@@ -57,6 +57,8 @@ const providerSchemas = {
     QSTASH_TOKEN: z.string().min(1),
     QSTASH_CURRENT_SIGNING_KEY: z.string().min(1),
     QSTASH_NEXT_SIGNING_KEY: z.string().min(1),
+    /** Regional endpoint (e.g. https://qstash-us-east-1.upstash.io). SDK default if absent. */
+    QSTASH_URL: z.string().url().optional(),
   }),
   upstashRedis: z.object({
     UPSTASH_REDIS_REST_URL: z.string().url(),

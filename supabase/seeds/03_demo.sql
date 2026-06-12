@@ -43,6 +43,23 @@ do $$ begin
         '{}'::jsonb
       )
     on conflict (id) do nothing;
+
+    -- GoTrue scans these string columns as NON-nullable (see seed 01 note) and
+    -- a phone without phone_confirmed_at is not a valid OTP login identity.
+    update auth.users set
+      confirmation_token         = coalesce(confirmation_token, ''),
+      recovery_token             = coalesce(recovery_token, ''),
+      email_change               = coalesce(email_change, ''),
+      email_change_token_new     = coalesce(email_change_token_new, ''),
+      email_change_token_current = coalesce(email_change_token_current, ''),
+      phone_change               = coalesce(phone_change, ''),
+      phone_change_token         = coalesce(phone_change_token, ''),
+      reauthentication_token     = coalesce(reauthentication_token, ''),
+      phone_confirmed_at         = coalesce(phone_confirmed_at, now())
+    where id in (
+      '00000000-0000-0000-0000-000000000101',
+      '00000000-0000-0000-0000-000000000102'
+    );
   end if;
 end $$;
 

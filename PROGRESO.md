@@ -27,13 +27,14 @@
 
 ## Pendientes BLOQUEANTES para la demo F0 (necesitan a Henry)
 
-1. **Activar el Auth Hook** en el dashboard de Supabase: Authentication → Hooks → Custom Access Token → `public.custom_access_token_hook`. (El `config.toml` ya lo trae para local.)
-2. **Re-aplicar la función del hook en remoto** — el fix C-1 del review (claim `must_change_pw`) está en `supabase/migrations/0001_identity.sql` (fuente actualizada) pero NO llegó al remoto: el MCP de Supabase perdió permisos de escritura a mitad de sesión. Acción: pegar la función `custom_access_token_hook` de 0001 en el SQL Editor, o reintentar vía MCP.
-3. **SUPABASE_SERVICE_ROLE_KEY** → `.env.local` (hoy tiene placeholder; el gate anti-enumeración lo necesita).
-4. **Twilio Verify** (Account SID, Auth Token, Verify Service SID) → configurar como SMS provider en Supabase Auth (dashboard) para el OTP real. Habilitar proveedor Phone.
-5. **Upstash Redis** (REST URL + token) → `.env.local` (sin esto el rate limiting usa fallback in-memory SOLO en development).
-6. **Resend API key** + configurar SMTP custom en Supabase Auth → emails de reset/invitación staff.
-7. **Passwords reales de los 4 staff** (el seed dejó placeholders `changeme-*`; resetear vía dashboard o flujo de reset).
+> Actualizado 2026-06-12 (tarde): Henry entregó service role ✅, Resend ✅ y QStash ✅ — ya cargadas en `.env.local` y verificadas (QStash respondió 200 al event log; Resend es key send-only, válida pero solo verificable con un envío real autorizado).
+
+1. **Ejecutar `supabase/fixes/2026-06-12-remote-repair.sql` en el SQL Editor** (una vez). Repara: (a) los 6 usuarios seed de `auth.users` que hoy hacen 500 "Database error querying schema" en TODA llamada de Auth (columnas token en NULL + teléfonos sin confirmar — bug encontrado por la suite Playwright); (b) el claim `must_change_pw` del hook (fix C-1 del review). Los seeds fuente ya están corregidos para futuros resets.
+2. **Activar el Auth Hook** en el dashboard: Authentication → Hooks → Custom Access Token → `public.custom_access_token_hook`. Sin esto, ningún login (staff o cliente) pasa los guards (claims ausentes ⇒ unprovisioned).
+3. **Twilio Verify** (Account SID, Auth Token, Verify Service SID) → configurar como SMS provider en Supabase Auth + habilitar proveedor Phone → OTP real por SMS.
+4. **Upstash Redis** (REST URL + token) → `.env.local` (mientras tanto el rate limiting usa fallback in-memory SOLO en development). OJO: las credenciales QStash recibidas son del producto QStash (jobs); el Ratelimit necesita un Redis de Upstash, es otro recurso.
+5. **SMTP custom de Resend en Supabase Auth** (dashboard) → emails de reset/invitación staff.
+6. **Passwords reales de los 4 staff** (placeholders `changeme-*` del seed; resetear tras el fix 1).
 
 ## Decisiones tomadas (registro)
 

@@ -50,7 +50,10 @@ let _client: Client | null = null;
 function getClient(): Client {
   if (!_client) {
     const qenv = providerEnv("qstash");
-    _client = new Client({ token: qenv.QSTASH_TOKEN });
+    _client = new Client({
+      token: qenv.QSTASH_TOKEN,
+      ...(qenv.QSTASH_URL ? { baseUrl: qenv.QSTASH_URL } : {}),
+    });
   }
   return _client;
 }
