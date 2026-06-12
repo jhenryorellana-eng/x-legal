@@ -1142,3 +1142,136 @@ export async function listDatasets(orgId: string) {
 }
 
 export { isServiceContractable };
+
+// ---------------------------------------------------------------------------
+// Admin catalog reads (DOC-53 §4.1 / §4.2) — page-initial RSC reads.
+// The public catalog reads above only return active+public services; the admin
+// panel needs the full editor list (drafts, hidden, archived) and the full
+// editor tree of a single service for the wizard/ficha.
+// ---------------------------------------------------------------------------
+
+export interface AdminServiceSummary {
+  id: string;
+  slug: string;
+  category: string;
+  label_i18n: import("./domain").I18nTextDraft;
+  icon: string;
+  color: string;
+  is_active: boolean;
+  is_public: boolean;
+  archived_at: string | null;
+  entry_parent_service_id: string | null;
+  entry_phase_id: string | null;
+  position: number;
+  plan_kinds: string[];
+  phase_count: number;
+}
+
+/**
+ * Lists every service of the org for the admin catalog grid, including drafts,
+ * hidden and (optionally) archived services, with plan + phase counts.
+ *
+ * @api-id API-CAT-01 (admin list — page-initial RSC read, DOC-53 §4.4)
+ */
+export async function listServicesAdmin(
+  actor: Actor,
+  opts: { include_archived?: boolean } = {},
+): Promise<AdminServiceSummary[]> {
+  can(actor, "catalog", "view");
+  const services = await repo.listServicesForEditor(actor.orgId, opts);
+
+  return Promise.all(
+    services.map(async (s) => {
+      const [plans, phases] = await Promise.all([
+        repo.listPlans(s.id),
+        repo.listPhases(s.id),
+      ]);
+      return {
+        id: s.id,
+        slug: s.slug,
+        category: s.category,
+        label_i18n: (s.label_i18n ?? {}) as import("./domain").I18nTextDraft,
+        icon: s.icon ?? "doc",
+        color: s.color ?? "accent",
+        is_active: s.is_active,
+        is_public: s.is_public,
+        archived_at: s.archived_at,
+        entry_parent_service_id: s.entry_parent_service_id,
+        entry_phase_id: s.entry_phase_id,
+        position: s.position ?? 0,
+        plan_kinds: plans.filter((p) => p.is_active).map((p) => p.kind),
+        phase_count: phases.length,
+      };
+    }),
+  );
+}
+
+export interface ServiceEditorPhase {
+  id: string;
+  slug: string;
+  label_i18n: import("./domain").I18nTextDraft;
+  description_i18n: import("./domain").I18nTextDraft | null;
+  client_explainer_i18n: import("./domain").I18nTextDraft | null;
+  position: number;
+  milestones: Milestone[];
+  appointment_policy: PolicyRow | null;
+  documents: RequiredDocRow[];
+  forms: FormDefinitionRow[];
+}
+
+export interface ServiceEditorTree {
+  service: Service;
+  plans: ServicePlan[];
+  phases: ServiceEditorPhase[];
+}
+
+/**
+ * Returns the full editor tree of a single service for the wizard / ficha:
+ * service + plans + ordered phases, each with its milestones, appointment
+ * policy, required documents and form definitions. Read-only.
+ *
+ * @api-id API-CAT-02 (admin service detail — page-initial RSC read, DOC-53 §4.2)
+ */
+export async function getServiceEditorTree(
+  actor: Actor,
+  serviceId: string,
+): Promise<ServiceEditorTree | null> {
+  can(actor, "catalog", "view");
+
+  const service = await repo.findServiceById(serviceId);
+  if (!service) return null;
+
+  const [plans, phaseRows] = await Promise.all([
+    repo.listPlans(serviceId),
+    repo.listPhases(serviceId),
+  ]);
+
+  const phases: ServiceEditorPhase[] = await Promise.all(
+    phaseRows.map(async (ph) => {
+      const [milestones, policy, documents, forms] = await Promise.all([
+        repo.listMilestones(ph.id),
+        repo.findPhasePolicy(ph.id),
+        repo.listRequiredDocs(ph.id),
+        repo.listFormDefinitions(ph.id),
+      ]);
+      return {
+        id: ph.id,
+        slug: ph.slug,
+        label_i18n: (ph.label_i18n ?? {}) as import("./domain").I18nTextDraft,
+        description_i18n: (ph.description_i18n ?? null) as import("./domain").I18nTextDraft | null,
+        client_explainer_i18n: (ph.client_explainer_i18n ?? null) as import("./domain").I18nTextDraft | null,
+        position: ph.position,
+        milestones: milestones as unknown as Milestone[],
+        appointment_policy: policy,
+        documents: documents,
+        forms: forms,
+      };
+    }),
+  );
+
+  return {
+    service: service as unknown as Service,
+    plans: plans as unknown as ServicePlan[],
+    phases,
+  };
+}

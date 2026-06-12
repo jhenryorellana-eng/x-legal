@@ -16,6 +16,16 @@ export {
   getAutomationVersionById,
   listContractableServices,
   isServiceContractable,
+  // Admin panel reads (DOC-53 §4 — page-initial RSC reads)
+  listServicesAdmin,
+  getServiceEditorTree,
+} from "./service";
+
+// Admin read types (DOC-53 §4)
+export type {
+  AdminServiceSummary,
+  ServiceEditorTree,
+  ServiceEditorPhase,
 } from "./service";
 
 // Types needed by other modules

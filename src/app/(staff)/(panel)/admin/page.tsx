@@ -18,6 +18,7 @@ import {
   countActiveEmployees,
   getCurrentStaffProfile,
 } from "@/backend/modules/identity";
+import { listServicesAdmin } from "@/backend/modules/catalog";
 import {
   DashboardView,
   type DashboardMessages,
@@ -29,9 +30,14 @@ export default async function AdminDashboardPage() {
 
   const t = await getTranslations("staff.dashboard");
 
-  // Real KPI (identity read). Active cases + services are wired in W2.
-  const activeEmployees = await countActiveEmployees();
-  const profile = await getCurrentStaffProfile();
+  // Real KPIs available at F1: active employees (identity) + active services
+  // (catalog). Active cases land when the cases module ships (em-dash until then).
+  const [activeEmployees, profile, services] = await Promise.all([
+    countActiveEmployees(),
+    getCurrentStaffProfile(),
+    listServicesAdmin(actor),
+  ]);
+  const activeServices = services.filter((s) => s.is_active && s.archived_at === null).length;
   const firstName = (profile?.displayName ?? "").split(" ")[0] || "";
 
   const messages: DashboardMessages = {
@@ -62,10 +68,9 @@ export default async function AdminDashboardPage() {
   return (
     <DashboardView
       kpis={{
-        // TODO(F1-W2): wire activeCases (cases/index.ts) + activeServices
-        // (catalog/index.ts) once those modules land. Null renders an em-dash.
+        // Active cases land with the cases module (em-dash until then).
         activeCases: null,
-        activeServices: null,
+        activeServices,
         activeEmployees,
       }}
       messages={messages}

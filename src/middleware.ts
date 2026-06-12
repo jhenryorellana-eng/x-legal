@@ -61,6 +61,7 @@ const PUBLIC_PATH_PREFIXES = [
   "/_next/",          // Next.js static assets
   "/assets/",         // public static assets
   "/favicon",
+  "/admin-preview",   // dev-only admin view harness (Playwright); 404s in prod
 ];
 
 function isPublicPath(pathname: string): boolean {

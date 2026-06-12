@@ -8,9 +8,13 @@ pgTAP tests for Row Level Security policies defined in DOC-31.
 |------|-------------------|-----------------|
 | `01_client_isolation.sql` | **1** | Client A cannot SELECT cases or case_documents of Client B |
 | `02_deactivated_user.sql` | **10, 11** | JWT valid but `users.is_active=false` → `is_staff()` / `is_case_member()` return false → 0 rows |
-| `03_staff_module_matrix.sql` | **12** | No module row → 0 rows + INSERT blocked; `can_view` → read only; `can_edit` → read+write; admin bypasses all |
+| `03_staff_module_matrix.sql` | **12** | No module row → 0 rows + INSERT blocked; `can_view` → read only; `can_edit` → read+write; admin bypasses all (module: cases) |
 | `04_anti_spoofing_write.sql` | **14** | Client cannot UPDATE cases; cannot INSERT case_documents/case_timeline with another user's UUID |
 | `05_anon_total_block.sql` | **17** | `anon` role: 0 rows on all representative tables, INSERT raises 42501 |
+| `06_billing_module_gate.sql` | **6, 7** | Paralegal without `billing` sees 0 installments/payments; without `accounting` sees 0 ledger_entries; finance with both modules sees all |
+| `07_role_defaults_block.sql` | **8** | Sales (no `expedientes`) sees 0 expedientes + blocked INSERT; finance (no `validations`) sees 0 legal_validations + blocked INSERT; `legal_validations` UPDATE is service_role-only even with the module |
+| `08_finance_leads_write_block.sql` | **9** | Finance (no `leads` module) cannot SELECT, INSERT, or UPDATE leads; view-only leads staff also blocked from INSERT |
+| `09_catalog_module_matrix.sql` | **12** (catalog/datasets), **13** | Catalog/datasets module three-state matrix; admin bypass of catalog+datasets; mid-transaction revocation of `cases` module → next statement returns 0 rows immediately (RF-ADM-045) |
 
 ## Running locally
 

@@ -19,6 +19,7 @@ const eslintConfig = [
       "out/**",
       "build/**",
       "next-env.d.ts",
+      "docs/**", // evidence harness scripts (CJS) — not app code
     ],
   },
   {

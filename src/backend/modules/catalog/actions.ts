@@ -194,6 +194,24 @@ export async function reorderPhasesAction(
   }
 }
 
+/**
+ * Upserts the appointment policy of a phase (DOC-53 §4 step 3 — RF-ADM-026).
+ * DOC-53 routes this through scheduling (API-SCH-13); in F1 the catalog owns the
+ * phase policy table, so the action lives here over the existing service fn.
+ *
+ * @api-id API-SCH-13 (phase appointment policy — consolidated)
+ */
+export async function upsertPhasePolicyAction(
+  input: Parameters<typeof svc.upsertPhasePolicy>[1],
+): Promise<ActionResult<Awaited<ReturnType<typeof svc.upsertPhasePolicy>>>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.upsertPhasePolicy(actor, input));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Milestones
 // ---------------------------------------------------------------------------

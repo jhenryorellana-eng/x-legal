@@ -141,6 +141,9 @@
   --hover: #f5f8fe;
   --accent: var(--brand-blue);
   --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  /* Finance role / purple service color (DOC-53 §7, §4 color swatch). */
+  --purple: #7c5cff;
+  --purple-soft: color-mix(in srgb, var(--purple) 14%, transparent);
   --on-accent: #ffffff;
   --r-lg: 20px; /* desktop cards */
 
@@ -171,6 +174,9 @@
   --hover: #16294a;
   --accent: var(--brand-blue-2);
   --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  /* Finance role / purple service color (DOC-53 §7, §4 color swatch). */
+  --purple: #9d86ff;
+  --purple-soft: color-mix(in srgb, var(--purple) 18%, transparent);
   --on-accent: #ffffff;
   --r-lg: 20px;
 
