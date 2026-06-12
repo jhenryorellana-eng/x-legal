@@ -1,0 +1,317 @@
+/* ============================================================================
+ * UsaLatinoPrime V2 — Motion (DOC-01 §7)
+ * Canonical keyframes. Definitions are copied verbatim from the prototypes
+ * (V2/UI Cliente/MigrationPrime.html + V2/UI Vanessa/styles.css).
+ *
+ * Only `transform` and `opacity` are animated (60fps rule).
+ * Decorative motion is disabled under prefers-reduced-motion (bottom of file).
+ * ========================================================================== */
+
+/* Scrims / overlays */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Staggered content entrance */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Bottom sheets */
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+/* Lex — calma (4.5s) / atento (3s) */
+@keyframes floatY {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-9px);
+  }
+}
+
+/* Lex — atento / señala (small float) */
+@keyframes floatYsmall {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+/* Lex — celebración */
+@keyframes celebrate {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-2deg);
+  }
+  25% {
+    transform: translateY(-14px) rotate(2deg);
+  }
+  50% {
+    transform: translateY(-4px) rotate(-1deg);
+  }
+  75% {
+    transform: translateY(-12px) rotate(1deg);
+  }
+}
+
+/* Halo de Lex */
+@keyframes haloPulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.95;
+    transform: scale(1.12);
+  }
+}
+
+/* FABs / paso actual / grabación (expansive ring) */
+@keyframes ringPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(47, 107, 255, 0.35);
+  }
+  70% {
+    box-shadow: 0 0 0 16px rgba(47, 107, 255, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(47, 107, 255, 0);
+  }
+}
+
+/* GradientBtn / logo — reflejo de luz que cruza */
+@keyframes reflect {
+  0% {
+    transform: translateX(-150%) skewX(-18deg);
+  }
+  16% {
+    transform: translateX(260%) skewX(-18deg);
+  }
+  100% {
+    transform: translateX(260%) skewX(-18deg);
+  }
+}
+
+/* Logo brand-mark sheen (desktop) */
+@keyframes sheen {
+  0%,
+  80% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(120%);
+  }
+}
+
+/* Badge de éxito */
+@keyframes checkPop {
+  0% {
+    transform: scale(0);
+  }
+  55% {
+    transform: scale(1.18);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Cards de celebración */
+@keyframes softPop {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Sparkles decorativos */
+@keyframes glowBreath {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Spotlight del tutorial */
+@keyframes spotPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 3px rgba(255, 198, 41, 0.9), 0 0 0 9px rgba(255, 198, 41, 0.25);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(255, 198, 41, 1), 0 0 0 16px rgba(255, 198, 41, 0);
+  }
+}
+
+/* Indicador de grabación de voz (barras) */
+@keyframes wave {
+  0% {
+    transform: scaleY(0.4);
+  }
+  100% {
+    transform: scaleY(1);
+  }
+}
+
+/* Time badges warn/hot */
+@keyframes blink {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* Burbujas / panel de Lex (desktop) */
+@keyframes bubin {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Call overlay — anillo expansivo */
+@keyframes ring {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 26px transparent;
+  }
+}
+
+/* Lex en paneles staff */
+@keyframes lexpulse {
+  0%,
+  100% {
+    transform: scale(0.9);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scale(1.12);
+    opacity: 0.95;
+  }
+}
+@keyframes lexfloat {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+/* Skeleton shimmer */
+@keyframes shimmer {
+  0% {
+    transform: translateX(-120%) skewX(-18deg);
+  }
+  100% {
+    transform: translateX(220%) skewX(-18deg);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Animation utility classes (token-driven durations) — DOC-01 §7
+ * ------------------------------------------------------------------------- */
+.anim-float-calm {
+  animation: floatY 4.5s ease-in-out infinite;
+}
+.anim-float-happy {
+  animation: floatY 2.8s ease-in-out infinite;
+}
+.anim-float-attentive {
+  animation: floatYsmall 3s ease-in-out infinite;
+}
+.anim-float-point {
+  animation: floatYsmall 2.4s ease-in-out infinite;
+}
+.anim-celebrate {
+  animation: celebrate 1.6s ease-in-out infinite;
+}
+.anim-halo {
+  animation: haloPulse 3.2s ease-in-out infinite;
+}
+.anim-ring-pulse {
+  animation: ringPulse 2.6s ease-out infinite;
+}
+.anim-blink {
+  animation: blink 1.4s ease-in-out infinite;
+}
+.anim-glow-breath {
+  animation: glowBreath 4s ease-in-out infinite;
+}
+.anim-bubin {
+  animation: bubin 0.45s ease-out both;
+}
+.anim-fade-in-up {
+  animation: fadeInUp 0.5s ease both;
+}
+.anim-reflect {
+  animation: reflect 5s ease-in-out infinite;
+}
+.anim-sheen {
+  animation: sheen 5s ease-in-out infinite 2s;
+}
+
+/* ---------------------------------------------------------------------------
+ * Reduced motion — disable float/pulse/reflect; keep short fades (DOC-01 §7/§8.6)
+ * ------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .anim-float-calm,
+  .anim-float-happy,
+  .anim-float-attentive,
+  .anim-float-point,
+  .anim-celebrate,
+  .anim-halo,
+  .anim-ring-pulse,
+  .anim-glow-breath,
+  .anim-reflect,
+  .anim-sheen {
+    animation: none !important;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

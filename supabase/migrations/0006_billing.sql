@@ -241,10 +241,15 @@ create table public.ledger_entries (
   payment_id   uuid        references public.payments(id) on delete restrict,
   recorded_by  uuid        references public.staff_profiles(user_id) on delete restrict,
   created_at   timestamptz not null default now(),
-  updated_at   timestamptz not null default now(),
-  -- Accounting idempotency: one auto-generated entry per payment per kind
-  unique (payment_id, kind) where payment_id is not null
+  updated_at   timestamptz not null default now()
 );
+
+-- Accounting idempotency: one auto-generated entry per payment per kind.
+-- NOTE: originally an inline UNIQUE constraint with WHERE clause — invalid in
+-- Postgres (table constraints cannot be partial). Moved to a partial unique index.
+create unique index ledger_entries_payment_kind_unique_idx
+  on public.ledger_entries (payment_id, kind)
+  where payment_id is not null;
 
 -- Index for ledger listing by org and date
 create index ledger_entries_org_entry_date_idx

@@ -16,6 +16,7 @@ create extension if not exists btree_gist;
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
+set search_path = ''
 as $$
 begin
   new.updated_at = now();
@@ -163,7 +164,7 @@ create trigger trg_person_records_updated_at
 -- employee_module_permissions: per-staff module access matrix (RF-ADM-045)
 create table public.employee_module_permissions (
   id         uuid    primary key default gen_random_uuid(),
-  staff_id   uuid    not null references public.staff_profiles(id) on delete cascade,
+  staff_id   uuid    not null references public.staff_profiles(user_id) on delete cascade,
   module_key text    not null,
   -- Canonical values (shared/constants/modules.ts):
   -- dashboard, leads, clients, cases, calendar, availability,
@@ -274,6 +275,7 @@ create or replace function public.custom_access_token_hook(event jsonb)
 returns jsonb
 language plpgsql
 stable
+set search_path = ''
 as $$
 declare
   claims jsonb;
@@ -435,27 +437,14 @@ revoke update on public.client_profiles from authenticated;
 grant update (preferred_name, address, marketing_opt_in, tutorial_seen_at) on public.client_profiles to authenticated;
 
 -- ── Policies: person_records ───────────────────────────────────────────────────
--- SELECT: staff with cases module OR client sees people in THEIR cases (via case_parties)
--- Note: is_case_member() doesn't exist yet; the subquery below mirrors its logic at this stage.
--- When 0004 creates case_members, the function is_case_member() will be added and policies
--- that reference case_members will use it.
+-- SELECT: staff with cases module. The client branch (sees people in THEIR cases
+-- via case_parties/case_members) is added in 0004, where those tables exist —
+-- CREATE POLICY resolves relations at creation time, so it cannot live here.
+-- RLS is enabled from this migration; until 0004 clients simply match no policy.
 create policy person_records_select on public.person_records
   for select to authenticated
   using (
-    (org_id = (select public.auth_org_id()) and (select public.has_module('cases', false)))
-    or exists (
-      -- Client sees persons linked to their own cases (their minors/spouse)
-      -- case_parties and case_members don't exist yet but this policy runs after 0004 is applied
-      -- During 0001 bootstrap, this subquery will return false until 0004 creates the tables.
-      -- TODO(SoT): Verify this forward-reference behavior is acceptable in Supabase (policy compiled at query time)
-      select 1 from public.case_parties cp
-       where cp.person_record_id = person_records.id
-         and exists (
-           select 1 from public.case_members cm
-            where cm.case_id = cp.case_id
-              and cm.user_id = (select auth.uid())
-         )
-    )
+    org_id = (select public.auth_org_id()) and (select public.has_module('cases', false))
   );
 
 -- INSERT: staff with cases edit

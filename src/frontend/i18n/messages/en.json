@@ -1,0 +1,14 @@
+{
+  "common": {
+    "appName": "UsaLatinoPrime",
+    "loading": "Loading…",
+    "error": "Something went wrong",
+    "retry": "Try again",
+    "cancel": "Cancel",
+    "save": "Save",
+    "close": "Close"
+  },
+  "design": {
+    "title": "Design system — component showcase"
+  }
+}

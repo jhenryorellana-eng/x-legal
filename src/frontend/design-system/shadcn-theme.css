@@ -1,0 +1,104 @@
+/* ============================================================================
+ * UsaLatinoPrime V2 — shadcn/ui theme bridge (DOC-01 §4)
+ * Maps shadcn's expected CSS variables onto our brand semantic tokens so the
+ * shadcn components (forms, menus, dialogs, table, switch, sonner) inherit the
+ * exact same palette as the brand components — driven by a single [data-theme]
+ * switch instead of shadcn's default `.dark` class.
+ *
+ * `--background`, `--primary`, etc. resolve from tokens.css. Because some
+ * tokens are surface-specific (mobile `--card` vs staff `--panel`), we prefer
+ * `--panel` when present (staff scope) and fall back to `--card` (mobile).
+ * ========================================================================== */
+
+[data-theme] {
+  /* Core surfaces */
+  --background: var(--bg);
+  --foreground: var(--ink);
+  --card: var(--panel, var(--card-surface, var(--card)));
+  --card-foreground: var(--ink);
+  --popover: var(--panel, var(--card));
+  --popover-foreground: var(--ink);
+
+  /* Action / accent — NOTE: shadcn's `--accent` is its subtle hover tint
+   * (distinct from the brand action color, which Tailwind exposes as `accent`
+   * via tokens.css). We keep shadcn's internal names prefixed `sc-` to avoid
+   * clobbering the brand `--accent` token. */
+  --primary: var(--accent);
+  --primary-foreground: var(--on-accent);
+  --secondary: var(--chip, var(--card-alt));
+  --secondary-foreground: var(--ink);
+  --muted: var(--chip, var(--card-alt));
+  --muted-foreground: var(--ink-2);
+  --sc-accent: var(--accent-soft);
+  --sc-accent-foreground: var(--ink);
+
+  /* Feedback */
+  --destructive: var(--red);
+  --destructive-foreground: var(--on-accent);
+
+  /* Lines / fields / focus */
+  --border: var(--line);
+  --input: var(--line);
+  --ring: var(--accent);
+
+  /* Radius — DOC-01 §4 (--radius: 14px) */
+  --radius: var(--r-md);
+
+  /* Charts — derived from brand hues */
+  --chart-1: var(--brand-blue);
+  --chart-2: var(--brand-gold);
+  --chart-3: var(--brand-green);
+  --chart-4: var(--brand-blue-2);
+  --chart-5: var(--brand-red);
+
+  /* Sidebar (staff) */
+  --sidebar: var(--sidebar-surface, var(--sidebar, var(--card)));
+  --sidebar-foreground: var(--ink);
+  --sidebar-primary: var(--accent);
+  --sidebar-primary-foreground: var(--on-accent);
+  --sidebar-accent: var(--hover, var(--card-alt));
+  --sidebar-accent-foreground: var(--ink);
+  --sidebar-border: var(--line);
+  --sidebar-ring: var(--accent);
+}
+
+/* Expose shadcn vars to Tailwind utilities (bg-primary, text-muted-foreground…).
+ * `background`, `foreground`, `card`, `accent` are already mapped in tokens.css
+ * to the BRAND tokens; here we add only the shadcn-specific names so the two
+ * @theme blocks don't fight over `--color-accent`/`--color-card`. shadcn
+ * components that need its subtle accent use `--sc-accent` directly. */
+@theme inline {
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent-foreground: var(--sc-accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}

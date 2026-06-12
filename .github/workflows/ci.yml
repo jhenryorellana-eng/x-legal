@@ -1,0 +1,156 @@
+# =============================================================================
+# CI — UsaLatinoPrime V2 (F0)
+# Gates from DOC-81 §7 that apply to F0: typecheck, lint (0 warnings), unit
+# tests, i18n key parity, build, RLS pgTAP suite on an ephemeral DB, DB types
+# drift, and secret scanning.
+#
+# Required repository secrets:
+#   SUPABASE_ACCESS_TOKEN  — used by `db-drift` to regenerate types against the
+#                            hosted project (uexxyokexcamyjcknxua). The job only
+#                            runs on push to main (PRs — incl. forks — never see
+#                            this secret); without it configured, the job fails.
+#   GITLEAKS_LICENSE       — ONLY needed if this repo moves under a GitHub
+#                            organization. gitleaks-action is free for repos
+#                            owned by personal accounts.
+#
+# The `quality` build step uses DUMMY env values on purpose: `next build` must
+# never require real secrets (DOC-82). Anything that needs a real credential
+# must be read lazily at request time, not at build time.
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # 1. Typecheck · lint · unit · i18n parity · build (DOC-81 §7 gates 1–4, 7)
+  # ───────────────────────────────────────────────────────────────────────────
+  quality:
+    name: Quality (tsc, eslint, vitest, i18n, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck (tsc --noEmit, strict)
+        run: npm run typecheck
+
+      - name: Lint (eslint --max-warnings=0, incl. boundaries)
+        run: npm run lint
+
+      - name: Unit tests (vitest)
+        run: npm run test
+
+      - name: i18n key parity es/en (RNF-027)
+        run: npm run check:i18n
+
+      - name: Build (dummy env — build must not require real secrets)
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder
+          SUPABASE_SERVICE_ROLE_KEY: placeholder
+          NEXT_PUBLIC_APP_URL: http://localhost:3000
+        run: |
+          # AES-256-GCM dummy key (32 random bytes, base64) — same shape as prod
+          export ENCRYPTION_KEY="$(openssl rand -base64 32)"
+          npm run build
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 2. RLS pgTAP suite against an ephemeral local DB (DOC-81 §7 gate 5)
+  #    `supabase db start` boots Postgres and applies supabase/migrations;
+  #    `supabase db reset --local` re-applies migrations 0001–0015 and runs the
+  #    seeds declared in supabase/config.toml [db.seed].sql_paths
+  #    (./seeds/*.sql → 01_org_y_staff, 02_catalogo_servicios, 03_demo —
+  #    lexicographic order). Seed 03's anti-prod guard reads app.environment,
+  #    which is unset locally, so demo data loads in CI as intended.
+  # ───────────────────────────────────────────────────────────────────────────
+  rls-tests:
+    name: RLS tests (pgTAP, ephemeral DB)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v2
+        with:
+          version: latest
+          github-token: ${{ github.token }}
+
+      - name: Start local database (applies migrations)
+        run: supabase db start
+
+      - name: Reset DB — migrations + seeds ([db.seed].sql_paths)
+        run: supabase db reset --local
+
+      - name: Run pgTAP tests (supabase/tests/)
+        run: |
+          # F0 bootstrap guard: the suite is being authored in parallel.
+          # Once supabase/tests/ has .sql files, this gate is fully blocking.
+          if find supabase/tests -name '*.sql' -type f | grep -q .; then
+            supabase test db
+          else
+            echo "::warning::No pgTAP tests under supabase/tests yet (F0 bootstrap) — nothing to run"
+          fi
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 3. DB types drift (DOC-33 §4, DOC-81 §7 gate 6)
+  #    Compares committed src/shared/database.types.ts against types freshly
+  #    generated from the HOSTED project. Push-only: PRs (and forks) don't get
+  #    SUPABASE_ACCESS_TOKEN. PR-side drift is still caught here right after
+  #    merge, and locally via `npm run check:drift`.
+  # ───────────────────────────────────────────────────────────────────────────
+  db-drift:
+    name: DB types drift (hosted schema)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check committed types vs hosted schema
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_ID: uexxyokexcamyjcknxua
+        run: npm run check:drift
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 4. Secret scan (DOC-81 §7 gate 12)
+  #    gitleaks needs full history (fetch-depth: 0) to scan every commit.
+  # ───────────────────────────────────────────────────────────────────────────
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          # Uncomment if the repo moves under an organization:
+          # GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}

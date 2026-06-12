@@ -166,11 +166,6 @@ create table public.appointments (
   -- XOR: a booking must belong to a case OR a lead, never neither, never both
   check (case_id is not null or lead_id is not null),
 
-  -- Unique constraint: enforce "Appointment N of M" within a phase
-  -- (only for scheduled/completed; rescheduled/cancelled/no_show slots are excluded)
-  unique (case_id, service_phase_id, sequence_number)
-    where (status in ('scheduled','completed')),
-
   -- One active live call per conversation is tracked in calls table;
   -- this unique prevents double-booking the same staff member at the same time.
   -- Requires btree_gist (created in 0001_identity.sql).
@@ -179,6 +174,14 @@ create table public.appointments (
     tstzrange(starts_at, ends_at) with &&
   ) where (status = 'scheduled')
 );
+
+-- Unique partial index: enforce "Appointment N of M" within a phase
+-- (only for scheduled/completed; rescheduled/cancelled/no_show slots are excluded).
+-- NOTE: originally an inline UNIQUE constraint with WHERE clause — invalid in
+-- Postgres (table constraints cannot be partial). Moved to a partial unique index.
+create unique index appointments_case_phase_seq_unique_idx
+  on public.appointments (case_id, service_phase_id, sequence_number)
+  where (status in ('scheduled','completed'));
 
 -- Indexes for common queries
 create index appointments_staff_starts_at_idx

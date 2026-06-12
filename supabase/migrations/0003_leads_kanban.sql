@@ -39,7 +39,7 @@ create table public.leads (
   lost_reason           text,
   interested_service_id uuid    references public.services(id),
   note                  text,
-  assigned_to           uuid    references public.staff_profiles(id),
+  assigned_to           uuid    references public.staff_profiles(user_id),
   status                text    not null default 'open' check (status in ('open', 'won', 'lost')),
   contacted_at          timestamptz,
   won_case_id           uuid,   -- FK to cases added in 0004
@@ -67,7 +67,7 @@ create trigger trg_leads_updated_at
 create table public.kanban_boards (
   id             uuid primary key default gen_random_uuid(),
   org_id         uuid not null references public.orgs(id),
-  owner_staff_id uuid not null references public.staff_profiles(id) on delete cascade,
+  owner_staff_id uuid not null references public.staff_profiles(user_id) on delete cascade,
   board_kind     text not null check (board_kind in ('leads', 'cases', 'collections')),
   created_at     timestamptz not null default now(),
   updated_at     timestamptz not null default now(),
@@ -126,7 +126,7 @@ create trigger trg_kanban_cards_updated_at
 -- FK constraint added in 0004 after cases is created.
 create table public.staff_tasks (
   id         uuid    primary key default gen_random_uuid(),
-  staff_id   uuid    not null references public.staff_profiles(id) on delete cascade,
+  staff_id   uuid    not null references public.staff_profiles(user_id) on delete cascade,
   text       text    not null,
   tag        text,   -- 'Cartas','Documentos','Traspaso','Onboarding'...
   case_id    uuid,   -- FK to cases added in 0004

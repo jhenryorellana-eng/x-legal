@@ -473,7 +473,9 @@ join (values
   ('reforzar', 'declaracion-jurada-personal',
    '{"es":"Declaración jurada personal","en":"Personal sworn declaration"}'::jsonb,
    '{"es":"Tu caso","en":"Your Case"}'::jsonb,
-   true, false, null, true, 10),
+   -- null::text[] cast required: when every row in this VALUES list is null,
+   -- Postgres infers text and the insert into party_roles text[] fails (42804)
+   true, false, null::text[], true, 10),
   ('reforzar', 'evidencias-persecucion',
    '{"es":"Evidencias de persecución (fotos, reportes, amenazas)","en":"Persecution evidence (photos, reports, threats)"}'::jsonb,
    '{"es":"Tu caso","en":"Your Case"}'::jsonb,
@@ -497,7 +499,7 @@ join (values
   ('reforzar', 'i589-presentado',
    '{"es":"I-589 presentado (págs. 1–4)","en":"Filed I-589 (pages 1–4)"}'::jsonb,
    '{"es":"I-589 presentado","en":"Filed I-589"}'::jsonb,
-   true, false, null, true, 10),
+   true, false, null::text[], true, 10),  -- cast: all-null roles column (42804)
   ('reforzar', 'declaracion-jurada-personal',
    '{"es":"Declaración jurada personal","en":"Personal sworn declaration"}'::jsonb,
    '{"es":"Tu caso","en":"Your Case"}'::jsonb,
@@ -524,7 +526,7 @@ join (values
   ('unica', 'decision-juez',
    '{"es":"Decisión del Juez de Inmigración","en":"Immigration Judge''s decision"}'::jsonb,
    '{"es":"Documentos del caso","en":"Case Documents"}'::jsonb,
-   true, false, null, true, 10),
+   true, false, null::text[], true, 10),  -- cast: all-null roles column (42804)
   -- ai_extract: decision date (appeal deadline is 30 days)
   ('unica', 'nta',
    '{"es":"NTA — Notice to Appear","en":"NTA — Notice to Appear"}'::jsonb,
@@ -549,7 +551,7 @@ join (values
   ('unica', 'id-solicitante',
    '{"es":"Identificación del solicitante","en":"Applicant''s ID"}'::jsonb,
    '{"es":"Identidad","en":"Identity"}'::jsonb,
-   true, false, null, false, 10),
+   true, false, null::text[], false, 10),  -- cast: all-null roles column (42804)
   ('unica', 'nta',
    '{"es":"NTA — datos de la corte actual","en":"NTA — current court data"}'::jsonb,
    '{"es":"Documentos del caso","en":"Case Documents"}'::jsonb,
@@ -635,7 +637,7 @@ join (values
   ('unica', 'recibo-i589',
    '{"es":"Recibo del I-589 (asilo pendiente)","en":"I-589 receipt notice (pending asylum)"}'::jsonb,
    '{"es":"Asilo pendiente","en":"Pending Asylum"}'::jsonb,
-   true, false, null, true, 10),
+   true, false, null::text[], true, 10),  -- cast: all-null roles column (42804)
   ('unica', 'fotos-uscis',
    '{"es":"Fotos tipo pasaporte USCIS (2x2)","en":"USCIS passport-style photos (2x2)"}'::jsonb,
    '{"es":"Identidad","en":"Identity"}'::jsonb,

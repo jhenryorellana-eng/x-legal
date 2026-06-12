@@ -79,9 +79,15 @@ create table public.expedientes (
   tracking_ref         text,           -- courier tracking number
   created_at           timestamptz     not null default now(),
   updated_at           timestamptz     not null default now(),
-  unique (case_id, attempt_no),
-  unique (case_id) where (status = 'draft')  -- only one draft per case at a time
+  unique (case_id, attempt_no)
 );
+
+-- Only one draft per case at a time.
+-- NOTE: originally an inline UNIQUE constraint with WHERE clause — invalid in
+-- Postgres (table constraints cannot be partial). Moved to a partial unique index.
+create unique index expedientes_one_draft_per_case_idx
+  on public.expedientes (case_id)
+  where (status = 'draft');
 
 create trigger set_updated_at_expedientes
   before update on public.expedientes

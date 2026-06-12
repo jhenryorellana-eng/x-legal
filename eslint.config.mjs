@@ -29,6 +29,9 @@ const eslintConfig = [
       "import/resolver": {
         typescript: { alwaysTryTypes: true },
       },
+      // Side-effect stylesheet imports (e.g. layout importing globals.css) are
+      // not architectural dependencies — exclude them from boundary analysis.
+      "boundaries/ignore": ["**/*.css"],
       // Order matters: first matching pattern wins (module-pub before module-int).
       "boundaries/elements": [
         { type: "app", pattern: "src/app/**", mode: "full" },

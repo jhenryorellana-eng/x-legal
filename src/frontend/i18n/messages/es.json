@@ -1,0 +1,14 @@
+{
+  "common": {
+    "appName": "UsaLatinoPrime",
+    "loading": "Cargando…",
+    "error": "Algo salió mal",
+    "retry": "Reintentar",
+    "cancel": "Cancelar",
+    "save": "Guardar",
+    "close": "Cerrar"
+  },
+  "design": {
+    "title": "Sistema de diseño — vitrina de componentes"
+  }
+}

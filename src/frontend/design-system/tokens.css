@@ -1,0 +1,263 @@
+/* ============================================================================
+ * UsaLatinoPrime V2 — Design Tokens (DOC-01 §3)
+ * Single source of truth for every visual value (color, radius, shadow).
+ * Brand primitives in :root; semantic tokens under [data-theme].
+ *
+ * Surfaces:
+ *   - MOBILE (app cliente)  → DOC-01 §3.2  (default scope)
+ *   - DESKTOP (paneles staff) → DOC-01 §3.3 (scoped under .surface-staff)
+ *
+ * The Tailwind v4 @theme inline block lives at the bottom and maps semantic
+ * tokens to utility classes (bg-bg, text-ink-2, bg-blue-soft, …).
+ * ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+ * §3.1 — Brand primitives (theme-independent hues)
+ * ------------------------------------------------------------------------- */
+:root {
+  --brand-navy: #002855;
+  --brand-blue: #2f6bff;
+  --brand-blue-2: #5b8cff;
+  --brand-blue-deep: #1b4fd6;
+  --brand-gold: #ffc629;
+  --brand-gold-2: #ffd25a;
+  --brand-gold-deep: #f0a500;
+  --brand-green: #1bb673;
+  --brand-green-2: #28c98a;
+  --brand-red: #e4002b;
+  --brand-red-2: #ff5a73;
+
+  /* Brand gradient (azul → dorado). The GradientBtn cycles toward gold on hover. */
+  --grad-c1: #2f6bff;
+  --grad-c2: #ffc629;
+
+  /* Radii & metrics (DOC-01 §3.4) */
+  --r-lg: 24px; /* cards móvil */
+  --r-md: 14px;
+  --r-sm: 10px;
+  --r-pill: 999px;
+  --r-sheet: 28px; /* bottom-sheet superior */
+  --sb-w: 248px; /* sidebar staff */
+
+  /* Standard easing used across motion (DOC-01 §7) */
+  --ease: cubic-bezier(0.4, 0.8, 0.3, 1);
+}
+
+/* ---------------------------------------------------------------------------
+ * §3.2 — Semantic tokens · MOBILE surface (app cliente) — default scope
+ * Source: V2/UI Cliente/app/ui.jsx (LIGHT/DARK objects)
+ * ------------------------------------------------------------------------- */
+[data-theme="light"] {
+  --bg: #f4f7fb;
+  --card: #ffffff;
+  --card-alt: #f1f5fb;
+  --nav-bg: rgba(255, 255, 255, 0.92);
+  --navy: #002855;
+  --ink: #0b1b33;
+  --ink-2: #5b6b82;
+  --ink-3: #94a2b8;
+  --line: #eaeff6;
+  --accent: #2f6bff;
+  --accent-deep: #1b4fd6;
+  --gold: #ffc629;
+  --gold-deep: #f0a500;
+  --green: #1bb673;
+  --green-soft: #e7f7ef;
+  --red: #e4002b;
+  --red-soft: #fdecef;
+  --blue-soft: #eaf1ff;
+  --gold-soft: #fff6df;
+  --shadow-1: rgba(11, 27, 51, 0.07);
+  --shadow-2: rgba(11, 27, 51, 0.1);
+  --lex-halo: #ffc629;
+
+  /* Composed shadows (derived from --shadow-1/2) */
+  --shadow-soft: 0 10px 30px var(--shadow-1), 0 2px 8px var(--shadow-1);
+  --shadow-card: 0 18px 44px var(--shadow-2), 0 4px 12px var(--shadow-1);
+
+  /* Accent-soft used by focus rings & active fills (mobile mirror of staff) */
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  --on-accent: #ffffff;
+
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --bg: #0c1322;
+  --card: #172238;
+  --card-alt: #101a2d;
+  --nav-bg: rgba(15, 22, 38, 0.92);
+  --navy: #f3f7ff;
+  --ink: #e7eefb;
+  --ink-2: #9fb1cc;
+  --ink-3: #64768f;
+  --line: #27344e;
+  --accent: #5b8cff;
+  --accent-deep: #2f6bff;
+  --gold: #ffd25e;
+  --gold-deep: #ffc629;
+  --green: #2bd08a;
+  --green-soft: #13311f;
+  --red: #ff5c76;
+  --red-soft: #33161c;
+  --blue-soft: #16264a;
+  --gold-soft: #2c2614;
+  --shadow-1: rgba(0, 0, 0, 0.45);
+  --shadow-2: rgba(0, 0, 0, 0.55);
+  --lex-halo: #ffc629;
+
+  --shadow-soft: 0 10px 30px var(--shadow-1), 0 2px 8px var(--shadow-1);
+  --shadow-card: 0 18px 44px var(--shadow-2), 0 4px 12px var(--shadow-1);
+
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  --on-accent: #ffffff;
+
+  color-scheme: dark;
+}
+
+/* ---------------------------------------------------------------------------
+ * §3.3 — Semantic tokens · DESKTOP surface (paneles staff)
+ * Source: V2/UI Vanessa/styles.css. Diana, Andrium & Admin reuse these.
+ * Activate by adding class `surface-staff` to a [data-theme] container.
+ * Overrides the mobile values for the same theme.
+ * ------------------------------------------------------------------------- */
+[data-theme="light"].surface-staff,
+[data-theme="light"] .surface-staff {
+  --bg: #eef3fa;
+  --bg-grad: radial-gradient(1200px 700px at 12% -8%, #fff6e0 0%, transparent 55%),
+    radial-gradient(1100px 700px at 105% 0%, #e4ecff 0%, transparent 50%),
+    linear-gradient(180deg, #f4f7fb, #eaf0f8);
+  --panel: #ffffff;
+  --panel-2: #fbfcfe;
+  --glass: rgba(255, 255, 255, 0.72);
+  --glass-brd: rgba(255, 255, 255, 0.85);
+  --sidebar: #ffffff;
+  --ink: #0b1b33;
+  --ink-2: #5b6b82;
+  --ink-3: #8a99b2;
+  --line: #e3e9f2;
+  --line-2: #edf1f8;
+  --chip: #f2f6fd;
+  --hover: #f5f8fe;
+  --accent: var(--brand-blue);
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  --on-accent: #ffffff;
+  --r-lg: 20px; /* desktop cards */
+
+  --shadow-sm: 0 1px 2px rgba(11, 27, 51, 0.06), 0 2px 8px rgba(11, 27, 51, 0.05);
+  --shadow-md: 0 6px 22px rgba(11, 27, 51, 0.1), 0 2px 6px rgba(11, 27, 51, 0.06);
+  --shadow-lg: 0 18px 48px rgba(11, 27, 51, 0.16), 0 6px 18px rgba(11, 27, 51, 0.08);
+  --glow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent),
+    0 10px 40px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+[data-theme="dark"].surface-staff,
+[data-theme="dark"] .surface-staff {
+  --bg: #070e1c;
+  --bg-grad: radial-gradient(1200px 760px at 10% -10%, rgba(255, 198, 41, 0.1) 0%, transparent 55%),
+    radial-gradient(1100px 720px at 108% -6%, rgba(91, 140, 255, 0.18) 0%, transparent 52%),
+    linear-gradient(180deg, #0a1424, #070e1c);
+  --panel: #101e34;
+  --panel-2: #0c1830;
+  --glass: rgba(18, 32, 54, 0.66);
+  --glass-brd: rgba(120, 150, 200, 0.18);
+  --sidebar: #0c1830;
+  --ink: #eaf1ff;
+  --ink-2: #9fb2ce;
+  --ink-3: #6c82a6;
+  --line: #1e3050;
+  --line-2: #172643;
+  --chip: #172845;
+  --hover: #16294a;
+  --accent: var(--brand-blue-2);
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  --on-accent: #ffffff;
+  --r-lg: 20px;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 8px 26px rgba(0, 0, 0, 0.42);
+  --shadow-lg: 0 22px 56px rgba(0, 0, 0, 0.55);
+  --glow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent),
+    0 10px 40px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* ---------------------------------------------------------------------------
+ * User text scale (DOC-01 §2 / §8.5) — root multiplier 0.92 | 1 | 1.12
+ * Applied via [data-text-scale] on <html>; persisted by the client.
+ * ------------------------------------------------------------------------- */
+:root {
+  --text-scale: 1;
+}
+[data-text-scale="sm"] {
+  --text-scale: 0.92;
+}
+[data-text-scale="md"] {
+  --text-scale: 1;
+}
+[data-text-scale="lg"] {
+  --text-scale: 1.12;
+}
+
+/* ---------------------------------------------------------------------------
+ * Tailwind v4 — map semantic tokens to utilities (bg-bg, text-ink-2, …)
+ * DOC-01 §4. Fallbacks for desktop-only tokens keep the build resilient
+ * outside a `.surface-staff` scope.
+ * ------------------------------------------------------------------------- */
+@theme inline {
+  /* Brand primitives */
+  --color-brand-navy: var(--brand-navy);
+  --color-brand-blue: var(--brand-blue);
+  --color-brand-blue-2: var(--brand-blue-2);
+  --color-brand-blue-deep: var(--brand-blue-deep);
+  --color-brand-gold: var(--brand-gold);
+  --color-brand-gold-2: var(--brand-gold-2);
+  --color-brand-gold-deep: var(--brand-gold-deep);
+  --color-brand-green: var(--brand-green);
+  --color-brand-green-2: var(--brand-green-2);
+  --color-brand-red: var(--brand-red);
+  --color-brand-red-2: var(--brand-red-2);
+
+  /* Semantic surfaces & text. `card` resolves to the staff panel when in a
+   * `.surface-staff` scope, else the mobile card. */
+  --color-bg: var(--bg);
+  --color-card: var(--panel, var(--card));
+  --color-card-alt: var(--panel-2, var(--card-alt));
+  --color-navy: var(--navy);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-line: var(--line);
+  /* Brand action color (DOC-01 --accent). Exposed as `action` so the Tailwind
+   * `accent` utility can stay aligned with shadcn's subtle accent tint
+   * (used by ghost/outline hovers). Brand components read `var(--accent)`. */
+  --color-action: var(--accent);
+  --color-accent: var(--accent-soft);
+  --color-accent-deep: var(--accent-deep);
+  --color-accent-soft: var(--accent-soft);
+  --color-gold: var(--gold);
+  --color-gold-deep: var(--gold-deep);
+  --color-green: var(--green);
+  --color-green-soft: var(--green-soft);
+  --color-red: var(--red);
+  --color-red-soft: var(--red-soft);
+  --color-blue-soft: var(--blue-soft);
+  --color-gold-soft: var(--gold-soft);
+
+  /* Desktop staff surfaces */
+  --color-panel: var(--panel, var(--card));
+  --color-panel-2: var(--panel-2, var(--card-alt));
+  --color-sidebar: var(--sidebar, var(--card));
+  --color-line-2: var(--line-2, var(--line));
+  --color-chip: var(--chip, var(--card-alt));
+  --color-hover: var(--hover, var(--card-alt));
+
+  /* Radii */
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+  --radius-pill: var(--r-pill);
+
+  /* Fonts (provided by next/font in fonts.ts) */
+  --font-title: var(--font-plus-jakarta), system-ui, sans-serif;
+  --font-body: system-ui, -apple-system, "Segoe UI", sans-serif;
+}

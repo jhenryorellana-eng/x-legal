@@ -7,9 +7,83 @@
 -- Defines: is_conversation_participant(uuid) helper (table exists now)
 -- =============================================================================
 
+-- NOTE: the is_conversation_participant() helper was originally defined HERE,
+-- before conversation_participants existed. CREATE FUNCTION (language sql)
+-- validates the body at creation time, so it failed with 42P01. The function
+-- (and the conversations policies that reference it) were moved below, after
+-- conversation_participants is created. Purely a statement-ordering fix.
+
+-- ---------------------------------------------------------------------------
+-- conversations  (root table: carries org_id)
+-- ---------------------------------------------------------------------------
+create table public.conversations (
+  id              uuid        primary key default gen_random_uuid(),
+  org_id          uuid        not null references public.orgs(id) on delete restrict,
+  scope           text        not null check (scope in ('case','lead','support')),
+  case_id         uuid        references public.cases(id) on delete restrict,
+  lead_id         uuid        references public.leads(id) on delete restrict,
+  title           text,       -- e.g. "Re: Visa Juvenil de Mateo"
+  last_message_at timestamptz,
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now(),
+
+  -- Enforce scope <-> FK alignment:
+  --   scope='case'  requires case_id  not null (and lead_id null implied by the unique + check)
+  --   scope='lead'  requires lead_id  not null
+  --   scope='support' allows both null
+  check (
+    (scope = 'case') = (case_id is not null)
+    and (scope = 'lead') = (lead_id is not null)
+  )
+);
+
+-- Each case has exactly one conversation thread.
+-- NOTE: originally an inline UNIQUE constraint with WHERE clause — invalid in
+-- Postgres (table constraints cannot be partial). Moved to a partial unique index.
+create unique index conversations_one_per_case_idx
+  on public.conversations (case_id)
+  where (scope = 'case');
+
+-- Indexes for common queries
+create index conversations_case_id_idx
+  on public.conversations (case_id);
+
+create index conversations_last_message_at_idx
+  on public.conversations (last_message_at desc);
+
+create trigger set_updated_at_conversations
+  before update on public.conversations
+  for each row execute function public.set_updated_at();
+
+alter table public.conversations enable row level security;
+
+-- (conversations policies moved below: they reference is_conversation_participant(),
+--  which can only be created after conversation_participants exists)
+
+-- ---------------------------------------------------------------------------
+-- conversation_participants
+-- ---------------------------------------------------------------------------
+create table public.conversation_participants (
+  id               uuid        primary key default gen_random_uuid(),
+  conversation_id  uuid        not null references public.conversations(id) on delete cascade,
+  user_id          uuid        not null references public.users(id) on delete cascade,
+  joined_at        timestamptz not null default now(),
+  last_read_at     timestamptz,  -- for unread badges (GRANT update on last_read_at only, N2)
+  created_at       timestamptz not null default now(),
+  updated_at       timestamptz not null default now(),
+  unique (conversation_id, user_id)
+);
+
+create trigger set_updated_at_conversation_participants
+  before update on public.conversation_participants
+  for each row execute function public.set_updated_at();
+
+alter table public.conversation_participants enable row level security;
+
 -- ---------------------------------------------------------------------------
 -- RLS helper: is_conversation_participant
--- Defined here because conversation_participants table is created in this file.
+-- Defined here (AFTER conversation_participants exists) because language sql
+-- function bodies are validated at creation time.
 -- The function is referenced by RLS policies below and by 0015_realtime.sql.
 -- ---------------------------------------------------------------------------
 create or replace function public.is_conversation_participant(conv uuid)
@@ -29,46 +103,9 @@ $$;
 
 -- Grant to authenticated (mirrors the pattern of helpers in 0001)
 grant execute on function public.is_conversation_participant(uuid) to authenticated;
+revoke execute on function public.is_conversation_participant(uuid) from public, anon;
 
--- ---------------------------------------------------------------------------
--- conversations  (root table: carries org_id)
--- ---------------------------------------------------------------------------
-create table public.conversations (
-  id              uuid        primary key default gen_random_uuid(),
-  org_id          uuid        not null references public.orgs(id) on delete restrict,
-  scope           text        not null check (scope in ('case','lead','support')),
-  case_id         uuid        references public.cases(id) on delete restrict,
-  lead_id         uuid        references public.leads(id) on delete restrict,
-  title           text,       -- e.g. "Re: Visa Juvenil de Mateo"
-  last_message_at timestamptz,
-  created_at      timestamptz not null default now(),
-  updated_at      timestamptz not null default now(),
-
-  -- Each case has exactly one conversation thread
-  unique (case_id) where (scope = 'case'),
-
-  -- Enforce scope <-> FK alignment:
-  --   scope='case'  requires case_id  not null (and lead_id null implied by the unique + check)
-  --   scope='lead'  requires lead_id  not null
-  --   scope='support' allows both null
-  check (
-    (scope = 'case') = (case_id is not null)
-    and (scope = 'lead') = (lead_id is not null)
-  )
-);
-
--- Indexes for common queries
-create index conversations_case_id_idx
-  on public.conversations (case_id);
-
-create index conversations_last_message_at_idx
-  on public.conversations (last_message_at desc);
-
-create trigger set_updated_at_conversations
-  before update on public.conversations
-  for each row execute function public.set_updated_at();
-
-alter table public.conversations enable row level security;
+-- ── Policies: conversations (moved here — they reference the helper above) ───
 
 -- SELECT: participants and admin only (messaging module does NOT give global read)
 create policy conversations_select on public.conversations
@@ -94,25 +131,7 @@ create policy conversations_insert on public.conversations
 
 -- DELETE: denied
 
--- ---------------------------------------------------------------------------
--- conversation_participants
--- ---------------------------------------------------------------------------
-create table public.conversation_participants (
-  id               uuid        primary key default gen_random_uuid(),
-  conversation_id  uuid        not null references public.conversations(id) on delete cascade,
-  user_id          uuid        not null references public.users(id) on delete cascade,
-  joined_at        timestamptz not null default now(),
-  last_read_at     timestamptz,  -- for unread badges (GRANT update on last_read_at only, N2)
-  created_at       timestamptz not null default now(),
-  updated_at       timestamptz not null default now(),
-  unique (conversation_id, user_id)
-);
-
-create trigger set_updated_at_conversation_participants
-  before update on public.conversation_participants
-  for each row execute function public.set_updated_at();
-
-alter table public.conversation_participants enable row level security;
+-- ── Policies: conversation_participants ──────────────────────────────────────
 
 -- SELECT: a participant sees who else is in their threads; admin sees all
 create policy conversation_participants_select on public.conversation_participants
@@ -189,6 +208,33 @@ create policy messages_insert on public.messages
 
 -- UPDATE/DELETE: denied (immutable; body_translated written by service_role job)
 
+-- N3 trigger: messages are immutable EXCEPT body_translated (translation job,
+-- service_role — triggers still fire for service_role, unlike RLS).
+create or replace function public.enforce_message_immutability()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if tg_op = 'DELETE' then
+    raise exception 'messages are immutable (operation: DELETE)'
+      using errcode = 'restrict_violation';
+  end if;
+  if (to_jsonb(new) - 'body_translated') is distinct from (to_jsonb(old) - 'body_translated') then
+    raise exception 'messages are immutable except body_translated (operation: UPDATE)'
+      using errcode = 'restrict_violation';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists messages_immutable on public.messages;
+create trigger messages_immutable
+  before update or delete on public.messages
+  for each row execute function public.enforce_message_immutability();
+
+revoke execute on function public.enforce_message_immutability() from public, anon, authenticated;
+
 -- ---------------------------------------------------------------------------
 -- calls
 -- ---------------------------------------------------------------------------
@@ -209,11 +255,14 @@ create table public.calls (
   -- Snapshot: [{user_id, joined_at, left_at}]
   participants     jsonb       not null default '[]',
   created_at       timestamptz not null default now(),
-  updated_at       timestamptz not null default now(),
-
-  -- Only one live call per conversation at a time
-  unique (conversation_id) where (status in ('ringing','active'))
+  updated_at       timestamptz not null default now()
 );
+
+-- Only one live call per conversation at a time (partial unique index —
+-- inline UNIQUE constraints cannot carry a WHERE clause)
+create unique index calls_one_live_per_conversation_idx
+  on public.calls (conversation_id)
+  where (status in ('ringing','active'));
 
 -- Index for call history by conversation
 create index calls_conversation_started_at_idx

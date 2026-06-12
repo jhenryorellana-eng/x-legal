@@ -58,8 +58,8 @@ create table public.cases (
                                'cancelled', 'on_hold'
                              )),
   primary_client_id        uuid    not null references public.users(id),
-  assigned_paralegal_id    uuid    references public.staff_profiles(id),
-  assigned_sales_id        uuid    references public.staff_profiles(id),
+  assigned_paralegal_id    uuid    references public.staff_profiles(user_id),
+  assigned_sales_id        uuid    references public.staff_profiles(user_id),
   opened_at                timestamptz,
   completed_at             timestamptz,
   rebooking_blocked_until  timestamptz,
@@ -164,7 +164,7 @@ create table public.case_documents (
   status                   text    not null default 'uploaded'
                              check (status in ('uploaded', 'approved', 'rejected', 'replaced')),
   rejection_reason_i18n    jsonb,
-  reviewed_by              uuid    references public.staff_profiles(id),
+  reviewed_by              uuid    references public.staff_profiles(user_id),
   reviewed_at              timestamptz,
   correction_due_at        timestamptz,
   replaces_document_id     uuid    references public.case_documents(id),
@@ -283,7 +283,7 @@ create table public.case_overrides (
   service_phase_id uuid    not null references public.service_phases(id),
   appointment_count integer,
   duration_minutes  integer,
-  set_by           uuid    references public.staff_profiles(id),
+  set_by           uuid    references public.staff_profiles(user_id),
   created_at       timestamptz not null default now(),
   updated_at       timestamptz not null default now(),
   unique (case_id, service_phase_id)
@@ -304,7 +304,7 @@ create table public.case_requirement_overrides (
   party_id                 uuid    references public.case_parties(id),
   is_hidden                boolean not null default false,
   is_required              boolean,
-  created_by               uuid    references public.staff_profiles(id),
+  created_by               uuid    references public.staff_profiles(user_id),
   created_at               timestamptz not null default now(),
   updated_at               timestamptz not null default now(),
   unique (case_id, required_document_type_id, party_id)
@@ -709,3 +709,73 @@ create policy case_timeline_insert_staff on public.case_timeline
   );
 -- UPDATE/DELETE: denied (immutable; trigger N3)
 -- system events (actor_kind='system') are written by service_role
+
+-- ── N3 integrity triggers (DOC-31 N3) ─────────────────────────────────────────
+-- Immutability beyond RLS: also guards against service_role bugs.
+
+create or replace function public.prevent_row_mutation()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  raise exception '% rows are immutable (operation: %)', tg_table_name, tg_op
+    using errcode = 'restrict_violation';
+end;
+$$;
+
+drop trigger if exists case_phase_history_immutable on public.case_phase_history;
+create trigger case_phase_history_immutable
+  before update or delete on public.case_phase_history
+  for each row execute function public.prevent_row_mutation();
+
+drop trigger if exists case_timeline_immutable on public.case_timeline;
+create trigger case_timeline_immutable
+  before update or delete on public.case_timeline
+  for each row execute function public.prevent_row_mutation();
+
+-- case_form_responses: transition guard — only staff (or service_role, which has
+-- no auth.uid()) may set status='approved'. Clients submit, never self-approve.
+create or replace function public.enforce_form_response_approval()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if new.status = 'approved' and old.status is distinct from 'approved' then
+    if (select auth.uid()) is not null and not public.has_module('cases', true) then
+      raise exception 'Only staff with cases module can approve a form response'
+        using errcode = 'insufficient_privilege';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists case_form_responses_approval_guard on public.case_form_responses;
+create trigger case_form_responses_approval_guard
+  before update on public.case_form_responses
+  for each row execute function public.enforce_form_response_approval();
+
+-- ── person_records: recreate SELECT policy with the client branch ─────────────
+-- The 0001 version only had the staff branch (case_parties/case_members did not
+-- exist yet). Now that they do, the full DOC-31 policy applies: staff with cases
+-- module OR client seeing persons linked to their own cases (minors/spouse).
+drop policy if exists person_records_select on public.person_records;
+create policy person_records_select on public.person_records
+  for select to authenticated
+  using (
+    (org_id = (select public.auth_org_id()) and (select public.has_module('cases', false)))
+    or exists (
+      select 1 from public.case_parties cp
+       where cp.person_record_id = person_records.id
+         and (select public.is_case_member(cp.case_id))
+    )
+  );
+
+-- ── Surface reduction (DOC-31 principle 7: anon executes NOTHING) ─────────────
+revoke execute on function public.next_case_number(uuid) from public, anon;
+revoke execute on function public.is_case_member(uuid) from public, anon;
+revoke execute on function public.prevent_row_mutation() from public, anon, authenticated;
+revoke execute on function public.enforce_form_response_approval() from public, anon, authenticated;

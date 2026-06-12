@@ -52,7 +52,7 @@ create table public.contracts (
   signature_image_path text,
   signed_at           timestamptz,
   signed_ip           inet,
-  created_by          uuid    references public.staff_profiles(id),
+  created_by          uuid    references public.staff_profiles(user_id),
   terms_version       text,                  -- T&C version included at signing
   created_at          timestamptz not null default now(),
   updated_at          timestamptz not null default now()

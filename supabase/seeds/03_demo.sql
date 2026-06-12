@@ -391,7 +391,8 @@ values
   ('00000000-0000-0000-0000-000000000813', '00000000-0000-0000-0000-000000000801', 'Cita agendada',   null,         'green',  3, false, false),
   ('00000000-0000-0000-0000-000000000814', '00000000-0000-0000-0000-000000000801', 'Ganado',          null,         'green',  4, true,  false),
   ('00000000-0000-0000-0000-000000000815', '00000000-0000-0000-0000-000000000801', 'Perdido',         null,         'red',    5, false, true)
-on conflict do nothing;
+-- explicit arbiter (id): bare ON CONFLICT fails on tables with deferrable unique constraints (55000)
+on conflict (id) do nothing;
 
 -- Place leads on kanban columns
 insert into public.kanban_cards (column_id, ref_type, ref_id, position, pinned_note)
@@ -400,7 +401,8 @@ values
   ('00000000-0000-0000-0000-000000000812', 'lead', '00000000-0000-0000-0000-000000000702', 1, null),  -- Luisa: Contactados
   ('00000000-0000-0000-0000-000000000813', 'lead', '00000000-0000-0000-0000-000000000703', 1, null),  -- Jorge: Cita agendada
   ('00000000-0000-0000-0000-000000000811', 'lead', '00000000-0000-0000-0000-000000000704', 2, null)   -- Ana: Nuevos (uncontacted = amber band)
-on conflict do nothing;
+-- explicit arbiter: bare ON CONFLICT fails on tables with deferrable unique constraints (55000)
+on conflict (ref_type, ref_id, column_id) do nothing;
 
 -- ---------------------------------------------------------------------------
 -- Demo appointments
@@ -425,7 +427,8 @@ from public.service_phases ph
 join public.services s on s.id = ph.service_id and s.slug = 'visa-juvenil'
 join public.staff_profiles vane on vane.role = 'sales'
 where ph.slug = 'custodia'
-on conflict do nothing;
+-- explicit arbiter (id): bare ON CONFLICT fails on tables with EXCLUDE constraints (55000)
+on conflict (id) do nothing;
 
 -- Appointment 2: upcoming for case 0002 (video, 30 min)
 insert into public.appointments (
@@ -445,7 +448,8 @@ from public.service_phases ph
 join public.services s on s.id = ph.service_id and s.slug = 'asilo-politico'
 join public.staff_profiles vane on vane.role = 'sales'
 where ph.slug = 'reforzar'
-on conflict do nothing;
+-- explicit arbiter (id): bare ON CONFLICT fails on tables with EXCLUDE constraints (55000)
+on conflict (id) do nothing;
 
 -- Appointment 3: completed historical (case 0001)
 insert into public.appointments (
@@ -465,7 +469,8 @@ from public.service_phases ph
 join public.services s on s.id = ph.service_id and s.slug = 'visa-juvenil'
 join public.staff_profiles vane on vane.role = 'sales'
 where ph.slug = 'custodia'
-on conflict do nothing;
+-- explicit arbiter (id): bare ON CONFLICT fails on tables with EXCLUDE constraints (55000)
+on conflict (id) do nothing;
 
 -- ---------------------------------------------------------------------------
 -- Demo case_timeline events
