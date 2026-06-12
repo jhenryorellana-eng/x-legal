@@ -53,7 +53,7 @@ export function PreviewClient({ view }: { view: string }) {
           services={servicesMock}
           messages={catalogMessages}
           newServiceHref="#"
-          serviceHref={() => "#"}
+          serviceBasePath="#"
           actions={{ archive: noopRes, restore: noopRes, setActive: noopRes, setPublic: noopRes }}
         />
       )}

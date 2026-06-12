@@ -26,7 +26,7 @@ export default async function CatalogPage() {
 
   const locale = (await getLocale()) as Locale;
   const t = await getTranslations("staff.admin");
-  const tt = t as unknown as (key: string) => string;
+  const tt = t as unknown as ((key: string) => string) & { raw: (k: string) => string };
 
   const services = await listServicesAdmin(actor, { include_archived: true });
   const labelById = new Map(services.map((s) => [s.id, resolveI18n(s.label_i18n, locale)]));
@@ -52,7 +52,7 @@ export default async function CatalogPage() {
       services={cards}
       messages={buildCatalogStrings(tt)}
       newServiceHref="/admin/catalogo/nuevo"
-      serviceHref={(id) => `/admin/catalogo/${id}`}
+      serviceBasePath="/admin/catalogo"
       actions={{
         archive: archiveServiceUi,
         restore: restoreServiceUi,

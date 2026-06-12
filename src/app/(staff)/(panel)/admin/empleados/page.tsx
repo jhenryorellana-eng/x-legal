@@ -30,7 +30,7 @@ export default async function EmployeesPage() {
 
   const locale = (await getLocale()) as Locale;
   const t = await getTranslations("staff.admin");
-  const tt = t as unknown as (key: string) => string;
+  const tt = t as unknown as ((key: string) => string) & { raw: (k: string) => string };
 
   const result = await listEmployeesAction();
   const employees: EmployeeVM[] = result.ok
@@ -72,7 +72,9 @@ export default async function EmployeesPage() {
 }
 
 /** Flattens the employees + common i18n keys into the flat map the view uses. */
-function buildStrings(tt: (k: string) => string): Record<string, string> {
+type Translator = ((k: string) => string) & { raw: (k: string) => string };
+
+function buildStrings(tt: Translator): Record<string, string> {
   const keys = [
     "title", "sub", "newEmployee", "permissionMatrix", "filterRole", "filterStatus",
     "filterSearch", "colEmployee", "colEmail", "colRole", "colStatus", "colLastSeen",
@@ -88,10 +90,11 @@ function buildStrings(tt: (k: string) => string): Record<string, string> {
     "reactivateBody", "securityCloseSessions", "securityRemoveTotp",
   ];
   const out: Record<string, string> = {};
-  for (const k of keys) out[k] = tt(`employees.${k}`);
-  out.cancel = tt("common.cancel");
-  out.save = tt("common.save");
-  out.next = tt("common.next");
-  out.back = tt("common.back");
+  // raw(): some messages carry placeholders ({email}) — t() without values throws.
+  for (const k of keys) out[k] = tt.raw(`employees.${k}`);
+  out.cancel = tt.raw("common.cancel");
+  out.save = tt.raw("common.save");
+  out.next = tt.raw("common.next");
+  out.back = tt.raw("common.back");
   return out;
 }

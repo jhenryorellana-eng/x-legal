@@ -18,7 +18,7 @@ export default async function NewServicePage() {
   if (!actor || actor.kind !== "staff") redirect("/login");
 
   const t = await getTranslations("staff.admin");
-  const tt = t as unknown as (key: string) => string;
+  const tt = t as unknown as ((key: string) => string) & { raw: (k: string) => string };
 
   return (
     <CatalogWizard

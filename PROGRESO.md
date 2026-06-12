@@ -3,8 +3,16 @@
 > Archivo de continuidad entre sesiones (PROMPT-CONSTRUCCION-V2 §4). Actualizar al cierre de cada sesión.
 > Biblioteca SoT: `C:\Users\mauri\Documents\Trabajos\USALATINO V2\V2\docs\` · Supabase: **USALATINO V2** `uexxyokexcamyjcknxua`
 
-**Fase actual: F1 — Catálogo + Admin core (construida; en loop de review → demo pendiente)**
-Última sesión: 2026-06-12 (tarde)
+**Fase actual: F1 — Catálogo + Admin core ✅ COMPLETA (E2E 30/30 con auth real) — espera OK de Henry para F2**
+Última sesión: 2026-06-12 (noche)
+
+> Auth Hook ACTIVADO por Henry ✓ · Claims E2E verificados ✓ · Login staff real → /admin ✓
+> Suite Playwright completa: 30/30 (13 F0 + setup + 16 admin) contra BD remota.
+> Bugs reales encontrados y corregidos por la suite E2E: RLS bloqueaba al hook (policies supabase_auth_admin),
+> getActor leía claims de getUser (→ getClaims), import dinámico de módulo F2 rompía /admin,
+> i18n t() sin contexto en builders (→ t.raw), función cruzando frontera RSC (serviceHref→serviceBasePath).
+> Pendientes externos que NO bloquean F2: Twilio Verify (OTP SMS real), Upstash Redis (rate limit prod),
+> SMTP Resend en Supabase Auth, passwords reales del staff.
 
 ## Estado F1 por entregable
 
@@ -18,8 +26,9 @@
 | Pantallas admin: dashboard, catálogo+wizard 6 pasos, empleados+matriz, auditoría+CSV, configuración | ✅ |
 | pgTAP tests 6-9, 12-13 (37 aserciones) + corrección de fixtures F0 (bug de schema detectado) | ✅ / en curso |
 | E2E Playwright wizard (17 tests — 16 esperan activación del Auth Hook; corren en CI local) | ✅ escrito |
-| Two-stage review F1 | NEEDS-REVISION → fixes en aplicación (C-1, C-2, H-1, H-3, M/L) |
-| Demo F1 a Henry | pendiente (requiere Auth Hook activo) |
+| Two-stage review F1 | ✅ NEEDS-REVISION → 11 fixes aplicados + fail-closed extra → gates verdes |
+| E2E Playwright (auth real, storageState) | ✅ 30/30 — evidencia en docs/_evidence/f1-final/ |
+| Demo F1 a Henry | ✅ LISTA — login henry@usalatinoprime.com / changeme-henry! → /admin |
 
 — F0 (cerrada salvo ítems externos): —
 

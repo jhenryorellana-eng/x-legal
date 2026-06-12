@@ -35,7 +35,8 @@ export interface CatalogListProps {
   };
   /** Navigation hrefs the page wires (kept out of the client to stay presentational where possible). */
   newServiceHref: string;
-  serviceHref: (id: string) => string;
+  /** Base path: hrefs are built client-side as `${serviceBasePath}/${id}` (functions cannot cross the RSC boundary). */
+  serviceBasePath: string;
 }
 
 const SERVICE_COLOR: Record<string, string> = {
@@ -57,7 +58,7 @@ export function CatalogListView({
   messages: t,
   actions,
   newServiceHref,
-  serviceHref,
+  serviceBasePath,
 }: CatalogListProps) {
   const router = useRouter();
   const [query, setQuery] = React.useState("");
@@ -138,7 +139,7 @@ export function CatalogListView({
             key={s.id}
             s={s}
             t={t}
-            onOpen={() => router.push(serviceHref(s.id))}
+            onOpen={() => router.push(`${serviceBasePath}/${s.id}`)}
             menuOpen={menuOpen === s.id}
             setMenuOpen={(o) => setMenuOpen(o ? s.id : null)}
             onArchive={() => {

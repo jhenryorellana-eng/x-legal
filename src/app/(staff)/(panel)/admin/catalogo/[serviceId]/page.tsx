@@ -40,7 +40,7 @@ export default async function ServiceDetailPage({
   if (!tree) notFound();
 
   const t = await getTranslations("staff.admin");
-  const tt = t as unknown as (key: string) => string;
+  const tt = t as unknown as ((key: string) => string) & { raw: (k: string) => string };
 
   const service: WizardService = {
     id: tree.service.id,

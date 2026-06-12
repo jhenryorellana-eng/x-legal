@@ -44,3 +44,5 @@ next-env.d.ts
 # playwright artifacts
 /test-results/
 /playwright-report/
+# playwright auth state (session cookies — never commit)
+/e2e/.auth/

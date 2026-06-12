@@ -13,7 +13,6 @@
 
 import { can } from "@/backend/platform/authz";
 import { appEvents } from "@/backend/platform/events";
-import { logger } from "@/backend/platform/logger";
 import type { Actor } from "@/backend/platform/authz";
 import { writeAudit } from "@/backend/modules/audit";
 import { PROFILE_SOURCE_FIELDS } from "@/shared/constants/profile-fields";
@@ -40,7 +39,6 @@ import {
   catalogError,
   assertNoIssues,
   isFkViolation,
-  CatalogError,
 } from "./domain";
 
 import { z } from "zod";
