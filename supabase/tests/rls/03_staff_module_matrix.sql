@@ -45,18 +45,24 @@ select plan(9);
 
 -- ── Fixtures ─────────────────────────────────────────────────────────────────
 
-insert into auth.users (id, instance_id, aud, role, email, created_at, updated_at)
+-- auth.users — token columns normalized to '' (GoTrue requirement)
+insert into auth.users (
+  id, instance_id, aud, role, email, created_at, updated_at,
+  confirmation_token, recovery_token, email_change,
+  email_change_token_new, email_change_token_current,
+  phone_change, phone_change_token, reauthentication_token
+)
 values
   (:staff_none::uuid,  '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
-   'staff_none_t3@test.invalid',  now(), now()),
+   'staff_none_t3@test.invalid',  now(), now(), '', '', '', '', '', '', '', ''),
   (:staff_view::uuid,  '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
-   'staff_view_t3@test.invalid',  now(), now()),
+   'staff_view_t3@test.invalid',  now(), now(), '', '', '', '', '', '', '', ''),
   (:staff_edit::uuid,  '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
-   'staff_edit_t3@test.invalid',  now(), now()),
+   'staff_edit_t3@test.invalid',  now(), now(), '', '', '', '', '', '', '', ''),
   (:staff_admin::uuid, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
-   'staff_admin_t3@test.invalid', now(), now()),
+   'staff_admin_t3@test.invalid', now(), now(), '', '', '', '', '', '', '', ''),
   (:client_id::uuid,   '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
-   'client_t3@test.invalid',      now(), now());
+   'client_t3@test.invalid',      now(), now(), '', '', '', '', '', '', '', '');
 
 insert into public.orgs (id, name) values (:org_id::uuid, 'TestOrg_T3');
 
@@ -81,15 +87,17 @@ values
 -- staff_none: intentionally no row for 'cases'
 -- staff_admin: no rows needed (admin bypass)
 
--- service catalog skeleton
-insert into public.services (id, org_id, name_i18n, is_active)
-values (:service_id::uuid, :org_id::uuid, '{"es":"Svc T3","en":"Svc T3"}'::jsonb, true);
+-- service catalog skeleton — real schema: slug, category, label_i18n, kind, price_cents
+insert into public.services (id, org_id, slug, category, label_i18n, is_active)
+values (:service_id::uuid, :org_id::uuid, 'svc-t3', 'migratorio',
+        '{"es":"Svc T3","en":"Svc T3"}'::jsonb, true);
 
-insert into public.service_phases (id, service_id, name_i18n, position)
-values (:phase_id::uuid, :service_id::uuid, '{"es":"Fase","en":"Phase"}'::jsonb, 1);
+insert into public.service_phases (id, service_id, slug, label_i18n, position)
+values (:phase_id::uuid, :service_id::uuid, 'fase-t3',
+        '{"es":"Fase","en":"Phase"}'::jsonb, 1);
 
-insert into public.service_plans (id, service_id, name_i18n, price, currency, is_active)
-values (:plan_id::uuid, :service_id::uuid, '{"es":"Plan T3","en":"Plan T3"}'::jsonb, 100, 'USD', true);
+insert into public.service_plans (id, service_id, kind, price_cents, currency, is_active)
+values (:plan_id::uuid, :service_id::uuid, 'self', 10000, 'USD', true);
 
 -- existing case (INSERT by postgres/bypass before test scenarios)
 insert into public.cases

@@ -44,14 +44,19 @@ select plan(6);
 
 -- ── Fixtures (postgres = bypass RLS) ─────────────────────────────────────────
 
-insert into auth.users (id, instance_id, aud, role, email, created_at, updated_at)
+insert into auth.users (
+  id, instance_id, aud, role, email, created_at, updated_at,
+  confirmation_token, recovery_token, email_change,
+  email_change_token_new, email_change_token_current,
+  phone_change, phone_change_token, reauthentication_token
+)
 values
   (:finance_id::uuid,  '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
-   'finance_t8@test.invalid',  now(), now()),
+   'finance_t8@test.invalid',  now(), now(), '', '', '', '', '', '', '', ''),
   (:sales_id::uuid,    '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
-   'sales_t8@test.invalid',    now(), now()),
+   'sales_t8@test.invalid',    now(), now(), '', '', '', '', '', '', '', ''),
   (:viewonly_id::uuid, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
-   'viewonly_t8@test.invalid', now(), now());
+   'viewonly_t8@test.invalid', now(), now(), '', '', '', '', '', '', '', '');
 
 insert into public.orgs (id, name)
 values (:org_id::uuid, 'TestOrg_T8');

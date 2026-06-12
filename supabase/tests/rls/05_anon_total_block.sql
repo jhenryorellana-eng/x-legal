@@ -48,12 +48,18 @@ select plan(17);
 
 -- ── Fixtures (postgres role = bypass RLS) ────────────────────────────────────
 
-insert into auth.users (id, instance_id, aud, role, email, created_at, updated_at)
+-- auth.users — token columns normalized to '' (GoTrue requirement)
+insert into auth.users (
+  id, instance_id, aud, role, email, created_at, updated_at,
+  confirmation_token, recovery_token, email_change,
+  email_change_token_new, email_change_token_current,
+  phone_change, phone_change_token, reauthentication_token
+)
 values
   (:staff_id::uuid,  '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
-   'staff_t5@test.invalid',  now(), now()),
+   'staff_t5@test.invalid',  now(), now(), '', '', '', '', '', '', '', ''),
   (:client_id::uuid, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
-   'client_t5@test.invalid', now(), now());
+   'client_t5@test.invalid', now(), now(), '', '', '', '', '', '', '', '');
 
 insert into public.orgs (id, name) values (:org_id::uuid, 'TestOrg_T5');
 
@@ -67,19 +73,23 @@ values (:staff_id::uuid, 'admin', 'Admin_T5');
 insert into public.employee_module_permissions (staff_id, module_key, can_view, can_edit)
 values (:staff_id::uuid, 'leads', true, true);
 
--- catalog skeleton (Bloque 2)
-insert into public.services (id, org_id, name_i18n, is_active)
-values (:service_id::uuid, :org_id::uuid, '{"es":"Svc T5","en":"Svc T5"}'::jsonb, true);
+-- catalog skeleton (Bloque 2) — real schema: slug, category, label_i18n, kind, price_cents
+insert into public.services (id, org_id, slug, category, label_i18n, is_active)
+values (:service_id::uuid, :org_id::uuid, 'svc-t5', 'migratorio',
+        '{"es":"Svc T5","en":"Svc T5"}'::jsonb, true);
 
-insert into public.service_phases (id, service_id, name_i18n, position)
-values (:phase_id::uuid, :service_id::uuid, '{"es":"Fase","en":"Phase"}'::jsonb, 1);
+insert into public.service_phases (id, service_id, slug, label_i18n, position)
+values (:phase_id::uuid, :service_id::uuid, 'fase-t5',
+        '{"es":"Fase","en":"Phase"}'::jsonb, 1);
 
-insert into public.service_plans (id, service_id, name_i18n, price, currency, is_active)
-values (:plan_id::uuid, :service_id::uuid, '{"es":"Plan T5","en":"Plan T5"}'::jsonb, 100, 'USD', true);
+insert into public.service_plans (id, service_id, kind, price_cents, currency, is_active)
+values (:plan_id::uuid, :service_id::uuid, 'self', 10000, 'USD', true);
 
--- leads (Bloque 3)
-insert into public.leads (id, org_id, service_id, contact_name, status)
-values (:lead_id::uuid, :org_id::uuid, :service_id::uuid, 'Lead Anon Test', 'new');
+-- leads (Bloque 3) — real schema: phone_e164 NOT NULL (not contact_name), no service_id column
+-- interested_service_id is the FK to services (nullable)
+insert into public.leads (id, org_id, phone_e164, full_name, status, interested_service_id)
+values (:lead_id::uuid, :org_id::uuid, '+15550000001', 'Lead Anon Test', 'open',
+        :service_id::uuid);
 
 -- case (Bloque 4)
 insert into public.cases
@@ -98,9 +108,9 @@ values
    'case/f5000000-0000-0000-0000-000000e00400/anon_test.pdf',
    'anon_test.pdf', 'application/pdf', 256);
 
--- messaging (Bloque 10)
-insert into public.conversations (id, org_id, title)
-values (:conv_id::uuid, :org_id::uuid, 'Anon Test Conv');
+-- messaging (Bloque 10) — conversations.scope NOT NULL; 'support' allows both FKs null
+insert into public.conversations (id, org_id, scope, title)
+values (:conv_id::uuid, :org_id::uuid, 'support', 'Anon Test Conv');
 
 insert into public.conversation_participants (conversation_id, user_id)
 values (:conv_id::uuid, :client_id::uuid);
@@ -110,24 +120,23 @@ insert into public.messages
 values
   (:msg_id::uuid, :conv_id::uuid, :staff_id::uuid, 'text', 'hello');
 
--- notifications (Bloque 11)
+-- notifications (Bloque 11) — real schema: column is 'type' NOT NULL (not 'kind')
 insert into public.notifications
-  (id, user_id, kind, title_i18n)
+  (id, user_id, type, title_i18n)
 values
   (:notif_id::uuid, :client_id::uuid, 'case.update',
    '{"es":"Notif","en":"Notif"}'::jsonb);
 
--- community (Bloque 12)
-insert into public.community_posts (id, org_id, title_i18n, body_md, is_published)
+-- community (Bloque 12) — real schema: no title_i18n / body_md columns; has body text, kind
+insert into public.community_posts (id, org_id, kind, body, is_published)
 values
-  (:post_id::uuid, :org_id::uuid,
-   '{"es":"Post test","en":"Test Post"}'::jsonb,
-   'body', true);
+  (:post_id::uuid, :org_id::uuid, 'text', 'post body for anon test', true);
 
--- audit_log (Bloque 13): service-role-only insert
-insert into public.audit_log (id, org_id, actor_kind, action, table_name, record_id)
+-- audit_log (Bloque 13) — real schema: entity_type NOT NULL (not table_name/record_id)
+-- actor_user_id IS NULL only allowed when action LIKE 'system.%' (CHECK constraint)
+insert into public.audit_log (id, org_id, actor_user_id, action, entity_type, entity_id)
 values
-  (:audit_id::uuid, :org_id::uuid, 'system', 'system.test', 'cases', :case_id::uuid);
+  (:audit_id::uuid, :org_id::uuid, null, 'system.test', 'cases', :case_id::uuid);
 
 -- ── Switch to anon role ───────────────────────────────────────────────────────
 -- DOC-31 principle 7: anon has NO policies on ANY table.
@@ -254,8 +263,9 @@ select throws_ok(
 );
 
 -- anon cannot insert into notifications
+-- real schema: column is 'type' NOT NULL (not 'kind')
 select throws_ok(
-  $$ insert into public.notifications (user_id, kind, title_i18n)
+  $$ insert into public.notifications (user_id, type, title_i18n)
      values (
        'f5000000-0000-0000-0000-000000e00300'::uuid,
        'case.update',

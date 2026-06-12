@@ -34,13 +34,20 @@ select plan(6);
 
 -- ── Fixtures (running as postgres = bypass RLS) ───────────────────────────────
 
--- auth.users (minimum columns for FK satisfaction)
-insert into auth.users (id, instance_id, aud, role, email, created_at, updated_at)
+-- auth.users — minimum columns + token columns normalized to '' (GoTrue requirement)
+insert into auth.users (
+  id, instance_id, aud, role, email, created_at, updated_at,
+  confirmation_token, recovery_token, email_change,
+  email_change_token_new, email_change_token_current,
+  phone_change, phone_change_token, reauthentication_token
+)
 values
   (:client_a::uuid, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
-   'client_a_t1@test.invalid', now(), now()),
+   'client_a_t1@test.invalid', now(), now(),
+   '', '', '', '', '', '', '', ''),
   (:client_b::uuid, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
-   'client_b_t1@test.invalid', now(), now());
+   'client_b_t1@test.invalid', now(), now(),
+   '', '', '', '', '', '', '', '');
 
 -- org
 insert into public.orgs (id, name)
@@ -52,15 +59,19 @@ values
   (:client_a::uuid, :org_id::uuid, 'client', true),
   (:client_b::uuid, :org_id::uuid, 'client', true);
 
--- service catalog skeleton (cases requires service_id, service_plan_id)
-insert into public.services (id, org_id, name_i18n, is_active)
-values (:service_id::uuid, :org_id::uuid, '{"es":"Servicio Test","en":"Test Service"}'::jsonb, true);
+-- service catalog skeleton — real schema: slug NOT NULL, category NOT NULL, label_i18n (not name_i18n)
+insert into public.services (id, org_id, slug, category, label_i18n, is_active)
+values (:service_id::uuid, :org_id::uuid, 'svc-t1', 'migratorio',
+        '{"es":"Servicio Test","en":"Test Service"}'::jsonb, true);
 
-insert into public.service_phases (id, service_id, name_i18n, position)
-values (:phase_id::uuid, :service_id::uuid, '{"es":"Fase 1","en":"Phase 1"}'::jsonb, 1);
+-- service_phases — real schema: slug NOT NULL, label_i18n (not name_i18n), position NOT NULL
+insert into public.service_phases (id, service_id, slug, label_i18n, position)
+values (:phase_id::uuid, :service_id::uuid, 'fase-t1',
+        '{"es":"Fase 1","en":"Phase 1"}'::jsonb, 1);
 
-insert into public.service_plans (id, service_id, name_i18n, price, currency, is_active)
-values (:plan_id::uuid, :service_id::uuid, '{"es":"Plan Test","en":"Test Plan"}'::jsonb, 100, 'USD', true);
+-- service_plans — real schema: kind ('self'|'with_lawyer') NOT NULL, price_cents integer (not price numeric+currency)
+insert into public.service_plans (id, service_id, kind, price_cents, currency, is_active)
+values (:plan_id::uuid, :service_id::uuid, 'self', 10000, 'USD', true);
 
 -- cases
 insert into public.cases

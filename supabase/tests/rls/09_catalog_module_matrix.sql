@@ -71,20 +71,25 @@ select plan(13);
 
 -- ── Fixtures (postgres = bypass RLS) ─────────────────────────────────────────
 
-insert into auth.users (id, instance_id, aud, role, email, created_at, updated_at)
+insert into auth.users (
+  id, instance_id, aud, role, email, created_at, updated_at,
+  confirmation_token, recovery_token, email_change,
+  email_change_token_new, email_change_token_current,
+  phone_change, phone_change_token, reauthentication_token
+)
 values
   (:staff_nocat::uuid,   '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
-   'nocat_t9@test.invalid',   now(), now()),
+   'nocat_t9@test.invalid',   now(), now(), '', '', '', '', '', '', '', ''),
   (:staff_viewcat::uuid, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
-   'viewcat_t9@test.invalid', now(), now()),
+   'viewcat_t9@test.invalid', now(), now(), '', '', '', '', '', '', '', ''),
   (:staff_editcat::uuid, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
-   'editcat_t9@test.invalid', now(), now()),
+   'editcat_t9@test.invalid', now(), now(), '', '', '', '', '', '', '', ''),
   (:staff_admin::uuid,   '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
-   'admin_t9@test.invalid',   now(), now()),
+   'admin_t9@test.invalid',   now(), now(), '', '', '', '', '', '', '', ''),
   (:staff_revoke::uuid,  '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
-   'revoke_t9@test.invalid',  now(), now()),
+   'revoke_t9@test.invalid',  now(), now(), '', '', '', '', '', '', '', ''),
   (:client_id::uuid,     '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
-   'client_t9@test.invalid',  now(), now());
+   'client_t9@test.invalid',  now(), now(), '', '', '', '', '', '', '', '');
 
 insert into public.orgs (id, name)
 values (:org_id::uuid, 'TestOrg_T9');
