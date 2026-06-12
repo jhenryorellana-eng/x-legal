@@ -322,6 +322,17 @@ grant usage on schema public to supabase_auth_admin;
 grant execute on function public.custom_access_token_hook to supabase_auth_admin;
 grant select on table public.users, public.staff_profiles to supabase_auth_admin;
 
+-- supabase_auth_admin is subject to RLS (it has no BYPASSRLS): without these
+-- policies the hook's SELECT returns 0 rows and every user becomes
+-- "unprovisioned". Official Supabase pattern for custom access token hooks.
+create policy users_auth_admin_select on public.users
+  for select to supabase_auth_admin
+  using (true);
+
+create policy staff_profiles_auth_admin_select on public.staff_profiles
+  for select to supabase_auth_admin
+  using (true);
+
 -- Revoke from everyone else (hook is not a user-callable function)
 revoke execute on function public.custom_access_token_hook from authenticated, anon, public;
 

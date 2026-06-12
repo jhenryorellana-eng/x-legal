@@ -87,6 +87,21 @@ export async function slugExists(orgId: string, slug: string): Promise<boolean> 
   return data !== null;
 }
 
+/**
+ * Counts cases referencing a service (slug lock, RF-ADM-020 E1).
+ * TODO(F2): move behind the cases module index once it exists. Direct table
+ * read here because the cases MODULE is F2 while the table exists since 0004.
+ * Fail-closed: on error returns 1 (locks the slug — renames are retryable).
+ */
+export async function countCasesReferencingService(serviceId: string): Promise<number> {
+  const { count, error } = await db()
+    .from("cases")
+    .select("id", { count: "exact", head: true })
+    .eq("service_id", serviceId);
+  if (error || count == null) return 1; // fail-closed
+  return count;
+}
+
 export async function listServicesForEditor(
   orgId: string,
   opts: { include_archived?: boolean } = {},

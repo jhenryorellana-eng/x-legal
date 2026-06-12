@@ -126,41 +126,21 @@ interface CustomClaims {
 }
 
 function readCustomClaims(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  user: any,
+  jwtClaims: Record<string, unknown> | null,
 ): CustomClaims | null {
-  // Custom claims from the Access Token Hook (DOC-22 §3.2):
-  // The hook sets {org_id, user_kind, user_role} at the TOP LEVEL of the JWT
-  // (NOT inside app_metadata). When getUser() validates against the Auth server,
-  // Supabase JS SDK v2 returns the user object which merges the validated JWT
-  // payload. Top-level JWT claims are accessible directly on the user object.
+  // Custom claims from the Access Token Hook (DOC-22 §3.2): the hook sets
+  // {org_id, user_kind, user_role, must_change_pw} at the TOP LEVEL of the
+  // JWT payload. IMPORTANT: getUser() returns the DB user record, which does
+  // NOT contain hook-injected claims — they exist ONLY in the JWT. The only
+  // correct source is supabase.auth.getClaims() (validated JWT payload).
   //
-  // getClaims() (available in @supabase/supabase-js 2.67+) reads these directly
-  // from the JWT without a server round-trip. In middleware we use getClaims();
-  // here in getActor() we use getUser() (authoritative server validation) and
-  // read from the merged user object.
-  //
-  // Fallback to user.app_metadata for backward compatibility during hook activation
-  // ramp-up (the hook is not yet activated — claims may be absent).
-  //
-  // Hook NOT activated (DOC-22 §3.2 TODO): all three claims will be null →
-  // readCustomClaims returns null → getActor() returns null → no guard passes.
-  // Safe degradation confirmed.
-  const topLevel = (user as Record<string, unknown>) ?? {};
-  const appMeta = (user?.app_metadata as Record<string, unknown>) ?? {};
+  // Hook NOT activated: claims absent → null → getActor() returns null →
+  // no guard passes. Safe degradation.
+  if (!jwtClaims) return null;
 
-  const org_id =
-    (topLevel["org_id"] as string) ??
-    (appMeta["org_id"] as string) ??
-    null;
-  const user_kind =
-    (topLevel["user_kind"] as string) ??
-    (appMeta["user_kind"] as string) ??
-    null;
-  const user_role =
-    (topLevel["user_role"] as string | null) ??
-    (appMeta["user_role"] as string | null) ??
-    null;
+  const org_id = (jwtClaims["org_id"] as string) ?? null;
+  const user_kind = (jwtClaims["user_kind"] as string) ?? null;
+  const user_role = (jwtClaims["user_role"] as string | null) ?? null;
 
   if (!org_id || !user_kind) return null;
 
@@ -246,21 +226,38 @@ function toPermissionMap(
 export const getActor = cache(async (): Promise<Actor | null> => {
   const supabase = await createServerClient();
 
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser();
+  // getClaims() validates the JWT (JWKS / Auth server) and returns the full
+  // payload INCLUDING hook-injected custom claims — getUser() does NOT carry
+  // them (it returns the DB user record). userId comes from the `sub` claim.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const claimsResult = await (supabase.auth as any).getClaims?.();
+  let jwtClaims: Record<string, unknown> | null = null;
+  let userId: string | null = null;
 
-  if (error || !user) return null;
+  if (claimsResult && !claimsResult.error && claimsResult.data?.claims) {
+    jwtClaims = claimsResult.data.claims as Record<string, unknown>;
+    userId = (jwtClaims["sub"] as string) ?? null;
+  } else {
+    // getClaims unavailable (older SDK) — getUser() still authenticates, but
+    // hook claims are unreachable: the actor will resolve as unprovisioned.
+    const {
+      data: { user },
+      error,
+    } = await supabase.auth.getUser();
+    if (error || !user) return null;
+    userId = user.id;
+  }
 
-  const claims = readCustomClaims(user);
+  if (!userId) return null;
+
+  const claims = readCustomClaims(jwtClaims);
   if (!claims || claims.user_kind === "unprovisioned") return null;
 
-  const row = await loadActorRow(user.id, supabase);
+  const row = await loadActorRow(userId, supabase);
   if (!row || !row.is_active) return null;
 
   return {
-    userId: user.id,
+    userId,
     orgId: claims.org_id,
     kind: claims.user_kind as "client" | "staff",
     role: claims.user_role,

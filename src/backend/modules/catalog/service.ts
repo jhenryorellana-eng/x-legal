@@ -158,22 +158,12 @@ export async function updateService(
   }
 
   if (dto.slug && dto.slug !== before.slug) {
-    // Slug lock: frozen once cases exist (RF-ADM-020 E1)
-    // Dynamic import to avoid circular dependency (DOC-40 §1.3).
-    // The cases module does not exist yet in F1 — the try/catch degrades gracefully.
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const casesModule: any = await import("@/backend/modules/cases" as string);
-      const count = await casesModule.countCasesForService(id);
-      if (count > 0) throw catalogError("CATALOG_SLUG_LOCKED");
-    } catch (err) {
-      if (err instanceof CatalogError) throw err;
-      // cases module not yet available — skip the check (safe: will be caught later)
-      logger.warn(
-        { err: (err as Error).message },
-        "catalog.updateService: cases module unavailable for slug lock check",
-      );
-    }
+    // Slug lock: frozen once cases exist (RF-ADM-020 E1).
+    // TODO(F2): route through the cases module index once it exists. Until
+    // then the count lives in catalog/repository as a direct table read —
+    // a bundler-resolved import of a nonexistent module breaks the build.
+    const casesCount = await repo.countCasesReferencingService(id);
+    if (casesCount > 0) throw catalogError("CATALOG_SLUG_LOCKED");
     if (await repo.slugExists(actor.orgId, dto.slug)) {
       throw catalogError("CATALOG_SLUG_TAKEN");
     }
