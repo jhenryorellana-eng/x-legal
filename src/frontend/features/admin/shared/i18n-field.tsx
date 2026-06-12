@@ -37,6 +37,9 @@ export function I18nField({
   flagMissingEn = true,
   missingEnLabel = "Falta EN",
 }: I18nFieldProps) {
+  // `label` is threaded into each Col so that aria-label becomes
+  // "{label} ES" / "{label} EN" — unique within the form and selectable
+  // via page.getByLabel("Nombre del servicio ES") in E2E tests.
   const enMissing = flagMissingEn && !(value.en ?? "").trim();
 
   return (
@@ -83,6 +86,7 @@ export function I18nField({
       >
         <Col
           lang="ES"
+          fieldLabel={label}
           value={value.es ?? ""}
           onChange={(v) => onChange({ ...value, es: v })}
           multiline={multiline}
@@ -90,6 +94,7 @@ export function I18nField({
         />
         <Col
           lang="EN"
+          fieldLabel={label}
           value={value.en ?? ""}
           onChange={(v) => onChange({ ...value, en: v })}
           multiline={multiline}
@@ -103,6 +108,7 @@ export function I18nField({
 
 function Col({
   lang,
+  fieldLabel,
   value,
   onChange,
   multiline,
@@ -110,6 +116,8 @@ function Col({
   warn = false,
 }: {
   lang: string;
+  /** Parent field label threaded in so aria-label becomes "{fieldLabel} {lang}". */
+  fieldLabel: string;
   value: string;
   onChange: (v: string) => void;
   multiline?: boolean;
@@ -152,7 +160,7 @@ function Col({
           placeholder={placeholder}
           onChange={(e) => onChange(e.target.value)}
           style={fieldStyle}
-          aria-label={`${lang}`}
+          aria-label={`${fieldLabel} ${lang}`}
         />
       ) : (
         <input
@@ -160,7 +168,7 @@ function Col({
           placeholder={placeholder}
           onChange={(e) => onChange(e.target.value)}
           style={fieldStyle}
-          aria-label={`${lang}`}
+          aria-label={`${fieldLabel} ${lang}`}
         />
       )}
     </label>

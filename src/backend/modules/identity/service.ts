@@ -25,7 +25,7 @@ import crypto from "node:crypto";
 import { ZxcvbnFactory } from "@zxcvbn-ts/core";
 import { adjacencyGraphs, dictionary } from "@zxcvbn-ts/language-common";
 
-import { getActor, requireActor, can } from "@/backend/platform/authz";
+import { getActor, requireActor, can, AuthzError } from "@/backend/platform/authz";
 import type { Actor } from "@/backend/platform/authz";
 import { createServerClient, createServiceClient, revokeAllSessions } from "@/backend/platform/supabase";
 import { logger } from "@/backend/platform/logger";
@@ -46,6 +46,8 @@ import {
   checkClientEligibilityById,
   countActiveStaff,
   getStaffProfileById,
+  findStaffById,
+  countActiveAdminsByOrg,
   listStaffMembers,
   insertStaffRows,
   replaceStaffPermissions,
@@ -158,7 +160,8 @@ export class IdentityError extends Error {
       | "unauthenticated"
       | "wrong_kind"
       | "employee_not_found"
-      | "employee_already_exists",
+      | "employee_already_exists"
+      | "last_admin_protected",
     message?: string,
   ) {
     super(message ?? code);
@@ -206,13 +209,19 @@ export async function requestClientOtp(
     throw err;
   }
 
-  // Step 2: Rate limit (closed fail mode — see ratelimit.ts)
-  const [phoneRL, ipRL] = await Promise.all([
-    limitOtpSendPhone(phoneE164),
-    limitOtpSendIp(ip),
-  ]);
+  // Step 2: Rate limit — sequential: phone first, IP second.
+  // M-1: If phone is denied we short-circuit before hitting the IP limiter,
+  // which prevents leaking information about whether the phone is known by
+  // timing the two checks together. This mirrors the sequential pattern in
+  // ratelimit.ts (DOC-22 §1.3).
+  const phoneRL = await limitOtpSendPhone(phoneE164);
+  if (!phoneRL.allowed) {
+    await enforceFloor(start, OTP_LATENCY_FLOOR_MS);
+    throw new IdentityError("rate_limited");
+  }
 
-  if (!phoneRL.allowed || !ipRL.allowed) {
+  const ipRL = await limitOtpSendIp(ip);
+  if (!ipRL.allowed) {
     await enforceFloor(start, OTP_LATENCY_FLOOR_MS);
     throw new IdentityError("rate_limited");
   }
@@ -617,6 +626,20 @@ export async function updateEmployeePermissions(
 ): Promise<UpdatePermissionsResult> {
   can(actor, "employees", "edit");
 
+  // C-1: DOC-22 §9.3 — no self-modification of permissions
+  if (actor.userId === staffId) {
+    throw new AuthzError("self_permission_change_denied");
+  }
+
+  // C-1: Verify target belongs to actor's org (defense in depth)
+  const target = await findStaffById(staffId);
+  if (!target) {
+    throw new IdentityError("employee_not_found", `Staff member ${staffId} not found.`);
+  }
+  if (target.orgId !== actor.orgId) {
+    throw new AuthzError("cross_org_access_denied");
+  }
+
   const prevPermissions = await (async () => {
     try {
       const supabase = createServiceClient();
@@ -671,6 +694,31 @@ export async function deactivateEmployee(
   staffId: string,
 ): Promise<DeactivateEmployeeResult> {
   can(actor, "employees", "edit");
+
+  // C-1: DOC-22 §9.3 — cannot deactivate yourself
+  if (actor.userId === staffId) {
+    throw new AuthzError("self_deactivation_denied");
+  }
+
+  // C-1: Verify target belongs to actor's org
+  const target = await findStaffById(staffId);
+  if (!target) {
+    throw new IdentityError("employee_not_found", `Staff member ${staffId} not found.`);
+  }
+  if (target.orgId !== actor.orgId) {
+    throw new AuthzError("cross_org_access_denied");
+  }
+
+  // H-3: DOC-22 §9.3 — protect the last active admin
+  if (target.role === "admin") {
+    const activeAdminCount = await countActiveAdminsByOrg(actor.orgId);
+    if (activeAdminCount <= 1) {
+      throw new IdentityError(
+        "last_admin_protected",
+        "No se puede desactivar al único administrador activo del org.",
+      );
+    }
+  }
 
   // Set is_active=false in public.users
   await setStaffActive(staffId, false);
@@ -797,6 +845,19 @@ function buildPermissionPreset(
 }
 
 /**
+ * Minimal HTML escaper for 5 dangerous characters (L-3).
+ * Prevents XSS if displayName or email contain HTML metacharacters.
+ */
+function escapeHtml(raw: string): string {
+  return raw
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#x27;");
+}
+
+/**
  * Builds the HTML body for the staff invitation email.
  * The temp password is rendered here and goes nowhere else.
  */
@@ -808,16 +869,21 @@ function buildStaffInviteEmail(opts: {
 }): string {
   // Intentionally simple HTML — no JSX dependency in this module.
   // The react-email component for staff-invite is in the notifications module (F3).
+  // L-3: all user-supplied values are HTML-escaped before interpolation.
+  const safeName = escapeHtml(opts.displayName);
+  const safeEmail = escapeHtml(opts.email);
+  const safePassword = escapeHtml(opts.tempPassword);
+  const safeLink = escapeHtml(opts.loginLink);
   return `<!DOCTYPE html>
 <html lang="es">
 <head><meta charset="UTF-8"><title>Bienvenido/a a UsaLatinoPrime</title></head>
 <body style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:32px;">
-  <h2>Bienvenido/a al panel, ${opts.displayName}</h2>
+  <h2>Bienvenido/a al panel, ${safeName}</h2>
   <p>El administrador te ha dado acceso al panel de UsaLatinoPrime.</p>
-  <p><strong>Email:</strong> ${opts.email}<br>
-  <strong>Contraseña temporal:</strong> <code>${opts.tempPassword}</code></p>
+  <p><strong>Email:</strong> ${safeEmail}<br>
+  <strong>Contraseña temporal:</strong> <code>${safePassword}</code></p>
   <p>Al ingresar por primera vez se te pedirá que cambies la contraseña.</p>
-  <p><a href="${opts.loginLink}" style="background:#0f172a;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;">Acceder al panel</a></p>
+  <p><a href="${safeLink}" style="background:#0f172a;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;">Acceder al panel</a></p>
   <p style="color:#6b7280;font-size:12px;margin-top:32px;">
     Si no esperabas este email, puedes ignorarlo.
     Este mensaje fue enviado por UsaLatinoPrime.

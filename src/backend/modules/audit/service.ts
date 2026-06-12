@@ -138,10 +138,25 @@ export async function exportAuditCsv(
   return rows.join("\n");
 }
 
+/**
+ * RFC 4180 CSV escape with Excel formula-injection prefix neutralization (H-1).
+ *
+ * Cells starting with =, +, -, @, tab (0x09) or CR (0x0D) are prefixed with
+ * a tab character so spreadsheet parsers do not interpret them as formulas.
+ * The tab-prefixed cell is then wrapped in quotes per RFC 4180.
+ *
+ * Reference: OWASP CSV Injection.
+ */
 function csvEscape(value: string): string {
   const s = String(value);
-  if (s.includes(",") || s.includes('"') || s.includes("\n")) {
-    return `"${s.replace(/"/g, '""')}"`;
+
+  // Neutralize Excel/LibreOffice formula injection prefixes
+  const FORMULA_PREFIX = /^[=+\-@\t\r]/;
+  const neutralized = FORMULA_PREFIX.test(s) ? `\t${s}` : s;
+
+  // RFC 4180: wrap in double quotes when the cell contains commas, quotes or newlines
+  if (neutralized.includes(",") || neutralized.includes('"') || neutralized.includes("\n") || neutralized !== s) {
+    return `"${neutralized.replace(/"/g, '""')}"`;
   }
-  return s;
+  return neutralized;
 }

@@ -3,8 +3,25 @@
 > Archivo de continuidad entre sesiones (PROMPT-CONSTRUCCION-V2 §4). Actualizar al cierre de cada sesión.
 > Biblioteca SoT: `C:\Users\mauri\Documents\Trabajos\USALATINO V2\V2\docs\` · Supabase: **USALATINO V2** `uexxyokexcamyjcknxua`
 
-**Fase actual: F0 — Fundaciones (entregables completos; demo pendiente de credenciales de Henry)**
-Última sesión: 2026-06-12
+**Fase actual: F1 — Catálogo + Admin core (construida; en loop de review → demo pendiente)**
+Última sesión: 2026-06-12 (tarde)
+
+## Estado F1 por entregable
+
+| Entregable | Estado |
+|---|---|
+| Módulo `catalog` (CRUD servicios/planes/fases/hitos/docs, reglas publicación §2.4-2.6, getCaseRequirements, stubs F4) | ✅ |
+| Módulo `audit` (writeAudit en toda mutación staff, listado, export CSV) | ✅ |
+| `identity.inviteEmployee` + matriz permisos + EV-03 → email staff-invite | ✅ |
+| Módulo `org` (nuevo: settings, terms_versions, cover_templates — decisión de cohesión documentada) | ✅ |
+| Shell staff: Sidebar por permisos + 11 componentes desktop DOC-01 §5.3 | ✅ |
+| Pantallas admin: dashboard, catálogo+wizard 6 pasos, empleados+matriz, auditoría+CSV, configuración | ✅ |
+| pgTAP tests 6-9, 12-13 (37 aserciones) + corrección de fixtures F0 (bug de schema detectado) | ✅ / en curso |
+| E2E Playwright wizard (17 tests — 16 esperan activación del Auth Hook; corren en CI local) | ✅ escrito |
+| Two-stage review F1 | NEEDS-REVISION → fixes en aplicación (C-1, C-2, H-1, H-3, M/L) |
+| Demo F1 a Henry | pendiente (requiere Auth Hook activo) |
+
+— F0 (cerrada salvo ítems externos): —
 
 ---
 

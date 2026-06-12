@@ -292,6 +292,88 @@ export async function replaceStaffPermissions(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Staff identity look-ups (C-1 / H-3 guards)
+// ---------------------------------------------------------------------------
+
+export interface StaffIdentityRow {
+  userId: string;
+  orgId: string;
+  isActive: boolean;
+  role: string;
+}
+
+/**
+ * Loads the minimal identity row for a staff member.
+ * Used by C-1 (org membership check) and H-3 (last-admin guard).
+ * Returns null if the userId does not exist or is not a staff member.
+ */
+export async function findStaffById(
+  userId: string,
+): Promise<StaffIdentityRow | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("users")
+    .select("id, org_id, is_active, staff_profiles(role)")
+    .eq("id", userId)
+    .eq("kind", "staff")
+    .maybeSingle();
+
+  if (!data) return null;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const role = (data.staff_profiles as any)?.[0]?.role ?? (data.staff_profiles as any)?.role ?? "staff";
+
+  return {
+    userId: data.id,
+    orgId: data.org_id,
+    isActive: data.is_active,
+    role,
+  };
+}
+
+/**
+ * Counts the number of active admin staff members for an org.
+ * Used by H-3 (last-admin guard in deactivateEmployee).
+ *
+ * Strategy: fetch user_ids of all active staff in the org, then count how many
+ * have role=admin in staff_profiles. Two queries; service client, no RLS.
+ *
+ * FAIL-CLOSED: on any error the function returns 1 ("assume the target is the
+ * only admin"), which BLOCKS admin deactivation. Wrongly blocking is retryable;
+ * wrongly deactivating the last admin locks the org out — never risk that.
+ */
+export async function countActiveAdminsByOrg(orgId: string): Promise<number> {
+  try {
+    const supabase = createServiceClient();
+
+    // Step 1: active staff user IDs for the org
+    const { data: activeUsers, error: usersError } = await supabase
+      .from("users")
+      .select("id")
+      .eq("org_id", orgId)
+      .eq("kind", "staff")
+      .eq("is_active", true);
+
+    if (usersError) return 1; // fail-closed
+    if (!activeUsers || activeUsers.length === 0) return 0;
+
+    const activeIds = activeUsers.map((u) => u.id);
+
+    // Step 2: count how many of those are admins
+    const { count, error: profileError } = await supabase
+      .from("staff_profiles")
+      .select("user_id", { count: "exact", head: true })
+      .eq("role", "admin")
+      .in("user_id", activeIds);
+
+    if (profileError || count == null) return 1; // fail-closed
+    return count;
+  } catch {
+    return 1; // fail-closed: if the DB is unreachable, block admin deactivation
+  }
+}
+
 /**
  * Sets users.is_active for a staff member.
  * The caller is responsible for session revocation (via revokeAllSessions).

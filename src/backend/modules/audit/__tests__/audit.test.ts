@@ -222,4 +222,59 @@ describe("exportAuditCsv", () => {
     const actor = makeStaffActor({});
     await expect(exportAuditCsv(actor, {})).rejects.toBeInstanceOf(AuthzError);
   });
+
+  it("H-1: neutralizes Excel formula injection prefix '='", async () => {
+    const actor = makeAdminActor();
+    vi.mocked(listAuditLogRows).mockResolvedValueOnce({
+      items: [
+        {
+          id: "log-3",
+          created_at: "2026-06-01T00:00:00Z",
+          actor_user_id: actor.userId,
+          action: "=cmd(|' /C calc'!A0)",
+          entity_type: "services",
+          entity_id: "svc-1",
+          org_id: actor.orgId,
+          diff: null,
+          ip: null,
+        },
+      ],
+      nextCursor: null,
+    });
+
+    const csv = await exportAuditCsv(actor, {});
+    // The cell must be quoted and must start with a tab prefix (not a raw '=')
+    // so spreadsheet parsers do not execute it as a formula.
+    const actionCell = csv.split("\n")[1]?.split(",")[3] ?? "";
+    expect(actionCell).not.toMatch(/^=/);
+    // The tab-prefixed value should be wrapped in quotes
+    expect(actionCell.startsWith('"')).toBe(true);
+  });
+
+  it("H-1: neutralizes '+', '-', '@', tab prefixes", async () => {
+    const actor = makeAdminActor();
+    const dangerousActions = ["+malicious", "-drop", "@ref", "\tcmd"];
+    for (const action of dangerousActions) {
+      vi.mocked(listAuditLogRows).mockResolvedValueOnce({
+        items: [
+          {
+            id: `log-inject-${action[0]}`,
+            created_at: "2026-06-01T00:00:00Z",
+            actor_user_id: actor.userId,
+            action,
+            entity_type: "t",
+            entity_id: null,
+            org_id: actor.orgId,
+            diff: null,
+            ip: null,
+          },
+        ],
+        nextCursor: null,
+      });
+      const csv = await exportAuditCsv(actor, {});
+      const actionCell = csv.split("\n")[1]?.split(",")[3] ?? "";
+      // Must not start with the formula-injection character unquoted
+      expect(actionCell.charAt(0)).not.toBe(action[0]);
+    }
+  });
 });

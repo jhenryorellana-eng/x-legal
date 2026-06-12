@@ -53,7 +53,12 @@ export class AuthzError extends Error {
       | "inactive"
       | "forbidden_module"
       | "forbidden_case"
-      | "wrong_kind",
+      | "wrong_kind"
+      // DOC-22 §9.3 — self-action guards
+      | "self_permission_change_denied"
+      | "self_deactivation_denied"
+      // Cross-org access prevention (defense in depth)
+      | "cross_org_access_denied",
   ) {
     super(reason);
     this.name = "AuthzError";

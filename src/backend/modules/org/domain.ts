@@ -37,8 +37,9 @@ export const OrgSettingsSchema = z.object({
   default_timezone: z.string().min(1).default("America/New_York"),
   /** Logo URL shown in app footer + emails. */
   logo_url: z.string().nullable().default(null),
-  /** Free-form goals/notes used by the dashboard targets (meta). */
-  goals: z.record(z.string(), z.unknown()).default({}),
+  /** Free-form goals/notes used by the dashboard targets (meta).
+   *  Keys capped at 60 chars, values capped at 1 000 chars (M-3: bounded, no unlimited input). */
+  goals: z.record(z.string().max(60), z.string().max(1000)).default({}),
 });
 export type OrgSettings = z.infer<typeof OrgSettingsSchema>;
 
@@ -49,7 +50,8 @@ export const UpdateOrgSettingsDtoSchema = z.object({
     .optional(),
   default_timezone: z.string().min(1).optional(),
   logo_url: z.string().nullable().optional(),
-  goals: z.record(z.string(), z.unknown()).optional(),
+  /** Keys capped at 60 chars, values capped at 1 000 chars (M-3). */
+  goals: z.record(z.string().max(60), z.string().max(1000)).optional(),
 });
 export type UpdateOrgSettingsDto = z.infer<typeof UpdateOrgSettingsDtoSchema>;
 

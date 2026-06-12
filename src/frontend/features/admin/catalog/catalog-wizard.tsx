@@ -379,6 +379,8 @@ function BasicsStep(p: {
                 <button
                   key={c}
                   onClick={() => p.setCategory(c)}
+                  aria-label={c}
+                  aria-pressed={on}
                   style={{
                     padding: "12px 8px",
                     borderRadius: 12,
@@ -632,6 +634,8 @@ function PhasesStep({
             <button
               key={ph.id}
               onClick={() => setActiveIdx(i)}
+              aria-label={`Fase ${i + 1}: ${ph.label.es || ph.slug}`}
+              aria-pressed={on}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -656,6 +660,7 @@ function PhasesStep({
         <button
           onClick={addPhase}
           disabled={savingPhase}
+          aria-label={t.addPhase}
           style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: 12, cursor: "pointer", border: "1.5px dashed var(--line)", background: "transparent", color: "var(--accent)", fontWeight: 700, fontSize: 13 }}
         >
           <Icon name="plus" size={15} color="var(--accent)" /> {t.addPhase}

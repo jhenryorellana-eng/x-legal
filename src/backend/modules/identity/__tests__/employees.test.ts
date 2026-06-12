@@ -29,6 +29,8 @@ const {
   mockSetStaffActive,
   mockListStaffMembers,
   mockGetStaffProfileById,
+  mockFindStaffById,
+  mockCountActiveAdminsByOrg,
   mockWriteAudit,
   mockRevokeAllSessions,
 } = vi.hoisted(() => ({
@@ -44,6 +46,8 @@ const {
   mockSetStaffActive: vi.fn(),
   mockListStaffMembers: vi.fn(),
   mockGetStaffProfileById: vi.fn(),
+  mockFindStaffById: vi.fn(),
+  mockCountActiveAdminsByOrg: vi.fn(),
   mockWriteAudit: vi.fn().mockResolvedValue(undefined),
   mockRevokeAllSessions: vi.fn().mockResolvedValue(undefined),
 }));
@@ -125,6 +129,8 @@ vi.mock("../repository.js", () => ({
   setStaffActive: mockSetStaffActive,
   listStaffMembers: mockListStaffMembers,
   getStaffProfileById: mockGetStaffProfileById,
+  findStaffById: mockFindStaffById,
+  countActiveAdminsByOrg: mockCountActiveAdminsByOrg,
   countActiveStaff: vi.fn().mockResolvedValue(0),
 }));
 
@@ -366,10 +372,20 @@ describe("updateEmployeePermissions", () => {
     { module_key: "calendar", can_view: true, can_edit: false },
   ];
 
+  function makeTargetStaff(overrides: Partial<{ orgId: string; role: string }> = {}) {
+    return {
+      userId: STAFF_ID,
+      orgId: overrides.orgId ?? ADMIN_ACTOR.orgId,
+      isActive: true,
+      role: overrides.role ?? "paralegal",
+    };
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockCan.mockImplementation(() => undefined);
     mockReplaceStaffPermissions.mockResolvedValue(undefined);
+    mockFindStaffById.mockResolvedValue(makeTargetStaff());
   });
 
   it("calls can(actor, 'employees', 'edit')", async () => {
@@ -402,6 +418,31 @@ describe("updateEmployeePermissions", () => {
       updateEmployeePermissions(ADMIN_ACTOR, STAFF_ID, NEW_PERMS),
     ).rejects.toThrow("DB error");
   });
+
+  // C-1: DOC-22 §9.3 — no self-modification
+  it("C-1: throws AuthzError when actor tries to modify their own permissions", async () => {
+    const { AuthzError } = await import("@/backend/platform/authz");
+    await expect(
+      updateEmployeePermissions(ADMIN_ACTOR, ADMIN_ACTOR.userId, NEW_PERMS),
+    ).rejects.toBeInstanceOf(AuthzError);
+  });
+
+  // C-1: org membership check
+  it("C-1: throws AuthzError when target belongs to a different org", async () => {
+    const { AuthzError } = await import("@/backend/platform/authz");
+    mockFindStaffById.mockResolvedValueOnce(makeTargetStaff({ orgId: "different-org" }));
+    await expect(
+      updateEmployeePermissions(ADMIN_ACTOR, STAFF_ID, NEW_PERMS),
+    ).rejects.toBeInstanceOf(AuthzError);
+  });
+
+  // C-1: not found
+  it("C-1: throws IdentityError('employee_not_found') when target does not exist", async () => {
+    mockFindStaffById.mockResolvedValueOnce(null);
+    const err = await updateEmployeePermissions(ADMIN_ACTOR, STAFF_ID, NEW_PERMS).catch((e) => e);
+    expect(err).toBeInstanceOf(IdentityError);
+    expect((err as IdentityError).code).toBe("employee_not_found");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -411,11 +452,22 @@ describe("updateEmployeePermissions", () => {
 describe("deactivateEmployee", () => {
   const STAFF_ID = "staff-uuid-3";
 
+  function makeTargetStaff(overrides: Partial<{ orgId: string; role: string }> = {}) {
+    return {
+      userId: STAFF_ID,
+      orgId: overrides.orgId ?? ADMIN_ACTOR.orgId,
+      isActive: true,
+      role: overrides.role ?? "paralegal",
+    };
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockCan.mockImplementation(() => undefined);
     mockSetStaffActive.mockResolvedValue(undefined);
     mockRevokeAllSessions.mockResolvedValue(undefined);
+    mockFindStaffById.mockResolvedValue(makeTargetStaff());
+    mockCountActiveAdminsByOrg.mockResolvedValue(2);
   });
 
   it("calls can(actor, 'employees', 'edit')", async () => {
@@ -436,6 +488,53 @@ describe("deactivateEmployee", () => {
   it("returns { ok: true } on success", async () => {
     const result = await deactivateEmployee(ADMIN_ACTOR, STAFF_ID);
     expect(result.ok).toBe(true);
+  });
+
+  // C-1: DOC-22 §9.3 — cannot deactivate yourself
+  it("C-1: throws AuthzError when actor tries to deactivate themselves", async () => {
+    const { AuthzError } = await import("@/backend/platform/authz");
+    await expect(
+      deactivateEmployee(ADMIN_ACTOR, ADMIN_ACTOR.userId),
+    ).rejects.toBeInstanceOf(AuthzError);
+  });
+
+  // C-1: org membership check
+  it("C-1: throws AuthzError when target belongs to a different org", async () => {
+    const { AuthzError } = await import("@/backend/platform/authz");
+    mockFindStaffById.mockResolvedValueOnce(makeTargetStaff({ orgId: "other-org" }));
+    await expect(
+      deactivateEmployee(ADMIN_ACTOR, STAFF_ID),
+    ).rejects.toBeInstanceOf(AuthzError);
+  });
+
+  // C-1: not found
+  it("C-1: throws IdentityError('employee_not_found') when target does not exist", async () => {
+    mockFindStaffById.mockResolvedValueOnce(null);
+    const err = await deactivateEmployee(ADMIN_ACTOR, STAFF_ID).catch((e) => e);
+    expect(err).toBeInstanceOf(IdentityError);
+    expect((err as IdentityError).code).toBe("employee_not_found");
+  });
+
+  // H-3: DOC-22 §9.3 — protect last admin
+  it("H-3: throws IdentityError('last_admin_protected') when deactivating the sole active admin", async () => {
+    mockFindStaffById.mockResolvedValueOnce(makeTargetStaff({ role: "admin" }));
+    mockCountActiveAdminsByOrg.mockResolvedValueOnce(1);
+    const err = await deactivateEmployee(ADMIN_ACTOR, STAFF_ID).catch((e) => e);
+    expect(err).toBeInstanceOf(IdentityError);
+    expect((err as IdentityError).code).toBe("last_admin_protected");
+  });
+
+  it("H-3: allows deactivating an admin when there are 2+ active admins", async () => {
+    mockFindStaffById.mockResolvedValueOnce(makeTargetStaff({ role: "admin" }));
+    mockCountActiveAdminsByOrg.mockResolvedValueOnce(2);
+    const result = await deactivateEmployee(ADMIN_ACTOR, STAFF_ID);
+    expect(result.ok).toBe(true);
+  });
+
+  it("H-3: does NOT call countActiveAdminsByOrg for non-admin targets", async () => {
+    mockFindStaffById.mockResolvedValueOnce(makeTargetStaff({ role: "paralegal" }));
+    await deactivateEmployee(ADMIN_ACTOR, STAFF_ID);
+    expect(mockCountActiveAdminsByOrg).not.toHaveBeenCalled();
   });
 });
 

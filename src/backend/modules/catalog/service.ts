@@ -28,6 +28,7 @@ import {
   CreateMilestoneDtoSchema,
   CreateRequiredDocDtoSchema,
   CreateFormDtoSchema,
+  QuestionSchema,
   validateServicePublication,
   validateEntryServiceLink,
   expandPerPartyRequirements,
@@ -41,6 +42,14 @@ import {
   isFkViolation,
   CatalogError,
 } from "./domain";
+
+import { z } from "zod";
+
+// Q-1: Zod schema for upsertQuestion input.
+// id is optional (absent = INSERT, present = UPDATE/upsert).
+const UpsertQuestionSchema = QuestionSchema.partial({ id: true, position: true }).extend({
+  group_id: z.string().uuid(),
+});
 
 import type {
   Service,
@@ -141,6 +150,9 @@ export async function updateService(
   const before = await repo.findServiceById(id);
   if (!before) throw catalogError("CATALOG_SERVICE_NOT_FOUND");
 
+  // M-5: org ownership check (defense in depth; RLS is last line)
+  if (before.org_id !== actor.orgId) throw catalogError("CATALOG_SERVICE_NOT_FOUND");
+
   if (before.archived_at) {
     throw catalogError("CATALOG_SERVICE_ARCHIVED", "Restore the service before editing.");
   }
@@ -202,6 +214,9 @@ export async function activateService(
   const service = await repo.findServiceById(id);
   if (!service) throw catalogError("CATALOG_SERVICE_NOT_FOUND");
 
+  // M-5: org ownership check (defense in depth; RLS is last line)
+  if (service.org_id !== actor.orgId) throw catalogError("CATALOG_SERVICE_NOT_FOUND");
+
   const [plans, phases] = await Promise.all([repo.listPlans(id), repo.listPhases(id)]);
 
   const check = validateServicePublication({
@@ -242,8 +257,16 @@ export async function activateService(
  */
 export async function deactivateService(actor: Actor, id: string): Promise<void> {
   can(actor, "catalog", "edit");
+  // L-1: load before for audit diff
+  const before = await repo.findServiceById(id);
+  if (!before) throw catalogError("CATALOG_SERVICE_NOT_FOUND");
+  // M-5: org ownership check (entity already loaded)
+  if (before.org_id !== actor.orgId) throw catalogError("CATALOG_SERVICE_NOT_FOUND");
   await repo.updateService(id, { is_active: false });
-  await writeAudit(actor, "catalog.service.deactivated", "services", id, {});
+  await writeAudit(actor, "catalog.service.deactivated", "services", id, {
+    before: { is_active: before.is_active },
+    after: { is_active: false },
+  });
 }
 
 /**
@@ -253,6 +276,8 @@ export async function archiveService(actor: Actor, id: string): Promise<void> {
   can(actor, "catalog", "edit");
   const before = await repo.findServiceById(id);
   if (!before) throw catalogError("CATALOG_SERVICE_NOT_FOUND");
+  // M-5: org ownership check (defense in depth; RLS is last line)
+  if (before.org_id !== actor.orgId) throw catalogError("CATALOG_SERVICE_NOT_FOUND");
   await repo.updateService(id, { is_active: false, archived_at: new Date().toISOString() });
   await writeAudit(actor, "catalog.service.archived", "services", id, { before });
 }
@@ -262,8 +287,19 @@ export async function archiveService(actor: Actor, id: string): Promise<void> {
  */
 export async function restoreService(actor: Actor, id: string): Promise<void> {
   can(actor, "catalog", "edit");
+  // L-2: validate existence and archived state (no silent 0-row updates)
+  const before = await repo.findServiceById(id);
+  if (!before) throw catalogError("CATALOG_SERVICE_NOT_FOUND");
+  if (!before.archived_at) {
+    throw catalogError("CATALOG_SERVICE_NOT_ARCHIVED", "Service is not archived; nothing to restore.");
+  }
+  // M-5: org ownership check (entity already loaded)
+  if (before.org_id !== actor.orgId) throw catalogError("CATALOG_SERVICE_NOT_FOUND");
   await repo.updateService(id, { archived_at: null });
-  await writeAudit(actor, "catalog.service.restored", "services", id, {});
+  await writeAudit(actor, "catalog.service.restored", "services", id, {
+    before: { archived_at: before.archived_at },
+    after: { archived_at: null },
+  });
 }
 
 /**
@@ -668,27 +704,29 @@ export async function upsertQuestion(
 ): Promise<Question> {
   can(actor, "catalog", "edit");
 
-  const groupId = input.group_id as string;
+  // Q-1: validate at boundary (consistent with every other use case in this module)
+  const dto = UpsertQuestionSchema.parse(input);
+
+  const groupId = dto.group_id;
   const version = await repo.findVersionByGroup(groupId);
   if (!version) throw catalogError("CATALOG_FORM_NOT_FOUND");
   if (version.status !== "draft") throw catalogError("CATALOG_VERSION_PUBLISHED_IMMUTABLE");
 
   // source_ref validation
-  if (input.source && input.source !== "client_answer") {
+  if (dto.source && dto.source !== "client_answer") {
     const slugIndex = await repo.getServiceSlugIndex(version.form_definition_id);
     const ctx = {
       documentSlugsWithSchema: slugIndex.documentsWithSchema,
       aiLetterSlugs: slugIndex.aiLetterSlugs,
       profileFields: Array.from(PROFILE_SOURCE_FIELDS),
     };
-    const q = input as unknown as import("./domain").Question;
-    const sourceIssues = validateSourceRef(q, ctx);
+    const sourceIssues = validateSourceRef(dto as unknown as import("./domain").Question, ctx);
     assertNoIssues(sourceIssues);
   }
 
   // pdf_field_name must exist in detected_fields
-  if (input.pdf_field_name) {
-    const fieldName = input.pdf_field_name as string;
+  if (dto.pdf_field_name) {
+    const fieldName = dto.pdf_field_name;
     // detected_fields is stored as Json in DB — safe cast to array
     const detectedFields = (version.detected_fields ?? []) as Array<{ pdf_field_name: string }>;
     const detectedNames = new Set(detectedFields.map((f) => f.pdf_field_name));
@@ -697,7 +735,7 @@ export async function upsertQuestion(
     }
   }
 
-  const q = await repo.upsertQuestion(input as Parameters<typeof repo.upsertQuestion>[0]);
+  const q = await repo.upsertQuestion(dto as Parameters<typeof repo.upsertQuestion>[0]);
   await writeAudit(actor, "catalog.form_questions.updated", "form_questions", q.id, { after: q });
   return q as unknown as Question;
 }
@@ -775,14 +813,22 @@ export async function publishVersion(
     {},
   );
 
-  // Find the service for the event payload
-  const phases = await repo.listPhases(formDef.service_phase_id);
+  // C-2: Load the phase directly by id to get its service_id.
+  // Using listPhases(service_phase_id) was wrong — it expects a serviceId, not a phaseId —
+  // causing service_id to be "" in the event. findPhaseById gives the correct row.
+  const phase = await repo.findPhaseById(formDef.service_phase_id);
+  if (!phase) {
+    throw catalogError(
+      "CATALOG_PHASE_NOT_FOUND",
+      `Phase ${formDef.service_phase_id} not found when publishing version.`,
+    );
+  }
 
   appEvents.emit({
     type: "form_version.published",
     payload: {
       org_id: actor.orgId,
-      service_id: phases[0]?.service_id ?? "",
+      service_id: phase.service_id,
       service_phase_id: formDef.service_phase_id,
       form_definition_id: formDef.id,
       form_slug: formDef.slug,

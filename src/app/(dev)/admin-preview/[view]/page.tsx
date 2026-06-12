@@ -20,7 +20,15 @@ export default async function AdminPreviewPage({
 }: {
   params: Promise<{ view: string }>;
 }) {
-  if (process.env.NODE_ENV === "production") notFound();
+  // Guard 1: never ship to production build.
+  // Guard 2: must explicitly opt-in via ENABLE_ADMIN_PREVIEW=true (set in .env.local / dev compose only).
+  // See .env.example for documentation.
+  if (
+    process.env.NODE_ENV === "production" ||
+    process.env.ENABLE_ADMIN_PREVIEW !== "true"
+  ) {
+    notFound();
+  }
   const { view } = await params;
   if (!VIEWS.includes(view)) notFound();
   return <PreviewClient view={view} />;

@@ -61,6 +61,8 @@ vi.mock("../repository.js", () => ({
   setStaffActive: vi.fn(),
   listStaffMembers: vi.fn(),
   getStaffProfileById: vi.fn(),
+  findStaffById: vi.fn(),
+  countActiveAdminsByOrg: vi.fn(),
   countActiveStaff: vi.fn().mockResolvedValue(0),
 }));
 
