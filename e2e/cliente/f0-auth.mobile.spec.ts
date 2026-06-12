@@ -22,7 +22,8 @@ test.describe("welcome", () => {
   test("CTA navigates to /phone", async ({ page }) => {
     await page.goto("/welcome");
     await page.getByRole("link", { name: /ver mi caso/i }).click();
-    await expect(page).toHaveURL(/\/phone$/);
+    // Generous timeout: Turbopack cold-compiles /phone on first hit in dev
+    await expect(page).toHaveURL(/\/phone$/, { timeout: 30_000 });
     await expect(page.locator('input[type="tel"]')).toBeVisible();
   });
 });
@@ -34,8 +35,8 @@ test.describe("phone → otp (anti-enumeration: always lands on /otp)", () => {
     await page.locator('button[type="submit"]').click();
 
     // Uniform response: ALWAYS transitions to OTP (DOC-22 §1.4) — the request
-    // takes >= 800ms (latency floor), so give it room.
-    await expect(page).toHaveURL(/\/otp\?phone=/, { timeout: 15_000 });
+    // takes >= 800ms (latency floor) plus dev cold-compile of the action.
+    await expect(page).toHaveURL(/\/otp\?phone=/, { timeout: 30_000 });
     await expect(page.getByText("Escribe tu código")).toBeVisible();
 
     // 6 OTP boxes
