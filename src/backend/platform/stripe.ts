@@ -12,7 +12,7 @@
  */
 
 import Stripe from "stripe";
-import { providerEnv } from "./env.js";
+import { providerEnv } from "./env";
 
 // ---------------------------------------------------------------------------
 // Client factory (lazy singleton)

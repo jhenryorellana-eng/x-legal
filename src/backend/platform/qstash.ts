@@ -12,8 +12,8 @@
  */
 
 import { Client, Receiver } from "@upstash/qstash";
-import { env, providerEnv } from "./env.js";
-import { logger } from "./logger.js";
+import { env, providerEnv } from "./env";
+import { logger } from "./logger";
 
 // ---------------------------------------------------------------------------
 // Types

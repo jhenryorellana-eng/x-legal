@@ -17,8 +17,8 @@
 import { createClient } from "@supabase/supabase-js";
 import { createServerClient as createSSRClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-import type { Database } from "@/shared/database.types.js";
-import { env } from "./env.js";
+import type { Database } from "@/shared/database.types";
+import { env } from "./env";
 
 // ---------------------------------------------------------------------------
 // Service client (service_role — RLS bypass)

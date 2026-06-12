@@ -128,23 +128,28 @@ function buildLogLine(
     base["err"] = serializeError(err);
   }
 
-  return JSON.stringify(base) + "\n";
+  return JSON.stringify(base);
 }
 
 // ---------------------------------------------------------------------------
 // Public logger
 // ---------------------------------------------------------------------------
+// console.* (not process.stdout) on purpose: the logger is imported by
+// src/middleware.ts, which runs on the Edge Runtime where process.stdout does
+// not exist (Turbopack fails the build on any static reference to it).
+// In Node, console.log/warn/error write the JSON line to stdout/stderr just
+// the same — one logger, both runtimes.
 
 export const logger = {
   info(context: Record<string, unknown>, message: string): void {
-    process.stdout.write(buildLogLine("info", context, message));
+    console.log(buildLogLine("info", context, message));
   },
 
   warn(context: Record<string, unknown>, message: string): void {
-    process.stdout.write(buildLogLine("warn", context, message));
+    console.warn(buildLogLine("warn", context, message));
   },
 
   error(context: Record<string, unknown>, message: string): void {
-    process.stdout.write(buildLogLine("error", context, message));
+    console.error(buildLogLine("error", context, message));
   },
 };

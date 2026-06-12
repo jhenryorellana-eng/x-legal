@@ -22,8 +22,8 @@ process.env.ENCRYPTION_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
 const { can, AuthzError, systemActor } = await import("../authz.js");
 
-import type { Actor } from "../authz.js";
-import type { ModuleKey } from "@/shared/constants/modules.js";
+import type { Actor } from "../authz";
+import type { ModuleKey } from "@/shared/constants/modules";
 
 // ---------------------------------------------------------------------------
 // Helpers

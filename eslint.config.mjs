@@ -54,9 +54,18 @@ const eslintConfig = [
         {
           default: "disallow",
           rules: [
-            { from: "app", allow: ["module-pub", "frontend", "shared"] },
+            // app→app: co-located route files (page.tsx imports ./screen.tsx or ./action.ts)
+            // are allowed. Pages MUST NOT import from unrelated routes.
+            { from: "app", allow: ["app", "module-pub", "frontend", "shared"] },
             { from: "frontend", allow: ["frontend", "shared"] },
-            // module-pub = index/actions of OTHER modules
+            // module-pub (index.ts / actions.ts) — entry points for each module.
+            // May import the module's own internals (module-int) and platform helpers.
+            // index.ts may also re-export from other module-pub files within the same module.
+            {
+              from: "module-pub",
+              allow: ["module-int", "platform", "shared", "module-pub"],
+            },
+            // module-int = domain, service, repository and other internals
             {
               from: "module-int",
               allow: ["module-int", "platform", "shared", "module-pub"],

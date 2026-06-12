@@ -14,8 +14,8 @@
  */
 
 import Twilio from "twilio";
-import { providerEnv } from "./env.js";
-import { logger } from "./logger.js";
+import { providerEnv } from "./env";
+import { logger } from "./logger";
 
 // ---------------------------------------------------------------------------
 // Client factory (lazy)

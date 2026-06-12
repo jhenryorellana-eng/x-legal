@@ -15,7 +15,7 @@
  */
 
 import { GoogleGenAI } from "@google/genai";
-import { providerEnv } from "./env.js";
+import { providerEnv } from "./env";
 
 // ---------------------------------------------------------------------------
 // Model constants (DOC-74 §3.2)

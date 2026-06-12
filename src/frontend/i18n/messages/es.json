@@ -10,5 +10,98 @@
   },
   "design": {
     "title": "Sistema de diseño — vitrina de componentes"
+  },
+  "cliente": {
+    "welcome": {
+      "title": "Bienvenido a tu portal",
+      "subtitle": "Aquí sigues tu caso paso a paso, con tu equipo siempre cerca.",
+      "cta": "Ver mi caso",
+      "noAccess": "No tengo acceso",
+      "trustBadge": "Tu información está protegida"
+    },
+    "noAccess": {
+      "title": "Primero conversemos contigo",
+      "body": "El acceso a tu portal lo activamos cuando inicias tu caso con nosotros. Escríbenos y te entregamos tus datos para entrar.",
+      "whatsapp": {
+        "title": "Escríbenos por WhatsApp",
+        "sub": "Respuesta rápida, de lunes a sábado"
+      },
+      "phone": {
+        "title": "Llamar a la oficina",
+        "sub": "(305) 555-0100"
+      },
+      "website": {
+        "title": "Conoce nuestros servicios",
+        "sub": "Todo lo que hacemos por tu familia"
+      },
+      "cta": "Ir a usalatinoprime.com",
+      "escape": "Ya tengo mis datos → Ver mi caso"
+    },
+    "phone": {
+      "eyebrow": "Ver mi caso",
+      "title": "Entra con tu teléfono",
+      "body": "Usa el mismo número con el que hiciste tu contrato. Ya lo tenemos registrado — con eso entras a tu caso.",
+      "placeholder": "(305) 555-0134",
+      "trustBadge": "Reconocemos tu número y abrimos tu caso al instante.",
+      "cta": "Entrar a mi caso",
+      "noAccess": "No tengo acceso",
+      "footerBadge": "Solo tú podrás ver tu caso.",
+      "errorRateLimit": "Demasiados intentos. Espera unos minutos antes de reintentar.",
+      "errorInvalidPhone": "El número de teléfono no es válido. Verifica e intenta de nuevo.",
+      "errorGeneric": "Algo salió mal. Intenta de nuevo."
+    },
+    "otp": {
+      "title": "Escribe tu código",
+      "bodyPrefix": "Enviamos un código de 6 dígitos por SMS al",
+      "resendCountdown": "Reenviar código en {seconds}",
+      "resendBtn": "Reenviar código",
+      "changeNumber": "Cambiar número",
+      "cta": "Entrar a mi caso",
+      "footerBadge": "Verificamos que eres tú para proteger tu caso.",
+      "errorCode": "Ese código no coincide. Inténtalo de nuevo, sin prisa.",
+      "errorRateLimit": "Demasiados intentos. Espera unos minutos."
+    },
+    "home": {
+      "greeting": "Hola, {name}",
+      "subtitle": "Aquí están tus casos activos.",
+      "noCases": "No tienes casos activos en este momento."
+    }
+  },
+  "staff": {
+    "login": {
+      "title": "Panel de equipo",
+      "subtitle": "Acceso exclusivo para empleados de UsaLatinoPrime.",
+      "emailLabel": "Correo electrónico",
+      "passwordLabel": "Contraseña",
+      "cta": "Entrar",
+      "forgotPassword": "¿Olvidaste tu contraseña?",
+      "errorCredentials": "Email o contraseña incorrectos.",
+      "errorRateLimit": "Demasiados intentos. Espera 15 minutos.",
+      "errorGeneric": "Algo salió mal. Intenta de nuevo."
+    },
+    "resetPassword": {
+      "title": "Recuperar contraseña",
+      "body": "Escribe tu correo y te enviamos instrucciones si pertenece a un empleado activo.",
+      "emailLabel": "Correo electrónico",
+      "cta": "Enviar instrucciones",
+      "successMessage": "Si el email pertenece a un empleado activo, recibirás instrucciones en breve.",
+      "backToLogin": "Volver al inicio de sesión"
+    },
+    "cambiarPassword": {
+      "title": "Crea tu contraseña",
+      "body": "Es tu primer acceso. Elige una contraseña segura para proteger tu cuenta.",
+      "newPasswordLabel": "Nueva contraseña",
+      "confirmPasswordLabel": "Confirmar contraseña",
+      "cta": "Guardar contraseña",
+      "requirements": "Mínimo 12 caracteres. Usa una combinación de letras, números y símbolos.",
+      "errorTooShort": "La contraseña debe tener al menos 12 caracteres.",
+      "errorTooWeak": "La contraseña es muy fácil de adivinar. Intenta con una combinación más variada.",
+      "errorMismatch": "Las contraseñas no coinciden."
+    },
+    "stub": {
+      "greeting": "Hola, {name}",
+      "role": "Rol: {role}",
+      "comingSoon": "Esta sección estará disponible próximamente."
+    }
   }
 }

@@ -21,7 +21,7 @@ import {
   VideoGrant,
   WebhookReceiver,
 } from "livekit-server-sdk";
-import { providerEnv } from "./env.js";
+import { providerEnv } from "./env";
 
 // ---------------------------------------------------------------------------
 // Types

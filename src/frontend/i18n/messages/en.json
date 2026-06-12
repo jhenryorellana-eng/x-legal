@@ -10,5 +10,98 @@
   },
   "design": {
     "title": "Design system — component showcase"
+  },
+  "cliente": {
+    "welcome": {
+      "title": "Welcome to your portal",
+      "subtitle": "Follow your case step by step, with your team always close by.",
+      "cta": "View my case",
+      "noAccess": "I don't have access",
+      "trustBadge": "Your information is protected"
+    },
+    "noAccess": {
+      "title": "Let's talk first",
+      "body": "We activate your portal access once you start your case with us. Reach out and we'll give you your login details.",
+      "whatsapp": {
+        "title": "Message us on WhatsApp",
+        "sub": "Quick reply, Monday to Saturday"
+      },
+      "phone": {
+        "title": "Call the office",
+        "sub": "(305) 555-0100"
+      },
+      "website": {
+        "title": "See our services",
+        "sub": "Everything we do for your family"
+      },
+      "cta": "Go to usalatinoprime.com",
+      "escape": "I have my details → View my case"
+    },
+    "phone": {
+      "eyebrow": "View my case",
+      "title": "Enter with your phone",
+      "body": "Use the same number you used for your contract. We already have it on file — that's your key to your case.",
+      "placeholder": "(305) 555-0134",
+      "trustBadge": "We recognize your number and open your case instantly.",
+      "cta": "Access my case",
+      "noAccess": "I don't have access",
+      "footerBadge": "Only you can see your case.",
+      "errorRateLimit": "Too many attempts. Please wait a few minutes before trying again.",
+      "errorInvalidPhone": "The phone number is not valid. Please check and try again.",
+      "errorGeneric": "Something went wrong. Please try again."
+    },
+    "otp": {
+      "title": "Enter your code",
+      "bodyPrefix": "We sent a 6-digit code via SMS to",
+      "resendCountdown": "Resend code in {seconds}",
+      "resendBtn": "Resend code",
+      "changeNumber": "Change number",
+      "cta": "Access my case",
+      "footerBadge": "We verify it's you to protect your case.",
+      "errorCode": "That code doesn't match. Try again, no rush.",
+      "errorRateLimit": "Too many attempts. Please wait a few minutes."
+    },
+    "home": {
+      "greeting": "Hello, {name}",
+      "subtitle": "Here are your active cases.",
+      "noCases": "You have no active cases at this time."
+    }
+  },
+  "staff": {
+    "login": {
+      "title": "Team Panel",
+      "subtitle": "Exclusive access for UsaLatinoPrime employees.",
+      "emailLabel": "Email address",
+      "passwordLabel": "Password",
+      "cta": "Sign in",
+      "forgotPassword": "Forgot your password?",
+      "errorCredentials": "Incorrect email or password.",
+      "errorRateLimit": "Too many attempts. Please wait 15 minutes.",
+      "errorGeneric": "Something went wrong. Please try again."
+    },
+    "resetPassword": {
+      "title": "Reset password",
+      "body": "Enter your email and we'll send instructions if it belongs to an active employee.",
+      "emailLabel": "Email address",
+      "cta": "Send instructions",
+      "successMessage": "If the email belongs to an active employee, you'll receive instructions shortly.",
+      "backToLogin": "Back to sign in"
+    },
+    "cambiarPassword": {
+      "title": "Create your password",
+      "body": "This is your first access. Choose a secure password to protect your account.",
+      "newPasswordLabel": "New password",
+      "confirmPasswordLabel": "Confirm password",
+      "cta": "Save password",
+      "requirements": "At least 12 characters. Use a mix of letters, numbers and symbols.",
+      "errorTooShort": "Password must be at least 12 characters.",
+      "errorTooWeak": "This password is too easy to guess. Try a more varied combination.",
+      "errorMismatch": "Passwords do not match."
+    },
+    "stub": {
+      "greeting": "Hello, {name}",
+      "role": "Role: {role}",
+      "comingSoon": "This section will be available soon."
+    }
   }
 }

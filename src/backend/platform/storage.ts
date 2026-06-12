@@ -11,8 +11,8 @@
  * - File size ≤ 25 MB (RNF-016)
  */
 
-import { createServiceClient } from "./supabase.js";
-import { logger } from "./logger.js";
+import { createServiceClient } from "./supabase";
+import { logger } from "./logger";
 
 // ---------------------------------------------------------------------------
 // Constants

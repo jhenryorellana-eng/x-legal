@@ -23,8 +23,8 @@
  */
 
 import { cache } from "react";
-import type { ModuleKey } from "@/shared/constants/modules.js";
-import { createServerClient } from "./supabase.js";
+import type { ModuleKey } from "@/shared/constants/modules";
+import { createServerClient } from "./supabase";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -124,23 +124,37 @@ function readCustomClaims(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   user: any,
 ): CustomClaims | null {
-  // Claims injected by the Custom Access Token Hook (DOC-22 §3.2)
-  const claims = user?.app_metadata ?? {};
-  const jwtClaims = (user as Record<string, unknown>) ?? {};
+  // Custom claims from the Access Token Hook (DOC-22 §3.2):
+  // The hook sets {org_id, user_kind, user_role} at the TOP LEVEL of the JWT
+  // (NOT inside app_metadata). When getUser() validates against the Auth server,
+  // Supabase JS SDK v2 returns the user object which merges the validated JWT
+  // payload. Top-level JWT claims are accessible directly on the user object.
+  //
+  // getClaims() (available in @supabase/supabase-js 2.67+) reads these directly
+  // from the JWT without a server round-trip. In middleware we use getClaims();
+  // here in getActor() we use getUser() (authoritative server validation) and
+  // read from the merged user object.
+  //
+  // Fallback to user.app_metadata for backward compatibility during hook activation
+  // ramp-up (the hook is not yet activated — claims may be absent).
+  //
+  // Hook NOT activated (DOC-22 §3.2 TODO): all three claims will be null →
+  // readCustomClaims returns null → getActor() returns null → no guard passes.
+  // Safe degradation confirmed.
+  const topLevel = (user as Record<string, unknown>) ?? {};
+  const appMeta = (user?.app_metadata as Record<string, unknown>) ?? {};
 
-  // user_metadata from getUser() reflects the JWT claims set by the hook
-  // getUser() merges the validated JWT payload into user object
   const org_id =
-    (jwtClaims["org_id"] as string) ??
-    (claims["org_id"] as string) ??
+    (topLevel["org_id"] as string) ??
+    (appMeta["org_id"] as string) ??
     null;
   const user_kind =
-    (jwtClaims["user_kind"] as string) ??
-    (claims["user_kind"] as string) ??
+    (topLevel["user_kind"] as string) ??
+    (appMeta["user_kind"] as string) ??
     null;
   const user_role =
-    (jwtClaims["user_role"] as string | null) ??
-    (claims["user_role"] as string | null) ??
+    (topLevel["user_role"] as string | null) ??
+    (appMeta["user_role"] as string | null) ??
     null;
 
   if (!org_id || !user_kind) return null;

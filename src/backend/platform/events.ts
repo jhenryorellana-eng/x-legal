@@ -18,7 +18,7 @@
  * Test isolation: use `createEventBus()` to get a fresh instance per test.
  */
 
-import { logger } from "./logger.js";
+import { logger } from "./logger";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -59,7 +59,22 @@ export function createEventBus(): EventBus {
         try {
           // Synchronous call (consumers may be async but we don't await here).
           // Heavy work must be enqueued to QStash; async consumers are fire-and-forget.
-          void handler(event);
+          const result = handler(event);
+          // Post-await rejections are NOT caught by the try/catch — attach a
+          // handler so an async consumer failure never becomes an unhandled
+          // promise rejection (and never kills the other consumers).
+          if (result instanceof Promise) {
+            result.catch((err) =>
+              logger.error(
+                {
+                  err,
+                  eventType: event.type,
+                  handler: handler.name || "(anonymous)",
+                },
+                "EventBus: async consumer rejected — continuing",
+              ),
+            );
+          }
         } catch (err) {
           logger.error(
             {

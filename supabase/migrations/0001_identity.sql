@@ -299,6 +299,20 @@ begin
     claims := jsonb_set(claims, '{user_kind}', '"unprovisioned"');
   end if;
 
+  -- must_change_pw as a TOP-LEVEL claim (DOC-22 §2.2): the middleware reads the
+  -- JWT payload via getClaims(), which does NOT expose auth.users.app_metadata —
+  -- so the forced-password-change flag must travel as its own claim.
+  claims := jsonb_set(
+    claims,
+    '{must_change_pw}',
+    coalesce(
+      (select to_jsonb(coalesce((au.raw_app_meta_data ->> 'must_change_password')::boolean, false))
+         from auth.users au
+        where au.id = (event->>'user_id')::uuid),
+      'false'::jsonb
+    )
+  );
+
   return jsonb_set(event, '{claims}', claims);
 end;
 $$;

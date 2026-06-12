@@ -17,8 +17,8 @@
  */
 
 import { Resend } from "resend";
-import { providerEnv } from "./env.js";
-import { logger } from "./logger.js";
+import { providerEnv } from "./env";
+import { logger } from "./logger";
 
 // ---------------------------------------------------------------------------
 // Canonical senders

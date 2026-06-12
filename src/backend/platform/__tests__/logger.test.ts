@@ -21,21 +21,30 @@ process.env.ENCRYPTION_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 const { logger } = await import("../logger.js");
 
 describe("logger — PII redaction (RNF-020)", () => {
+  // The logger writes through console.* (Edge-runtime compatible — see logger.ts).
   let writtenLines: string[] = [];
-  let originalWrite: typeof process.stdout.write;
+  let originalLog: typeof console.log;
+  let originalWarn: typeof console.warn;
+  let originalError: typeof console.error;
+
+  const capture = (chunk: unknown) => {
+    if (typeof chunk === "string") writtenLines.push(chunk);
+  };
 
   beforeEach(() => {
     writtenLines = [];
-    originalWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (chunk: unknown) => {
-      if (typeof chunk === "string") writtenLines.push(chunk);
-      else if (Buffer.isBuffer(chunk)) writtenLines.push(chunk.toString());
-      return true;
-    };
+    originalLog = console.log;
+    originalWarn = console.warn;
+    originalError = console.error;
+    console.log = capture;
+    console.warn = capture;
+    console.error = capture;
   });
 
   afterEach(() => {
-    process.stdout.write = originalWrite;
+    console.log = originalLog;
+    console.warn = originalWarn;
+    console.error = originalError;
   });
 
   it("redacts top-level ssn field", () => {

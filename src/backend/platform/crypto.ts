@@ -16,7 +16,7 @@ import {
   createDecipheriv,
   randomBytes,
 } from "node:crypto";
-import { env } from "./env.js";
+import { env } from "./env";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -94,7 +94,15 @@ export function decryptPiiField(ciphertext: EncryptedField): string {
     if (!env.ENCRYPTION_KEY_PREVIOUS) {
       throw primaryErr;
     }
-    // Retry with previous key (rotation window — DOC-27 §2.5)
+    // Only a GCM auth-tag failure means "wrong key" (rotation window —
+    // DOC-27 §2.5). Any other error (bad IV length, malformed input) is a
+    // programming error and must surface, not be masked by a retry.
+    const isAuthFailure =
+      primaryErr instanceof Error &&
+      /unable to authenticate|auth/i.test(primaryErr.message);
+    if (!isAuthFailure) {
+      throw primaryErr;
+    }
     return tryDecrypt(ciphertext, env.ENCRYPTION_KEY_PREVIOUS);
   }
 }

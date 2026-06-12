@@ -13,8 +13,8 @@
  */
 
 import webpush, { type PushSubscription } from "web-push";
-import { providerEnv } from "./env.js";
-import { logger } from "./logger.js";
+import { providerEnv } from "./env";
+import { logger } from "./logger";
 
 // ---------------------------------------------------------------------------
 // VAPID initialization (lazy)

@@ -21,7 +21,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
-import { providerEnv } from "./env.js";
+import { providerEnv } from "./env";
 
 // ---------------------------------------------------------------------------
 // Model constants (whitelist for the catalog selector — DOC-74 §1)
