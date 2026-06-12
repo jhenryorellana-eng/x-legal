@@ -1,31 +1,71 @@
 /**
- * Identity service — F0 use cases (DOC-22 §1, §2).
+ * Identity service — F0 + F1 use cases (DOC-22 §1, §2, §6).
  *
  * Use cases implemented:
+ * F0:
  * - requestClientOtp      (anonymous) — normalize, rate limit, gate, signInWithOtp
  * - verifyClientOtp       (anonymous) — rate limit, verifyOtp, re-gate post-session
  * - requestStaffPasswordReset (anonymous) — resetPasswordForEmail, uniform response
  * - updateStaffPassword   (authenticated) — zxcvbn score check, updateUser
+ *
+ * F1 (employee management — RF-ADM-041…045):
+ * - inviteEmployee             — DOC-22 §2.2 exact flow
+ * - updateEmployeePermissions  — RF-ADM-045 immediate effect
+ * - deactivateEmployee         — with session revocation
+ * - reactivateEmployee         — clears ban, re-enables login
+ * - listEmployees              — staff panel list
  *
  * Authorization rules per DOC-22 §5.2:
  * - Anonymous use cases: no Actor required (explicitly documented here per DOC-22 §7)
  * - Authenticated use cases: requireActor() + can() as first line
  */
 
+import crypto from "node:crypto";
+
 import { ZxcvbnFactory } from "@zxcvbn-ts/core";
 import { adjacencyGraphs, dictionary } from "@zxcvbn-ts/language-common";
 
-import { requireActor } from "@/backend/platform/authz";
-import { createServerClient, createServiceClient } from "@/backend/platform/supabase";
+import { getActor, requireActor, can } from "@/backend/platform/authz";
+import type { Actor } from "@/backend/platform/authz";
+import { createServerClient, createServiceClient, revokeAllSessions } from "@/backend/platform/supabase";
 import { logger } from "@/backend/platform/logger";
 import {
   limitOtpSendPhone,
   limitOtpSendIp,
   limitOtpVerifyPhone,
 } from "@/backend/platform/ratelimit";
+import { sendTransactional, FROM_TRANSACTIONAL } from "@/backend/platform/resend";
+import { appEvents } from "@/backend/platform/events";
+
+import type { ModuleKey } from "@/shared/constants/modules";
+import { MODULE_KEYS } from "@/shared/constants/modules";
 
 import { normalizePhoneE164, passwordPolicy, PhoneNormalizationError } from "./domain";
-import { checkClientEligibility, checkClientEligibilityById } from "./repository";
+import {
+  checkClientEligibility,
+  checkClientEligibilityById,
+  countActiveStaff,
+  getStaffProfileById,
+  listStaffMembers,
+  insertStaffRows,
+  replaceStaffPermissions,
+  setStaffActive,
+  type StaffProfileRow,
+  type EmployeePermissionInput,
+  type EmployeeRow,
+} from "./repository";
+
+// Audit module — imported via dynamic require to avoid circular deps at module load
+// (audit → platform only; identity → platform; no true cycle but dynamic avoids
+// potential init ordering issues in tests)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _audit: { writeAudit: (...args: any[]) => Promise<void> } | null = null;
+async function getAudit() {
+  if (!_audit) {
+    _audit = await import("@/backend/modules/audit");
+  }
+  return _audit;
+}
 
 // ---------------------------------------------------------------------------
 // zxcvbn — lazy singleton factory
@@ -76,6 +116,34 @@ export interface PasswordUpdateResult {
 }
 
 // ---------------------------------------------------------------------------
+// Result types (F1)
+// ---------------------------------------------------------------------------
+
+export interface InviteEmployeeResult {
+  ok: true;
+  userId: string;
+}
+
+export interface UpdatePermissionsResult {
+  ok: true;
+}
+
+export interface DeactivateEmployeeResult {
+  ok: true;
+}
+
+export interface ReactivateEmployeeResult {
+  ok: true;
+}
+
+export interface ListEmployeesResult {
+  employees: EmployeeRow[];
+}
+
+// Re-export EmployeeRow type so callers don't need to import from repository
+export type { EmployeeRow };
+
+// ---------------------------------------------------------------------------
 // Error types
 // ---------------------------------------------------------------------------
 
@@ -88,7 +156,9 @@ export class IdentityError extends Error {
       | "password_too_short"
       | "password_too_weak"
       | "unauthenticated"
-      | "wrong_kind",
+      | "wrong_kind"
+      | "employee_not_found"
+      | "employee_already_exists",
     message?: string,
   ) {
     super(message ?? code);
@@ -337,6 +407,423 @@ export async function updateStaffPassword(
   }
 
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// getCurrentStaffProfile — authenticated read (DOC-50 §1.3 shell header)
+// ---------------------------------------------------------------------------
+
+export interface StaffProfileResult {
+  displayName: string;
+  role: string;
+  titleI18n: StaffProfileRow["titleI18n"];
+  avatarUrl: string | null;
+}
+
+/**
+ * Returns the staff profile of the currently authenticated staff member, for
+ * the shell header / sidebar user-chip (name, role, title, avatar). Read-only;
+ * the Actor's session guarantees it is the right user.
+ *
+ * Returns null when there is no staff session or no profile row.
+ */
+export async function getCurrentStaffProfile(): Promise<StaffProfileResult | null> {
+  const actor = await getActor();
+  if (!actor || actor.kind !== "staff") return null;
+
+  const profile = await getStaffProfileById(actor.userId);
+  if (!profile) return null;
+
+  return {
+    displayName: profile.displayName,
+    role: profile.role,
+    titleI18n: profile.titleI18n,
+    avatarUrl: profile.avatarUrl,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// countActiveEmployees — authenticated read (DOC-53 §1.1 dashboard KPI)
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns the number of active staff members (employees) in the actor's org,
+ * for the admin dashboard KPI. Requires a staff session; returns 0 otherwise.
+ */
+export async function countActiveEmployees(): Promise<number> {
+  const actor = await getActor();
+  if (!actor || actor.kind !== "staff") return 0;
+  return countActiveStaff();
+}
+
+// ---------------------------------------------------------------------------
+// inviteEmployee — DOC-22 §2.2 (RF-ADM-042)
+// ---------------------------------------------------------------------------
+
+/**
+ * Creates a new staff member with a temporary password.
+ *
+ * Exact flow per DOC-22 §2.2:
+ * a. can(actor, 'employees', 'edit')
+ * b. 24-char crypto-random password
+ * c. auth.admin.createUser(email_confirm=true, must_change_password=true)
+ * d. INSERT users(kind='staff') + staff_profiles + employee_module_permissions(preset)
+ * e. Send staff-invite email via Resend (password travels ONLY here — never in logs/events)
+ * f. emit staff.created + permissions.changed + audit
+ *
+ * API-AUT-09
+ */
+export async function inviteEmployee(
+  actor: Actor,
+  input: {
+    email: string;
+    displayName: string;
+    titleI18n: Record<string, string> | null;
+    role: "sales" | "paralegal" | "finance";
+    permissionsPreset?: EmployeePermissionInput[];
+  },
+): Promise<InviteEmployeeResult> {
+  // Step a: Authorization
+  can(actor, "employees", "edit");
+
+  // Step b: Generate 24-char cryptographically random password
+  // SECURITY: This value must NEVER appear in logs, event payloads, or audit diffs.
+  const tempPassword = crypto.randomBytes(18).toString("base64url").slice(0, 24);
+
+  // Step c: Create Supabase Auth user (service client)
+  const serviceClient = createServiceClient();
+  const { data: authData, error: authError } =
+    await serviceClient.auth.admin.createUser({
+      email: input.email,
+      password: tempPassword,
+      email_confirm: true, // skip verification email — we send our own
+      app_metadata: {
+        must_change_password: true,
+      },
+    });
+
+  if (authError || !authData.user) {
+    if (authError?.message?.toLowerCase().includes("already registered")) {
+      throw new IdentityError("employee_already_exists", authError.message);
+    }
+    throw new Error(`inviteEmployee.createUser: ${authError?.message}`);
+  }
+
+  const userId = authData.user.id;
+
+  // Step d: Insert base rows + preset permissions
+  const permissions =
+    input.permissionsPreset ?? buildPermissionPreset(input.role);
+
+  try {
+    await insertStaffRows({
+      userId,
+      orgId: actor.orgId,
+      email: input.email,
+      displayName: input.displayName,
+      titleI18n: input.titleI18n as import("@/shared/database.types").Json,
+      role: input.role,
+      permissions,
+    });
+  } catch (err) {
+    // Compensate: delete the auth user so we don't leave orphaned auth rows
+    await serviceClient.auth.admin.deleteUser(userId).catch((e: unknown) =>
+      logger.error({ err: e, userId }, "inviteEmployee: compensation deleteUser failed"),
+    );
+    throw err;
+  }
+
+  // Step e: Send staff-invite email via Resend
+  // The temp password travels ONLY through this email; no event payload, no logs.
+  const loginLink = `${process.env.NEXT_PUBLIC_APP_URL ?? "https://panel.usalatinoprime.com"}/login`;
+  const emailHtml = buildStaffInviteEmail({
+    displayName: input.displayName,
+    email: input.email,
+    tempPassword, // passed by value into email render — not in any log
+    loginLink,
+  });
+
+  try {
+    await sendTransactional({
+      to: input.email,
+      from: FROM_TRANSACTIONAL,
+      subject: "Bienvenido/a a UsaLatinoPrime — accede al panel",
+      html: emailHtml,
+      idempotencyKey: `staff-invite:${userId}`,
+    });
+  } catch (emailErr) {
+    // Non-fatal: log the email failure but don't roll back the created account.
+    // The admin can resend via resendInvite action.
+    logger.error(
+      { err: emailErr, userId },
+      "inviteEmployee: email send failed — account was created",
+    );
+  }
+
+  // Step f: Emit events + audit
+  appEvents.emit({
+    type: "staff.created",
+    payload: {
+      userId,
+      orgId: actor.orgId,
+      email: input.email,
+      displayName: input.displayName,
+      role: input.role,
+      invitedBy: actor.userId,
+      // SECURITY: tempPassword is NOT in the event payload
+    },
+    occurredAt: new Date(),
+  });
+
+  appEvents.emit({
+    type: "permissions.changed",
+    payload: {
+      staffId: userId,
+      orgId: actor.orgId,
+      changedBy: actor.userId,
+      permissions: permissions.map((p) => ({
+        module_key: p.module_key,
+        can_view: p.can_view,
+        can_edit: p.can_edit,
+      })),
+    },
+    occurredAt: new Date(),
+  });
+
+  const audit = await getAudit();
+  await audit.writeAudit(actor, "invite", "staff", userId, {
+    email: input.email,
+    role: input.role,
+    displayName: input.displayName,
+  });
+
+  return { ok: true, userId };
+}
+
+// ---------------------------------------------------------------------------
+// updateEmployeePermissions — RF-ADM-045
+// ---------------------------------------------------------------------------
+
+/**
+ * Replaces the permission matrix for a staff member.
+ * Takes effect immediately on the next request (permissions are NOT in JWT — DOC-22 §3.1).
+ *
+ * API-AUT-10
+ */
+export async function updateEmployeePermissions(
+  actor: Actor,
+  staffId: string,
+  permissions: EmployeePermissionInput[],
+): Promise<UpdatePermissionsResult> {
+  can(actor, "employees", "edit");
+
+  const prevPermissions = await (async () => {
+    try {
+      const supabase = createServiceClient();
+      const { data } = await supabase
+        .from("employee_module_permissions")
+        .select("module_key, can_view, can_edit")
+        .eq("staff_id", staffId);
+      return data ?? [];
+    } catch {
+      return [];
+    }
+  })();
+
+  await replaceStaffPermissions(staffId, permissions);
+
+  appEvents.emit({
+    type: "permissions.changed",
+    payload: {
+      staffId,
+      orgId: actor.orgId,
+      changedBy: actor.userId,
+      permissions: permissions.map((p) => ({
+        module_key: p.module_key,
+        can_view: p.can_view,
+        can_edit: p.can_edit,
+      })),
+    },
+    occurredAt: new Date(),
+  });
+
+  const audit = await getAudit();
+  await audit.writeAudit(actor, "update_permissions", "staff", staffId, {
+    before: prevPermissions,
+    after: permissions,
+  });
+
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// deactivateEmployee — RF-ADM-043
+// ---------------------------------------------------------------------------
+
+/**
+ * Deactivates a staff member: sets is_active=false, revokes all sessions,
+ * and bans the Supabase auth user from future logins.
+ *
+ * API-AUT-11
+ */
+export async function deactivateEmployee(
+  actor: Actor,
+  staffId: string,
+): Promise<DeactivateEmployeeResult> {
+  can(actor, "employees", "edit");
+
+  // Set is_active=false in public.users
+  await setStaffActive(staffId, false);
+
+  // Revoke all sessions + ban (ban=true prevents future logins)
+  await revokeAllSessions(staffId, true);
+
+  const audit = await getAudit();
+  await audit.writeAudit(actor, "deactivate", "staff", staffId, {
+    changedBy: actor.userId,
+  });
+
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// reactivateEmployee — RF-ADM-043
+// ---------------------------------------------------------------------------
+
+/**
+ * Reactivates a deactivated staff member: sets is_active=true and lifts
+ * the Supabase auth ban so they can log in again.
+ *
+ * API-AUT-12
+ */
+export async function reactivateEmployee(
+  actor: Actor,
+  staffId: string,
+): Promise<ReactivateEmployeeResult> {
+  can(actor, "employees", "edit");
+
+  // Re-enable the user in public.users
+  await setStaffActive(staffId, true);
+
+  // Lift the auth ban (ban=false unblocks future logins)
+  // revokeAllSessions with ban=false calls updateUserById({ ban_duration: 'none' })
+  await revokeAllSessions(staffId, false);
+
+  const audit = await getAudit();
+  await audit.writeAudit(actor, "reactivate", "staff", staffId, {
+    changedBy: actor.userId,
+  });
+
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// listEmployees — RF-ADM-041
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns the list of all staff members with their permissions.
+ * Used by the employees panel.
+ *
+ * API-AUT-13
+ */
+export async function listEmployees(
+  actor: Actor,
+): Promise<ListEmployeesResult> {
+  can(actor, "employees", "view");
+
+  const employees = await listStaffMembers();
+  return { employees };
+}
+
+// ---------------------------------------------------------------------------
+// Helpers — permission preset matrix (DOC-22 §6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns the default permission rows for a given role.
+ * E = view+edit, V = view-only, — = no access.
+ * Source of truth: DOC-22 §6 matrix.
+ */
+function buildPermissionPreset(
+  role: "admin" | "sales" | "paralegal" | "finance",
+): EmployeePermissionInput[] {
+  if (role === "admin") {
+    // Admin bypasses matrix entirely (§5.2). Return full access for completeness.
+    return MODULE_KEYS.map((k) => ({
+      module_key: k as ModuleKey,
+      can_view: true,
+      can_edit: true,
+    }));
+  }
+
+  type Cell = "E" | "V" | "-";
+
+  // Matrix from DOC-22 §6 (sales = Vanessa, paralegal = Diana, finance = Andrium)
+  const matrix: Record<ModuleKey, { sales: Cell; paralegal: Cell; finance: Cell }> = {
+    dashboard:   { sales: "V", paralegal: "V", finance: "V" },
+    leads:       { sales: "E", paralegal: "-", finance: "-" },
+    clients:     { sales: "V", paralegal: "V", finance: "V" },
+    cases:       { sales: "V", paralegal: "E", finance: "V" },
+    calendar:    { sales: "E", paralegal: "V", finance: "-" },
+    availability: { sales: "E", paralegal: "-", finance: "-" },
+    metrics:     { sales: "V", paralegal: "-", finance: "-" },
+    catalog:     { sales: "-", paralegal: "-", finance: "-" },
+    datasets:    { sales: "-", paralegal: "-", finance: "-" },
+    employees:   { sales: "-", paralegal: "-", finance: "-" },
+    billing:     { sales: "-", paralegal: "-", finance: "E" },
+    collections: { sales: "-", paralegal: "-", finance: "E" },
+    printing:    { sales: "-", paralegal: "-", finance: "E" },
+    campaigns:   { sales: "-", paralegal: "-", finance: "E" },
+    accounting:  { sales: "-", paralegal: "-", finance: "E" },
+    expedientes: { sales: "-", paralegal: "E", finance: "V" },
+    validations: { sales: "-", paralegal: "E", finance: "-" },
+    messaging:   { sales: "E", paralegal: "E", finance: "E" },
+    community:   { sales: "-", paralegal: "-", finance: "E" },
+    audit:       { sales: "-", paralegal: "-", finance: "-" },
+  };
+
+  return MODULE_KEYS.flatMap((k) => {
+    const cell = matrix[k as ModuleKey][role];
+    if (cell === "-") return [];
+    return [
+      {
+        module_key: k as ModuleKey,
+        can_view: true,
+        can_edit: cell === "E",
+      },
+    ];
+  });
+}
+
+/**
+ * Builds the HTML body for the staff invitation email.
+ * The temp password is rendered here and goes nowhere else.
+ */
+function buildStaffInviteEmail(opts: {
+  displayName: string;
+  email: string;
+  tempPassword: string;
+  loginLink: string;
+}): string {
+  // Intentionally simple HTML — no JSX dependency in this module.
+  // The react-email component for staff-invite is in the notifications module (F3).
+  return `<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"><title>Bienvenido/a a UsaLatinoPrime</title></head>
+<body style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:32px;">
+  <h2>Bienvenido/a al panel, ${opts.displayName}</h2>
+  <p>El administrador te ha dado acceso al panel de UsaLatinoPrime.</p>
+  <p><strong>Email:</strong> ${opts.email}<br>
+  <strong>Contraseña temporal:</strong> <code>${opts.tempPassword}</code></p>
+  <p>Al ingresar por primera vez se te pedirá que cambies la contraseña.</p>
+  <p><a href="${opts.loginLink}" style="background:#0f172a;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;">Acceder al panel</a></p>
+  <p style="color:#6b7280;font-size:12px;margin-top:32px;">
+    Si no esperabas este email, puedes ignorarlo.
+    Este mensaje fue enviado por UsaLatinoPrime.
+  </p>
+</body>
+</html>`;
 }
 
 // ---------------------------------------------------------------------------

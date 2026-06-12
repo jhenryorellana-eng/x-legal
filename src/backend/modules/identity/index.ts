@@ -17,7 +17,7 @@ export type { PhoneNormalizationError } from "./domain";
 export { normalizePhoneE164 } from "./domain";
 
 // Action result types (needed by UI layer)
-export type { ActionResult } from "./actions";
+export type { ActionResult, TypedActionResult } from "./actions";
 
 // Service result types (for other modules that delegate to identity)
 export type {
@@ -26,7 +26,20 @@ export type {
   PasswordResetResult,
   PasswordUpdateResult,
   IdentityError,
+  StaffProfileResult,
+  InviteEmployeeResult,
+  UpdatePermissionsResult,
+  DeactivateEmployeeResult,
+  ReactivateEmployeeResult,
+  ListEmployeesResult,
+  EmployeeRow,
 } from "./service";
+
+// Read-only staff profile for the shell header / sidebar user-chip (DOC-50 §1.3)
+export { getCurrentStaffProfile } from "./service";
+
+// Read-only employee count for the admin dashboard KPI (DOC-53 §1.1)
+export { countActiveEmployees } from "./service";
 
 // Auth / authorization helpers — re-exported here so app-layer files can
 // import them via module-pub boundary (app → module-pub is allowed per DOC-21).

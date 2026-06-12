@@ -28,8 +28,21 @@ import {
 } from "@/frontend/components/ui/card";
 import { Input } from "@/frontend/components/ui/input";
 import { Label } from "@/frontend/components/ui/label";
-import { Switch } from "@/frontend/components/ui/switch";
-import { Skeleton } from "@/frontend/components/ui/skeleton";
+import { Switch as ShadSwitch } from "@/frontend/components/ui/switch";
+import { Skeleton as ShadSkeleton } from "@/frontend/components/ui/skeleton";
+import {
+  Sidebar,
+  Kpi,
+  DataTable,
+  EmptyState,
+  Modal,
+  SidePanel,
+  Switch as StaffSwitch,
+  Skeleton as StaffSkeleton,
+  BrandToaster,
+  toast,
+  type Column,
+} from "@/frontend/components/desktop";
 
 /* ── Layout helpers ─────────────────────────────────────────────────────── */
 
@@ -83,7 +96,7 @@ function Tile({
 }: {
   label: string;
   children: React.ReactNode;
-  width?: number;
+  width?: number | string;
 }) {
   return (
     <div style={{ width, maxWidth: "100%" }}>
@@ -108,11 +121,64 @@ function Tile({
 
 const LEX_MOODS: LexMood[] = ["calma", "feliz", "atento", "señala", "celebra"];
 
+interface DemoCase {
+  id: string;
+  number: string;
+  client: string;
+  service: string;
+  age: string;
+}
+
+const DEMO_CASES: DemoCase[] = [
+  { id: "1", number: "ULP-2026-0042", client: "María González", service: "Asilo Político", age: "hace 3 días" },
+  { id: "2", number: "ULP-2026-0041", client: "José Martínez", service: "Creación de LLC", age: "hace 5 días" },
+  { id: "3", number: "ULP-2026-0039", client: "Ana Ruiz", service: "Residencia familiar", age: "hace 8 días" },
+  { id: "4", number: "ULP-2026-0037", client: "Carlos Díaz", service: "Asilo Político", age: "hace 12 días" },
+];
+
 export default function DesignShowcasePage() {
   const [staff, setStaff] = React.useState(false);
+  const [modalOpen, setModalOpen] = React.useState(false);
+  const [panelOpen, setPanelOpen] = React.useState(false);
+  const [sort, setSort] = React.useState<{ id: string; dir: "asc" | "desc" }>({
+    id: "number",
+    dir: "desc",
+  });
+
+  const caseColumns: Column<DemoCase>[] = [
+    {
+      id: "number",
+      header: "Caso",
+      sortable: true,
+      cell: (r) => (
+        <div>
+          <div style={{ fontWeight: 800, fontSize: 13, color: "var(--ink)" }}>{r.number}</div>
+          <div style={{ fontSize: 12, color: "var(--ink-2)" }}>{r.client}</div>
+        </div>
+      ),
+    },
+    {
+      id: "service",
+      header: "Servicio",
+      sortable: true,
+      cell: (r) => <Chip tone="blue">{r.service}</Chip>,
+    },
+    {
+      id: "status",
+      header: "Estado",
+      cell: () => <StatusPill kind="aprobado">Activo</StatusPill>,
+    },
+    {
+      id: "age",
+      header: "Apertura",
+      align: "right",
+      cell: (r) => <span style={{ color: "var(--ink-2)", fontSize: 13 }}>{r.age}</span>,
+    },
+  ];
 
   return (
     <div className={staff ? "surface-staff" : undefined}>
+      <BrandToaster />
       <main
         style={{
           minHeight: "100vh",
@@ -537,7 +603,7 @@ export default function DesignShowcasePage() {
                       gap: 10,
                     }}
                   >
-                    <Switch id="notif" defaultChecked />
+                    <ShadSwitch id="notif" defaultChecked />
                     <Label htmlFor="notif">Enviar notificaciones</Label>
                   </div>
                 </div>
@@ -551,9 +617,9 @@ export default function DesignShowcasePage() {
           <Tile label="loading" width={280}>
             <Card>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <Skeleton className="h-5 w-32" />
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-3/4" />
+                <ShadSkeleton className="h-5 w-32" />
+                <ShadSkeleton className="h-4 w-full" />
+                <ShadSkeleton className="h-4 w-3/4" />
               </div>
             </Card>
           </Tile>
@@ -610,6 +676,292 @@ export default function DesignShowcasePage() {
           </Tile>
         </Section>
 
+        {/* ── Desktop components (staff panels) ──────────────────────────── */}
+        <Section
+          title="Desktop — paneles staff (F1)"
+          hint="Sidebar · KPI · DataTable · EmptyState · Modal · SidePanel · Switch · Skeleton · Toast (DOC-01 §5.3). Activa «Superficie: Staff» arriba para ver los tokens desktop."
+        >
+          {/* KPI row */}
+          <Tile label="KPI · row (1 hot)" width="100%">
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                gap: 14,
+              }}
+            >
+              <Kpi
+                icon="briefcase"
+                hot
+                label="Casos activos"
+                value="128"
+                trend={{ dir: "up", label: "12%" }}
+                onClick={() => toast.success("KPI: Casos activos")}
+                aria-label="Casos activos"
+              />
+              <Kpi icon="grid" label="Servicios activos" value="14" />
+              <Kpi
+                icon="user"
+                label="Empleados activos"
+                value="6"
+                trend={{ dir: "down", label: "1" }}
+              />
+              <Kpi icon="dollar" label="Ingresos del mes" value="$42,500" />
+            </div>
+          </Tile>
+
+          {/* Sidebar preview */}
+          <Tile label="Sidebar (248px · nav activo + badge)" width={260}>
+            <div
+              style={{
+                height: 460,
+                borderRadius: "var(--r-lg)",
+                overflow: "hidden",
+                boxShadow: "var(--shadow-md)",
+                border: "1px solid var(--line)",
+              }}
+            >
+              <div style={{ transform: "scale(1)", height: "100%" }}>
+                <Sidebar
+                  panelLabel="Panel de administración"
+                  user={{ name: "Henry Orellana", title: "Administrador" }}
+                  groups={[
+                    {
+                      label: "General",
+                      items: [{ label: "Dashboard", href: "/admin", icon: "grid" }],
+                    },
+                    {
+                      label: "Operación",
+                      items: [
+                        { label: "Casos", href: "/admin/casos", icon: "briefcase", badge: 6 },
+                        { label: "Calendario", href: "/ventas/citas", icon: "calendar" },
+                        { label: "Validaciones", href: "/legal/validaciones", icon: "shield" },
+                      ],
+                    },
+                    {
+                      label: "Catálogo",
+                      items: [
+                        { label: "Servicios", href: "/admin/catalogo", icon: "grid" },
+                        { label: "Datasets IA", href: "/admin/datasets", icon: "sparkle" },
+                      ],
+                    },
+                  ]}
+                />
+              </div>
+            </div>
+          </Tile>
+
+          {/* DataTable */}
+          <Tile label="DataTable (sticky header · sort · cargar más)" width="100%">
+            <DataTable
+              columns={caseColumns}
+              rows={DEMO_CASES}
+              rowKey={(r) => r.id}
+              sort={sort}
+              onSortChange={setSort}
+              onRowClick={(r) => toast.info(`Abrir ${r.number}`)}
+              hasMore
+              onLoadMore={() => toast("Cargando más casos…")}
+              loadMoreLabel="Cargar más"
+            />
+          </Tile>
+
+          {/* DataTable loading + empty */}
+          <Tile label="DataTable · loading" width={420}>
+            <DataTable
+              columns={caseColumns}
+              rows={[]}
+              rowKey={(r) => r.id}
+              loading
+              skeletonRows={4}
+            />
+          </Tile>
+
+          {/* EmptyState */}
+          <Tile label="EmptyState (Lex + CTA)" width={360}>
+            <EmptyState
+              title="Aún no hay casos"
+              subtitle="Los casos nacen cuando Vanessa convierte un lead y el cliente firma."
+              mood="calma"
+              action={{ label: "Ir al catálogo", icon: "grid", onClick: () => toast("Catálogo") }}
+              secondaryAction={{ label: "Ver leads", icon: "route", onClick: () => toast("Leads") }}
+            />
+          </Tile>
+
+          {/* EmptyState error */}
+          <Tile label="EmptyState · error (code)" width={360}>
+            <EmptyState
+              title="No se pudo cargar"
+              subtitle="Reintenta con un rango menor."
+              mood="atento"
+              lexSize={92}
+              action={{ label: "Reintentar", icon: "route", onClick: () => toast.error("Reintentando") }}
+              code="AGGREGATION_TIMEOUT"
+            />
+          </Tile>
+
+          {/* Switch + Skeleton + Toast + Modal/Panel triggers */}
+          <Tile label="Switch (staff) · Skeleton · Toast" width={300}>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 16,
+                padding: 16,
+                background: "var(--panel, var(--card))",
+                borderRadius: "var(--r-lg)",
+                border: "1px solid var(--line)",
+                boxShadow: "var(--shadow-sm)",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <StaffSwitch defaultChecked aria-label="Obligatorio" />
+                <span style={{ fontSize: 14, color: "var(--ink)", fontWeight: 600 }}>
+                  Obligatorio (on = verde)
+                </span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <StaffSwitch aria-label="IA extrae" />
+                <span style={{ fontSize: 14, color: "var(--ink-2)", fontWeight: 600 }}>
+                  IA extrae (off)
+                </span>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <StaffSkeleton width="70%" height={14} />
+                <StaffSkeleton width="100%" height={12} />
+                <StaffSkeleton width="50%" height={12} />
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                <GhostBtn size="md" full={false} icon="check" onClick={() => toast.success("¡Guardado!")}>
+                  Toast éxito
+                </GhostBtn>
+                <GhostBtn size="md" full={false} icon="x" color="var(--red)" onClick={() => toast.error("Error de red")}>
+                  Toast error
+                </GhostBtn>
+              </div>
+            </div>
+          </Tile>
+
+          {/* Modal + SidePanel triggers */}
+          <Tile label="Modal · SidePanel" width={300}>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 10,
+                padding: 16,
+                background: "var(--panel, var(--card))",
+                borderRadius: "var(--r-lg)",
+                border: "1px solid var(--line)",
+                boxShadow: "var(--shadow-sm)",
+              }}
+            >
+              <GradientBtn size="md" icon="bolt" onClick={() => setModalOpen(true)}>
+                Abrir Modal
+              </GradientBtn>
+              <GhostBtn size="md" icon="doc" onClick={() => setPanelOpen(true)}>
+                Abrir SidePanel
+              </GhostBtn>
+            </div>
+          </Tile>
+        </Section>
+
+        {/* Desktop overlays */}
+        <Modal
+          open={modalOpen}
+          onOpenChange={setModalOpen}
+          title="Avanzar fase"
+          description="Caso ULP-2026-0042 · María González"
+          footer={
+            <>
+              <GhostBtn size="md" full={false} onClick={() => setModalOpen(false)}>
+                Cancelar
+              </GhostBtn>
+              <GradientBtn
+                size="md"
+                full={false}
+                icon="check"
+                onClick={() => {
+                  setModalOpen(false);
+                  toast.success("Fase avanzada");
+                }}
+              >
+                Avanzar a Documentos
+              </GradientBtn>
+            </>
+          }
+        >
+          <p style={{ margin: 0, fontSize: 14, color: "var(--ink-2)", lineHeight: 1.6 }}>
+            La fase actual <strong style={{ color: "var(--ink)" }}>Apertura</strong> pasará a{" "}
+            <strong style={{ color: "var(--ink)" }}>Documentos</strong>. Todas tus acciones quedan
+            auditadas.
+          </p>
+        </Modal>
+
+        <SidePanel
+          open={panelOpen}
+          onOpenChange={setPanelOpen}
+          title="Pasaporte — María González"
+          subtitle="Documento subido · pendiente de revisión"
+          footer={
+            <>
+              <GhostBtn size="md" color="var(--red)" onClick={() => setPanelOpen(false)}>
+                Rechazar
+              </GhostBtn>
+              <GradientBtn
+                size="md"
+                icon="check"
+                onClick={() => {
+                  setPanelOpen(false);
+                  toast.success("Documento aprobado");
+                }}
+              >
+                Aprobar
+              </GradientBtn>
+            </>
+          }
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div
+              style={{
+                height: 160,
+                borderRadius: "var(--r-md)",
+                background: "var(--chip)",
+                display: "grid",
+                placeItems: "center",
+                color: "var(--ink-3)",
+                fontSize: 13,
+              }}
+            >
+              Visor de documento
+            </div>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--ink-3)", marginBottom: 8 }}>
+                Datos extraídos (IA)
+              </div>
+              {[
+                ["Número", "X1234567"],
+                ["Nombre", "María González"],
+                ["Nacionalidad", "Venezolana"],
+              ].map(([k, v]) => (
+                <div
+                  key={k}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    padding: "8px 0",
+                    borderBottom: "1px solid var(--line-2, var(--line))",
+                    fontSize: 14,
+                  }}
+                >
+                  <span style={{ color: "var(--ink-2)" }}>{k}</span>
+                  <span style={{ color: "var(--ink)", fontWeight: 600 }}>{v}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </SidePanel>
+
         <footer
           style={{
             marginTop: 56,
@@ -621,7 +973,8 @@ export default function DesignShowcasePage() {
           }}
         >
           Criterio de salida F0 · todos los componentes de DOC-01 §5.1 + tokens
-          §3 + motion §7 en light/dark, cliente/staff.
+          §3 + motion §7 en light/dark, cliente/staff. F1 · componentes desktop
+          §5.3 + shell staff.
         </footer>
       </main>
     </div>

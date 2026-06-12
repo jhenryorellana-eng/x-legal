@@ -46,18 +46,45 @@ vi.mock("@/backend/platform/logger.js", () => ({
 // platform/authz
 vi.mock("@/backend/platform/authz.js", () => ({
   requireActor: vi.fn(),
+  can: vi.fn(),
+  AuthzError: class AuthzError extends Error {
+    constructor(public readonly reason: string) { super(reason); this.name = "AuthzError"; }
+  },
 }));
 
 // identity/repository
 vi.mock("../repository.js", () => ({
   checkClientEligibility: vi.fn(),
   checkClientEligibilityById: vi.fn(),
+  insertStaffRows: vi.fn(),
+  replaceStaffPermissions: vi.fn(),
+  setStaffActive: vi.fn(),
+  listStaffMembers: vi.fn(),
+  getStaffProfileById: vi.fn(),
+  countActiveStaff: vi.fn().mockResolvedValue(0),
+}));
+
+// platform/resend — mock to avoid env validation
+vi.mock("@/backend/platform/resend.js", () => ({
+  sendTransactional: vi.fn().mockResolvedValue({ id: "email-id-1" }),
+  FROM_TRANSACTIONAL: "test@mail.example.com",
+}));
+
+// platform/events — mock to avoid initialization
+vi.mock("@/backend/platform/events.js", () => ({
+  appEvents: { emit: vi.fn(), on: vi.fn() },
+}));
+
+// audit module — mock dynamic import target
+vi.mock("@/backend/modules/audit/index.js", () => ({
+  writeAudit: vi.fn().mockResolvedValue(undefined),
 }));
 
 // platform/supabase — factory uses vi.fn() without referencing hoisted vars
 vi.mock("@/backend/platform/supabase.js", () => ({
   createServerClient: vi.fn(),
   createServiceClient: vi.fn(),
+  revokeAllSessions: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------

@@ -239,6 +239,18 @@
   }
 }
 
+/* SidePanel — slide in from the right (DOC-01 §5.3) */
+@keyframes slideInRight {
+  from {
+    transform: translateX(24px);
+    opacity: 0.6;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
 /* Skeleton shimmer */
 @keyframes shimmer {
   0% {
@@ -247,6 +259,51 @@
   100% {
     transform: translateX(220%) skewX(-18deg);
   }
+}
+
+/* ---------------------------------------------------------------------------
+ * Desktop Switch (DOC-01 §5.3) — Radix state drives the brand visuals.
+ * Inline styles can't target [data-state]; these rules complete the toggle.
+ * ------------------------------------------------------------------------- */
+.staff-switch[data-state="checked"] {
+  background-color: var(--green) !important;
+}
+.staff-switch[data-state="checked"] .staff-switch-thumb {
+  transform: translateX(21px) !important;
+}
+.staff-switch:focus-visible {
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+.staff-switch[data-disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* SidePanel entrance (DOC-01 §5.3) */
+.side-panel-content[data-state="open"] {
+  animation: slideInRight 0.28s var(--ease);
+}
+
+/* DataTable rows (DOC-53 §0.6) — hover --hover, focus ring --accent-soft */
+.dt-row:hover {
+  background-color: var(--hover);
+}
+.dt-row:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent-soft);
+}
+.dt-sort-asc {
+  transform: rotate(180deg);
+}
+
+/* Sidebar nav item hover (DOC-53 §0.2) — only inactive items tint to --hover */
+.nav-item:not([data-active]):hover {
+  background-color: var(--hover) !important;
+  color: var(--ink) !important;
+}
+.nav-item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 /* ---------------------------------------------------------------------------

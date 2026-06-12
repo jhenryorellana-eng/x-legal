@@ -49,6 +49,15 @@ const eslintConfig = [
       ],
     },
     rules: {
+      // Allow unused vars/params with underscore prefix (convention for intentional stubs/ignores)
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+        },
+      ],
       "boundaries/element-types": [
         "error",
         {

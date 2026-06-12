@@ -102,6 +102,81 @@
       "greeting": "Hello, {name}",
       "role": "Role: {role}",
       "comingSoon": "This section will be available soon."
+    },
+    "shell": {
+      "panelLabel": "Admin panel",
+      "searchPlaceholder": "Search lead, client or phone…",
+      "notifications": "Notifications",
+      "logout": "Sign out"
+    },
+    "roles": {
+      "admin": "Administrator",
+      "sales": "Sales advisor",
+      "paralegal": "Paralegal",
+      "finance": "Finance",
+      "staff": "Team"
+    },
+    "nav": {
+      "groups": {
+        "general": "General",
+        "operations": "Operations",
+        "sales": "Sales",
+        "finance": "Finance",
+        "catalog": "Catalog",
+        "administration": "Administration"
+      },
+      "items": {
+        "dashboard": "Dashboard",
+        "cases": "Cases",
+        "calendar": "Calendar",
+        "expedientes": "Case files",
+        "validations": "Validations",
+        "printing": "Printing",
+        "leads": "Leads",
+        "clients": "Clients",
+        "salesMetrics": "Sales metrics",
+        "payments": "Payments & collections",
+        "accounting": "Accounting",
+        "campaigns": "Campaigns",
+        "services": "Services",
+        "datasets": "AI datasets",
+        "employees": "Employees",
+        "audit": "Audit",
+        "settings": "Settings"
+      }
+    },
+    "dashboard": {
+      "greeting": "Good morning",
+      "greetingName": "Good morning, {name}",
+      "sub": "Here's what's happening in your business today.",
+      "comingSoon": "This section is completed in the next wave.",
+      "pendingData": "Coming soon",
+      "period": {
+        "today": "Today",
+        "d7": "7 days",
+        "d30": "30 days",
+        "custom": "Custom"
+      },
+      "kpi": {
+        "cases": "Active cases",
+        "services": "Active services",
+        "employees": "Active employees",
+        "revenue": "Revenue this month",
+        "conversion": "Lead conversion"
+      },
+      "card": {
+        "casesByService": "Cases by service",
+        "casesByPhase": "Cases by phase and status",
+        "revenue": "Revenue this month",
+        "funnel": "Conversion funnel",
+        "validations": "Lawyer validations",
+        "aiCost": "AI spend vs budget",
+        "activity": "Recent activity"
+      },
+      "activityEmpty": {
+        "title": "No activity in this period yet",
+        "sub": "Change the range or create your first service to start seeing movement here."
+      }
     }
   }
 }

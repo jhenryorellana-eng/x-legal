@@ -12,6 +12,10 @@
  *    Use in: route handlers, server actions, getActor().
  *
  * Both clients are typed with `Database` from the generated types (DOC-21).
+ *
+ * 3. `revokeAllSessions(userId, ban?)` — Admin API: invalidates all refresh
+ *    tokens for a user.  If `ban=true`, also sets ban_duration='876600h' so
+ *    no future login is possible until explicitly unblocked.
  */
 
 import { createClient } from "@supabase/supabase-js";
@@ -19,6 +23,7 @@ import { createServerClient as createSSRClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import type { Database } from "@/shared/database.types";
 import { env } from "./env";
+import { logger } from "./logger";
 
 // ---------------------------------------------------------------------------
 // Service client (service_role — RLS bypass)
@@ -52,6 +57,65 @@ export function createServiceClient() {
 // ---------------------------------------------------------------------------
 // Server client (anon key + SSR cookies — RLS applies as the logged-in user)
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// revokeAllSessions — DOC-22 §3.3
+// ---------------------------------------------------------------------------
+
+/**
+ * Invalidates all refresh tokens for a user (global logout) via Admin API.
+ *
+ * If `ban=true`, also sets `ban_duration='876600h'` so the user cannot log in
+ * again until `revokeAllSessions(userId, false)` is called with ban=false.
+ *
+ * DOC-22 §3.3: "revocación activa" pattern.
+ * Note: a residual access token window (≤1 h) exists but is inert because
+ * every request re-checks `users.is_active` via `getActor()`.
+ */
+export async function revokeAllSessions(
+  userId: string,
+  ban = false,
+): Promise<void> {
+  const client = createServiceClient();
+
+  const { error: signOutError } =
+    await client.auth.admin.signOut(userId, "global");
+
+  if (signOutError) {
+    logger.warn(
+      { err: signOutError.message, userId },
+      "revokeAllSessions: signOut error (non-fatal)",
+    );
+  }
+
+  if (ban) {
+    const { error: banError } = await client.auth.admin.updateUserById(userId, {
+      ban_duration: "876600h", // ~100 years — effectively permanent until unblocked
+    });
+
+    if (banError) {
+      logger.warn(
+        { err: banError.message, userId },
+        "revokeAllSessions: ban error (non-fatal)",
+      );
+    }
+  } else {
+    // Unban — called when reactivating a user
+    const { error: unbanError } = await client.auth.admin.updateUserById(
+      userId,
+      {
+        ban_duration: "none",
+      },
+    );
+
+    if (unbanError) {
+      logger.warn(
+        { err: unbanError.message, userId },
+        "revokeAllSessions: unban error (non-fatal)",
+      );
+    }
+  }
+}
 
 /**
  * Returns a Supabase client bound to the current request cookies.

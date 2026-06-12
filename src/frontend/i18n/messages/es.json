@@ -102,6 +102,81 @@
       "greeting": "Hola, {name}",
       "role": "Rol: {role}",
       "comingSoon": "Esta sección estará disponible próximamente."
+    },
+    "shell": {
+      "panelLabel": "Panel de administración",
+      "searchPlaceholder": "Buscar lead, cliente o teléfono…",
+      "notifications": "Avisos",
+      "logout": "Cerrar sesión"
+    },
+    "roles": {
+      "admin": "Administrador",
+      "sales": "Asesora de ventas",
+      "paralegal": "Paralegal",
+      "finance": "Finanzas",
+      "staff": "Equipo"
+    },
+    "nav": {
+      "groups": {
+        "general": "General",
+        "operations": "Operación",
+        "sales": "Ventas",
+        "finance": "Finanzas",
+        "catalog": "Catálogo",
+        "administration": "Administración"
+      },
+      "items": {
+        "dashboard": "Dashboard",
+        "cases": "Casos",
+        "calendar": "Calendario",
+        "expedientes": "Expedientes",
+        "validations": "Validaciones",
+        "printing": "Impresión",
+        "leads": "Leads",
+        "clients": "Clientes",
+        "salesMetrics": "Métricas de ventas",
+        "payments": "Pagos y cobranza",
+        "accounting": "Contabilidad",
+        "campaigns": "Campañas",
+        "services": "Servicios",
+        "datasets": "Datasets IA",
+        "employees": "Empleados",
+        "audit": "Auditoría",
+        "settings": "Configuración"
+      }
+    },
+    "dashboard": {
+      "greeting": "Buen día",
+      "greetingName": "Buen día, {name}",
+      "sub": "Esto es lo que pasa en tu negocio hoy.",
+      "comingSoon": "Esta sección se completa en la próxima ola.",
+      "pendingData": "Próximamente",
+      "period": {
+        "today": "Hoy",
+        "d7": "7 días",
+        "d30": "30 días",
+        "custom": "Personalizado"
+      },
+      "kpi": {
+        "cases": "Casos activos",
+        "services": "Servicios activos",
+        "employees": "Empleados activos",
+        "revenue": "Ingresos del mes",
+        "conversion": "Conversión de leads"
+      },
+      "card": {
+        "casesByService": "Casos por servicio",
+        "casesByPhase": "Casos por fase y estado",
+        "revenue": "Ingresos del mes",
+        "funnel": "Embudo de conversión",
+        "validations": "Validaciones con abogado",
+        "aiCost": "Costes IA vs presupuesto",
+        "activity": "Actividad reciente"
+      },
+      "activityEmpty": {
+        "title": "Aún no hay actividad en este período",
+        "sub": "Cambia el rango o crea tu primer servicio para empezar a ver movimiento aquí."
+      }
     }
   }
 }
