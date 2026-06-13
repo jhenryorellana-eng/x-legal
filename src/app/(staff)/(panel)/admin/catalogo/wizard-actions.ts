@@ -13,6 +13,7 @@ import {
   updatePhaseUi,
   deletePhaseUi,
   upsertPolicyUi,
+  createRequiredDocUi,
   activateServiceUi,
 } from "./actions";
 
@@ -24,5 +25,6 @@ export const catalogWizardActions = {
   updatePhase: updatePhaseUi,
   deletePhase: deletePhaseUi,
   upsertPolicy: upsertPolicyUi,
+  createRequiredDoc: createRequiredDocUi,
   activate: activateServiceUi,
 };

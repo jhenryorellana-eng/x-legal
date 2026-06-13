@@ -21,6 +21,7 @@ export function buildCatalogStrings(tt: Translator): Record<string, string> {
     "phaseDesc", "clientExplainer", "milestones", "apptPolicy", "apptCount", "apptDuration",
     "apptKind", "apptVideo", "apptPhone", "apptPresencial", "apptNote", "selectPhase",
     "docDocument", "docTip", "docCategory", "docRequired", "docPerParty", "docAiExtract",
+    "docAdd", "docNeedName",
     "docActiveCol", "docSchema", "formPdf", "formAi", "filledBy", "filledClient",
     "filledStaff", "filledBoth", "formStub", "formStubSub", "publishTitle", "publishReady",
     "activateService", "celebrate", "issueBlocking", "issueWarning", "ackWarning",

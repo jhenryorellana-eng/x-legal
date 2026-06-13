@@ -301,7 +301,9 @@
         "celebrate": "🎉 {service} is now live. Clients see it in the app and Vanessa can create contracts — no deploy needed.",
         "issueBlocking": "Blocking",
         "issueWarning": "Warning",
-        "ackWarning": "I understand and want to publish anyway"
+        "ackWarning": "I understand and want to publish anyway",
+        "docAdd": "Add document",
+        "docNeedName": "Enter the document name (ES)."
       },
       "employees": {
         "title": "Employees",

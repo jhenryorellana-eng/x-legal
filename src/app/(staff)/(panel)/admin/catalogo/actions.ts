@@ -20,6 +20,7 @@ import {
   updatePhaseAction,
   deletePhaseAction,
   upsertPhasePolicyAction,
+  createRequiredDocumentAction,
 } from "@/backend/modules/catalog/actions";
 
 type Res<T> = { success: boolean; data?: T; error?: { code: string; message: string } };
@@ -72,6 +73,17 @@ export async function updatePhaseUi(id: string, patch: Record<string, unknown>):
 export async function deletePhaseUi(id: string): Promise<Res<unknown>> {
   const r = await deletePhaseAction(id);
   return r.success ? { success: true } : { success: false, error: r.error };
+}
+
+export async function createRequiredDocUi(
+  input: Record<string, unknown>,
+): Promise<Res<{ id: string }>> {
+  const r = await createRequiredDocumentAction(
+    input as Parameters<typeof createRequiredDocumentAction>[0],
+  );
+  return r.success
+    ? { success: true, data: { id: (r.data as { id: string }).id } }
+    : { success: false, error: r.error };
 }
 
 export async function upsertPolicyUi(input: Record<string, unknown>): Promise<Res<unknown>> {

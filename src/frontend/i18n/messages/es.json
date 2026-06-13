@@ -301,7 +301,9 @@
         "celebrate": "🎉 {service} ya está a la venta. El cliente lo ve en su app y Vanessa puede crear contratos — sin deploy.",
         "issueBlocking": "Bloqueante",
         "issueWarning": "Advertencia",
-        "ackWarning": "Entiendo y quiero publicar de todos modos"
+        "ackWarning": "Entiendo y quiero publicar de todos modos",
+        "docAdd": "Agregar documento",
+        "docNeedName": "Escribe el nombre del documento (ES)."
       },
       "employees": {
         "title": "Empleados",

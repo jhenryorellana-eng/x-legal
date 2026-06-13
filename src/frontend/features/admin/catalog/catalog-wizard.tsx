@@ -98,6 +98,7 @@ export interface CatalogWizardProps {
     updatePhase: (id: string, patch: Record<string, unknown>) => Promise<ActionRes<unknown>>;
     deletePhase: (id: string) => Promise<ActionRes<unknown>>;
     upsertPolicy: (input: Record<string, unknown>) => Promise<ActionRes<unknown>>;
+    createRequiredDoc: (input: Record<string, unknown>) => Promise<ActionRes<{ id: string }>>;
     activate: (id: string) => Promise<ActionRes<{ ok: boolean; issues: PublicationIssueVM[] }>>;
   };
 }
@@ -310,7 +311,9 @@ export function CatalogWizard({
             t={t}
           />
         )}
-        {step === "docs" && <DocsStep phases={phases} t={t} />}
+        {step === "docs" && (
+          <DocsStep phases={phases} setPhases={setPhases} actions={actions} t={t} />
+        )}
         {step === "forms" && <FormsStep t={t} />}
         {step === "publish" && <PublishStep issues={pubIssues} published={published} label={label.es ?? slug} t={t} onGoToStep={setStep} />}
       </Card>
@@ -716,9 +719,87 @@ function PhasesStep({
 
 /* ───────────────────────── Step 4: Documents ───────────────────────── */
 
-function DocsStep({ phases, t }: { phases: WizardPhase[]; t: Record<string, string> }) {
+function DocsStep({
+  phases,
+  setPhases,
+  actions,
+  t,
+}: {
+  phases: WizardPhase[];
+  setPhases: React.Dispatch<React.SetStateAction<WizardPhase[]>>;
+  actions: CatalogWizardProps["actions"];
+  t: Record<string, string>;
+}) {
   const [phaseIdx, setPhaseIdx] = React.useState(0);
   const phase = phases[phaseIdx];
+
+  // Add-document form (RF-ADM-023)
+  const [docLabel, setDocLabel] = React.useState<I18nValue>({ es: "", en: "" });
+  const [docCategory, setDocCategory] = React.useState("");
+  const [docRequired, setDocRequired] = React.useState(true);
+  const [docPerParty, setDocPerParty] = React.useState(false);
+  // Domain rule: is_per_party requires party_roles (CATALOG_PER_PARTY_WITHOUT_ROLES)
+  const [docPartyRoles, setDocPartyRoles] = React.useState("beneficiary");
+  const [docAiExtract, setDocAiExtract] = React.useState(false);
+  const [savingDoc, setSavingDoc] = React.useState(false);
+
+  const docSlugFrom = (es: string) =>
+    es
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60) || `documento-${(phase?.docs.length ?? 0) + 1}`;
+
+  async function addDocument() {
+    if (!phase) return;
+    if (!docLabel.es?.trim()) {
+      toast.error(t.docNeedName);
+      return;
+    }
+    const partyRoles = docPerParty
+      ? docPartyRoles.split(",").map((s) => s.trim()).filter(Boolean)
+      : null;
+    setSavingDoc(true);
+    const r = await actions.createRequiredDoc({
+      service_phase_id: phase.id,
+      slug: docSlugFrom(docLabel.es),
+      label_i18n: { es: docLabel.es ?? "", en: docLabel.en ?? "" },
+      category_i18n: docCategory.trim() ? { es: docCategory.trim(), en: "" } : null,
+      is_required: docRequired,
+      is_per_party: docPerParty,
+      party_roles: partyRoles,
+      ai_extract: docAiExtract,
+      position: phase.docs.length,
+    });
+    setSavingDoc(false);
+    if (r.success && r.data) {
+      const created: WizardDoc = {
+        id: r.data.id,
+        slug: docSlugFrom(docLabel.es),
+        label: { es: docLabel.es ?? "", en: docLabel.en ?? "" },
+        help: { es: "", en: "" },
+        category: { es: docCategory.trim(), en: "" },
+        is_required: docRequired,
+        is_per_party: docPerParty,
+        party_roles: partyRoles ?? [],
+        ai_extract: docAiExtract,
+        is_active: true,
+      };
+      setPhases((prev) =>
+        prev.map((p, i) => (i === phaseIdx ? { ...p, docs: [...p.docs, created] } : p)),
+      );
+      setDocLabel({ es: "", en: "" });
+      setDocCategory("");
+      setDocRequired(true);
+      setDocPerParty(false);
+      setDocAiExtract(false);
+      toast.success(t.saved);
+    } else {
+      toast.error(r.error?.message ?? "Error");
+    }
+  }
 
   return (
     <div>
@@ -732,6 +813,55 @@ function DocsStep({ phases, t }: { phases: WizardPhase[]; t: Record<string, stri
           ))}
         </SelectInput>
       </div>
+
+      {phase && (
+        <div
+          style={{
+            border: "1px solid var(--line)",
+            borderRadius: 12,
+            padding: 16,
+            marginBottom: 16,
+            display: "grid",
+            gap: 12,
+          }}
+        >
+          <I18nField label={t.docDocument} value={docLabel} onChange={setDocLabel} />
+          <div style={{ maxWidth: 320 }}>
+            <FieldLabel>{t.docCategory}</FieldLabel>
+            <TextInput
+              value={docCategory}
+              placeholder="Identidad"
+              onChange={(e) => setDocCategory(e.target.value)}
+            />
+          </div>
+          <div style={{ display: "flex", gap: 22, flexWrap: "wrap", alignItems: "center" }}>
+            <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer" }}>
+              <Switch checked={docRequired} onCheckedChange={setDocRequired} aria-label={t.docRequired} />
+              {t.docRequired}
+            </label>
+            <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer" }}>
+              <Switch checked={docPerParty} onCheckedChange={setDocPerParty} aria-label={t.docPerParty} />
+              {t.docPerParty}
+            </label>
+            {docPerParty && (
+              <TextInput
+                value={docPartyRoles}
+                onChange={(e) => setDocPartyRoles(e.target.value)}
+                placeholder="beneficiary, spouse, minor"
+                aria-label="Roles por parte"
+                style={{ maxWidth: 240 }}
+              />
+            )}
+            <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer" }}>
+              <Switch checked={docAiExtract} onCheckedChange={setDocAiExtract} aria-label={t.docAiExtract} />
+              {t.docAiExtract}
+            </label>
+            <GradientBtn onClick={addDocument} disabled={savingDoc} aria-label={t.docAdd}>
+              {savingDoc ? "…" : t.docAdd}
+            </GradientBtn>
+          </div>
+        </div>
+      )}
 
       {!phase ? (
         <p style={{ color: "var(--ink-3)" }}>{t.addPhase}</p>
