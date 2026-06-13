@@ -17,7 +17,7 @@ import { getActor } from "@/backend/modules/identity";
 import { listLeads, listMyTasks } from "@/backend/modules/kanban";
 import { MiDiaView } from "@/frontend/features/vanessa";
 import { fmtHeaderDate, fmtRelative, type Locale } from "@/frontend/lib/datetime";
-import { sourceMeta } from "@/frontend/features/vanessa/shared/ui";
+import { sourceMeta } from "@/frontend/features/vanessa/shared/source-meta";
 import { MiDiaClientShell } from "./client-shell";
 import { contactLeadAction, toggleTaskDoneAction } from "../actions";
 

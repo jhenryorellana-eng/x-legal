@@ -12,43 +12,17 @@
 import * as React from "react";
 import { MSym } from "./msym";
 
-export type LeadSource = "tiktok" | "web" | "whatsapp" | "voz" | "ref" | string;
-
-export const SOURCE_META: Record<
-  string,
-  { labelKey: string; icon: string; cls: string }
-> = {
-  tiktok: { labelKey: "tiktok", icon: "music_note", cls: "src-tiktok" },
-  web: { labelKey: "web", icon: "language", cls: "src-web" },
-  whatsapp: { labelKey: "whatsapp", icon: "chat", cls: "src-whatsapp" },
-  voz: { labelKey: "voz", icon: "graphic_eq", cls: "src-voz" },
-  voice: { labelKey: "voz", icon: "graphic_eq", cls: "src-voz" },
-  ref: { labelKey: "ref", icon: "group", cls: "src-ref" },
-  referral: { labelKey: "ref", icon: "group", cls: "src-ref" },
-};
-
-export function sourceMeta(source: string) {
-  return SOURCE_META[source] ?? SOURCE_META.web;
-}
-
-/** RF-VAN-013 time-badge tier from minutes since lead creation. */
-export function timeTier(minutes: number): "time-ok" | "time-warn" | "time-hot" {
-  if (minutes > 30) return "time-hot";
-  if (minutes >= 5) return "time-warn";
-  return "time-ok";
-}
-
-export function fmtMoney(cents: number, locale: "es" | "en" = "es"): string {
-  return new Intl.NumberFormat(locale === "en" ? "en-US" : "es-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: cents % 100 === 0 ? 0 : 2,
-  }).format(cents / 100);
-}
-
-export function fmtPercent(value: number): string {
-  return `${Math.round(value)}%`;
-}
+// Pure, server-safe helpers live in ./source-meta (no "use client"). We
+// re-export them here so existing client imports from "./ui" keep working,
+// while Server Components import directly from "./source-meta".
+export {
+  SOURCE_META,
+  sourceMeta,
+  timeTier,
+  fmtMoney,
+  fmtPercent,
+} from "./source-meta";
+export type { LeadSource } from "./source-meta";
 
 export function Chip({
   tone = "neutral",

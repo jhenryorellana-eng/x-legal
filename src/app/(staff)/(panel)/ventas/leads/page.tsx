@@ -18,7 +18,7 @@ import { buildCasosStrings } from "@/frontend/features/shared-case";
 import type { NewCaseService } from "@/frontend/features/admin/casos/new-case-modal";
 import { LeadsClient } from "./client";
 import { fmtRelative, type Locale } from "@/frontend/lib/datetime";
-import { sourceMeta } from "@/frontend/features/vanessa/shared/ui";
+import { sourceMeta } from "@/frontend/features/vanessa/shared/source-meta";
 import type { LeadColumnVM, LeadCardVM, SourceOption } from "@/frontend/features/vanessa";
 import {
   moveKanbanCardAction,
