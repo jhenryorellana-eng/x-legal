@@ -8,6 +8,12 @@ import type { DashboardScreenProps } from "@/frontend/features/cliente/home/dash
 import type { CaminoScreenProps } from "@/frontend/features/cliente/camino/camino-screen";
 import type { DocItem } from "@/frontend/features/cliente/documentos/documentos-screen";
 import type { ProcesoMilestone } from "@/frontend/features/cliente/proceso/proceso-screen";
+import type {
+  AgendarScreenProps,
+  SlotWire,
+} from "@/frontend/features/cliente/agendar/agendar-screen";
+import type { CitaScreenProps } from "@/frontend/features/cliente/cita/cita-screen";
+import { fromZonedTime } from "date-fns-tz";
 
 export const homeMock: DashboardScreenProps = {
   displayName: "María",
@@ -307,4 +313,136 @@ export const procesoMock = {
     whatsNextBody:
       "Tu abogada está preparando tu orden de custodia. Te avisaremos en cuanto haya novedades.",
   },
+};
+
+// --- Scheduling (F3) -------------------------------------------------------
+// Florida client, Utah office. Slots are real UTC instants built from local
+// Florida wall-times so the dual hour renders "2:00 PM" / "12:00 PM en Utah".
+
+const CLIENT_TZ = "America/New_York";
+const OFFICE_TZ = "America/Denver";
+
+/** Builds slots at Florida wall-times for the next two available weekdays. */
+function buildMockSlots(): SlotWire[] {
+  const out: SlotWire[] = [];
+  const base = new Date();
+  base.setDate(base.getDate() + 2); // start two days out (min notice)
+  const hours = ["09:00", "10:00", "11:30", "14:00", "15:30", "16:30"];
+  let added = 0;
+  let cursor = new Date(base);
+  while (added < 2) {
+    const wd = cursor.getDay();
+    if (wd !== 0 && wd !== 6) {
+      const ymd = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}-${String(cursor.getDate()).padStart(2, "0")}`;
+      for (const h of hours) {
+        const startUtc = fromZonedTime(`${ymd}T${h}:00`, CLIENT_TZ);
+        const endUtc = new Date(startUtc.getTime() + 45 * 60_000);
+        out.push({ startUtc: startUtc.toISOString(), endUtc: endUtc.toISOString() });
+      }
+      added++;
+    }
+    cursor = new Date(cursor.getTime() + 86_400_000);
+  }
+  return out;
+}
+
+const agendarLabels = {
+  title: "Agendar tu cita",
+  subtitle: "Reserva un momento con tu asesora legal. La cita es por videollamada.",
+  bannerTz: "Verás los horarios en tu hora local (Florida (ET)).",
+  region: "Florida (ET)",
+  monthAria: "Mes anterior y siguiente",
+  prevMonth: "Mes anterior",
+  nextMonth: "Mes siguiente",
+  weekdays: "D L M M J V S",
+  slotsTitle: "Horarios disponibles para el {date}",
+  slotsLoading: "Buscando horarios…",
+  pickDayFirst: "Elige un día con disponibilidad para ver los horarios.",
+  noSlotsDay: "Agenda llena para ese día. Prueba con otro.",
+  remindersTitle: "Recordatorios",
+  reminder1d: "Recordarme 1 día antes",
+  reminder1h: "Recordarme 1 hora antes",
+  noteLabel: "Nota para tu asesora (opcional)",
+  notePlaceholder: "¿Algo que quieras adelantarle? Escríbelo aquí…",
+  penaltyNotice: "Si cancelas, no podrás reagendar por 7 días.",
+  ctaIdle: "Elige un horario",
+  ctaReady: "Confirmar cita",
+  ctaReschedule: "Cambiar a este horario",
+  ctaBooking: "Guardando…",
+  inOffice: "{hora} en Utah",
+  seqLabel: "Cita {n} de {total}",
+  errSlotTaken: "Ese horario lo tomaron justo ahora. Elige otro de la lista actualizada.",
+  errNoLeft: "Ya usaste las citas de esta etapa.",
+  errGeneric: "No pudimos agendar tu cita. Inténtalo de nuevo en un momento.",
+  errWindow: "Ya estás dentro de las 24 horas previas, así que no se puede cambiar.",
+  back: "Inicio",
+};
+
+export const agendarMock: AgendarScreenProps = {
+  caseId: "demo",
+  clientTimezone: CLIENT_TZ,
+  staffTimezone: OFFICE_TZ,
+  initialSlots: buildMockSlots(),
+  durationMinutes: 45,
+  sequenceNumber: 1,
+  appointmentCount: 1,
+  locale: "es",
+  labels: agendarLabels,
+  getSlots: async () => ({ ok: true, slots: buildMockSlots() }),
+  book: async () => ({ ok: true, appointmentId: "appt-demo" }),
+  reschedule: async () => ({ ok: true, appointmentId: "appt-demo" }),
+};
+
+const citaLabels = {
+  title: "¡Tu cita está agendada!",
+  dateLabel: "Fecha",
+  timeLabel: "Hora",
+  withLabel: "Con",
+  objectiveLabel: "Objetivo de la cita",
+  joinCall: "Entrar a la videollamada",
+  callSoon: "Pronto",
+  callSoonNote: "Estamos terminando la videollamada dentro de la app. Te avisaremos cuando esté lista.",
+  typePhone: "Tu cita será por teléfono. Te llamaremos a tu número.",
+  typePresencial: "Tu cita será presencial en la oficina.",
+  reminderNote: "Te enviaremos un recordatorio. Si necesitas cambiarla, puedes hacerlo hasta 24 horas antes.",
+  backHome: "Volver al inicio",
+  reschedule: "Cambiar cita",
+  cancel: "Cancelar cita",
+  completedChip: "Completada",
+  completedTitle: "Tu cita ya pasó",
+  completedBody: "Gracias por asistir. Si tu equipo dejó una nota, la verás aquí.",
+  staffNoteLabel: "Nota de tu equipo",
+  cancelTitle: "¿Cancelar tu cita?",
+  cancelBody: "Si cancelas ahora, no podrás reagendar por 7 días. ¿Seguro que quieres cancelar?",
+  cancelReasonPlaceholder: "Motivo (opcional)",
+  cancelKeep: "Mantener mi cita",
+  cancelConfirm: "Sí, cancelar",
+  cancelling: "Cancelando…",
+  errCancel: "No pudimos cancelar tu cita. Inténtalo de nuevo en un momento.",
+  errReschedule: "No pudimos cambiar tu cita.",
+  errWindow: "Ya estás dentro de las 24 horas previas, así que no se puede cambiar.",
+};
+
+export const citaMock: CitaScreenProps = {
+  caseId: "demo",
+  appointmentId: "appt-demo",
+  dateText: "Jueves, 12 de junio",
+  timeText: "2:00 PM (Florida (ET)) · 12:00 PM en Utah",
+  advisorText: "Diana Restrepo, tu asesora",
+  advisorInitial: "D",
+  objectiveText: "Revisar tu orden de custodia antes de enviar la petición.",
+  kind: "video",
+  status: "scheduled",
+  staffNote: null,
+  celebrate: true,
+  labels: citaLabels,
+  cancelAppointment: async () => ({ ok: true }),
+};
+
+export const citaCompletadaMock: CitaScreenProps = {
+  ...citaMock,
+  status: "completed",
+  celebrate: false,
+  staffNote: "Conversamos sobre los próximos pasos. Sube la orden de custodia cuando la tengas.",
+  cancelAppointment: async () => ({ ok: true }),
 };

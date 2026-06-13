@@ -6,13 +6,25 @@
  * + no-op actions inside the mobile frame. It 404s in production so it never
  * ships, and is marked public in the middleware only for /cliente-preview.
  *
- * Valid views: home · camino · documentos · disclaimer · proceso.
+ * Valid views: home · camino · documentos · disclaimer · proceso · agendar ·
+ * cita · cita-completada · agendar-bloqueado · agendar-vacio.
  */
 
 import { notFound } from "next/navigation";
 import { ClientePreview } from "./preview-client";
 
-const VIEWS = ["home", "camino", "documentos", "disclaimer", "proceso"];
+const VIEWS = [
+  "home",
+  "camino",
+  "documentos",
+  "disclaimer",
+  "proceso",
+  "agendar",
+  "cita",
+  "cita-completada",
+  "agendar-bloqueado",
+  "agendar-vacio",
+];
 
 export default async function ClientePreviewPage({
   params,

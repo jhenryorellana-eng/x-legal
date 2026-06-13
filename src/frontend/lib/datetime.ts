@@ -120,6 +120,43 @@ export function dualHour(
   return { primary, secondary: `${clientHour} ${tag}` };
 }
 
+/**
+ * Dual-hour string for the CLIENT app (§6.5): the client's own time as primary
+ * and, when the staff TZ differs, the staff hour as a small secondary clause that
+ * names the staff city (the prototype uses Utah → "12:00 PM en Utah").
+ *
+ *   client in Florida, staff in Utah, 18:00Z →
+ *     { primary: "2:00 PM", secondary: "12:00 PM en Utah" }
+ *
+ * Both derived from the same UTC instant — the offset is NEVER a fixed table
+ * (DOC-23 §6.4). `secondary` is null when the two zones resolve to the same wall
+ * time. `staffCity` defaults to the city segment of the IANA staff TZ.
+ */
+export function clientDualHour(
+  instant: Date | string,
+  clientTz: string,
+  staffTz: string | null,
+  locale: Locale,
+  staffCity?: string,
+): { primary: string; secondary: string | null } {
+  const d = toDate(instant);
+  const primary = fmtTime(d, clientTz);
+  if (!staffTz || staffTz === clientTz) return { primary, secondary: null };
+  const staffHour = fmtTime(d, staffTz);
+  if (staffHour === primary) return { primary, secondary: null };
+  const city = staffCity ?? cityFromTz(staffTz);
+  const inWord = locale === "en" ? "in" : "en";
+  return { primary, secondary: `${staffHour} ${inWord} ${city}` };
+}
+
+/** Human city name from an IANA zone ("America/Denver" → "Utah" for the office). */
+function cityFromTz(timeZone: string): string {
+  // The office lives in Utah (America/Denver). Keep the friendly business name
+  // the prototype uses; otherwise fall back to the IANA city segment.
+  if (timeZone === "America/Denver") return "Utah";
+  return timeZone.split("/").pop()?.replace(/_/g, " ") ?? timeZone;
+}
+
 function toDate(instant: Date | string): Date {
   return instant instanceof Date ? instant : new Date(instant);
 }

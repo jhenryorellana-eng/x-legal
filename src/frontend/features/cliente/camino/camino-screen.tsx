@@ -449,7 +449,7 @@ export function CaminoScreen(props: CaminoScreenProps) {
       <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
         {[
           {
-            href: `/caso/${caseId}/citas`,
+            href: `/caso/${caseId}/agendar`,
             icon: "calendar" as const,
             color: "var(--accent)",
             label: labels.nextMeeting,

@@ -78,7 +78,7 @@ function buildCaseItems(labels: BottomNavLabels, caseId: string): NavItem[] {
       label: labels.citas,
       icon: "calendar",
       href: `${base}/agendar`,
-      match: [`${base}/cita-confirmada`],
+      match: [`${base}/cita`],
     },
     {
       id: "documentos",
