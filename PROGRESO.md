@@ -3,8 +3,18 @@
 > Archivo de continuidad entre sesiones (PROMPT-CONSTRUCCION-V2 §4). Actualizar al cierre de cada sesión.
 > Biblioteca SoT: `C:\Users\mauri\Documents\Trabajos\USALATINO V2\V2\docs\` · Supabase: **USALATINO V2** `uexxyokexcamyjcknxua`
 
-**Fase actual: F2 — Casos + Cliente core ✅ COMPLETA (gate del negocio verificado en vivo) — espera OK de Henry para F3**
+**Fase actual: F3 — Scheduling + Vanessa (en curso) · Parte A auth email ✅ COMPLETA**
 Última sesión: 2026-06-13
+
+## Parte A — Auth cliente por EMAIL (cambio al SoT DOC-22 §1) ✅
+> Decisión del dueño: el cliente se autentica por **email** (capturado en el alta del caso), NO por OTP de teléfono. El teléfono queda como contacto opcional. Sustituto: **email OTP de 6 dígitos (Supabase nativo, cero Twilio)**.
+- Backend refactorizado: `requestClientOtp`/`verifyClientOtp` por email, `provisionClientUser` idempotente por email (`email_confirm:true`, phone opcional), `checkClientEligibilityByEmail`, limiters email. domain `normalizeEmail`/`isValidEmail`/`normalizeEmailStrict`.
+- Frontend: `/phone`→`/email`, `/otp` conserva (código por email), welcome CTA, middleware rutas públicas. Modal Nuevo caso: campo Email (identidad) + teléfono opcional.
+- i18n `cliente.email.*` (796 claves, paridad). SoT DOC-22 §1 actualizado.
+- Gates: typecheck 0 · lint 0/0 · **322 tests** · build OK · /email render verificado.
+- **Pendiente externo (no bloquea F3, paso de Henry)**: configurar SMTP en Supabase Auth (Resend) — o un test-OTP en el dashboard — para que el código por email se entregue de verdad. Clientes demo María/Carlos ya tienen email; María tiene caso activo → lista para el demo de login email.
+
+— F2 (cerrada): —
 
 > **Gate del negocio F1 demostrado de punta a punta con navegador real (MCP):** staff crea caso (modal Nuevo caso →
 > provisiona usuario cliente H-2 + caso payment_pending + contrato + plan) → cliente firma en /firma/[token] público
