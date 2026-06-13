@@ -3,16 +3,46 @@
 > Archivo de continuidad entre sesiones (PROMPT-CONSTRUCCION-V2 §4). Actualizar al cierre de cada sesión.
 > Biblioteca SoT: `C:\Users\mauri\Documents\Trabajos\USALATINO V2\V2\docs\` · Supabase: **USALATINO V2** `uexxyokexcamyjcknxua`
 
-**Fase actual: F1 — Catálogo + Admin core ✅ COMPLETA (E2E 30/30 con auth real) — espera OK de Henry para F2**
-Última sesión: 2026-06-12 (noche)
+**Fase actual: F2 — Casos + Cliente core ✅ COMPLETA (gate del negocio verificado en vivo) — espera OK de Henry para F3**
+Última sesión: 2026-06-13
 
-> Auth Hook ACTIVADO por Henry ✓ · Claims E2E verificados ✓ · Login staff real → /admin ✓
-> Suite Playwright completa: 30/30 (13 F0 + setup + 16 admin) contra BD remota.
-> Bugs reales encontrados y corregidos por la suite E2E: RLS bloqueaba al hook (policies supabase_auth_admin),
-> getActor leía claims de getUser (→ getClaims), import dinámico de módulo F2 rompía /admin,
-> i18n t() sin contexto en builders (→ t.raw), función cruzando frontera RSC (serviceHref→serviceBasePath).
-> Pendientes externos que NO bloquean F2: Twilio Verify (OTP SMS real), Upstash Redis (rate limit prod),
-> SMTP Resend en Supabase Auth, passwords reales del staff.
+> **Gate del negocio F1 demostrado de punta a punta con navegador real (MCP):** staff crea caso (modal Nuevo caso →
+> provisiona usuario cliente H-2 + caso payment_pending + contrato + plan) → cliente firma en /firma/[token] público
+> (contrato signed, token anulado single-use) → staff registra pago Zelle → evento downpayment.confirmed → caso
+> ACTIVADO (active + opened_at + fase 1 "Documentación inicial" + phase_history). Caso real: **ULP-2026-0003** (Rosa Méndez).
+>
+> **5 bugs reales encontrados SOLO por el dogfooding en vivo** (ningún test unitario los veía):
+>   1. CRÍTICO: el event bus era un const de módulo → instrumentation y la server action tenían instancias
+>      distintas (bundles separados de Next.js) → el consumer del gate NUNCA disparaba, el caso no se activaba.
+>      Fix: bus respaldado en globalThis + flag de registro en globalThis.
+>   2. createCaseFromContract NO existía (la action solo creaba un contrato huérfano) → implementado el orquestador
+>      completo (DOC-41 §3.1) + provisionClientUser (H-2) en identity.
+>   3. La activación no fijaba current_phase_id (getCatalogFirstPhase "diferido a F3" pero DOC-41 §3.4 lo pide en F2) → añadido.
+>   4. El modal dejaba enviar una parte a medio llenar → error duro confuso. Fix: descartar filas de parte incompletas.
+>   5. Cosmético: la firma pública mostraba "—" como servicio (plan_snapshot sin serviceLabel) → añadido al snapshot.
+>
+> Pendientes externos que NO bloquean F3: **Twilio Verify** (OTP SMS real — necesario para que el cliente entre por su
+> celular; la demo del lado cliente quedó verificada a nivel de datos: Rosa es elegible por tener caso activo),
+> Upstash Redis (rate limit prod), SMTP Resend en Supabase Auth, passwords reales del staff.
+
+## Estado F2 por entregable
+
+| Entregable | Estado |
+|---|---|
+| Módulos `cases` + `contracts` (máquinas de estado, createCaseFromContract idempotente, firma token, T&C, RFE, timeline) | ✅ |
+| Slice `billing` (createPaymentPlan, registerZellePayment → downpayment.confirmed) | ✅ |
+| `notifications` mínimo (dispatcher matriz F2) + job `deliver-notification` + webhook qstash + `instrumentation.ts` | ✅ |
+| `provisionClientUser` (H-2: alta auth+users+client_profiles sin sesión, idempotente por phone) | ✅ |
+| Componentes móviles DOC-01 §5.2 (ScreenHead, BottomNav, BottomSheet, Confetti, Tutorial, SignaturePad, FABs) | ✅ |
+| Pantallas cliente (home, servicios, disclaimer+firma, camino, proceso, bitácora, documentos+subir+corregir+éxito, datos, más, config) | ✅ |
+| Firma pública `/firma/[token]` (anti-enum, single-use, rate limit, scroll-gate, SignaturePad) | ✅ |
+| Admin casos + shared-case (tabs Resumen/Documentos/Partes, RFE aprobar/rechazar, registro pago Zelle, modal Nuevo caso) | ✅ |
+| pgTAP test 18 (signing token) | ✅ |
+| Two-stage review F2 | ✅ NEEDS-REVISION → C-1/C-2/C-3/H-1/H-2/H-3/M-1..M-4 aplicados → gates verdes |
+| Gates F2 | ✅ typecheck 0 · lint 0/0 · **316 unit tests** · build OK · 783 i18n · **E2E 30/30** · gate live verificado |
+| Demo F2 a Henry | ✅ LISTA (gate del negocio funciona en vivo; ver ULP-2026-0003) |
+
+— F1 (cerrada): —
 
 ## Estado F1 por entregable
 
