@@ -6,6 +6,8 @@
 @import "../frontend/design-system/tokens.css";
 @import "../frontend/design-system/shadcn-theme.css";
 @import "../frontend/design-system/motion.css";
+/* Vanessa sales panel component CSS (DOC-52 replica), scoped under .surface-staff */
+@import "../frontend/design-system/vanessa.css";
 
 /* shadcn dark-mode variant driven by [data-theme="dark"] instead of `.dark` */
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));

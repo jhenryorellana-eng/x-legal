@@ -17,7 +17,7 @@
 import type { IconName } from "@/frontend/components/brand/icon";
 import type { ModuleKey } from "@/shared/constants/modules";
 
-export type NavBadgeKey = "cases" | "pagos";
+export type NavBadgeKey = "cases" | "pagos" | "leads";
 
 export interface NavItem {
   /** i18n key under `staff.nav.items`. */
@@ -61,9 +61,13 @@ export const STAFF_NAV: NavGroup[] = [
   {
     labelKey: "sales",
     items: [
-      { labelKey: "leads", href: "/ventas/leads", icon: "route", module: "leads" },
-      { labelKey: "clients", href: "/ventas/clientes", icon: "family", module: "clients" },
+      { labelKey: "miDia", href: "/ventas/mi-dia", icon: "sun", module: "dashboard" },
+      { labelKey: "leads", href: "/ventas/leads", icon: "route", module: "leads", badge: "leads" },
+      { labelKey: "appointments", href: "/ventas/citas", icon: "calendar", module: "calendar" },
+      { labelKey: "availability", href: "/ventas/disponibilidad", icon: "clock", module: "calendar" },
+      { labelKey: "clients", href: "/ventas/clientes", icon: "family", module: "clients", badge: "cases" },
       { labelKey: "salesMetrics", href: "/ventas/metricas", icon: "bolt", module: "metrics" },
+      { labelKey: "salesConfig", href: "/ventas/configuracion", icon: "gear", module: "dashboard" },
     ],
   },
   {

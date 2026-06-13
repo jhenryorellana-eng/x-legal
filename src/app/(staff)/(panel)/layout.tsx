@@ -24,6 +24,7 @@ import {
   type StaffShellMessages,
 } from "@/frontend/features/staff-shell/staff-shell";
 import type { SidebarGroup } from "@/frontend/components/desktop/sidebar";
+import { MaterialSymbolsFont } from "@/frontend/features/vanessa";
 
 /** Fallback role labels (used when no title_i18n is set). */
 const ROLE_LABEL_KEY: Record<string, string> = {
@@ -88,17 +89,21 @@ export default async function StaffPanelLayout({
   };
 
   return (
-    <StaffShell
-      groups={groups}
-      user={{
-        name: profile?.displayName ?? fallbackRole,
-        title,
-        avatarUrl: profile?.avatarUrl ?? undefined,
-      }}
-      messages={messages}
-      logoutAction={signOutAction}
-    >
-      {children}
-    </StaffShell>
+    <>
+      {/* Material Symbols Rounded — icon vocabulary of the sales panel (DOC-52 §0.1). */}
+      <MaterialSymbolsFont />
+      <StaffShell
+        groups={groups}
+        user={{
+          name: profile?.displayName ?? fallbackRole,
+          title,
+          avatarUrl: profile?.avatarUrl ?? undefined,
+        }}
+        messages={messages}
+        logoutAction={signOutAction}
+      >
+        {children}
+      </StaffShell>
+    </>
   );
 }

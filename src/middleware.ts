@@ -63,6 +63,7 @@ const PUBLIC_PATH_PREFIXES = [
   "/favicon",
   "/admin-preview",   // dev-only admin view harness (Playwright); 404s in prod
   "/cliente-preview", // dev-only client view harness (Playwright); 404s in prod
+  "/ventas-preview",  // dev-only Vanessa view harness (Playwright); 404s in prod
 ];
 
 function isPublicPath(pathname: string): boolean {
