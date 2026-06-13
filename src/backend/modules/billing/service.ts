@@ -196,6 +196,14 @@ export async function registerZellePayment(
 
   const caseId = await findInstallmentCaseId(parsed.installmentId);
 
+  // TODO(SoT M-4): add a partial unique index on payments(installment_id) WHERE
+  // status IN ('succeeded') to prevent duplicate succeeded rows at DB level.
+  // Migration: CREATE UNIQUE INDEX payments_installment_succeeded_idx
+  //   ON payments(installment_id) WHERE status = 'succeeded';
+  // Until then, the application-level guard below + applyPaymentSuccess idempotency
+  // reduces the window but does NOT fully eliminate the TOCTOU race.
+  // Only a DB constraint makes this truly atomic.
+
   // Create payment record
   const payment = await insertPayment({
     installment_id: installment.id,

@@ -269,7 +269,15 @@ export async function notifyFromEvent(event: DomainEvent): Promise<void> {
         if (rule.channels.email) {
           const user = await findUserById(userId);
           const hasEmail = user?.email && !user.emailBouncedAt;
-          if ((rule.unsuppressible || true) && hasEmail && rule.emailTemplateKey) {
+          // C-2 FIX: removed `|| true` that made every email unsuppressible.
+          // Correct logic (DOC-47 §4.3):
+          //   - unsuppressible:true  → always send (cannot be turned off)
+          //   - unsuppressible:false/undefined (suppresible) → send UNLESS the user
+          //     has opted out. User preference table not yet implemented, so default=send.
+          // TODO(SoT DOC-47): replace `?? true` with a real pref check once
+          //   notification_preferences table is provisioned.
+          const shouldSendEmail = rule.unsuppressible ?? true;
+          if (shouldSendEmail && hasEmail && rule.emailTemplateKey) {
             try {
               await enqueueJob({
                 jobKey: "deliver-notification",

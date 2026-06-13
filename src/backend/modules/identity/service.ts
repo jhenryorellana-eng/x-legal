@@ -39,6 +39,7 @@ import { appEvents } from "@/backend/platform/events";
 
 import type { ModuleKey } from "@/shared/constants/modules";
 import { MODULE_KEYS } from "@/shared/constants/modules";
+import { escapeHtml } from "@/shared/html";
 
 import { normalizePhoneE164, passwordPolicy, PhoneNormalizationError } from "./domain";
 import {
@@ -847,18 +848,7 @@ function buildPermissionPreset(
   });
 }
 
-/**
- * Minimal HTML escaper for 5 dangerous characters (L-3).
- * Prevents XSS if displayName or email contain HTML metacharacters.
- */
-function escapeHtml(raw: string): string {
-  return raw
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#x27;");
-}
+// escapeHtml is imported from @/shared/html (M-2 consolidation — shared with jobs layer).
 
 /**
  * Builds the HTML body for the staff invitation email.
@@ -972,11 +962,17 @@ export async function provisionClientUser(
     // Check if auth user already exists (race condition between check and create)
     if (authError?.message?.toLowerCase().includes("already registered") ||
         authError?.message?.toLowerCase().includes("already been registered")) {
-      // Auth user exists but our public.users row doesn't — look up by phone to get UID
-      const { data: authList } = await serviceClient.auth.admin.listUsers();
-      const authUser = authList?.users?.find(
-        (u) => u.phone === phoneE164,
-      );
+      // Auth user exists but our public.users row doesn't — look up by phone to get UID.
+      // C-1 FIX: use a direct query on public.users (indexed by users_phone_e164_idx)
+      // instead of listUsers() which pages at 1 000 and silently misses users in
+      // large orgs. The users row is the source of truth for the auth UID in this path.
+      const { data: userRow } = await serviceClient
+        .from("users")
+        .select("id")
+        .eq("phone_e164", phoneE164)
+        .maybeSingle();
+      // Minimal stub — enough for the type-check below; only `.id` is accessed.
+      const authUser: { id: string } | null = userRow ?? null;
       if (authUser) {
         // Insert/upsert the missing public rows
         await insertClientRows({

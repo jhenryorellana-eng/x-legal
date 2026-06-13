@@ -50,6 +50,8 @@ const eslintConfig = [
         { type: "frontend", pattern: "src/frontend/**", mode: "full" },
         { type: "shared", pattern: "src/shared/**", mode: "full" },
         { type: "middleware", pattern: "src/middleware.ts", mode: "full" },
+        // C-3: instrumentation.ts is a Next.js startup hook — same import budget as middleware.
+        { type: "instrumentation", pattern: "src/instrumentation.ts", mode: "full" },
       ],
     },
     rules: {
@@ -92,6 +94,9 @@ const eslintConfig = [
             { from: "shared", allow: ["shared"] },
             // middleware.ts lives at src/ root (Next.js requirement) and acts as surface guard
             { from: "middleware", allow: ["platform", "shared"] },
+            // instrumentation.ts: Next.js startup hook — dynamic-imports consumer registry
+            // (register-consumers.ts is unclassified/module-int; allow both)
+            { from: "instrumentation", allow: ["module-pub", "module-int", "platform", "shared"] },
           ],
         },
       ],

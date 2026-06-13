@@ -479,6 +479,23 @@ describe("createCaseFromContract", () => {
     expect(result.created).toBe(true);
   });
 
+  // M-1 FIX: any billing error other than PAYMENT_PLAN_EXISTS must propagate so
+  // the admin can retry — a case with no payment plan cannot be activated.
+  it("M-1: re-throws non-PAYMENT_PLAN_EXISTS billing errors", async () => {
+    const billingErr = Object.assign(new Error("BILLING_ERROR"), { code: "BILLING_ERROR" });
+    mockCreatePaymentPlan.mockRejectedValueOnce(billingErr);
+
+    await expect(
+      createCaseFromContract(ACTOR, {
+        primaryClientId: CLIENT_ID,
+        serviceId: SERVICE_ID,
+        servicePlanId: PLAN_ID,
+        parties: [],
+        paymentPlan: VALID_PAYMENT_PLAN,
+      }),
+    ).rejects.toMatchObject({ code: "BILLING_ERROR" });
+  });
+
   it("emits case.assigned when assignedParalegalId is set", async () => {
     mockInsertCase.mockResolvedValueOnce({
       ...CASE_ROW,

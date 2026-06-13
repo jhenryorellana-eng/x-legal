@@ -18,6 +18,7 @@ import { z } from "zod";
 import { logger } from "@/backend/platform/logger";
 import { sendTransactional } from "@/backend/platform/resend";
 import { findNotificationById } from "@/backend/modules/notifications";
+import { escapeHtml } from "@/shared/html";
 
 // ---------------------------------------------------------------------------
 // Payload schema
@@ -100,14 +101,20 @@ function buildEmailHtml(
 
   const ctaText = locale === "en" ? "View details" : "Ver detalles";
 
+  // M-2 FIX: escape title/body before interpolating into HTML.
+  // Title/body are system-generated today but a rejection reason could carry
+  // user-supplied content in future; defence-in-depth is cheap here.
+  const safeTitle = escapeHtml(title);
+  const safeBody = escapeHtml(body);
+
   return `<!DOCTYPE html>
 <html>
-<head><meta charset="utf-8"><title>${title}</title></head>
+<head><meta charset="utf-8"><title>${safeTitle}</title></head>
 <body style="font-family: 'Plus Jakarta Sans', sans-serif; color: #1a1a2e; background: #f8f9fa; padding: 24px;">
   <div style="max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; padding: 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
     <div style="background: #003366; width: 40px; height: 40px; border-radius: 8px; margin-bottom: 24px;"></div>
-    <h1 style="font-size: 22px; font-weight: 700; margin: 0 0 12px;">${title}</h1>
-    ${body ? `<p style="color: #4b5563; font-size: 15px; line-height: 1.6; margin: 0 0 24px;">${body}</p>` : ""}
+    <h1 style="font-size: 22px; font-weight: 700; margin: 0 0 12px;">${safeTitle}</h1>
+    ${safeBody ? `<p style="color: #4b5563; font-size: 15px; line-height: 1.6; margin: 0 0 24px;">${safeBody}</p>` : ""}
     ${notification.action_url ? `<a href="https://app.usalatinoprime.com${notification.action_url}" style="display: inline-block; background: #003366; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">${ctaText}</a>` : ""}
   </div>
 </body>

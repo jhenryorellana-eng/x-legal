@@ -348,4 +348,32 @@ describe("notifyFromEvent('downpayment.confirmed')", () => {
 
     expect(mockInsertNotificationIdempotent).not.toHaveBeenCalled();
   });
+
+  // C-2 FIX: downpayment-confirmed → client rule has unsuppressible:true.
+  // Verify that even when the rule is suppresible by default the welcome email
+  // (unsuppressible:true) is always enqueued.
+  it("C-2: unsuppressible:true rule always enqueues email (downpayment-confirmed client)", async () => {
+    mockFindUserById.mockImplementation(async (id: string) => ({
+      id,
+      email: `${id}@example.com`,
+      emailBouncedAt: null,
+      locale: "es",
+      kind: id === CLIENT_USER_ID ? "client" : "staff",
+    }));
+
+    await notifyFromEvent({
+      type: "downpayment.confirmed",
+      payload: { caseId: CASE_ID, installmentId: "inst-1" },
+      occurredAt: new Date(),
+    });
+
+    // The client downpayment-confirmed email MUST be enqueued (unsuppressible:true)
+    const clientWelcomeJobs = mockEnqueueJob.mock.calls.filter(
+      ([payload]) =>
+        payload.channel === "email" &&
+        payload.templateKey === "downpayment-confirmed" &&
+        payload.recipientEmail === `${CLIENT_USER_ID}@example.com`,
+    );
+    expect(clientWelcomeJobs).toHaveLength(1);
+  });
 });

@@ -22,14 +22,29 @@ const {
   mockCreateUser,
   mockListUsers,
   mockWriteAudit,
-} = vi.hoisted(() => ({
-  mockCan: vi.fn(),
-  mockFindClientByPhone: vi.fn(),
-  mockInsertClientRows: vi.fn().mockResolvedValue(undefined),
-  mockCreateUser: vi.fn(),
-  mockListUsers: vi.fn().mockResolvedValue({ data: { users: [] } }),
-  mockWriteAudit: vi.fn().mockResolvedValue(undefined),
-}));
+  mockDbQueryChain,
+} = vi.hoisted(() => {
+  // Chainable Supabase query-builder stub (used by the C-1 fix path)
+  const chain = {
+    from: vi.fn(),
+    select: vi.fn(),
+    eq: vi.fn(),
+    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+  };
+  chain.from.mockReturnValue(chain);
+  chain.select.mockReturnValue(chain);
+  chain.eq.mockReturnValue(chain);
+
+  return {
+    mockCan: vi.fn(),
+    mockFindClientByPhone: vi.fn(),
+    mockInsertClientRows: vi.fn().mockResolvedValue(undefined),
+    mockCreateUser: vi.fn(),
+    mockListUsers: vi.fn().mockResolvedValue({ data: { users: [] } }),
+    mockWriteAudit: vi.fn().mockResolvedValue(undefined),
+    mockDbQueryChain: chain,
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Mocks (before any SUT import)
@@ -44,6 +59,8 @@ vi.mock("@/backend/platform/supabase", () => ({
         listUsers: mockListUsers,
       },
     },
+    // C-1 fix: serviceClient.from(…) chain for the public.users lookup
+    from: mockDbQueryChain.from,
   }),
   revokeAllSessions: vi.fn(),
 }));
@@ -256,15 +273,18 @@ describe("provisionClientUser", () => {
     );
   });
 
-  it("handles race condition: auth error 'already registered' → falls back to listUsers", async () => {
-    mockFindClientByPhone.mockResolvedValue(null); // not found initially
+  // C-1 FIX: race condition now resolved via direct DB query on public.users,
+  // NOT via listUsers() which silently misses users in orgs with >1000 accounts.
+  it("C-1: handles race condition via public.users DB query (not listUsers)", async () => {
+    mockFindClientByPhone.mockResolvedValue(null); // phone not in public.users yet
     mockCreateUser.mockResolvedValue({
       data: null,
       error: { message: "User already registered" },
     });
-    // listUsers returns the pre-existing auth user
-    mockListUsers.mockResolvedValue({
-      data: { users: [{ id: "preexisting-auth-id", phone: "+13055550006" }] },
+    // C-1: DB query on public.users returns the pre-existing row
+    mockDbQueryChain.maybeSingle.mockResolvedValue({
+      data: { id: "preexisting-auth-id" },
+      error: null,
     });
 
     const result = await provisionClientUser(ACTOR, {
@@ -276,5 +296,7 @@ describe("provisionClientUser", () => {
     expect(mockInsertClientRows).toHaveBeenCalledWith(
       expect.objectContaining({ userId: "preexisting-auth-id" }),
     );
+    // listUsers must NOT have been called (C-1 fix replaced it)
+    expect(mockListUsers).not.toHaveBeenCalled();
   });
 });

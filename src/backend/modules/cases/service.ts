@@ -436,11 +436,16 @@ export async function createCaseFromContract(
       notes: p.paymentPlan.notes,
     });
   } catch (err) {
-    // PAYMENT_PLAN_EXISTS is idempotent (re-run); other billing errors are logged but
-    // non-fatal at this point — the case exists and the signing flow can proceed.
+    // M-1 FIX: only swallow PAYMENT_PLAN_EXISTS (idempotent retry).
+    // Any other billing error means the case has no payment plan — the client
+    // would never be able to activate it (no installment to pay). Re-throw so
+    // the modal surfaces a failure and the admin can retry. The idempotency guard
+    // on contractId makes retries safe (createCaseFromContract returns created:false
+    // if the contract already has a case, then billing is retried cleanly).
     const code = (err as { code?: string }).code;
     if (code !== "PAYMENT_PLAN_EXISTS") {
-      logger.error({ err, caseId: caseRow.id }, "createCaseFromContract: billing.createPaymentPlan failed");
+      logger.error({ err, caseId: caseRow.id }, "createCaseFromContract: billing.createPaymentPlan failed — re-throwing");
+      throw err;
     }
   }
 
@@ -596,7 +601,10 @@ export async function startDocumentUpload(
     throw new CaseError("DOC_REQUIREMENT_NOT_FOUND");
   }
 
-  const storagePath = `case/${parsed.caseId}/${Date.now()}-${parsed.filename}`;
+  // H-2 FIX: sanitize client-supplied filename before embedding in the storage path.
+  // Allows alphanumerics, dots, hyphens, and underscores; everything else becomes '_'.
+  const safeFilename = parsed.filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const storagePath = `case/${parsed.caseId}/${Date.now()}-${safeFilename}`;
   const result = await createSignedUploadUrl("case-documents", storagePath);
 
   return { signedUrl: result.signedUrl, uploadRef: result.path };
@@ -623,6 +631,13 @@ export async function confirmDocumentUpload(
 ): Promise<CaseDocumentRow> {
   await requireCaseAccess(actor, input.caseId);
   const parsed = ConfirmUploadSchema.parse(input);
+
+  // H-3 FIX: verify the client-supplied uploadRef belongs to this case's prefix.
+  // Prevents a client from registering a document by supplying a path from another
+  // case (or a path they uploaded to a different case slot).
+  if (!parsed.uploadRef.startsWith(`case/${parsed.caseId}/`)) {
+    throw new CaseError("DOC_UPLOAD_INVALID");
+  }
 
   // Validate the uploaded object exists in storage
   const validated = await validateUploadedObject(

@@ -81,9 +81,20 @@ export async function createCaseAction(
 
     // Parse the encoded serviceId field from the modal selector
     const [serviceId, planId, priceStr, downStr, instStr] = input.serviceId.split("|");
-    const priceCents = Number(priceStr) || 0;
-    const downCents = Number(downStr) || Math.round(priceCents * 0.2);
-    const installments = Number(instStr) || 1;
+    const priceCents = Number(priceStr);
+    const downCents = Number(downStr);
+    const installments = Number(instStr);
+
+    // M-3 FIX: fail fast if any numeric plan field is NaN or non-positive.
+    // `Number(x) || 0` masked malformed input and could produce zero-value contracts.
+    if (
+      !Number.isFinite(priceCents) || priceCents <= 0 ||
+      !Number.isFinite(downCents) || downCents <= 0 ||
+      !Number.isFinite(installments) || installments <= 0 ||
+      !Number.isInteger(installments)
+    ) {
+      return { ok: false, error: { code: "INVALID_PLAN" } };
+    }
 
     // Normalize phone to E.164 (same algorithm as gate and SQL normalize_phone)
     let phoneE164: string;
