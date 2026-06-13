@@ -107,7 +107,9 @@ export function NewCaseModal({
       clientPhone: phone,
       serviceId: encoded,
       planKind: planKind as "self" | "with_lawyer",
-      parties: parties.filter((p) => p.name.trim()),
+      // Only fully-specified parties (name AND role) — a half-filled row is
+      // dropped rather than rejected by the domain (party_role requires ≥1 char).
+      parties: parties.filter((p) => p.name.trim() && p.role.trim()),
     });
     setSubmitting(false);
     if (res.ok && res.signingToken) {

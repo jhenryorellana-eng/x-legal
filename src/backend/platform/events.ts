@@ -92,7 +92,17 @@ export function createEventBus(): EventBus {
 
 /**
  * Singleton event bus for the application.
- * Modules wire their consumers at startup (e.g. in a top-level registration
- * file imported by the app root).
+ *
+ * Backed by globalThis so ALL module instances in the same Node process share
+ * ONE bus. This is mandatory under Next.js: `instrumentation.ts` is compiled
+ * into a SEPARATE bundle from route handlers / server actions, so a plain
+ * `export const appEvents = createEventBus()` yields a different instance per
+ * bundle — consumers registered at startup (instrumentation) would never see
+ * events emitted from an action. The globalThis pin closes that gap (same
+ * pattern used for the Prisma/Supabase client singletons in Next.js).
+ *
+ * Modules wire their consumers at startup via register-consumers.ts.
  */
-export const appEvents: EventBus = createEventBus();
+const globalForEvents = globalThis as unknown as { __ulpEventBus?: EventBus };
+export const appEvents: EventBus =
+  globalForEvents.__ulpEventBus ?? (globalForEvents.__ulpEventBus = createEventBus());

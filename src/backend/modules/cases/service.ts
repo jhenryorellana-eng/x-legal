@@ -392,6 +392,9 @@ export async function createCaseFromContract(
     }
 
     const planSnapshot: Record<string, unknown> = {
+      // serviceLabel frozen into the snapshot so the public signing page can
+      // show the service name without a live catalog lookup (the page is anon).
+      serviceLabel: (serviceRow as { label_i18n?: unknown }).label_i18n ?? null,
       planKind: (planRow as { kind: string }).kind,
       totalCents: p.paymentPlan.totalCents,
       downpaymentCents: p.paymentPlan.downpaymentCents,

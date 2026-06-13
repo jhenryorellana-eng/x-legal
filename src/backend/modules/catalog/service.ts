@@ -1162,6 +1162,27 @@ export async function listContractableServices(orgId: string) {
   return repo.listContractableServicesFromDb(orgId);
 }
 
+/**
+ * Returns the FIRST phase of a service for case activation (DOC-41 §3.4):
+ * the explicit entry_phase_id if set, otherwise the lowest-position phase.
+ * Internal cross-module read (no actor): consumed by cases.onDownpaymentConfirmed
+ * when a case transitions payment_pending → active.
+ *
+ * @api-id API-CAT-31
+ */
+export async function getCatalogFirstPhase(
+  serviceId: string,
+): Promise<{ id: string; position: number } | null> {
+  const service = await repo.findServiceById(serviceId);
+  const phases = await repo.listPhases(serviceId); // ordered by position asc
+  if (phases.length === 0) return null;
+  const entry = service?.entry_phase_id
+    ? phases.find((p) => p.id === service.entry_phase_id)
+    : null;
+  const chosen = entry ?? phases[0];
+  return { id: chosen.id, position: chosen.position };
+}
+
 export async function getPublishedAutomationVersion(formDefinitionId: string) {
   return repo.getPublishedVersion(formDefinitionId);
 }

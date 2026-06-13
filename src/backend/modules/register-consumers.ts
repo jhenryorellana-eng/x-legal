@@ -14,14 +14,20 @@ import { logger } from "@/backend/platform/logger";
 import { onDownpaymentConfirmed } from "@/backend/modules/cases";
 import { notifyFromEvent } from "@/backend/modules/notifications";
 
-let registered = false;
+// Pin the "registered" flag to globalThis (not a module-level let): the bus is
+// globalThis-shared across bundles, so the guard must be too — otherwise a
+// second bundle (or a hot-reload re-running instrumentation) would append a
+// duplicate set of consumers to the same persistent bus.
+const globalForConsumers = globalThis as unknown as {
+  __ulpConsumersRegistered?: boolean;
+};
 
 /**
- * Idempotent registration — safe to call multiple times in dev hot-reload.
+ * Idempotent registration — safe to call across bundles and dev hot-reloads.
  */
 export function registerConsumers(): void {
-  if (registered) return;
-  registered = true;
+  if (globalForConsumers.__ulpConsumersRegistered) return;
+  globalForConsumers.__ulpConsumersRegistered = true;
 
   // -------------------------------------------------------------------------
   // cases consumers

@@ -15,6 +15,7 @@ export {
   getPublishedAutomationVersion,
   getAutomationVersionById,
   listContractableServices,
+  getCatalogFirstPhase,
   isServiceContractable,
   // Admin panel reads (DOC-53 §4 — page-initial RSC reads)
   listServicesAdmin,

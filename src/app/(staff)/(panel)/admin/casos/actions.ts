@@ -43,6 +43,9 @@ function mapErr(err: unknown): Err {
   if (err instanceof ContractError || err instanceof BillingError || err instanceof CaseError) {
     return { ok: false, error: { code: err.code } };
   }
+  // Unexpected (non-domain) errors: surface server-side for observability.
+  // Domain errors already carry a stable code to the client.
+  console.error("[casos action] unexpected error:", err);
   return { ok: false, error: { code: "internal" } };
 }
 
