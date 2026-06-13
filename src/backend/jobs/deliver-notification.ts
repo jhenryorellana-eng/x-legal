@@ -75,6 +75,27 @@ function buildEmailSubject(
       en: "Welcome — your case is now active",
       es: "Bienvenido — tu caso está activo",
     },
+    // F3 appointment templates (DOC-73 §2)
+    "appointment-booked": {
+      en: "Your appointment is confirmed",
+      es: "Tu cita quedó agendada",
+    },
+    "appointment-cancelled": {
+      en: "Your appointment was cancelled",
+      es: "Tu cita fue cancelada",
+    },
+    "appointment-rescheduled": {
+      en: "Your appointment has been rescheduled",
+      es: "Tu cita cambió de fecha",
+    },
+    "appointment-24h": {
+      en: "Your appointment is tomorrow",
+      es: "Tu cita es mañana",
+    },
+    "appointment-1h": {
+      en: "Your appointment starts in 1 hour",
+      es: "Tu cita comienza en 1 hora",
+    },
   };
 
   const entry = subjects[templateKey];

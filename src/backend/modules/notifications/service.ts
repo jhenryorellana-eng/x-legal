@@ -1,13 +1,20 @@
 /**
- * Notifications module — service layer (F2 minimum).
+ * Notifications module — service layer (F2 + F3).
  *
- * F2 scope: notifyFromEvent (F2 matrix rows only), getNotifications, markRead.
- *
- * F2 notification matrix rows (DOC-47 §4.3):
+ * F2 matrix rows (DOC-47 §4.3):
  *   contract.signed    → Finance ①②③ (contract-signed-finance) + Sales ①
  *   document.approved  → Client ①②③ (document-approved)
  *   document.rejected  → Client ①②③ (document-rejected)
  *   downpayment.confirmed → Sales ①②③ (downpayment-confirmed-sales) + Paralegal ① + Client ③④◆ (welcome + downpayment-confirmed)
+ *
+ * F3 matrix rows added (DOC-47 §4.3):
+ *   appointment.booked      → Client ①②③ (appointment-booked) + Staff ①
+ *   appointment.cancelled   → Counterpart of actor ①②③ (appointment-cancelled)
+ *   appointment.rescheduled → Counterpart of actor ①②③ (appointment-rescheduled)
+ *   appointment.completed   → no-op (timeline + metrics only, per matrix)
+ *   lead.created            → Assigned staff (asesora) ①② (no email per matrix)
+ *
+ * Push (channel ④) is F7 — only in-app + email implemented here.
  *
  * @module notifications/service
  */
@@ -27,6 +34,9 @@ import {
   findCaseAssignedStaff,
   type NotificationsPage,
 } from "./repository";
+// findLeadAssignedStaff is exported from repository for jobs layer use (DOC-26 §2 rule R3),
+// but the service resolves lead.assigned_to directly from the event payload
+// (assignedTo field in LeadCreatedPayload — kanban emits it inline).
 
 // ---------------------------------------------------------------------------
 // F2 notification matrix
@@ -36,7 +46,15 @@ interface MatrixRule {
   type: string;
   /** Roles or recipient types to notify */
   recipients: Array<{
-    resolverKey: "finance" | "sales_of_case" | "paralegal_of_case" | "clients_of_case";
+    resolverKey:
+      | "finance"
+      | "sales_of_case"
+      | "paralegal_of_case"
+      | "clients_of_case"
+      | "appointment_staff"
+      | "appointment_client"
+      | "appointment_counterpart"
+      | "lead_assigned_staff";
   }>;
   channels: { push: boolean; email: boolean };
   /** Email template key from DOC-73 catalog */
@@ -47,7 +65,8 @@ interface MatrixRule {
   deepLinkTemplate: string;
 }
 
-// F2-only matrix rows (DOC-47 §4.3)
+// Combined F2 + F3 matrix rows (DOC-47 §4.3).
+// Rename was intentional: adding F3 rows to the same map (extending, not replacing).
 const F2_MATRIX: Record<string, MatrixRule[]> = {
   "contract.signed": [
     {
@@ -105,6 +124,66 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
       deepLinkTemplate: "/caso/{caseId}",
     },
   ],
+
+  // ---------------------------------------------------------------------------
+  // F3 rows — appointment lifecycle (DOC-47 §4.3)
+  // ---------------------------------------------------------------------------
+
+  // appointment.booked → Client ①②③ + Staff ①
+  "appointment.booked": [
+    {
+      type: "appointment.booked",
+      recipients: [{ resolverKey: "appointment_client" }],
+      channels: { push: true, email: true },
+      emailTemplateKey: "appointment-booked",
+      deepLinkTemplate: "/caso/{caseId}/citas/{appointmentId}",
+    },
+    {
+      type: "appointment.booked",
+      recipients: [{ resolverKey: "appointment_staff" }],
+      channels: { push: false, email: false }, // staff: in-app ① only
+      deepLinkTemplate: "/agenda?appointmentId={appointmentId}",
+    },
+  ],
+
+  // appointment.cancelled → Counterpart of actor ①②③
+  "appointment.cancelled": [
+    {
+      type: "appointment.cancelled",
+      recipients: [{ resolverKey: "appointment_counterpart" }],
+      channels: { push: true, email: true },
+      emailTemplateKey: "appointment-cancelled",
+      deepLinkTemplate: "/caso/{caseId}/citas",
+    },
+  ],
+
+  // appointment.rescheduled → Counterpart of actor ①②③
+  "appointment.rescheduled": [
+    {
+      type: "appointment.rescheduled",
+      recipients: [{ resolverKey: "appointment_counterpart" }],
+      channels: { push: true, email: true },
+      emailTemplateKey: "appointment-rescheduled",
+      deepLinkTemplate: "/caso/{caseId}/citas/{newAppointmentId}",
+    },
+  ],
+
+  // appointment.completed → no-op (timeline + metrics only per DOC-47 §4.3 "—")
+  // No entry needed: notifyFromEvent returns immediately for unregistered event types.
+
+  // ---------------------------------------------------------------------------
+  // F3 rows — lead lifecycle (DOC-47 §4.3)
+  // ---------------------------------------------------------------------------
+
+  // lead.created → Assigned asesora ①② (no email per matrix)
+  "lead.created": [
+    {
+      type: "lead.created",
+      recipients: [{ resolverKey: "lead_assigned_staff" }],
+      channels: { push: true, email: false }, // ①② per matrix, no email
+      deepLinkTemplate: "/ventas/leads?leadId={leadId}",
+    },
+  ],
 };
 
 // ---------------------------------------------------------------------------
@@ -138,6 +217,47 @@ async function resolveRecipients(
       return findCaseClientMembers(caseId);
     }
 
+    // F3: appointment.booked — notify the staff member of the appointment
+    case "appointment_staff": {
+      const staffId = eventPayload["staffId"] as string | undefined;
+      return staffId ? [staffId] : [];
+    }
+
+    // F3: appointment.booked — notify the client of the appointment
+    case "appointment_client": {
+      const clientUserId = eventPayload["clientUserId"] as string | undefined;
+      return clientUserId ? [clientUserId] : [];
+    }
+
+    // F3: appointment.cancelled / appointment.rescheduled
+    // The counterpart is whoever did NOT initiate the action.
+    // If cancelled/rescheduled by client → notify staff; by staff → notify client.
+    // Uses cancelledBy / rescheduledBy from the event payload.
+    case "appointment_counterpart": {
+      const cancelledBy = eventPayload["cancelledBy"] as "client" | "staff" | undefined;
+      const rescheduledBy = eventPayload["rescheduledBy"] as "client" | "staff" | undefined;
+      const initiatedBy = cancelledBy ?? rescheduledBy;
+      const staffId = eventPayload["staffId"] as string | undefined;
+      const clientUserId = eventPayload["clientUserId"] as string | undefined;
+
+      if (initiatedBy === "client") {
+        // Client cancelled/rescheduled → notify the staff counterpart
+        return staffId ? [staffId] : [];
+      }
+      if (initiatedBy === "staff") {
+        // Staff cancelled/rescheduled → notify the client counterpart
+        return clientUserId ? [clientUserId] : [];
+      }
+      // Unknown initiator: notify both (safe fallback)
+      return [staffId, clientUserId].filter((id): id is string => !!id);
+    }
+
+    // F3: lead.created → assigned asesora (leads.assigned_to field = staff user_id)
+    case "lead_assigned_staff": {
+      const assignedTo = eventPayload["assignedTo"] as string | undefined;
+      return assignedTo ? [assignedTo] : [];
+    }
+
     default:
       return [];
   }
@@ -151,9 +271,14 @@ function buildActionUrl(
   template: string,
   payload: Record<string, unknown>,
 ): string {
+  // appointment.rescheduled uses newAppointmentId as the canonical id
+  const enriched =
+    payload["newAppointmentId"]
+      ? { appointmentId: payload["newAppointmentId"], ...payload }
+      : payload;
   return template.replace(
     /\{(\w+)\}/g,
-    (_, key) => String(payload[key] ?? ""),
+    (_, key) => String(enriched[key] ?? ""),
   );
 }
 
@@ -191,6 +316,45 @@ function renderContent(
       icon: "dollar-sign",
       color: "green",
     },
+    // F3 appointment events
+    "appointment.booked": {
+      titleI18n: { en: "Appointment booked", es: "Cita agendada" },
+      bodyI18n: { en: "Your appointment has been confirmed.", es: "Tu cita ha sido confirmada." },
+      icon: "calendar",
+      color: "green",
+    },
+    "appointment.cancelled": {
+      titleI18n: { en: "Appointment cancelled", es: "Cita cancelada" },
+      bodyI18n: { en: "Your appointment was cancelled. You can reschedule at any time.", es: "Tu cita fue cancelada. Puedes reagendar cuando quieras." },
+      icon: "calendar-x",
+      color: "amber", // amber for correctable situation (RF-TRX-022)
+    },
+    "appointment.rescheduled": {
+      titleI18n: { en: "Appointment rescheduled", es: "Cita reprogramada" },
+      bodyI18n: { en: "Your appointment has been moved to a new date.", es: "Tu cita fue cambiada a una nueva fecha." },
+      icon: "calendar-clock",
+      color: "gold",
+    },
+    // F3 reminder types (used by job appointment-reminders)
+    "appointment.reminder_1d": {
+      titleI18n: { en: "Your appointment is tomorrow", es: "Tu cita es mañana" },
+      bodyI18n: { en: "Reminder: your appointment is scheduled for tomorrow.", es: "Recordatorio: tu cita está programada para mañana." },
+      icon: "bell",
+      color: "gold",
+    },
+    "appointment.reminder_1h": {
+      titleI18n: { en: "Your appointment starts in 1 hour", es: "Tu cita comienza en 1 hora" },
+      bodyI18n: { en: "Your appointment starts in about 1 hour.", es: "Tu cita comienza en aproximadamente 1 hora." },
+      icon: "bell",
+      color: "accent",
+    },
+    // F3 lead.created
+    "lead.created": {
+      titleI18n: { en: "New lead assigned", es: "Nuevo lead asignado" },
+      bodyI18n: { en: "A new lead has been assigned to you.", es: "Un nuevo lead te ha sido asignado." },
+      icon: "user-plus",
+      color: "accent",
+    },
   };
 
   return contentMap[type] ?? {
@@ -222,8 +386,16 @@ export async function notifyFromEvent(event: DomainEvent): Promise<void> {
       const userIds = await resolveRecipients(recipientDef.resolverKey, payload);
 
       for (const userId of userIds) {
-        // Build dedupe key
-        const entityId = (payload["caseId"] ?? payload["documentId"] ?? payload["contractId"] ?? "global") as string;
+        // Build dedupe key — pick the most specific entity id available
+        const entityId = (
+          payload["appointmentId"] ??
+          payload["newAppointmentId"] ??
+          payload["caseId"] ??
+          payload["leadId"] ??
+          payload["documentId"] ??
+          payload["contractId"] ??
+          "global"
+        ) as string;
         const dedupeKey = `${event.type}:${entityId}:${userId}`;
 
         const content = renderContent(rule.type, payload);

@@ -243,3 +243,20 @@ export async function findCaseAssignedStaff(caseId: string): Promise<{
     paralegalId: data?.assigned_paralegal_id ?? null,
   };
 }
+
+/**
+ * Returns the staff user_id assigned to a lead (leads.assigned_to field).
+ * Used by the lead.created notification rule (DOC-47 §4.3).
+ */
+export async function findLeadAssignedStaff(
+  leadId: string,
+): Promise<string | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("leads")
+    .select("assigned_to")
+    .eq("id", leadId)
+    .maybeSingle();
+
+  return data?.assigned_to ?? null;
+}

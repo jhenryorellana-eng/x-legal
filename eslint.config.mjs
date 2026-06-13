@@ -89,7 +89,10 @@ const eslintConfig = [
               from: "module-int",
               allow: ["module-int", "platform", "shared", "module-pub"],
             },
-            { from: "jobs", allow: ["module-pub", "platform", "shared"] },
+            // jobs → jobs is allowed so that __tests__/ files can import their
+            // sibling handler under test. Production job handlers only import
+            // module-pub, platform, and shared — this rule is not relaxed for them.
+            { from: "jobs", allow: ["module-pub", "platform", "shared", "jobs"] },
             { from: "platform", allow: ["platform", "shared"] },
             { from: "shared", allow: ["shared"] },
             // middleware.ts lives at src/ root (Next.js requirement) and acts as surface guard
