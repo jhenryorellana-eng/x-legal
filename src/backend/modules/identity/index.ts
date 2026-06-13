@@ -15,6 +15,12 @@
 // Domain types useful for other modules (read-only — no side effects)
 export type { PhoneNormalizationError } from "./domain";
 export { normalizePhoneE164 } from "./domain";
+export {
+  normalizeEmail,
+  normalizeEmailStrict,
+  isValidEmail,
+  EmailValidationError,
+} from "./domain";
 
 // Action result types (needed by UI layer)
 export type { ActionResult, TypedActionResult } from "./actions";

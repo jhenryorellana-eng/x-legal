@@ -47,7 +47,7 @@ import type { Database } from "@/shared/database.types";
 const PUBLIC_PATHS = [
   "/welcome",
   "/no-access",
-  "/phone",
+  "/email",           // client email entry (DOC-22 §1, replaces /phone June 2026)
   "/otp",
   "/login",           // staff login
   "/reset-password",  // staff password reset (email link lands here)
@@ -76,8 +76,8 @@ function isPublicPath(pathname: string): boolean {
 // ---------------------------------------------------------------------------
 
 function isClientSurface(pathname: string): boolean {
-  // Routes under (cliente) group: /welcome, /phone, /otp, /no-access, /home, etc.
-  // Public paths (welcome, phone, otp, no-access) are excluded above.
+  // Routes under (cliente) group: /welcome, /email, /otp, /no-access, /home, etc.
+  // Public paths (welcome, email, otp, no-access) are excluded above.
   const clientPaths = ["/home", "/servicios", "/comunidad", "/avisos", "/pagos", "/config", "/caso"];
   return clientPaths.some((p) => pathname === p || pathname.startsWith(p + "/"));
 }

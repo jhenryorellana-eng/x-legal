@@ -3,13 +3,13 @@
 /**
  * "Nuevo caso" — 2-step modal (DOC-53 §3, resolución H-2).
  *
- * Step 1 — Client details: full name + US phone (normalized to E.164 server-side).
+ * Step 1 — Client details: full name + email (login identity, DOC-22 §1) +
+ *           optional US phone (contact only).
  * Step 2 — Service + plan + parties → createCase action → shows the signing link
  *          to copy/send.
  *
- * The create action wraps the available backend surface (createContract + plan).
- * See the app action for the user-creation reconciliation note (no exposed
- * client-creation API in the cases/identity module-pub yet).
+ * Email-OTP migration (DOC-22 §1, June 2026): clientEmail is now the mandatory
+ * login identity. clientPhone is optional contact info (NOT the auth identity).
  */
 
 import * as React from "react";
@@ -39,7 +39,10 @@ export interface NewCaseService {
 
 export interface NewCaseInput {
   clientName: string;
-  clientPhone: string;
+  /** Login identity (DOC-22 §1, email auth). */
+  clientEmail: string;
+  /** Optional contact phone — NOT the login identity. */
+  clientPhone?: string;
   /** Encoded plan resolution string: serviceId|planId|price|down|installments. */
   serviceId: string;
   planKind: "self" | "with_lawyer";
@@ -69,6 +72,7 @@ export function NewCaseModal({
 }) {
   const [step, setStep] = React.useState<1 | 2 | 3>(1);
   const [name, setName] = React.useState("");
+  const [clientEmail, setClientEmail] = React.useState("");
   const [phone, setPhone] = React.useState("");
   const [serviceId, setServiceId] = React.useState("");
   const [planKind, setPlanKind] = React.useState<"self" | "with_lawyer" | "">("");
@@ -83,6 +87,7 @@ export function NewCaseModal({
   function reset() {
     setStep(1);
     setName("");
+    setClientEmail("");
     setPhone("");
     setServiceId("");
     setPlanKind("");
@@ -95,7 +100,8 @@ export function NewCaseModal({
     onOpenChange(o);
   }
 
-  const step1Valid = name.trim().length > 1 && phone.replace(/\D/g, "").length === 10;
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail.trim());
+  const step1Valid = name.trim().length > 1 && emailValid;
   const step2Valid = !!serviceId && !!planKind;
 
   async function submit() {
@@ -104,7 +110,9 @@ export function NewCaseModal({
     const encoded = service?.encodedByKind[planKind] ?? serviceId;
     const res = await actions.createCase({
       clientName: name.trim(),
-      clientPhone: phone,
+      clientEmail: clientEmail.trim(),
+      // Phone is optional contact info — only pass if the staff entered it.
+      ...(phone.trim() ? { clientPhone: phone } : {}),
       serviceId: encoded,
       planKind: planKind as "self" | "with_lawyer",
       // Only fully-specified parties (name AND role) — a half-filled row is
@@ -197,6 +205,19 @@ export function NewCaseModal({
       {step === 1 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <LabeledInput label={strings.clientName} value={name} onChange={setName} />
+          <div>
+            <LabeledInput
+              label={strings.clientEmail}
+              value={clientEmail}
+              onChange={setClientEmail}
+              inputMode="email"
+              placeholder="cliente@ejemplo.com"
+              type="email"
+            />
+            <p style={{ margin: "6px 0 0", fontSize: 12.5, color: "var(--ink-3)" }}>
+              {strings.clientEmailHint}
+            </p>
+          </div>
           <div>
             <LabeledInput
               label={strings.clientPhone}
@@ -400,12 +421,14 @@ function LabeledInput({
   onChange,
   inputMode,
   placeholder,
+  type,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
   placeholder?: string;
+  type?: React.InputHTMLAttributes<HTMLInputElement>["type"];
 }) {
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -415,6 +438,7 @@ function LabeledInput({
         onChange={(e) => onChange(e.target.value)}
         inputMode={inputMode}
         placeholder={placeholder}
+        type={type}
         style={inputStyle}
       />
     </label>

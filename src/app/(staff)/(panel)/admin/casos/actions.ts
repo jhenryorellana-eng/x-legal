@@ -17,7 +17,7 @@
  * `caseId` (was absent before) — compatible because callers check `ok` first.
  */
 
-import { requireActor, provisionClientUser, normalizePhoneE164, AuthzError } from "@/backend/modules/identity";
+import { requireActor, provisionClientUser, normalizePhoneE164, isValidEmail, AuthzError } from "@/backend/modules/identity";
 import {
   sendContractForSigning,
   resendSigningLink,
@@ -55,7 +55,10 @@ function mapErr(err: unknown): Err {
 
 export interface CreateCaseUiInput {
   clientName: string;
-  clientPhone: string;
+  /** Login identity (DOC-22 §1, email auth) — captured at intake. */
+  clientEmail: string;
+  /** Optional contact phone (NOT the login identity). */
+  clientPhone?: string;
   /**
    * Encoded plan resolution: serviceId|planId|priceCents|downCents|installments.
    * Matches the encoding used by the plan selector in new-case-modal.tsx.
@@ -99,17 +102,23 @@ export async function createCaseAction(
       return { ok: false, error: { code: "INVALID_PLAN" } };
     }
 
-    // Normalize phone to E.164 (same algorithm as gate and SQL normalize_phone)
-    let phoneE164: string;
-    try {
-      phoneE164 = normalizePhoneE164(input.clientPhone);
-    } catch {
-      return { ok: false, error: { code: "INVALID_PHONE" } };
+    // Email is the login identity (DOC-22 §1). Validate shape; phone is optional contact.
+    if (!isValidEmail(input.clientEmail)) {
+      return { ok: false, error: { code: "INVALID_EMAIL" } };
+    }
+    let phoneE164: string | null = null;
+    if (input.clientPhone && input.clientPhone.trim()) {
+      try {
+        phoneE164 = normalizePhoneE164(input.clientPhone);
+      } catch {
+        return { ok: false, error: { code: "INVALID_PHONE" } };
+      }
     }
 
-    // Step 1: Provision client user (idempotent — phone_e164 UNIQUE)
+    // Step 1: Provision client user (idempotent — email is the identity)
     const { userId } = await provisionClientUser(actor, {
       fullName: input.clientName,
+      email: input.clientEmail,
       phoneE164,
     });
 

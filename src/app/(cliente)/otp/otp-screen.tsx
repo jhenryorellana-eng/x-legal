@@ -7,7 +7,10 @@
  * - 6-box OTP input (gold border on error — NEVER red)
  * - 45s countdown timer before resend is available
  * - Auto-submit on 6th digit
- * - "Cambiar número" always available
+ * - "Cambiar correo" always available
+ *
+ * Email OTP migration (DOC-22 §1, June 2026):
+ * Reads ?email= param. Code now arrives by email, not SMS.
  */
 
 import * as React from "react";
@@ -24,7 +27,7 @@ interface OtpScreenProps {
     bodyPrefix: string;
     resendCountdown: string;
     resendBtn: string;
-    changeNumber: string;
+    changeEmail: string;
     cta: string;
     footerBadge: string;
     errorCode: string;
@@ -38,8 +41,8 @@ export function OtpScreen({ messages }: OtpScreenProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // Phone is passed as a URL param (formatted display value)
-  const phone = searchParams.get("phone") ?? "";
+  // Email is passed as a URL param (encoded display value)
+  const email = searchParams.get("email") ?? "";
 
   const [otpValue, setOtpValue] = React.useState("");
   const [loading, setLoading] = React.useState(false);
@@ -66,7 +69,7 @@ export function OtpScreen({ messages }: OtpScreenProps) {
     setLoading(true);
     setError(null);
 
-    const result = await verifyClientOtpAction(phone, code);
+    const result = await verifyClientOtpAction(email, code);
     setLoading(false);
 
     if (!result.ok) {
@@ -90,7 +93,7 @@ export function OtpScreen({ messages }: OtpScreenProps) {
     setError(null);
 
     // Re-request OTP (passes through gate silently)
-    await requestClientOtpAction(phone);
+    await requestClientOtpAction(email);
   }
 
   return (
@@ -107,8 +110,8 @@ export function OtpScreen({ messages }: OtpScreenProps) {
       {/* Zona 1 — Cabecera */}
       <div>
         <Link
-          href={`/phone`}
-          aria-label="Volver al teléfono"
+          href="/email"
+          aria-label="Volver al correo"
           style={{
             width: 46,
             height: 46,
@@ -142,7 +145,7 @@ export function OtpScreen({ messages }: OtpScreenProps) {
               fontFamily: "var(--font-title)",
             }}
           >
-            {phone}
+            {email}
           </span>
           .
         </p>
@@ -212,7 +215,7 @@ export function OtpScreen({ messages }: OtpScreenProps) {
         )}
 
         <Link
-          href="/phone"
+          href="/email"
           style={{
             fontSize: 14,
             color: "var(--accent)",
@@ -220,7 +223,7 @@ export function OtpScreen({ messages }: OtpScreenProps) {
             textDecoration: "none",
           }}
         >
-          {messages.changeNumber}
+          {messages.changeEmail}
         </Link>
       </div>
 

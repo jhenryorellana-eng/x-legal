@@ -55,6 +55,46 @@ export function normalizePhoneE164(raw: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Email normalization + validation — DOC-22 §1 (client auth by email)
+//
+// SoT decision (2026-06-13): clients authenticate with the EMAIL captured at
+// case intake (the "Nuevo caso" modal), NOT phone OTP. The phone is kept as
+// contact data only. normalizeEmail lowercases + trims; isValidEmail does a
+// pragmatic RFC-5321-ish shape check (Supabase enforces the real validation
+// on signInWithOtp). No SMS / Twilio involved.
+// ---------------------------------------------------------------------------
+
+export class EmailValidationError extends Error {
+  constructor(raw: string) {
+    super(`Invalid email address: "${raw}".`);
+    this.name = "EmailValidationError";
+  }
+}
+
+/** Trims and lowercases an email for use as the stable login identity. */
+export function normalizeEmail(raw: string): string {
+  return raw.trim().toLowerCase();
+}
+
+// Pragmatic email shape: local@domain.tld, no spaces, one @, a dot in domain.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Returns true when the email has a plausible shape. */
+export function isValidEmail(raw: string): boolean {
+  return EMAIL_RE.test(normalizeEmail(raw));
+}
+
+/**
+ * Normalizes and validates an email. Throws EmailValidationError on bad shape.
+ * Mirror of normalizePhoneE164's throw-on-invalid contract.
+ */
+export function normalizeEmailStrict(raw: string): string {
+  const email = normalizeEmail(raw);
+  if (!EMAIL_RE.test(email)) throw new EmailValidationError(raw);
+  return email;
+}
+
+// ---------------------------------------------------------------------------
 // Password policy — DOC-22 §2.2, §2.4
 //
 // Rules (staff passwords only — clients use OTP):

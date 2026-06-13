@@ -140,7 +140,7 @@ export default async function WelcomePage() {
           animationFillMode: "both",
         }}
       >
-        <Link href="/phone" style={{ textDecoration: "none" }}>
+        <Link href="/email" style={{ textDecoration: "none" }}>
           <GradientBtn icon="lock" size="lg">
             {t("cta")}
           </GradientBtn>

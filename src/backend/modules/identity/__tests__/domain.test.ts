@@ -10,9 +10,48 @@ import { describe, it, expect } from "vitest";
 import {
   normalizePhoneE164,
   PhoneNormalizationError,
+  normalizeEmail,
+  normalizeEmailStrict,
+  isValidEmail,
+  EmailValidationError,
   passwordPolicy,
   PASSWORD_MIN_LENGTH,
 } from "../domain";
+
+// ---------------------------------------------------------------------------
+// Email normalization + validation (DOC-22 §1 — client auth by email)
+// ---------------------------------------------------------------------------
+
+describe("normalizeEmail", () => {
+  it("trims and lowercases", () => {
+    expect(normalizeEmail("  Maria.Lopez@Example.COM ")).toBe("maria.lopez@example.com");
+  });
+});
+
+describe("isValidEmail", () => {
+  it("accepts well-formed emails", () => {
+    expect(isValidEmail("a@b.co")).toBe(true);
+    expect(isValidEmail("first.last+tag@sub.domain.com")).toBe(true);
+    expect(isValidEmail("  USER@Example.COM ")).toBe(true); // normalized first
+  });
+  it("rejects malformed emails", () => {
+    expect(isValidEmail("not-an-email")).toBe(false);
+    expect(isValidEmail("no@domain")).toBe(false);
+    expect(isValidEmail("two@@at.com")).toBe(false);
+    expect(isValidEmail("spaces in@email.com")).toBe(false);
+    expect(isValidEmail("@nolocal.com")).toBe(false);
+    expect(isValidEmail("")).toBe(false);
+  });
+});
+
+describe("normalizeEmailStrict", () => {
+  it("returns the normalized email when valid", () => {
+    expect(normalizeEmailStrict(" Foo@Bar.com ")).toBe("foo@bar.com");
+  });
+  it("throws EmailValidationError on invalid shape", () => {
+    expect(() => normalizeEmailStrict("nope")).toThrow(EmailValidationError);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // normalizePhoneE164

@@ -30,9 +30,9 @@ import type { Actor } from "@/backend/platform/authz";
 import { createServerClient, createServiceClient, revokeAllSessions } from "@/backend/platform/supabase";
 import { logger } from "@/backend/platform/logger";
 import {
-  limitOtpSendPhone,
+  limitOtpSendEmail,
   limitOtpSendIp,
-  limitOtpVerifyPhone,
+  limitOtpVerifyEmail,
 } from "@/backend/platform/ratelimit";
 import { sendTransactional, FROM_TRANSACTIONAL } from "@/backend/platform/resend";
 import { appEvents } from "@/backend/platform/events";
@@ -41,9 +41,14 @@ import type { ModuleKey } from "@/shared/constants/modules";
 import { MODULE_KEYS } from "@/shared/constants/modules";
 import { escapeHtml } from "@/shared/html";
 
-import { normalizePhoneE164, passwordPolicy, PhoneNormalizationError } from "./domain";
 import {
-  checkClientEligibility,
+  normalizePhoneE164,
+  normalizeEmailStrict,
+  EmailValidationError,
+  passwordPolicy,
+} from "./domain";
+import {
+  checkClientEligibilityByEmail,
   checkClientEligibilityById,
   countActiveStaff,
   getStaffProfileById,
@@ -53,7 +58,7 @@ import {
   insertStaffRows,
   replaceStaffPermissions,
   setStaffActive,
-  findClientByPhone,
+  findClientByEmail,
   insertClientRows,
   insertPersonRecord,
   type StaffProfileRow,
@@ -158,6 +163,7 @@ export class IdentityError extends Error {
     public readonly code:
       | "rate_limited"
       | "invalid_phone"
+      | "invalid_email"
       | "invalid_otp"
       | "password_too_short"
       | "password_too_weak"
@@ -179,47 +185,43 @@ export class IdentityError extends Error {
 // ---------------------------------------------------------------------------
 
 /**
- * Requests an OTP for a client phone number.
+ * Requests an email OTP for a client (DOC-22 §1, SoT 2026-06-13: email auth).
  *
  * Steps:
- * 1. Normalize phone to E.164 (server-side — DOC-22 §1.3).
- * 2. Rate limit: phone tiers (1/45s, 5/h, 8/d) + IP tiers (10/h, 30/d).
- * 3. GATE (service client): check eligibility (kind=client, is_active, has activated case).
- * 4. If eligible: supabase.auth.signInWithOtp (shouldCreateUser=false).
- * 5. Apply 800ms latency floor (both branches take the same wall time — DOC-22 §1.4).
+ * 1. Normalize + validate email (server-side).
+ * 2. Rate limit: email tiers (1/45s, 5/h, 8/d) + IP tiers (10/h, 30/d).
+ * 3. GATE (service client): eligibility (kind=client, is_active, activated case).
+ * 4. If eligible: supabase.auth.signInWithOtp({ email }) (shouldCreateUser=false).
+ * 5. Apply 800ms latency floor (both branches take the same wall time — §1.4).
  * 6. Return { ok: true } ALWAYS — anti-enumeration.
  *
- * @param rawPhone - Phone in any US format; normalized server-side.
+ * No SMS / Twilio: the 6-digit code is delivered by email (Supabase SMTP).
+ *
+ * @param rawEmail - Client email (the login identity captured at intake).
  * @param ip       - Request IP for per-IP rate limiting.
  */
 export async function requestClientOtp(
-  rawPhone: string,
+  rawEmail: string,
   ip: string,
 ): Promise<OtpRequestResult> {
   const start = Date.now();
 
-  // Step 1: Normalize
-  let phoneE164: string;
+  // Step 1: Normalize + validate
+  let email: string;
   try {
-    phoneE164 = normalizePhoneE164(rawPhone);
+    email = normalizeEmailStrict(rawEmail);
   } catch (err) {
-    if (err instanceof PhoneNormalizationError) {
-      // Pad to floor and return uniform response — invalid phones still get 800ms
+    if (err instanceof EmailValidationError) {
       await enforceFloor(start, OTP_LATENCY_FLOOR_MS);
-      // Log server-side, surface generic response
-      logger.info({ err: err.message }, "requestClientOtp: invalid phone format");
-      throw new IdentityError("invalid_phone", err.message);
+      logger.info({ err: err.message }, "requestClientOtp: invalid email format");
+      throw new IdentityError("invalid_email", err.message);
     }
     throw err;
   }
 
-  // Step 2: Rate limit — sequential: phone first, IP second.
-  // M-1: If phone is denied we short-circuit before hitting the IP limiter,
-  // which prevents leaking information about whether the phone is known by
-  // timing the two checks together. This mirrors the sequential pattern in
-  // ratelimit.ts (DOC-22 §1.3).
-  const phoneRL = await limitOtpSendPhone(phoneE164);
-  if (!phoneRL.allowed) {
+  // Step 2: Rate limit — sequential: email first, IP second (M-1 anti-timing).
+  const emailRL = await limitOtpSendEmail(email);
+  if (!emailRL.allowed) {
     await enforceFloor(start, OTP_LATENCY_FLOOR_MS);
     throw new IdentityError("rate_limited");
   }
@@ -230,17 +232,16 @@ export async function requestClientOtp(
     throw new IdentityError("rate_limited");
   }
 
-  // Step 3: Gate — check eligibility (always runs; result determines if we send SMS)
-  const { eligible } = await checkClientEligibility(phoneE164);
+  // Step 3: Gate — eligibility (always runs; result determines if we send the code)
+  const { eligible } = await checkClientEligibilityByEmail(email);
 
   if (eligible) {
-    // Step 4: Send OTP — only when eligible (shouldCreateUser=false is mandatory)
+    // Step 4: Send email OTP — only when eligible (shouldCreateUser=false mandatory)
     const supabase = await createServerClient();
     const { error } = await supabase.auth.signInWithOtp({
-      phone: phoneE164,
+      email,
       options: {
-        shouldCreateUser: false, // MANDATORY — never create phantom auth users (DOC-22 §1.3)
-        channel: "sms",
+        shouldCreateUser: false, // MANDATORY — never create phantom auth users (§1.3)
       },
     });
 
@@ -249,11 +250,11 @@ export async function requestClientOtp(
       // Still return uniform response — the client has no visibility into this failure
     }
   } else {
-    // Not eligible: do NOT send SMS. Latency floor ensures timing parity.
-    logger.info({}, "requestClientOtp: gate check failed — no SMS sent (anti-enum)");
+    // Not eligible: do NOT send the code. Latency floor ensures timing parity.
+    logger.info({}, "requestClientOtp: gate check failed — no code sent (anti-enum)");
   }
 
-  // Step 5: Enforce 800ms floor (DOC-22 §1.4)
+  // Step 5: Enforce 800ms floor (§1.4)
   await enforceFloor(start, OTP_LATENCY_FLOOR_MS);
 
   // Step 6: Uniform response
@@ -265,32 +266,32 @@ export async function requestClientOtp(
 // ---------------------------------------------------------------------------
 
 /**
- * Verifies an OTP and establishes a session.
+ * Verifies an email OTP and establishes a session (DOC-22 §1, email auth).
  *
  * Steps:
- * 1. Normalize phone.
+ * 1. Normalize + validate email.
  * 2. Rate limit: verify tier (10/h).
- * 3. supabase.auth.verifyOtp → creates session cookies via @supabase/ssr.
- * 4. RE-GATE post-session (DOC-22 §1.4, RF-CLI-006):
+ * 3. supabase.auth.verifyOtp({ email, type:'email' }) → session cookies.
+ * 4. RE-GATE post-session (§1.4, RF-CLI-006):
  *    If no longer eligible → signOut() + throw (caller redirects to /no-access).
  *
- * @param rawPhone - Phone in any US format.
- * @param code     - 6-digit OTP code.
+ * @param rawEmail - Client email.
+ * @param code     - 6-digit OTP code (delivered by email).
  */
 export async function verifyClientOtp(
-  rawPhone: string,
+  rawEmail: string,
   code: string,
 ): Promise<OtpVerifyResult> {
-  // Step 1: Normalize
-  let phoneE164: string;
+  // Step 1: Normalize + validate
+  let email: string;
   try {
-    phoneE164 = normalizePhoneE164(rawPhone);
+    email = normalizeEmailStrict(rawEmail);
   } catch {
-    throw new IdentityError("invalid_phone");
+    throw new IdentityError("invalid_email");
   }
 
   // Step 2: Rate limit
-  const rl = await limitOtpVerifyPhone(phoneE164);
+  const rl = await limitOtpVerifyEmail(email);
   if (!rl.allowed) {
     throw new IdentityError("rate_limited");
   }
@@ -298,13 +299,13 @@ export async function verifyClientOtp(
   // Step 3: Verify OTP
   const supabase = await createServerClient();
   const { data, error } = await supabase.auth.verifyOtp({
-    phone: phoneE164,
+    email,
     token: code,
-    type: "sms",
+    type: "email",
   });
 
   if (error || !data.user) {
-    // Uniform error — does not reveal eligibility (DOC-22 §1.4)
+    // Uniform error — does not reveal eligibility (§1.4)
     throw new IdentityError("invalid_otp", "Ese código no coincide");
   }
 
@@ -895,7 +896,10 @@ function buildStaffInviteEmail(opts: {
 
 export interface ProvisionClientUserInput {
   fullName: string;
-  phoneE164: string;
+  /** Login identity (DOC-22 §1, email auth). Captured at case intake. */
+  email: string;
+  /** Optional contact phone (NOT the login identity). */
+  phoneE164?: string | null;
   locale?: string;
   timezone?: string;
 }
@@ -909,19 +913,18 @@ export interface ProvisionClientUserResult {
 /**
  * Provisions a client user in Supabase Auth + public.users + client_profiles.
  *
- * Idempotent by phone_e164: if the user already exists (phone UNIQUE), returns
- * { userId, created: false } without touching any rows.
+ * Idempotent by EMAIL: if the user already exists, returns { userId, created:false }.
  *
- * Steps per DOC-22 §1.2:
+ * Steps per DOC-22 §1.2 (SoT 2026-06-13: email auth, phone optional contact):
  * 1. can(actor, 'clients', 'edit')
- * 2. Normalize phone (must already be E.164 — callers in the stack must normalize)
- * 3. Check existing: users.phone_e164 UNIQUE (kind=client)
- * 4. auth.admin.createUser({ phone, phone_confirm:true }) — no password, no session
- * 5. INSERT users(kind=client) + client_profiles (first/last derived from fullName)
+ * 2. Normalize + validate email
+ * 3. Check existing: users.email (kind=client)
+ * 4. auth.admin.createUser({ email, email_confirm:true }) — no password, no session
+ * 5. INSERT users(kind=client, email, phone?) + client_profiles
  * 6. audit
  *
- * Race condition: if auth user exists but public.users row is missing, the
- * upsert in insertClientRows handles it gracefully (idempotent upsert on id).
+ * Race condition: if the auth user exists but public.users is missing, look up
+ * by email and upsert the rows (idempotent on id).
  *
  * @api-id API-AUT-16 (client provisioning; DOC-22 §1.2)
  */
@@ -932,52 +935,50 @@ export async function provisionClientUser(
   // Step 1: Authorization — only staff with clients:edit can create client accounts
   can(actor, "clients", "edit");
 
-  const { fullName, phoneE164, locale, timezone } = input;
+  const { fullName, locale, timezone } = input;
+  const email = normalizeEmailStrict(input.email);
+  const phoneE164 = input.phoneE164 ? normalizePhoneE164(input.phoneE164) : null;
 
   // Derive first/last name from fullName (split on first space; last = rest)
   const spaceIdx = fullName.trim().indexOf(" ");
   const firstName = spaceIdx >= 0 ? fullName.trim().slice(0, spaceIdx) : fullName.trim();
   const lastName = spaceIdx >= 0 ? fullName.trim().slice(spaceIdx + 1).trim() : "";
 
-  // Step 3: Idempotency check — phone_e164 UNIQUE on users(kind=client)
-  const existing = await findClientByPhone(phoneE164);
+  // Step 3: Idempotency check — email on users(kind=client)
+  const existing = await findClientByEmail(email);
   if (existing) {
     logger.info(
       { userId: existing.id },
-      "provisionClientUser: phone already registered — returning existing user (idempotent)",
+      "provisionClientUser: email already registered — returning existing user (idempotent)",
     );
     return { userId: existing.id, created: false };
   }
 
-  // Step 4: Create auth user (no password, phone_confirm=true)
-  // DOC-22 §1.2: "phone_confirm: true, sin password ni sesión"
+  // Step 4: Create auth user (no password, email_confirm=true — no verification email)
   const serviceClient = createServiceClient();
   const { data: authData, error: authError } = await serviceClient.auth.admin.createUser({
-    phone: phoneE164,
-    phone_confirm: true,
-    // Intentionally no password and no email — client authenticates via OTP only
+    email,
+    email_confirm: true,
+    // Optional contact phone stored on the auth user too (not used for login)
+    ...(phoneE164 ? { phone: phoneE164, phone_confirm: true } : {}),
+    // Intentionally no password — client authenticates via email OTP only
   });
 
   if (authError || !authData?.user) {
-    // Check if auth user already exists (race condition between check and create)
+    // Race: auth user exists but our public.users row doesn't — look up by email.
     if (authError?.message?.toLowerCase().includes("already registered") ||
         authError?.message?.toLowerCase().includes("already been registered")) {
-      // Auth user exists but our public.users row doesn't — look up by phone to get UID.
-      // C-1 FIX: use a direct query on public.users (indexed by users_phone_e164_idx)
-      // instead of listUsers() which pages at 1 000 and silently misses users in
-      // large orgs. The users row is the source of truth for the auth UID in this path.
       const { data: userRow } = await serviceClient
         .from("users")
         .select("id")
-        .eq("phone_e164", phoneE164)
+        .eq("email", email)
         .maybeSingle();
-      // Minimal stub — enough for the type-check below; only `.id` is accessed.
       const authUser: { id: string } | null = userRow ?? null;
       if (authUser) {
-        // Insert/upsert the missing public rows
         await insertClientRows({
           userId: authUser.id,
           orgId: actor.orgId,
+          email,
           phoneE164,
           firstName,
           lastName,
@@ -986,7 +987,7 @@ export async function provisionClientUser(
         });
         const audit = await getAudit();
         await audit.writeAudit(actor, "client.provisioned", "users", authUser.id, {
-          phone_e164: phoneE164,
+          email,
           created_auth: false,
           created_rows: true,
         });
@@ -1002,6 +1003,7 @@ export async function provisionClientUser(
   await insertClientRows({
     userId,
     orgId: actor.orgId,
+    email,
     phoneE164,
     firstName,
     lastName,
@@ -1012,7 +1014,7 @@ export async function provisionClientUser(
   // Step 6: Audit (no welcome event here — downpayment.confirmed triggers it, DOC-41 §3.4 H-2)
   const audit = await getAudit();
   await audit.writeAudit(actor, "client.provisioned", "users", userId, {
-    phone_e164: phoneE164,
+    email,
     created_auth: true,
     created_rows: true,
   });

@@ -134,6 +134,44 @@ export async function checkClientEligibility(
   }
 }
 
+/**
+ * Email variant of the eligibility gate (DOC-22 §1, client auth by email).
+ * Same predicate as checkClientEligibility but keyed on the EMAIL identity:
+ * kind=client, is_active, and at least one activated case (opened_at IS NOT NULL).
+ * Always returns { eligible: false } on any error (anti-enumeration).
+ */
+export async function checkClientEligibilityByEmail(
+  email: string,
+): Promise<ClientEligibilityResult> {
+  try {
+    const supabase = createServiceClient();
+    const { data, error } = await supabase
+      .from("users")
+      .select(
+        `
+        id,
+        is_active,
+        kind,
+        case_members!inner(
+          case_id,
+          cases!inner(opened_at)
+        )
+      `,
+      )
+      .eq("email", email)
+      .eq("kind", "client")
+      .eq("is_active", true)
+      .not("case_members.cases.opened_at", "is", null)
+      .limit(1)
+      .single();
+
+    if (error || !data) return { eligible: false };
+    return { eligible: true };
+  } catch {
+    return { eligible: false };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Employee management types (F1 — RF-ADM-041…045)
 // ---------------------------------------------------------------------------
@@ -416,6 +454,25 @@ export async function findClientByPhone(
 }
 
 /**
+ * Looks up a client user by email (the login identity). Returns { id } when
+ * found, null otherwise. Service-client (bypass RLS). Used by provisionClientUser
+ * for idempotency by email (DOC-22 §1, client auth by email).
+ */
+export async function findClientByEmail(
+  email: string,
+): Promise<{ id: string; existed: true } | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("users")
+    .select("id")
+    .eq("email", email)
+    .eq("kind", "client")
+    .maybeSingle();
+  if (!data) return null;
+  return { id: data.id, existed: true };
+}
+
+/**
  * Inserts a users + client_profiles row for a newly provisioned client.
  * Called AFTER auth.admin.createUser so the auth UID is already known.
  * Idempotent: uses upsert on both tables.
@@ -423,7 +480,10 @@ export async function findClientByPhone(
 export async function insertClientRows(input: {
   userId: string;
   orgId: string;
-  phoneE164: string;
+  /** Login identity (DOC-22 §1, client auth by email). */
+  email: string;
+  /** Contact phone (optional; NOT the login identity anymore). */
+  phoneE164?: string | null;
   firstName: string;
   lastName: string;
   locale?: string;
@@ -431,7 +491,7 @@ export async function insertClientRows(input: {
 }): Promise<void> {
   const supabase = createServiceClient();
 
-  // Upsert users row (phone_e164 UNIQUE — safe to upsert if auth exists but row is missing)
+  // Upsert users row. email is the login identity; phone_e164 is optional contact.
   const { error: usersError } = await supabase
     .from("users")
     .upsert(
@@ -439,7 +499,8 @@ export async function insertClientRows(input: {
         id: input.userId,
         org_id: input.orgId,
         kind: "client",
-        phone_e164: input.phoneE164,
+        email: input.email,
+        phone_e164: input.phoneE164 ?? null,
         is_active: true,
         locale: input.locale ?? "en",
         timezone: input.timezone ?? "America/New_York",

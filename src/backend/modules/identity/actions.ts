@@ -112,12 +112,12 @@ export async function signOutAction(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /**
- * Requests an OTP for the given phone number.
- * Always returns { ok: true } even if the phone is not registered (anti-enumeration).
+ * Requests an email OTP for the given client email (DOC-22 §1, email auth).
+ * Always returns { ok: true } even if the email is not registered (anti-enumeration).
  * Only throws on rate limit (so UI can show the "wait" message).
  */
 export async function requestClientOtpAction(
-  rawPhone: string,
+  rawEmail: string,
 ): Promise<ActionResult> {
   // Extract IP for per-IP rate limiting
   const headerStore = await headers();
@@ -126,7 +126,7 @@ export async function requestClientOtpAction(
     ?? "unknown";
 
   try {
-    await requestClientOtp(rawPhone, ip);
+    await requestClientOtp(rawEmail, ip);
     return { ok: true };
   } catch (err) {
     if (err instanceof IdentityError) {
@@ -139,12 +139,12 @@ export async function requestClientOtpAction(
           },
         };
       }
-      if (err.code === "invalid_phone") {
+      if (err.code === "invalid_email") {
         return {
           ok: false,
           error: {
-            code: "invalid_phone",
-            message: "El número de teléfono no es válido. Verifica e intenta de nuevo.",
+            code: "invalid_email",
+            message: "El correo no es válido. Verifica e intenta de nuevo.",
           },
         };
       }
@@ -168,11 +168,11 @@ export async function requestClientOtpAction(
  * On invalid code: returns generic error ("Ese código no coincide").
  */
 export async function verifyClientOtpAction(
-  rawPhone: string,
+  rawEmail: string,
   code: string,
 ): Promise<ActionResult> {
   try {
-    await verifyClientOtp(rawPhone, code);
+    await verifyClientOtp(rawEmail, code);
     return { ok: true };
   } catch (err) {
     if (err instanceof IdentityError) {

@@ -163,6 +163,27 @@ function otpVerifyPhone1h(): Ratelimit {
   return (_otpVerifyPhone1h ??= makeLimiter(redis(), 10, "1 h", "rl:otp:verify:phone:1h"));
 }
 
+// otp:send:email — 3 tiers (DOC-22 §1, email auth): 1/45s · 5/h · 8/d
+let _otpSendEmail45s: Ratelimit | undefined;
+let _otpSendEmail1h: Ratelimit | undefined;
+let _otpSendEmail1d: Ratelimit | undefined;
+
+function otpSendEmail45s(): Ratelimit {
+  return (_otpSendEmail45s ??= makeLimiter(redis(), 1, "45 s", "rl:otp:send:email:45s"));
+}
+function otpSendEmail1h(): Ratelimit {
+  return (_otpSendEmail1h ??= makeLimiter(redis(), 5, "1 h", "rl:otp:send:email:1h"));
+}
+function otpSendEmail1d(): Ratelimit {
+  return (_otpSendEmail1d ??= makeLimiter(redis(), 8, "1 d", "rl:otp:send:email:1d"));
+}
+
+// otp:verify:email — 10/h (DOC-22 §1)
+let _otpVerifyEmail1h: Ratelimit | undefined;
+function otpVerifyEmail1h(): Ratelimit {
+  return (_otpVerifyEmail1h ??= makeLimiter(redis(), 10, "1 h", "rl:otp:verify:email:1h"));
+}
+
 // staff:login — 5/15min per email+ip (DOC-27 §4)
 let _staffLogin: Ratelimit | undefined;
 function staffLogin(): Ratelimit {
@@ -224,6 +245,38 @@ export async function limitOtpSendIp(ip: string): Promise<RateLimitResult> {
     return { allowed: true, reset: 0 };
   } catch (err) {
     logger.error({ err }, "Rate limiter error (otp:send:ip) — denying (closed fail mode)");
+    return { allowed: false, reset: Date.now() + 60_000 };
+  }
+}
+
+/**
+ * Checks all OTP send EMAIL tiers (1/45s · 5/h · 8/d) — client email auth.
+ * Sequential (see limitOtpSendPhone for rationale). Fail mode: closed.
+ */
+export async function limitOtpSendEmail(email: string): Promise<RateLimitResult> {
+  try {
+    const r45s = await otpSendEmail45s().limit(email);
+    if (!r45s.success) return { allowed: false, reset: r45s.reset };
+    const r1h = await otpSendEmail1h().limit(email);
+    if (!r1h.success) return { allowed: false, reset: r1h.reset };
+    const r1d = await otpSendEmail1d().limit(email);
+    if (!r1d.success) return { allowed: false, reset: r1d.reset };
+    return { allowed: true, reset: 0 };
+  } catch (err) {
+    logger.error({ err }, "Rate limiter error (otp:send:email) — denying (closed fail mode)");
+    return { allowed: false, reset: Date.now() + 60_000 };
+  }
+}
+
+/**
+ * Checks OTP verify EMAIL tier (10/h). Fail mode: closed.
+ */
+export async function limitOtpVerifyEmail(email: string): Promise<RateLimitResult> {
+  try {
+    const r = await otpVerifyEmail1h().limit(email);
+    return { allowed: r.success, reset: r.reset };
+  } catch (err) {
+    logger.error({ err }, "Rate limiter error (otp:verify:email) — denying (closed fail mode)");
     return { allowed: false, reset: Date.now() + 60_000 };
   }
 }

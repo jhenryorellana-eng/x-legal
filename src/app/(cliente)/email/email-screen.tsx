@@ -1,9 +1,11 @@
 "use client";
 
 /**
- * PhoneScreen — client component for the /phone page.
- * Handles phone input with live mask (XXX) XXX-XXXX, validation, and submission.
+ * EmailScreen — client component for the /email page.
+ * Handles email input with live validation, then calls requestClientOtpAction(email)
+ * and navigates to /otp?email=<encoded>.
  *
+ * Design mirrors PhoneScreen exactly (same brand tokens, layout zones, animations).
  * All messages are passed as props (resolved server-side by the RSC wrapper).
  */
 
@@ -14,7 +16,7 @@ import { GradientBtn } from "@/frontend/components/brand/gradient-btn";
 import { Icon } from "@/frontend/components/brand/icon";
 import { requestClientOtpAction } from "@/backend/modules/identity/actions";
 
-interface PhoneScreenProps {
+interface EmailScreenProps {
   messages: {
     eyebrow: string;
     title: string;
@@ -25,42 +27,35 @@ interface PhoneScreenProps {
     noAccess: string;
     footerBadge: string;
     errorRateLimit: string;
-    errorInvalidPhone: string;
+    errorInvalidEmail: string;
     errorGeneric: string;
   };
 }
 
-function formatPhone(raw: string): string {
-  const digits = raw.replace(/\D/g, "").slice(0, 10);
-  if (digits.length <= 3) return digits.length ? `(${digits}` : "";
-  if (digits.length <= 6)
-    return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
-  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function isValidEmail(email: string): boolean {
+  return EMAIL_REGEX.test(email.trim());
 }
 
-function getDigitsOnly(formatted: string): string {
-  return formatted.replace(/\D/g, "");
-}
-
-export function PhoneScreen({ messages }: PhoneScreenProps) {
+export function EmailScreen({ messages }: EmailScreenProps) {
   const router = useRouter();
-  const [formatted, setFormatted] = React.useState("");
+  const [email, setEmail] = React.useState("");
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
-  const digits = getDigitsOnly(formatted);
-  const isComplete = digits.length === 10;
+  const trimmed = email.trim();
+  const isComplete = isValidEmail(trimmed);
 
   function handleInput(e: React.ChangeEvent<HTMLInputElement>) {
-    const raw = e.target.value.replace(/\D/g, "").slice(0, 10);
-    setFormatted(formatPhone(raw));
+    setEmail(e.target.value);
     setError(null);
   }
 
   function borderColor(): string {
+    if (trimmed.length === 0) return "transparent";
     if (isComplete) return "var(--green)";
-    if (digits.length > 0) return "var(--accent)";
-    return "transparent";
+    return "var(--accent)";
   }
 
   async function handleSubmit(e?: React.FormEvent) {
@@ -69,20 +64,20 @@ export function PhoneScreen({ messages }: PhoneScreenProps) {
     setLoading(true);
     setError(null);
 
-    const result = await requestClientOtpAction(formatted);
+    const result = await requestClientOtpAction(trimmed);
 
     setLoading(false);
 
     if (!result.ok) {
       const code = result.error?.code;
       if (code === "rate_limited") setError(messages.errorRateLimit);
-      else if (code === "invalid_phone") setError(messages.errorInvalidPhone);
+      else if (code === "invalid_email") setError(messages.errorInvalidEmail);
       else setError(messages.errorGeneric);
       return;
     }
 
-    // Navigate to OTP screen with phone in URL search params (masked for display)
-    router.push(`/otp?phone=${encodeURIComponent(formatted)}`);
+    // Navigate to OTP screen with email in URL search params
+    router.push(`/otp?email=${encodeURIComponent(trimmed)}`);
   }
 
   return (
@@ -142,70 +137,46 @@ export function PhoneScreen({ messages }: PhoneScreenProps) {
         </p>
       </div>
 
-      {/* Zona 3 — Phone input */}
+      {/* Zona 3 — Email input */}
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-        <div style={{ display: "flex", gap: 10, alignItems: "stretch" }}>
-          {/* Country chip */}
-          <div
+        <div style={{ position: "relative" }}>
+          <input
+            type="email"
+            inputMode="email"
+            autoComplete="email"
+            placeholder={messages.placeholder}
+            value={email}
+            onChange={handleInput}
+            autoFocus
+            disabled={loading}
             style={{
+              width: "100%",
               height: 64,
-              padding: "0 16px",
               borderRadius: 16,
+              border: `2px solid ${borderColor()}`,
               background: "var(--card)",
-              boxShadow: "0 4px 12px rgba(11,27,51,0.07)",
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              flexShrink: 0,
-              fontFamily: "var(--font-title)",
-              fontWeight: 700,
-              fontSize: 15,
               color: "var(--ink)",
+              fontFamily: "var(--font-title)",
+              fontWeight: 600,
+              fontSize: 17,
+              padding: "0 50px 0 18px",
+              outline: "none",
+              boxSizing: "border-box",
+              transition: "border-color 0.2s ease",
             }}
-            aria-label="País: Estados Unidos, +1"
-          >
-            🇺🇸 +1
-          </div>
-
-          {/* Number input */}
-          <div style={{ position: "relative", flex: 1 }}>
-            <input
-              type="tel"
-              inputMode="numeric"
-              placeholder={messages.placeholder}
-              value={formatted}
-              onChange={handleInput}
-              autoFocus
-              disabled={loading}
+          />
+          {isComplete && (
+            <div
               style={{
-                width: "100%",
-                height: 64,
-                borderRadius: 16,
-                border: `2px solid ${borderColor()}`,
-                background: "var(--card)",
-                color: "var(--ink)",
-                fontFamily: "var(--font-title)",
-                fontWeight: 700,
-                fontSize: 21,
-                padding: "0 50px 0 18px",
-                outline: "none",
-                boxSizing: "border-box",
-                transition: "border-color 0.2s ease",
+                position: "absolute",
+                right: 16,
+                top: "50%",
+                transform: "translateY(-50%)",
               }}
-            />
-            {isComplete && (
-              <div
-                style={{
-                  position: "absolute",
-                  right: 16,
-                  top: "50%",
-                  transform: "translateY(-50%)",
-                }}
-              >
-                <Icon name="check" size={20} color="var(--green)" />
-              </div>
-            )}
-          </div>
+            >
+              <Icon name="check" size={20} color="var(--green)" />
+            </div>
+          )}
         </div>
 
         {/* Error toast */}

@@ -70,9 +70,9 @@ vi.mock("@zxcvbn-ts/language-common", () => ({
 
 // platform/ratelimit (not used in employee flows but required by the module)
 vi.mock("@/backend/platform/ratelimit.js", () => ({
-  limitOtpSendPhone: vi.fn(),
+  limitOtpSendEmail: vi.fn(),
   limitOtpSendIp: vi.fn(),
-  limitOtpVerifyPhone: vi.fn(),
+  limitOtpVerifyEmail: vi.fn(),
   limitStaffLogin: vi.fn(),
 }));
 
@@ -122,7 +122,7 @@ vi.mock("@/backend/platform/supabase.js", () => ({
 
 // identity/repository
 vi.mock("../repository.js", () => ({
-  checkClientEligibility: vi.fn(),
+  checkClientEligibilityByEmail: vi.fn(),
   checkClientEligibilityById: vi.fn(),
   insertStaffRows: mockInsertStaffRows,
   replaceStaffPermissions: mockReplaceStaffPermissions,

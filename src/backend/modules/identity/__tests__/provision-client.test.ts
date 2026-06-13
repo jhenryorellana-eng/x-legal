@@ -1,12 +1,13 @@
 /**
- * Tests for identity/service.ts — provisionClientUser (DOC-22 §1.2 H-2).
+ * Tests for identity/service.ts — provisionClientUser (DOC-22 §1, email auth).
  *
  * Covers:
- * - Idempotent by phone: returns existing userId when phone already registered
- * - Creates auth user + public rows when phone is new
+ * - Idempotent by email: returns existing userId when email already registered
+ * - Creates auth user (email + email_confirm) + public rows when email is new
  * - Derives first/last name correctly from fullName
  * - Handles race condition: auth user exists but public.users row is missing
  * - Requires clients:edit permission
+ * - Phone is optional contact data (not the login identity)
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -17,14 +18,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const {
   mockCan,
-  mockFindClientByPhone,
+  mockFindClientByEmail,
   mockInsertClientRows,
   mockCreateUser,
   mockListUsers,
   mockWriteAudit,
   mockDbQueryChain,
 } = vi.hoisted(() => {
-  // Chainable Supabase query-builder stub (used by the C-1 fix path)
+  // Chainable Supabase query-builder stub (used by the race-recovery path)
   const chain = {
     from: vi.fn(),
     select: vi.fn(),
@@ -37,7 +38,7 @@ const {
 
   return {
     mockCan: vi.fn(),
-    mockFindClientByPhone: vi.fn(),
+    mockFindClientByEmail: vi.fn(),
     mockInsertClientRows: vi.fn().mockResolvedValue(undefined),
     mockCreateUser: vi.fn(),
     mockListUsers: vi.fn().mockResolvedValue({ data: { users: [] } }),
@@ -59,7 +60,7 @@ vi.mock("@/backend/platform/supabase", () => ({
         listUsers: mockListUsers,
       },
     },
-    // C-1 fix: serviceClient.from(…) chain for the public.users lookup
+    // serviceClient.from(…) chain for the public.users race-recovery lookup
     from: mockDbQueryChain.from,
   }),
   revokeAllSessions: vi.fn(),
@@ -84,9 +85,9 @@ vi.mock("@/backend/platform/logger", () => ({
 }));
 
 vi.mock("@/backend/platform/ratelimit", () => ({
-  limitOtpSendPhone: vi.fn().mockResolvedValue({ allowed: true }),
+  limitOtpSendEmail: vi.fn().mockResolvedValue({ allowed: true }),
   limitOtpSendIp: vi.fn().mockResolvedValue({ allowed: true }),
-  limitOtpVerifyPhone: vi.fn().mockResolvedValue({ allowed: true }),
+  limitOtpVerifyEmail: vi.fn().mockResolvedValue({ allowed: true }),
 }));
 
 vi.mock("@/backend/platform/resend", () => ({
@@ -114,11 +115,12 @@ vi.mock("../repository", async (importOriginal) => {
   const original = await importOriginal<typeof import("../repository")>();
   return {
     ...original,
-    findClientByPhone: mockFindClientByPhone,
+    findClientByEmail: mockFindClientByEmail,
+    findClientByPhone: vi.fn().mockResolvedValue(null),
     insertClientRows: mockInsertClientRows,
     insertPersonRecord: vi.fn().mockResolvedValue("person-id-1"),
     insertCasePartyRow: vi.fn().mockResolvedValue(undefined),
-    checkClientEligibility: vi.fn().mockResolvedValue({ eligible: false }),
+    checkClientEligibilityByEmail: vi.fn().mockResolvedValue({ eligible: false }),
     checkClientEligibilityById: vi.fn().mockResolvedValue({ eligible: false }),
     countActiveStaff: vi.fn().mockResolvedValue(1),
     getStaffProfileById: vi.fn().mockResolvedValue(null),
@@ -169,16 +171,16 @@ describe("provisionClientUser", () => {
       throw new AuthzError("forbidden_module");
     });
     await expect(
-      provisionClientUser(ACTOR, { fullName: "Maria Lopez", phoneE164: "+13055550001" }),
+      provisionClientUser(ACTOR, { fullName: "Maria Lopez", email: "maria@example.com" }),
     ).rejects.toThrow();
   });
 
-  it("returns existing userId (created:false) when phone already registered", async () => {
-    mockFindClientByPhone.mockResolvedValue({ id: "existing-user-id", existed: true });
+  it("returns existing userId (created:false) when email already registered", async () => {
+    mockFindClientByEmail.mockResolvedValue({ id: "existing-user-id", existed: true });
 
     const result = await provisionClientUser(ACTOR, {
       fullName: "Maria Lopez",
-      phoneE164: "+13055550001",
+      email: "maria@example.com",
     });
 
     expect(result).toEqual({ userId: "existing-user-id", created: false });
@@ -188,29 +190,31 @@ describe("provisionClientUser", () => {
     expect(mockInsertClientRows).not.toHaveBeenCalled();
   });
 
-  it("creates auth user + rows and returns created:true for new phone", async () => {
-    mockFindClientByPhone.mockResolvedValue(null); // phone not found
+  it("creates auth user + rows and returns created:true for new email", async () => {
+    mockFindClientByEmail.mockResolvedValue(null); // email not found
     mockCreateUser.mockResolvedValue({ data: { user: AUTH_USER }, error: null });
 
     const result = await provisionClientUser(ACTOR, {
       fullName: "Pedro Gomez",
+      email: "pedro@example.com",
       phoneE164: "+13055550002",
     });
 
     expect(result).toEqual({ userId: AUTH_USER.id, created: true });
 
-    // auth.admin.createUser called with phone + phone_confirm:true (no password)
+    // auth.admin.createUser called with email + email_confirm:true (no password)
     expect(mockCreateUser).toHaveBeenCalledWith(
       expect.objectContaining({
-        phone: "+13055550002",
-        phone_confirm: true,
+        email: "pedro@example.com",
+        email_confirm: true,
       }),
     );
-    // Rows inserted
+    // Rows inserted with email as identity + phone as contact
     expect(mockInsertClientRows).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: AUTH_USER.id,
         orgId: ACTOR.orgId,
+        email: "pedro@example.com",
         phoneE164: "+13055550002",
         firstName: "Pedro",
         lastName: "Gomez",
@@ -220,13 +224,31 @@ describe("provisionClientUser", () => {
     expect(mockWriteAudit).toHaveBeenCalled();
   });
 
+  it("works without a phone (phone is optional contact data)", async () => {
+    mockFindClientByEmail.mockResolvedValue(null);
+    mockCreateUser.mockResolvedValue({ data: { user: AUTH_USER }, error: null });
+
+    await provisionClientUser(ACTOR, {
+      fullName: "Sin Telefono",
+      email: "notel@example.com",
+    });
+
+    // createUser called WITHOUT a phone key
+    expect(mockCreateUser).toHaveBeenCalledWith(
+      expect.objectContaining({ email: "notel@example.com", email_confirm: true }),
+    );
+    expect(mockInsertClientRows).toHaveBeenCalledWith(
+      expect.objectContaining({ email: "notel@example.com", phoneE164: null }),
+    );
+  });
+
   it("derives firstName only when fullName has no space", async () => {
-    mockFindClientByPhone.mockResolvedValue(null);
+    mockFindClientByEmail.mockResolvedValue(null);
     mockCreateUser.mockResolvedValue({ data: { user: AUTH_USER }, error: null });
 
     await provisionClientUser(ACTOR, {
       fullName: "Valentina",
-      phoneE164: "+13055550003",
+      email: "valentina@example.com",
     });
 
     expect(mockInsertClientRows).toHaveBeenCalledWith(
@@ -238,12 +260,12 @@ describe("provisionClientUser", () => {
   });
 
   it("derives first/last name correctly for multi-word last name", async () => {
-    mockFindClientByPhone.mockResolvedValue(null);
+    mockFindClientByEmail.mockResolvedValue(null);
     mockCreateUser.mockResolvedValue({ data: { user: AUTH_USER }, error: null });
 
     await provisionClientUser(ACTOR, {
       fullName: "Ana Maria de la Cruz",
-      phoneE164: "+13055550004",
+      email: "ana@example.com",
     });
 
     expect(mockInsertClientRows).toHaveBeenCalledWith(
@@ -255,12 +277,12 @@ describe("provisionClientUser", () => {
   });
 
   it("passes locale and timezone when provided", async () => {
-    mockFindClientByPhone.mockResolvedValue(null);
+    mockFindClientByEmail.mockResolvedValue(null);
     mockCreateUser.mockResolvedValue({ data: { user: AUTH_USER }, error: null });
 
     await provisionClientUser(ACTOR, {
       fullName: "Jose Torres",
-      phoneE164: "+13055550005",
+      email: "jose@example.com",
       locale: "es",
       timezone: "America/Chicago",
     });
@@ -273,15 +295,15 @@ describe("provisionClientUser", () => {
     );
   });
 
-  // C-1 FIX: race condition now resolved via direct DB query on public.users,
+  // Race recovery resolved via direct DB query on public.users (by email),
   // NOT via listUsers() which silently misses users in orgs with >1000 accounts.
-  it("C-1: handles race condition via public.users DB query (not listUsers)", async () => {
-    mockFindClientByPhone.mockResolvedValue(null); // phone not in public.users yet
+  it("handles race condition via public.users DB query (not listUsers)", async () => {
+    mockFindClientByEmail.mockResolvedValue(null); // email not in public.users yet
     mockCreateUser.mockResolvedValue({
       data: null,
       error: { message: "User already registered" },
     });
-    // C-1: DB query on public.users returns the pre-existing row
+    // DB query on public.users returns the pre-existing row
     mockDbQueryChain.maybeSingle.mockResolvedValue({
       data: { id: "preexisting-auth-id" },
       error: null,
@@ -289,14 +311,14 @@ describe("provisionClientUser", () => {
 
     const result = await provisionClientUser(ACTOR, {
       fullName: "Carmen Soto",
-      phoneE164: "+13055550006",
+      email: "carmen@example.com",
     });
 
     expect(result).toEqual({ userId: "preexisting-auth-id", created: false });
     expect(mockInsertClientRows).toHaveBeenCalledWith(
       expect.objectContaining({ userId: "preexisting-auth-id" }),
     );
-    // listUsers must NOT have been called (C-1 fix replaced it)
+    // listUsers must NOT have been called
     expect(mockListUsers).not.toHaveBeenCalled();
   });
 });

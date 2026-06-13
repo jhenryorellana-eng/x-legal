@@ -2,7 +2,8 @@
  * Código OTP — /otp (DOC-51-UI-CLIENTE §4, PROMPT-CLI-04)
  *
  * Public, no session required.
- * Shows 6-box OTP input, 45s countdown timer, resend/change-number links.
+ * Shows 6-box OTP input, 45s countdown timer, resend/change-email links.
+ * Email OTP migration (DOC-22 §1, June 2026): reads ?email= instead of ?phone=.
  */
 
 import { getTranslations } from "next-intl/server";
@@ -12,11 +13,11 @@ import { OtpScreen } from "./otp-screen";
 export default async function OtpPage({
   searchParams,
 }: {
-  searchParams: Promise<{ phone?: string }>;
+  searchParams: Promise<{ email?: string }>;
 }) {
-  // /otp only makes sense after entering a phone on /phone
-  const { phone } = await searchParams;
-  if (!phone) redirect("/phone");
+  // /otp only makes sense after entering an email on /email
+  const { email } = await searchParams;
+  if (!email) redirect("/email");
 
   const t = await getTranslations("cliente.otp");
 
@@ -29,7 +30,7 @@ export default async function OtpPage({
         // screen interpolates it on every countdown tick.
         resendCountdown: t.raw("resendCountdown"),
         resendBtn: t("resendBtn"),
-        changeNumber: t("changeNumber"),
+        changeEmail: t("changeEmail"),
         cta: t("cta"),
         footerBadge: t("footerBadge"),
         errorCode: t("errorCode"),

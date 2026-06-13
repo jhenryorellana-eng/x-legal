@@ -33,9 +33,9 @@ vi.mock("@zxcvbn-ts/language-common", () => ({ adjacencyGraphs: {}, dictionary: 
 
 // platform/ratelimit
 vi.mock("@/backend/platform/ratelimit.js", () => ({
-  limitOtpSendPhone: vi.fn(),
+  limitOtpSendEmail: vi.fn(),
   limitOtpSendIp: vi.fn(),
-  limitOtpVerifyPhone: vi.fn(),
+  limitOtpVerifyEmail: vi.fn(),
 }));
 
 // platform/logger
@@ -54,7 +54,7 @@ vi.mock("@/backend/platform/authz.js", () => ({
 
 // identity/repository
 vi.mock("../repository.js", () => ({
-  checkClientEligibility: vi.fn(),
+  checkClientEligibilityByEmail: vi.fn(),
   checkClientEligibilityById: vi.fn(),
   insertStaffRows: vi.fn(),
   replaceStaffPermissions: vi.fn(),
@@ -101,12 +101,12 @@ import {
 } from "../service";
 
 import {
-  limitOtpSendPhone,
+  limitOtpSendEmail,
   limitOtpSendIp,
-  limitOtpVerifyPhone,
+  limitOtpVerifyEmail,
 } from "@/backend/platform/ratelimit";
 import { requireActor } from "@/backend/platform/authz";
-import { checkClientEligibility, checkClientEligibilityById } from "../repository";
+import { checkClientEligibilityByEmail, checkClientEligibilityById } from "../repository";
 import { createServerClient, createServiceClient } from "@/backend/platform/supabase";
 
 // ---------------------------------------------------------------------------
@@ -142,69 +142,69 @@ function buildServiceClient(overrides: Record<string, unknown> = {}) {
 // ---------------------------------------------------------------------------
 
 describe("requestClientOtp", () => {
-  const validPhone = "(305) 555-0100"; // normalizes to +13055550100
+  const validEmail = "maria@example.com";
   const ip = "1.2.3.4";
 
   beforeEach(() => {
-    vi.mocked(limitOtpSendPhone).mockResolvedValue({ allowed: true, reset: 0 });
+    vi.mocked(limitOtpSendEmail).mockResolvedValue({ allowed: true, reset: 0 });
     vi.mocked(limitOtpSendIp).mockResolvedValue({ allowed: true, reset: 0 });
     const client = buildServerClient();
     vi.mocked(createServerClient).mockResolvedValue(// eslint-disable-next-line @typescript-eslint/no-explicit-any
 client as any);
   });
 
-  it("returns { ok: true } when phone is eligible", async () => {
-    vi.mocked(checkClientEligibility).mockResolvedValue({ eligible: true });
-    const result = await requestClientOtp(validPhone, ip);
+  it("returns { ok: true } when email is eligible", async () => {
+    vi.mocked(checkClientEligibilityByEmail).mockResolvedValue({ eligible: true });
+    const result = await requestClientOtp(validEmail, ip);
     expect(result).toEqual({ ok: true });
   }, 2000);
 
-  it("returns { ok: true } when phone is NOT eligible (anti-enumeration — same response)", async () => {
-    vi.mocked(checkClientEligibility).mockResolvedValue({ eligible: false });
+  it("returns { ok: true } when email is NOT eligible (anti-enumeration — same response)", async () => {
+    vi.mocked(checkClientEligibilityByEmail).mockResolvedValue({ eligible: false });
 
     const client = buildServerClient();
     vi.mocked(createServerClient).mockResolvedValue(// eslint-disable-next-line @typescript-eslint/no-explicit-any
 client as any);
 
-    const result = await requestClientOtp(validPhone, ip);
+    const result = await requestClientOtp(validEmail, ip);
     expect(result).toEqual({ ok: true });
-    // MUST NOT call signInWithOtp for ineligible phones
+    // MUST NOT call signInWithOtp for ineligible emails
     expect(client.auth.signInWithOtp).not.toHaveBeenCalled();
   }, 2000);
 
-  it("calls signInWithOtp with shouldCreateUser=false when eligible", async () => {
-    vi.mocked(checkClientEligibility).mockResolvedValue({ eligible: true });
+  it("calls signInWithOtp with email + shouldCreateUser=false when eligible", async () => {
+    vi.mocked(checkClientEligibilityByEmail).mockResolvedValue({ eligible: true });
     const client = buildServerClient();
     vi.mocked(createServerClient).mockResolvedValue(// eslint-disable-next-line @typescript-eslint/no-explicit-any
 client as any);
 
-    await requestClientOtp(validPhone, ip);
+    await requestClientOtp(validEmail, ip);
 
     expect(client.auth.signInWithOtp).toHaveBeenCalledWith(
       expect.objectContaining({
-        phone: "+13055550100",
-        options: expect.objectContaining({ shouldCreateUser: false, channel: "sms" }),
+        email: "maria@example.com",
+        options: expect.objectContaining({ shouldCreateUser: false }),
       }),
     );
   }, 2000);
 
-  it("throws IdentityError('rate_limited') when phone rate limit exceeded", async () => {
-    vi.mocked(limitOtpSendPhone).mockResolvedValue({ allowed: false, reset: Date.now() + 30_000 });
-    await expect(requestClientOtp(validPhone, ip)).rejects.toThrow(
+  it("throws IdentityError('rate_limited') when email rate limit exceeded", async () => {
+    vi.mocked(limitOtpSendEmail).mockResolvedValue({ allowed: false, reset: Date.now() + 30_000 });
+    await expect(requestClientOtp(validEmail, ip)).rejects.toThrow(
       expect.objectContaining({ code: "rate_limited" }),
     );
   }, 2000);
 
   it("throws IdentityError('rate_limited') when IP rate limit exceeded", async () => {
     vi.mocked(limitOtpSendIp).mockResolvedValue({ allowed: false, reset: Date.now() + 30_000 });
-    await expect(requestClientOtp(validPhone, ip)).rejects.toThrow(
+    await expect(requestClientOtp(validEmail, ip)).rejects.toThrow(
       expect.objectContaining({ code: "rate_limited" }),
     );
   }, 2000);
 
-  it("throws IdentityError('invalid_phone') for an invalid phone", async () => {
-    await expect(requestClientOtp("not-a-phone", ip)).rejects.toThrow(
-      expect.objectContaining({ code: "invalid_phone" }),
+  it("throws IdentityError('invalid_email') for an invalid email", async () => {
+    await expect(requestClientOtp("not-an-email", ip)).rejects.toThrow(
+      expect.objectContaining({ code: "invalid_email" }),
     );
   }, 2000);
 });
@@ -214,11 +214,11 @@ client as any);
 // ---------------------------------------------------------------------------
 
 describe("verifyClientOtp", () => {
-  const validPhone = "(305) 555-0100";
+  const validEmail = "maria@example.com";
   const validCode = "123456";
 
   beforeEach(() => {
-    vi.mocked(limitOtpVerifyPhone).mockResolvedValue({ allowed: true, reset: 0 });
+    vi.mocked(limitOtpVerifyEmail).mockResolvedValue({ allowed: true, reset: 0 });
   });
 
   it("returns { ok: true } when OTP is valid and re-gate passes", async () => {
@@ -231,9 +231,13 @@ describe("verifyClientOtp", () => {
 client as any);
     vi.mocked(checkClientEligibilityById).mockResolvedValue({ eligible: true });
 
-    const result = await verifyClientOtp(validPhone, validCode);
+    const result = await verifyClientOtp(validEmail, validCode);
     expect(result).toEqual({ ok: true });
     expect(client.auth.signOut).not.toHaveBeenCalled();
+    // verifyOtp called with email + type:'email'
+    expect(client.auth.verifyOtp).toHaveBeenCalledWith(
+      expect.objectContaining({ email: "maria@example.com", token: validCode, type: "email" }),
+    );
   });
 
   it("throws IdentityError('invalid_otp') on wrong code", async () => {
@@ -243,7 +247,7 @@ client as any);
     vi.mocked(createServerClient).mockResolvedValue(// eslint-disable-next-line @typescript-eslint/no-explicit-any
 client as any);
 
-    await expect(verifyClientOtp(validPhone, validCode)).rejects.toThrow(
+    await expect(verifyClientOtp(validEmail, validCode)).rejects.toThrow(
       expect.objectContaining({ code: "invalid_otp" }),
     );
   });
@@ -259,23 +263,23 @@ client as any);
 client as any);
     vi.mocked(checkClientEligibilityById).mockResolvedValue({ eligible: false });
 
-    await expect(verifyClientOtp(validPhone, validCode)).rejects.toThrow(
+    await expect(verifyClientOtp(validEmail, validCode)).rejects.toThrow(
       expect.objectContaining({ code: "wrong_kind", message: "no_access" }),
     );
     expect(signOutMock).toHaveBeenCalledWith({ scope: "local" });
   });
 
   it("throws IdentityError('rate_limited') when verify rate limit exceeded", async () => {
-    vi.mocked(limitOtpVerifyPhone).mockResolvedValue({ allowed: false, reset: Date.now() + 30_000 });
+    vi.mocked(limitOtpVerifyEmail).mockResolvedValue({ allowed: false, reset: Date.now() + 30_000 });
 
-    await expect(verifyClientOtp(validPhone, validCode)).rejects.toThrow(
+    await expect(verifyClientOtp(validEmail, validCode)).rejects.toThrow(
       expect.objectContaining({ code: "rate_limited" }),
     );
   });
 
-  it("throws IdentityError('invalid_phone') for an invalid phone", async () => {
+  it("throws IdentityError('invalid_email') for an invalid email", async () => {
     await expect(verifyClientOtp("bad", "123456")).rejects.toThrow(
-      expect.objectContaining({ code: "invalid_phone" }),
+      expect.objectContaining({ code: "invalid_email" }),
     );
   });
 });
