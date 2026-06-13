@@ -1,60 +1,116 @@
 /**
- * Home — /home (F0 stub — DOC-51-UI-CLIENTE §home, F0 minimal)
+ * Home — `/home` · nivel CUENTA (pestaña "Mis casos") — DOC-51 §5.
  *
- * Authenticated, client only. Guard in middleware.
- * F0: saludo con nombre + lista de casos (stub).
- * The full dashboard arrives in F2.
+ * Server component. Reads the client's cases (cases module), enriches each with
+ * its service/phase/progress (getCaseWorkspace), the unread notification count
+ * (notifications module) and the client display name. Renders the multi-case
+ * dashboard (réplica del prototipo `screens6.jsx → DashboardScreen`).
+ *
+ * Auth: middleware gates /home to authenticated clients; we re-check kind here.
  */
 
 import { redirect } from "next/navigation";
-import { getTranslations } from "next-intl/server";
+import { getLocale, getTranslations } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
-import { Icon } from "@/frontend/components/brand/icon";
+import {
+  getCasesForClient,
+  getCaseWorkspace,
+  getClientDisplayName,
+  type CaseWorkspaceDto,
+} from "@/backend/modules/cases";
+import { getNotifications } from "@/backend/modules/notifications";
+import { pickLocale, coerceIcon, type Locale } from "@/frontend/features/cliente/shared/i18n";
+import {
+  DashboardScreen,
+  type DashboardCase,
+} from "@/frontend/features/cliente/home/dashboard-screen";
 
 export default async function HomePage() {
-  const t = await getTranslations("cliente.home");
   const actor = await getActor();
+  if (!actor || actor.kind !== "client") redirect("/welcome");
 
-  if (!actor || actor.kind !== "client") {
-    redirect("/welcome");
+  const locale = (await getLocale()) as Locale;
+  const t = await getTranslations("cliente.home");
+  const tNav = await getTranslations("cliente.nav");
+
+  const displayName = (await getClientDisplayName(actor)) ?? "";
+  const avatarInitial = displayName.charAt(0).toUpperCase() || "U";
+
+  // List the client's cases, then enrich each with its workspace (service/phase
+  // /progress). RLS scopes the list to cases the client is a member of.
+  const casesPage = await getCasesForClient(actor, { limit: 20 });
+  const workspaces: CaseWorkspaceDto[] = [];
+  for (const c of casesPage.items) {
+    try {
+      workspaces.push(await getCaseWorkspace(actor, c.id));
+    } catch {
+      // A case the client can list but not (yet) fully read — skip defensively.
+    }
   }
 
-  // F0 stub: full case list and profile queries arrive in F2.
-  const displayName = "Cliente";
+  // Unread notifications: count from the first page (read_at is null).
+  let unreadCount = 0;
+  try {
+    const notifs = await getNotifications(actor, { limit: 50 });
+    unreadCount = notifs.items.filter((n) => n.read_at == null).length;
+  } catch {
+    unreadCount = 0;
+  }
+
+  const phaseTpl = t("phaseShort"); // "Fase {x} de {y} · {phase}"
+  const reviewLabel = t("inReview");
+
+  const cases: DashboardCase[] = workspaces.map((ws, idx) => {
+    const serviceName = pickLocale(ws.service?.labelI18n, locale);
+    const party = ws.parties[0]?.name;
+    const title = party ? `${serviceName} — ${party}` : serviceName;
+    const phaseName = pickLocale(ws.phase?.labelI18n, locale);
+    const phaseLabel = ws.phase
+      ? phaseTpl
+          .replace("{x}", String(ws.phaseIndex))
+          .replace("{y}", String(ws.phaseCount))
+          .replace("{phase}", phaseName)
+      : null;
+    const isInReview = ws.status === "in_validation";
+    return {
+      caseId: ws.caseId,
+      title,
+      phaseLabel,
+      serviceIcon: coerceIcon(ws.service?.icon, "shield"),
+      serviceColor: ws.service?.color || "var(--accent)",
+      progress: ws.phaseProgress,
+      pendingDocuments: ws.pendingDocuments,
+      // The first/most-recent active case is the highlighted hero card.
+      highlighted: idx === 0,
+      statusText: isInReview ? reviewLabel : undefined,
+      statusKind: isInReview ? ("revision" as const) : undefined,
+    };
+  });
 
   return (
-    <div
-      style={{
-        minHeight: "100dvh",
-        padding: "54px 20px 120px",
-        background: "var(--bg)",
+    <DashboardScreen
+      displayName={displayName || t("fallbackName")}
+      avatarInitial={avatarInitial}
+      cases={cases}
+      unreadCount={unreadCount}
+      labels={{
+        greetingEyebrow: t("greetingEyebrow"),
+        greeting: t("greeting"),
+        yourCases: t("yourCases"),
+        documentsLeft: t("documentsLeft"),
+        openCase: t("openCase"),
+        quickAccess: t("quickAccess"),
+        qServices: tNav("servicios"),
+        qServicesSub: t("qServicesSub"),
+        qPayments: tNav("pagos"),
+        qPaymentsSub: t("qPaymentsSub"),
+        qCommunity: tNav("comunidad"),
+        qCommunitySub: t("qCommunitySub"),
+        qSettings: t("qSettings"),
+        qSettingsSub: t("qSettingsSub"),
+        bellAria: t("bellAria"),
+        avatarAria: t("avatarAria"),
       }}
-    >
-      {/* Header */}
-      <div style={{ marginBottom: 28 }}>
-        <h1
-          className="t-black"
-          style={{ fontSize: 26, color: "var(--navy)", marginBottom: 4 }}
-        >
-          {t("greeting").replace("{name}", displayName)}
-        </h1>
-        <p style={{ fontSize: 15, color: "var(--ink-3)" }}>{t("subtitle")}</p>
-      </div>
-
-      {/* F0 stub — no cases rendered yet */}
-      <div
-        style={{
-          padding: "24px 20px",
-          background: "var(--card)",
-          borderRadius: 20,
-          textAlign: "center",
-          color: "var(--ink-3)",
-          fontSize: 15,
-        }}
-      >
-        <Icon name="briefcase" size={36} color="var(--ink-3)" />
-        <p style={{ marginTop: 12 }}>{t("noCases")}</p>
-      </div>
-    </div>
+    />
   );
 }

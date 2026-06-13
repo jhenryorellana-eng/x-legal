@@ -14,8 +14,12 @@ import { can, requireCaseAccess, AuthzError } from "@/backend/platform/authz";
 import type { Actor } from "@/backend/platform/authz";
 import { appEvents } from "@/backend/platform/events";
 import { limitSigningTokenIp } from "@/backend/platform/ratelimit";
-import { validateUploadedObject } from "@/backend/platform/storage";
+import {
+  validateUploadedObject,
+  createSignedUploadUrl,
+} from "@/backend/platform/storage";
 import { writeAudit, appendCaseTimeline } from "@/backend/modules/audit";
+import { jpegDataUrlToPdf } from "./signature-pdf";
 
 import {
   canTransitionContract,
@@ -368,6 +372,73 @@ export async function signContract(
 }
 
 // ---------------------------------------------------------------------------
+// signContractFromImage — PUBLIC (anonymous bearer)
+// ---------------------------------------------------------------------------
+
+/**
+ * Signs a contract from a signature image data URL (the public signing page).
+ *
+ * The `contracts` bucket is PDF-only and signContract validates PDF magic
+ * bytes; the signature is wrapped into a minimal one-page PDF here (the module
+ * owns platform/storage). The signature image is the legal artifact stored at
+ * `contracts/signatures/{token}-{ts}.pdf`.
+ *
+ * PUBLIC ENDPOINT — no Actor. Rate limited via limitSigningTokenIp.
+ *
+ * @api-id API-CTR-06 (image variant)
+ */
+export async function signContractFromImage(
+  token: string,
+  /** JPEG data URL — the client re-encodes the SignaturePad PNG to JPEG. */
+  signatureJpegDataUrl: string,
+  ip: string,
+): Promise<{ caseId: string | null }> {
+  await limitSigningTokenIp(ip);
+
+  // Wrap the JPEG into a minimal PDF and upload it to the contracts bucket.
+  const pdfBytes = jpegDataUrlToPdf(signatureJpegDataUrl);
+  const path = `signatures/${token}-${Date.now()}.pdf`;
+  const { signedUrl, path: uploadRef } = await createSignedUploadUrl(
+    "contracts",
+    path,
+  );
+
+  const putRes = await fetch(signedUrl, {
+    method: "PUT",
+    headers: { "content-type": "application/pdf" },
+    body: pdfBytes as unknown as BodyInit,
+  });
+  if (!putRes.ok) {
+    throw new ContractError("CONTRACT_TOKEN_INVALID");
+  }
+
+  return signContract(token, { signatureUploadRef: uploadRef, ip });
+}
+
+// ---------------------------------------------------------------------------
+// createContractAndSend — staff (creates draft → sent, returns token)
+// ---------------------------------------------------------------------------
+
+/**
+ * Creates a contract and immediately sends it for signing, returning the fresh
+ * signing token (so the admin "Nuevo caso" modal can show the link to copy).
+ *
+ * @api-id API-CTR-01 + API-CTR-02 (combined)
+ */
+export async function createContractAndSend(
+  actor: Actor,
+  input: CreateContractInput,
+): Promise<{ contractId: string; signingToken: string }> {
+  can(actor, "cases", "edit");
+  const contract = await createContract(input);
+  await sendContractForSigning(actor, contract.id);
+  const sent = await findContractById(contract.id);
+  const token = sent?.signing_token;
+  if (!token) throw new ContractError("CONTRACT_TOKEN_INVALID");
+  return { contractId: contract.id, signingToken: token };
+}
+
+// ---------------------------------------------------------------------------
 // acceptTermsInApp — client only
 // ---------------------------------------------------------------------------
 
@@ -437,6 +508,99 @@ export async function acceptTermsInApp(
   return acceptance;
 }
 
+/**
+ * Accepts the active Terms in-app from a SignaturePad image (DOC-51 §12).
+ *
+ * Mirrors signContractFromImage: wraps the JPEG into a minimal PDF (contracts
+ * bucket is PDF-only), uploads it via a signed URL, then records the acceptance.
+ * Keeps the PDF/storage concern inside the module (the app action stays thin and
+ * boundary-clean: app → module-pub only).
+ *
+ * @api-id API-CASE-12 + API-CTR-06 (combined client convenience)
+ */
+export async function acceptTermsFromImage(
+  actor: Actor,
+  input: { caseId: string; signatureJpegDataUrl: string; ip: string | null },
+): Promise<ContractTermsAcceptanceRow> {
+  await requireCaseAccess(actor, input.caseId);
+  if (actor.kind !== "client") throw new AuthzError("wrong_kind");
+
+  const pdfBytes = jpegDataUrlToPdf(input.signatureJpegDataUrl);
+  const path = `signatures/${input.caseId}-${actor.userId}-${Date.now()}.pdf`;
+  const { signedUrl, path: uploadRef } = await createSignedUploadUrl(
+    "contracts",
+    path,
+  );
+
+  const putRes = await fetch(signedUrl, {
+    method: "PUT",
+    headers: { "content-type": "application/pdf" },
+    body: pdfBytes as unknown as BodyInit,
+  });
+  if (!putRes.ok) {
+    throw new ContractError("TERMS_VERSION_INACTIVE"); // repurpose for upload failure
+  }
+
+  return acceptTermsInApp(actor, {
+    caseId: input.caseId,
+    signatureUploadRef: uploadRef,
+    ip: input.ip,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Read: getTermsStatusForCase (disclaimer guard — DOC-51 §12, API-CASE-11)
+// ---------------------------------------------------------------------------
+
+export interface TermsStatusView {
+  /** True when the client already accepted the org's active terms for this case. */
+  alreadyAccepted: boolean;
+  /** The active terms version content (null when none is published). */
+  terms: {
+    version: string;
+    titleI18n: { en: string; es: string };
+    bodyMdI18n: { en: string; es: string };
+  } | null;
+}
+
+/**
+ * Resolves whether the client has accepted the org's active Terms for this case
+ * and returns the active terms content (read-only). Used to gate the disclaimer.
+ *
+ * @api-id API-CASE-11 (TermsStatusDto)
+ */
+export async function getTermsStatusForCase(
+  actor: Actor,
+  caseId: string,
+): Promise<TermsStatusView> {
+  await requireCaseAccess(actor, caseId);
+  const activeTerms = await getActiveTermsVersion(actor.orgId);
+  if (!activeTerms) return { alreadyAccepted: false, terms: null };
+
+  const existing = await findAcceptance(caseId, actor.userId, activeTerms.version);
+
+  const toI18n = (v: unknown): { en: string; es: string } => {
+    if (v && typeof v === "object") {
+      const o = v as Record<string, unknown>;
+      return { en: String(o.en ?? o.es ?? ""), es: String(o.es ?? o.en ?? "") };
+    }
+    return { en: "", es: "" };
+  };
+
+  // The repo's TermsVersionRow interface predates the i18n columns; the actual
+  // terms_versions row carries title_i18n / body_md_i18n (see database.types).
+  const termsRow = activeTerms as unknown as Record<string, unknown>;
+
+  return {
+    alreadyAccepted: existing != null,
+    terms: {
+      version: activeTerms.version,
+      titleI18n: toI18n(termsRow["title_i18n"]),
+      bodyMdI18n: toI18n(termsRow["body_md_i18n"]),
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Read: getContractForCase
 // ---------------------------------------------------------------------------
@@ -452,4 +616,19 @@ export async function getContractForCase(
 ): Promise<ContractRow | null> {
   await requireCaseAccess(actor, caseId);
   return findContractByCaseId(caseId);
+}
+
+/**
+ * Returns the signing_token for a given contract (after sendContractForSigning).
+ * Used by createCaseAction to hand back the token to the modal.
+ *
+ * @api-id API-CTR-02 (signing token read-back)
+ */
+export async function getSigningTokenForContract(
+  actor: Actor,
+  contractId: string,
+): Promise<string | null> {
+  can(actor, "cases", "view");
+  const row = await findContractById(contractId);
+  return row?.signing_token ?? null;
 }

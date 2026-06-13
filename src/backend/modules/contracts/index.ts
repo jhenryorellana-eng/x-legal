@@ -7,14 +7,21 @@
 // Use cases
 export {
   createContract,
+  createContractAndSend,
   sendContractForSigning,
   cancelContractSending,
   resendSigningLink,
   getContractBySigningToken,
   signContract,
+  signContractFromImage,
   acceptTermsInApp,
+  acceptTermsFromImage,
+  getTermsStatusForCase,
   getContractForCase,
+  getSigningTokenForContract,
 } from "./service";
+
+export type { TermsStatusView } from "./service";
 
 // Error class
 export { ContractError } from "./service";
@@ -22,8 +29,9 @@ export { ContractError } from "./service";
 // Types
 export type { CreateContractInput, SignContractInput, ContractSigningView, AcceptTermsInput } from "./service";
 
-// Repository types (needed by cases module)
-export type { ContractRow, ContractTermsAcceptanceRow } from "./repository";
+// Repository helpers needed by cases module (terms version for contract creation)
+export { getActiveTermsVersion } from "./repository";
+export type { ContractRow, ContractTermsAcceptanceRow, TermsVersionRow } from "./repository";
 
 // Event types
 export type { ContractEvent, ContractSentEvent, ContractSignedEvent } from "./events";

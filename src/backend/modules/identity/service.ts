@@ -52,6 +52,9 @@ import {
   insertStaffRows,
   replaceStaffPermissions,
   setStaffActive,
+  findClientByPhone,
+  insertClientRows,
+  insertPersonRecord,
   type StaffProfileRow,
   type EmployeePermissionInput,
   type EmployeeRow,
@@ -891,6 +894,182 @@ function buildStaffInviteEmail(opts: {
 </body>
 </html>`;
 }
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// provisionClientUser — DOC-22 §1.2 (H-2 resolution)
+// ---------------------------------------------------------------------------
+
+export interface ProvisionClientUserInput {
+  fullName: string;
+  phoneE164: string;
+  locale?: string;
+  timezone?: string;
+}
+
+export interface ProvisionClientUserResult {
+  userId: string;
+  /** true when the user row was created; false when it already existed (idempotent). */
+  created: boolean;
+}
+
+/**
+ * Provisions a client user in Supabase Auth + public.users + client_profiles.
+ *
+ * Idempotent by phone_e164: if the user already exists (phone UNIQUE), returns
+ * { userId, created: false } without touching any rows.
+ *
+ * Steps per DOC-22 §1.2:
+ * 1. can(actor, 'clients', 'edit')
+ * 2. Normalize phone (must already be E.164 — callers in the stack must normalize)
+ * 3. Check existing: users.phone_e164 UNIQUE (kind=client)
+ * 4. auth.admin.createUser({ phone, phone_confirm:true }) — no password, no session
+ * 5. INSERT users(kind=client) + client_profiles (first/last derived from fullName)
+ * 6. audit
+ *
+ * Race condition: if auth user exists but public.users row is missing, the
+ * upsert in insertClientRows handles it gracefully (idempotent upsert on id).
+ *
+ * @api-id API-AUT-16 (client provisioning; DOC-22 §1.2)
+ */
+export async function provisionClientUser(
+  actor: Actor,
+  input: ProvisionClientUserInput,
+): Promise<ProvisionClientUserResult> {
+  // Step 1: Authorization — only staff with clients:edit can create client accounts
+  can(actor, "clients", "edit");
+
+  const { fullName, phoneE164, locale, timezone } = input;
+
+  // Derive first/last name from fullName (split on first space; last = rest)
+  const spaceIdx = fullName.trim().indexOf(" ");
+  const firstName = spaceIdx >= 0 ? fullName.trim().slice(0, spaceIdx) : fullName.trim();
+  const lastName = spaceIdx >= 0 ? fullName.trim().slice(spaceIdx + 1).trim() : "";
+
+  // Step 3: Idempotency check — phone_e164 UNIQUE on users(kind=client)
+  const existing = await findClientByPhone(phoneE164);
+  if (existing) {
+    logger.info(
+      { userId: existing.id },
+      "provisionClientUser: phone already registered — returning existing user (idempotent)",
+    );
+    return { userId: existing.id, created: false };
+  }
+
+  // Step 4: Create auth user (no password, phone_confirm=true)
+  // DOC-22 §1.2: "phone_confirm: true, sin password ni sesión"
+  const serviceClient = createServiceClient();
+  const { data: authData, error: authError } = await serviceClient.auth.admin.createUser({
+    phone: phoneE164,
+    phone_confirm: true,
+    // Intentionally no password and no email — client authenticates via OTP only
+  });
+
+  if (authError || !authData?.user) {
+    // Check if auth user already exists (race condition between check and create)
+    if (authError?.message?.toLowerCase().includes("already registered") ||
+        authError?.message?.toLowerCase().includes("already been registered")) {
+      // Auth user exists but our public.users row doesn't — look up by phone to get UID
+      const { data: authList } = await serviceClient.auth.admin.listUsers();
+      const authUser = authList?.users?.find(
+        (u) => u.phone === phoneE164,
+      );
+      if (authUser) {
+        // Insert/upsert the missing public rows
+        await insertClientRows({
+          userId: authUser.id,
+          orgId: actor.orgId,
+          phoneE164,
+          firstName,
+          lastName,
+          locale,
+          timezone,
+        });
+        const audit = await getAudit();
+        await audit.writeAudit(actor, "client.provisioned", "users", authUser.id, {
+          phone_e164: phoneE164,
+          created_auth: false,
+          created_rows: true,
+        });
+        return { userId: authUser.id, created: false };
+      }
+    }
+    throw new Error(`provisionClientUser.createUser: ${authError?.message ?? "unknown error"}`);
+  }
+
+  const userId = authData.user.id;
+
+  // Step 5: Insert public rows
+  await insertClientRows({
+    userId,
+    orgId: actor.orgId,
+    phoneE164,
+    firstName,
+    lastName,
+    locale,
+    timezone,
+  });
+
+  // Step 6: Audit (no welcome event here — downpayment.confirmed triggers it, DOC-41 §3.4 H-2)
+  const audit = await getAudit();
+  await audit.writeAudit(actor, "client.provisioned", "users", userId, {
+    phone_e164: phoneE164,
+    created_auth: true,
+    created_rows: true,
+  });
+
+  return { userId, created: true };
+}
+
+// ---------------------------------------------------------------------------
+// upsertPersonRecord — DOC-41 §3.1 (party provisioning for non-user parties)
+// ---------------------------------------------------------------------------
+
+export interface UpsertPersonRecordInput {
+  firstName: string;
+  lastName: string;
+  relationship?: string | null;
+}
+
+/**
+ * Creates a person_records row for a case party who is NOT a system user.
+ * Used by cases.createCaseFromContract for the `parties` list.
+ *
+ * NOTE: person_records has no UNIQUE key across name+org (by design — multiple
+ * people may share names). Each call creates a new record; callers should only
+ * call this once per party in the creation flow.
+ *
+ * @api-id (internal — invoked by cases module via identity/index.ts boundary)
+ */
+export async function upsertPersonRecord(
+  actor: Actor,
+  input: UpsertPersonRecordInput,
+): Promise<string> {
+  can(actor, "clients", "edit");
+  return insertPersonRecord({
+    orgId: actor.orgId,
+    createdBy: actor.userId,
+    firstName: input.firstName,
+    lastName: input.lastName,
+    relationship: input.relationship ?? null,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// insertCaseParty — thin boundary wrapper (DOC-41 §3.1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Inserts a case_parties row. Called exclusively by cases.createCaseFromContract
+ * via the identity/index.ts boundary (cases owns case_parties; identity owns
+ * person_records — this wrapper lets identity write its half atomically).
+ *
+ * Not exported in index.ts: used internally by cases via a dedicated wrapper.
+ */
+export { insertCasePartyRow } from "./repository";
 
 // ---------------------------------------------------------------------------
 // Helpers

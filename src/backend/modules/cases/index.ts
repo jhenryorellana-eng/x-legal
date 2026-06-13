@@ -7,6 +7,7 @@
 
 // Use cases
 export {
+  createCaseFromContract,
   onDownpaymentConfirmed,
   startDocumentUpload,
   confirmDocumentUpload,
@@ -15,7 +16,35 @@ export {
   getCasesForClient,
   getCaseOverview,
   getCaseRequirements,
+  getCaseDocuments,
+  getCaseDocumentDownloadUrl,
+  listCasesAdmin,
   getTimeline,
+  // Client-surface enriched reads (F2 — read-only DTOs, DOC-51)
+  getCaseWorkspace,
+  getDocumentsMatrix,
+  getCaseMilestones,
+  getClientDisplayName,
+} from "./service";
+
+// createCaseFromContract types
+export type {
+  CreateCaseFromContractInput,
+  CreateCaseFromContractResult,
+  CasePartyInput,
+} from "./service";
+
+// Client-surface read DTO types
+export type {
+  CaseWorkspaceDto,
+  CaseWorkspaceParty,
+  DocumentsMatrixDto,
+  DocumentMatrixItem,
+  CaseMilestonesDto,
+  CaseMilestoneItem,
+  I18nValue,
+  AdminCaseListItem,
+  AdminCasesPage,
 } from "./service";
 
 // Error class (used by route handlers / actions for HTTP mapping)

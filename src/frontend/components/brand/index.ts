@@ -23,3 +23,9 @@ export {
 export { Stepper, type StepperProps, type Step, type StepState } from "./stepper";
 export { ThemeToggle } from "./theme-toggle";
 export { OtpInput, type OtpInputProps } from "./otp-input";
+export {
+  IconTile,
+  type IconTileProps,
+  IconHalo,
+  type IconHaloProps,
+} from "./icon-tile";

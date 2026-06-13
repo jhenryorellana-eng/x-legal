@@ -43,6 +43,24 @@ export async function findCaseById(caseId: string): Promise<CaseRow | null> {
   return data;
 }
 
+/**
+ * Finds a case by looking up a contract's case_id.
+ * Used for idempotency check in createCaseFromContract:
+ * "if the contractId already has a case, return it".
+ */
+export async function findCaseByContractId(
+  contractId: string,
+): Promise<{ caseId: string } | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("contracts")
+    .select("case_id")
+    .eq("id", contractId)
+    .maybeSingle();
+  if (!data?.case_id) return null;
+  return { caseId: data.case_id };
+}
+
 /** Finds a case by contract_id using the service client (for event handlers). */
 export async function findCaseByCaseId(
   caseId: string,
@@ -55,6 +73,25 @@ export async function findCaseByCaseId(
     .single();
 
   if (error || !data) return null;
+  return data;
+}
+
+/**
+ * Calls the next_case_number() SQL function for an org.
+ * Returns a string like 'ULP-2026-0001'.
+ */
+export async function nextCaseNumber(orgId: string): Promise<string> {
+  const supabase = await createServiceClient();
+  const { data, error } = await (supabase.rpc as unknown as (
+    fn: string,
+    args: Record<string, unknown>,
+  ) => Promise<{ data: string | null; error: { message: string } | null }>)(
+    "next_case_number",
+    { org: orgId },
+  );
+  if (error || !data) {
+    throw new Error(`cases.repository: nextCaseNumber failed — ${error?.message}`);
+  }
   return data;
 }
 
@@ -372,6 +409,128 @@ export interface ListCasesFilters {
 export interface CasesPage {
   items: CaseRow[];
   nextCursor: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Client-surface enriched reads (F2 — read-only, RLS-scoped via server client)
+//
+// These power the (cliente) screens. They DO NOT mutate. The cases module is the
+// owner of `cases`/`case_documents`/`case_parties`; service-label/phase catalog
+// data comes from the `services`/`service_phases` tables it already references by
+// FK. Person/party names come from `person_records` / `client_profiles`.
+// ---------------------------------------------------------------------------
+
+export interface ServiceLite {
+  id: string;
+  slug: string;
+  label_i18n: Tables<"services">["label_i18n"];
+  icon: string;
+  color: string;
+}
+
+/** Reads a service's display fields (label/icon/color) — RLS-scoped. */
+export async function findServiceLite(
+  serviceId: string,
+): Promise<ServiceLite | null> {
+  const supabase = await createServerClient();
+  const { data } = await supabase
+    .from("services")
+    .select("id, slug, label_i18n, icon, color")
+    .eq("id", serviceId)
+    .maybeSingle();
+  return data ?? null;
+}
+
+export type ServicePhaseRow = Tables<"service_phases">;
+
+/** Returns all phases of a service ordered by position (for "Phase x of y"). */
+export async function listServicePhases(
+  serviceId: string,
+): Promise<ServicePhaseRow[]> {
+  const supabase = await createServerClient();
+  const { data } = await supabase
+    .from("service_phases")
+    .select("*")
+    .eq("service_id", serviceId)
+    .order("position");
+  return data ?? [];
+}
+
+export type ServiceMilestoneRow = Tables<"service_phase_milestones">;
+
+/** Returns all milestones of a service's phases ordered by phase then position. */
+export async function listServiceMilestones(
+  serviceId: string,
+): Promise<Array<ServiceMilestoneRow & { phase_position: number }>> {
+  const supabase = await createServerClient();
+  const { data } = await supabase
+    .from("service_phase_milestones")
+    .select("*, service_phases!inner(service_id, position)")
+    .eq("service_phases.service_id", serviceId)
+    .order("position");
+  if (!data) return [];
+  return data.map((m) => {
+    const rec = m as unknown as Record<string, unknown>;
+    const phase = rec["service_phases"] as { position?: number } | null;
+    return {
+      ...(m as unknown as ServiceMilestoneRow),
+      phase_position: phase?.position ?? 0,
+    };
+  });
+}
+
+/** Person record (party name) lookup by id — RLS-scoped. */
+export async function findPersonRecord(
+  personId: string,
+): Promise<{ first_name: string; last_name: string } | null> {
+  const supabase = await createServerClient();
+  const { data } = await supabase
+    .from("person_records")
+    .select("first_name, last_name")
+    .eq("id", personId)
+    .maybeSingle();
+  return data ?? null;
+}
+
+/** Plan kind (self | with_lawyer) lookup by service_plan id — RLS-scoped. */
+export async function findPlanKind(planId: string): Promise<string | null> {
+  const supabase = await createServerClient();
+  const { data } = await supabase
+    .from("service_plans")
+    .select("kind")
+    .eq("id", planId)
+    .maybeSingle();
+  return data?.kind ?? null;
+}
+
+/** Client profile display name (preferred_name ?? first_name) — RLS-scoped. */
+export async function findClientDisplayName(
+  userId: string,
+): Promise<string | null> {
+  const supabase = await createServerClient();
+  const { data } = await supabase
+    .from("client_profiles")
+    .select("first_name, preferred_name")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (!data) return null;
+  return data.preferred_name ?? data.first_name;
+}
+
+/**
+ * All documents for a case (latest chain heads not filtered here — the service
+ * layer reduces by requirement/party). Used to derive the documents matrix.
+ */
+export async function listCaseDocuments(
+  caseId: string,
+): Promise<CaseDocumentRow[]> {
+  const supabase = await createServerClient();
+  const { data } = await supabase
+    .from("case_documents")
+    .select("*")
+    .eq("case_id", caseId)
+    .order("created_at", { ascending: false });
+  return data ?? [];
 }
 
 export async function listCases(filters: ListCasesFilters): Promise<CasesPage> {

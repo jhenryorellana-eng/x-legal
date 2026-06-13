@@ -1,0 +1,150 @@
+/**
+ * Mock data for the F2-W2-b admin casos preview (Playwright evidence only).
+ * Dev-only — imported solely by the admin-preview route which 404s in prod.
+ */
+
+import { buildCasosStrings } from "@/frontend/features/shared-case";
+import type { CaseRowVM } from "@/frontend/features/admin/casos/casos-list-view";
+import type { NewCaseService } from "@/frontend/features/admin/casos/new-case-modal";
+import type { CaseWorkspaceVM } from "@/frontend/features/shared-case";
+
+export const casosStringsMock = buildCasosStrings("es");
+
+export const casoRowsMock: CaseRowVM[] = [
+  {
+    id: "c1",
+    caseNumber: "ULP-2026-0042",
+    clientName: "María González",
+    serviceLabel: "Asilo Político",
+    planKind: "with_lawyer",
+    phaseLabel: "Preparación del expediente",
+    phasePos: 3,
+    phaseTotal: 5,
+    status: "in_validation",
+    statusPill: "revision",
+    statusLabel: casosStringsMock.status.in_validation,
+    openedRel: "hace 4 meses",
+  },
+  {
+    id: "c2",
+    caseNumber: "ULP-2026-0061",
+    clientName: "Carlos Pérez",
+    serviceLabel: "Visa Juvenil",
+    planKind: "self",
+    phaseLabel: "Recolección de documentos",
+    phasePos: 1,
+    phaseTotal: 4,
+    status: "active",
+    statusPill: "aprobado",
+    statusLabel: casosStringsMock.status.active,
+    openedRel: "hace 12 días",
+  },
+  {
+    id: "c3",
+    caseNumber: "ULP-2026-0070",
+    clientName: "Yeimi Castillo",
+    serviceLabel: "Asilo Político",
+    planKind: "with_lawyer",
+    phaseLabel: "—",
+    phasePos: 0,
+    phaseTotal: 0,
+    status: "payment_pending",
+    statusPill: "pendiente",
+    statusLabel: casosStringsMock.status.payment_pending,
+    openedRel: "hace 2 días",
+  },
+  {
+    id: "c4",
+    caseNumber: "ULP-2025-0388",
+    clientName: "Pedro Alvarado",
+    serviceLabel: "Visa Juvenil",
+    planKind: "self",
+    phaseLabel: "Entrega",
+    phasePos: 4,
+    phaseTotal: 4,
+    status: "on_hold",
+    statusPill: "amber",
+    statusLabel: casosStringsMock.status.on_hold,
+    openedRel: "hace 7 meses",
+  },
+];
+
+export const newCaseServicesMock: NewCaseService[] = [
+  {
+    id: "svc-asilo",
+    label: "Asilo Político",
+    plans: [
+      {
+        kind: "with_lawyer",
+        label: casosStringsMock.planWith,
+        priceCents: 500000,
+        downpaymentCents: 125000,
+        installments: 4,
+      },
+      {
+        kind: "self",
+        label: casosStringsMock.planSelf,
+        priceCents: 250000,
+        downpaymentCents: 60000,
+        installments: 4,
+      },
+    ],
+    encodedByKind: {
+      with_lawyer: "svc-asilo|plan-wl|500000|125000|4",
+      self: "svc-asilo|plan-self|250000|60000|4",
+    },
+  },
+  {
+    id: "svc-sijs",
+    label: "Visa Juvenil (SIJS)",
+    plans: [
+      {
+        kind: "self",
+        label: casosStringsMock.planSelf,
+        priceCents: 360000,
+        downpaymentCents: 60000,
+        installments: 6,
+      },
+    ],
+    encodedByKind: { self: "svc-sijs|plan-sijs|360000|60000|6" },
+  },
+];
+
+export const caseWorkspaceVmMock: CaseWorkspaceVM = {
+  header: {
+    caseId: "c1",
+    caseNumber: "ULP-2026-0042",
+    clientName: "María González",
+    serviceLabel: "Asilo Político",
+    planKind: "with_lawyer",
+    status: "payment_pending",
+    statusPill: "pendiente",
+    statusLabel: casosStringsMock.status.payment_pending,
+    isPaymentPending: true,
+    hasPhase: false,
+    contractStatus: "sent",
+    contractId: "ctr-1",
+  },
+  documents: [
+    { id: "d1", filename: "Pasaporte de María.pdf", status: "uploaded", partyName: "María González", createdAt: new Date().toISOString() },
+    { id: "d2", filename: "Acta de nacimiento.pdf", status: "rejected", partyName: null, createdAt: new Date().toISOString() },
+    { id: "d3", filename: "Comprobante de domicilio.pdf", status: "approved", partyName: null, createdAt: new Date().toISOString() },
+  ],
+  parties: [
+    { id: "p1", name: "María González", role: "Titular" },
+    { id: "p2", name: "Diego González", role: "Cónyuge" },
+    { id: "p3", name: "Sofía González", role: "Hija" },
+  ],
+  installments: [
+    { id: "i1", number: 1, amountCents: 125000, status: "pending", isDownpayment: true, dueDate: null },
+    { id: "i2", number: 2, amountCents: 125000, status: "pending", isDownpayment: false, dueDate: "2026-07-15" },
+    { id: "i3", number: 3, amountCents: 125000, status: "pending", isDownpayment: false, dueDate: "2026-08-15" },
+    { id: "i4", number: 4, amountCents: 125000, status: "pending", isDownpayment: false, dueDate: "2026-09-15" },
+  ],
+  downpaymentInstallmentId: "i1",
+  downpaymentAmountCents: 125000,
+  timeline: [
+    { id: "t1", title: "Contrato enviado para firma", occurredAt: new Date().toISOString(), actorKind: "team", icon: "file-signature" },
+    { id: "t2", title: "Caso creado", occurredAt: new Date().toISOString(), actorKind: "team", icon: "file-plus" },
+  ],
+};

@@ -13,7 +13,16 @@
 import { notFound } from "next/navigation";
 import { PreviewClient } from "./preview-client";
 
-const VIEWS = ["empleados", "catalogo", "nuevo-servicio", "auditoria", "configuracion"];
+const VIEWS = [
+  "empleados",
+  "catalogo",
+  "nuevo-servicio",
+  "auditoria",
+  "configuracion",
+  "casos",
+  "caso-detalle",
+  "firma",
+];
 
 export default async function AdminPreviewPage({
   params,

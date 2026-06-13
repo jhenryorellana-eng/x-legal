@@ -1,0 +1,55 @@
+import * as React from "react";
+import { Lex, type LexMood } from "@/frontend/components/brand/lex";
+
+/**
+ * EmptyCase — friendly empty state for case screens (DOC-51 §0.5 "Empty").
+ * Lex + title + body, centered, no harsh language. Server-safe.
+ */
+export function EmptyCase({
+  title,
+  body,
+  lexMood = "calma",
+}: {
+  title: string;
+  body?: string;
+  lexMood?: LexMood;
+}) {
+  return (
+    <div
+      style={{
+        minHeight: "100dvh",
+        padding: "54px 26px 140px",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        textAlign: "center",
+        gap: 14,
+        background:
+          "radial-gradient(135% 95% at 100% -8%, var(--blue-soft) 0%, transparent 46%), var(--bg)",
+      }}
+    >
+      <Lex size={120} mood={lexMood} />
+      <h1
+        className="t-black"
+        style={{ margin: 0, fontSize: 24, color: "var(--navy)", textWrap: "balance" }}
+      >
+        {title}
+      </h1>
+      {body && (
+        <p
+          style={{
+            margin: 0,
+            fontSize: 16,
+            color: "var(--ink-2)",
+            fontWeight: 500,
+            maxWidth: 300,
+            lineHeight: 1.5,
+          }}
+        >
+          {body}
+        </p>
+      )}
+    </div>
+  );
+}

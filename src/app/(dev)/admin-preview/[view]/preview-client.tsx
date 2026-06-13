@@ -8,6 +8,10 @@ import { CatalogListView } from "@/frontend/features/admin/catalog/catalog-list-
 import { CatalogWizard } from "@/frontend/features/admin/catalog/catalog-wizard";
 import { AuditClient } from "@/frontend/features/admin/audit/audit-client";
 import { ConfigView } from "@/frontend/features/admin/config/config-view";
+import { CasosListView } from "@/frontend/features/admin/casos/casos-list-view";
+import { SharedCaseView } from "@/frontend/features/shared-case";
+import { SigningView } from "@/app/(public)/firma/[token]/signing-view";
+import { buildSigningStrings } from "@/app/(public)/firma/[token]/strings";
 import { BrandToaster } from "@/frontend/components/desktop";
 import {
   employeesMock,
@@ -24,6 +28,12 @@ import {
   acceptancesMock,
   timezonesMock,
 } from "../mock";
+import {
+  casosStringsMock,
+  casoRowsMock,
+  newCaseServicesMock,
+  caseWorkspaceVmMock,
+} from "../casos-mock";
 
 const noopRes = async () => ({ success: true as const });
 const noopOkRes = async () => ({ ok: true as const });
@@ -33,6 +43,17 @@ const noopOkRes = async () => ({ ok: true as const });
  * mock data + no-op actions. Never reachable in production (the page 404s).
  */
 export function PreviewClient({ view }: { view: string }) {
+  // The firma (public signing) surface uses MOBILE tokens — render it OUTSIDE
+  // the .surface-staff scope.
+  if (view === "firma") {
+    return (
+      <div data-theme-scope style={{ minHeight: "100dvh", background: "var(--bg)" }}>
+        <BrandToaster />
+        <FirmaPreview />
+      </div>
+    );
+  }
+
   return (
     <div className="surface-staff" data-theme-scope style={{ minHeight: "100dvh", background: "var(--bg)" }}>
       <BrandToaster />
@@ -105,7 +126,71 @@ export function PreviewClient({ view }: { view: string }) {
           actions={{ saveOrg: noopRes, setCoverActive: noopRes, createTerms: noopRes, publishTerms: noopRes }}
         />
       )}
+
+      {view === "casos" && (
+        <div style={{ padding: 28 }}>
+          <CasosListView
+            rows={casoRowsMock}
+            total={casoRowsMock.length}
+            hasMore={false}
+            nextCursor={null}
+            services={newCaseServicesMock}
+            strings={casosStringsMock}
+            detailBasePath="#"
+            newCaseActions={{
+              createCase: async () => ({ ok: true, signingToken: "preview-token-demo-1234" }),
+            }}
+            signingBaseUrl="https://app.usalatinoprime.com"
+          />
+        </div>
+      )}
+
+      {view === "caso-detalle" && (
+        <div style={{ padding: 28 }}>
+          <SharedCaseView
+            vm={caseWorkspaceVmMock}
+            actions={{
+              reviewDocument: noopOkRes,
+              registerPayment: noopOkRes,
+              resendSigningLink: noopOkRes,
+              getDocumentUrl: async () => ({ ok: true, url: "#" }),
+            }}
+            strings={casosStringsMock}
+            locale="es"
+            backHref="#"
+            isAdmin
+          />
+        </div>
+      )}
     </div>
+  );
+}
+
+/** Public signing surface preview (mobile tokens). */
+function FirmaPreview() {
+  const strings = buildSigningStrings("es");
+  return (
+    <SigningView
+      token="preview-token"
+      locale="es"
+      strings={strings}
+      serviceLabel="Asilo Político"
+      planKind="with_lawyer"
+      totalCents={500000}
+      currency="USD"
+      installments={[
+        { number: 1, amountCents: 125000, isDownpayment: true },
+        { number: 2, amountCents: 125000, dueDate: "15 jul 2026" },
+        { number: 3, amountCents: 125000, dueDate: "15 ago 2026" },
+        { number: 4, amountCents: 125000, dueDate: "15 sep 2026" },
+      ]}
+      parties={[
+        { name: "María González", role: "Titular" },
+        { name: "Diego González", role: "Cónyuge" },
+      ]}
+      termsVersion="v1.0"
+      signAction={async () => ({ ok: true, outcome: "signed" as const })}
+    />
   );
 }
 

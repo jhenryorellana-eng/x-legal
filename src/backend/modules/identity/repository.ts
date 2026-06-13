@@ -394,6 +394,140 @@ export async function setStaffActive(
 }
 
 // ---------------------------------------------------------------------------
+// provisionClientUser repo helpers (DOC-22 §1.2 — H-2 resolution)
+// ---------------------------------------------------------------------------
+
+/**
+ * Looks up a client user by phone_e164. Returns { id, existed:true } when found,
+ * null when not found. Service-client (bypass RLS).
+ */
+export async function findClientByPhone(
+  phoneE164: string,
+): Promise<{ id: string; existed: true } | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("users")
+    .select("id")
+    .eq("phone_e164", phoneE164)
+    .eq("kind", "client")
+    .maybeSingle();
+  if (!data) return null;
+  return { id: data.id, existed: true };
+}
+
+/**
+ * Inserts a users + client_profiles row for a newly provisioned client.
+ * Called AFTER auth.admin.createUser so the auth UID is already known.
+ * Idempotent: uses upsert on both tables.
+ */
+export async function insertClientRows(input: {
+  userId: string;
+  orgId: string;
+  phoneE164: string;
+  firstName: string;
+  lastName: string;
+  locale?: string;
+  timezone?: string;
+}): Promise<void> {
+  const supabase = createServiceClient();
+
+  // Upsert users row (phone_e164 UNIQUE — safe to upsert if auth exists but row is missing)
+  const { error: usersError } = await supabase
+    .from("users")
+    .upsert(
+      {
+        id: input.userId,
+        org_id: input.orgId,
+        kind: "client",
+        phone_e164: input.phoneE164,
+        is_active: true,
+        locale: input.locale ?? "en",
+        timezone: input.timezone ?? "America/New_York",
+      },
+      { onConflict: "id" },
+    );
+
+  if (usersError) throw new Error(`insertClientRows.users: ${usersError.message}`);
+
+  // Upsert client_profiles (user_id UNIQUE)
+  const { error: profileError } = await supabase
+    .from("client_profiles")
+    .upsert(
+      {
+        user_id: input.userId,
+        first_name: input.firstName,
+        last_name: input.lastName,
+      },
+      { onConflict: "user_id" },
+    );
+
+  if (profileError) throw new Error(`insertClientRows.client_profiles: ${profileError.message}`);
+}
+
+// ---------------------------------------------------------------------------
+// upsertPersonRecord repo helper (DOC-41 §3.1 — party provisioning)
+// ---------------------------------------------------------------------------
+
+/**
+ * Upserts a person_records row for a case party who is NOT a user.
+ * Returns the existing or newly-created row id.
+ *
+ * No true upsert key in the schema (no UNIQUE across first_name+last_name+org)
+ * so we always INSERT and return the new id. Callers that need idempotency
+ * must check before calling (the service layer handles this for bulk upsert).
+ */
+export async function insertPersonRecord(input: {
+  orgId: string;
+  createdBy: string;
+  firstName: string;
+  lastName: string;
+  relationship?: string | null;
+}): Promise<string> {
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("person_records")
+    .insert({
+      org_id: input.orgId,
+      created_by: input.createdBy,
+      first_name: input.firstName,
+      last_name: input.lastName,
+      relationship: input.relationship ?? null,
+      pii_encrypted: {} as import("@/shared/database.types").Json,
+    })
+    .select("id")
+    .single();
+
+  if (error || !data) throw new Error(`insertPersonRecord: ${error?.message}`);
+  return data.id;
+}
+
+// ---------------------------------------------------------------------------
+// case_parties repo helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Inserts a case_parties row. Called during createCaseFromContract.
+ */
+export async function insertCasePartyRow(input: {
+  caseId: string;
+  personRecordId: string | null;
+  userId: string | null;
+  partyRole: string;
+  position: number;
+}): Promise<void> {
+  const supabase = createServiceClient();
+  const { error } = await supabase.from("case_parties").insert({
+    case_id: input.caseId,
+    person_record_id: input.personRecordId,
+    user_id: input.userId,
+    party_role: input.partyRole,
+    position: input.position,
+  });
+
+  if (error) throw new Error(`insertCasePartyRow: ${error.message}`);
+}
+
+// ---------------------------------------------------------------------------
 
 /**
  * Same eligibility check used by the post-OTP re-gate (RF-CLI-006).

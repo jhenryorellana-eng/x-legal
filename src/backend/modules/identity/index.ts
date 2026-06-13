@@ -33,6 +33,10 @@ export type {
   ReactivateEmployeeResult,
   ListEmployeesResult,
   EmployeeRow,
+  // Client provisioning (DOC-22 §1.2, H-2)
+  ProvisionClientUserInput,
+  ProvisionClientUserResult,
+  UpsertPersonRecordInput,
 } from "./service";
 
 // Read-only staff profile for the shell header / sidebar user-chip (DOC-50 §1.3)
@@ -40,6 +44,12 @@ export { getCurrentStaffProfile } from "./service";
 
 // Read-only employee count for the admin dashboard KPI (DOC-53 §1.1)
 export { countActiveEmployees } from "./service";
+
+// Client provisioning — used by cases.createCaseFromContract (DOC-22 §1.2)
+export { provisionClientUser, upsertPersonRecord } from "./service";
+
+// Party row helper — used by cases module only (DOC-41 §3.1 boundary)
+export { insertCasePartyRow } from "./repository";
 
 // Auth / authorization helpers — re-exported here so app-layer files can
 // import them via module-pub boundary (app → module-pub is allowed per DOC-21).
