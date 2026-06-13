@@ -25,6 +25,8 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { fromZonedTime } from "date-fns-tz";
+import { addDays } from "date-fns";
 import {
   canTransitionAppointment,
   isLateCancellation,
@@ -866,5 +868,53 @@ describe("isSlotInSet", () => {
       endUtc: new Date("2026-06-16T14:00:00Z"), // different end
     };
     expect(isSlotInSet(candidate, slots)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M-7: getWeekAgenda — DST-safe week-end UTC calculation (domain-level proof)
+//
+// The fix moved from (fromUtc + 7×86400s) to addDays(localDate, 7) before
+// fromZonedTime. We verify the arithmetic here using date-fns to confirm that
+// across the US spring-forward boundary (2026-03-08, America/New_York) the
+// week end lands at the correct civil midnight, not 1 hour early/late.
+// ---------------------------------------------------------------------------
+
+describe("M-7: week-end UTC calculation is DST-safe (domain arithmetic)", () => {
+  it("addDays(weekStart, 7) in NY produces correct UTC during spring-forward week", () => {
+    // Week starting 2026-03-08 (spring forward Sunday).
+    // Civil week end = 2026-03-15T00:00:00 America/New_York.
+    // After DST: NY = UTC-4, so midnight = 04:00 UTC.
+    // The OLD bug: fromUtc + 7×86400s where fromUtc = 05:00Z (winter midnight),
+    //   gives 05:00Z on Mar 15 = 01:00 AM NY — wrong (1h late).
+    // The NEW fix: addDays("2026-03-08", 7) = "2026-03-15", then
+    //   fromZonedTime("2026-03-15T00:00:00", "America/New_York") = 04:00Z — correct.
+    const weekStartLocal = "2026-03-08";
+    const tz = "America/New_York";
+
+    // Correct approach (M-7 fix)
+    const weekEndLocal = addDays(new Date(`${weekStartLocal}T00:00:00`), 7)
+      .toISOString()
+      .slice(0, 10);
+    const toUtcCorrect = fromZonedTime(`${weekEndLocal}T00:00:00`, tz);
+
+    // 2026-03-15 midnight in NY (EDT = UTC-4) = 04:00 UTC
+    expect(toUtcCorrect.toISOString()).toBe("2026-03-15T04:00:00.000Z");
+  });
+
+  it("addDays(weekStart, 7) in NY produces correct UTC during fall-back week", () => {
+    // Week starting 2026-11-01 (fall back Sunday).
+    // Civil week end = 2026-11-08T00:00:00 America/New_York.
+    // NY reverted to EST = UTC-5, so midnight = 05:00 UTC.
+    const weekStartLocal = "2026-11-01";
+    const tz = "America/New_York";
+
+    const weekEndLocal = addDays(new Date(`${weekStartLocal}T00:00:00`), 7)
+      .toISOString()
+      .slice(0, 10);
+    const toUtcCorrect = fromZonedTime(`${weekEndLocal}T00:00:00`, tz);
+
+    // 2026-11-08 midnight in NY (EST = UTC-5) = 05:00 UTC
+    expect(toUtcCorrect.toISOString()).toBe("2026-11-08T05:00:00.000Z");
   });
 });

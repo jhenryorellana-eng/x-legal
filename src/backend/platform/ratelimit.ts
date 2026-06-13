@@ -196,6 +196,13 @@ function signingTokenIp(): Ratelimit {
   return (_signingTokenIp ??= makeLimiter(redis(), 30, "1 h", "rl:signing:token:ip"));
 }
 
+// express-interest:ip — 60/min (DOC-27 §4; public surface for API-LEAD-08)
+// Fail mode: closed — public endpoint with no auth guard on the service itself.
+let _expressInterestIp: Ratelimit | undefined;
+function expressInterestIp(): Ratelimit {
+  return (_expressInterestIp ??= makeLimiter(redis(), 60, "1 m", "rl:express-interest:ip"));
+}
+
 // ---------------------------------------------------------------------------
 // Public rate-limit helpers
 // ---------------------------------------------------------------------------
@@ -320,6 +327,34 @@ export async function limitSigningTokenIp(ip: string): Promise<RateLimitResult> 
     return { allowed: r.success, reset: r.reset };
   } catch (err) {
     logger.error({ err }, "Rate limiter error (signing:token:ip) — denying (closed fail mode)");
+    return { allowed: false, reset: Date.now() + 60_000 };
+  }
+}
+
+/**
+ * Checks express-interest IP tier (60/min, DOC-27 §4) — API-LEAD-08 public CTA.
+ *
+ * IMPORTANT: This limiter must be applied in the CALL SITE (the Next.js route
+ * handler or server action that calls kanban.expressServiceInterest). The
+ * service itself has no actor context, so IP is the only available key.
+ *
+ * Usage in the action:
+ *   const ip = headers().get("x-forwarded-for") ?? "unknown";
+ *   const rl = await limitExpressInterestIp(ip);
+ *   if (!rl.allowed) return { ok: false, error: { code: "RATE_LIMITED" } };
+ *
+ * TODO(API-LEAD-08): When the CTA is behind a feature-flag and the server action
+ * is created, wire limitExpressInterestIp() as the FIRST check before calling
+ * expressServiceInterest(). Fail mode: closed (deny on Upstash error).
+ *
+ * Fail mode: closed.
+ */
+export async function limitExpressInterestIp(ip: string): Promise<RateLimitResult> {
+  try {
+    const r = await expressInterestIp().limit(ip);
+    return { allowed: r.success, reset: r.reset };
+  } catch (err) {
+    logger.error({ err }, "Rate limiter error (express-interest:ip) — denying (closed fail mode)");
     return { allowed: false, reset: Date.now() + 60_000 };
   }
 }

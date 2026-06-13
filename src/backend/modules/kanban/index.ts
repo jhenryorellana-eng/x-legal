@@ -5,6 +5,12 @@
  * Rule R3: no cross-module imports except via index.ts.
  *
  * DOC-47 §1 (module responsibilities), DOC-48 §3.11 (API-KAN-* and API-LEAD-*).
+ *
+ * TODO(API-LEAD-08 / C-2): When the "Expresar interés" CTA is enabled from behind
+ * the feature flag, the server action that calls expressServiceInterest() MUST apply
+ * platform/ratelimit.limitExpressInterestIp(ip) as the FIRST check (60/min per IP,
+ * fail-closed). The limiter is already defined and exported from platform/ratelimit.ts.
+ * Do NOT call expressServiceInterest() from any public route without it.
  */
 
 // Kanban use cases (API-KAN-01..12)

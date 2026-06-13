@@ -51,8 +51,7 @@ export type AppointmentRemindersPayload = z.infer<
 // ---------------------------------------------------------------------------
 // Window constants (DOC-26 §2.7)
 //
-// The 15-minute cron window includes a 5-minute buffer so each appointment
-// falls in exactly one run window:
+// The 15-minute cron window ensures each appointment falls in exactly one run:
 //   24h reminder: starts_at in (now+24h-15min, now+24h]
 //   1h  reminder: starts_at in (now+1h-15min,  now+1h]
 // ---------------------------------------------------------------------------
@@ -281,16 +280,33 @@ export async function handleAppointmentReminders(
         continue;
       }
 
-      // Dispatch notifications first, then mark as sent
-      // (order: notify → mark; ensures re-delivery never sends twice because
-      //  markReminderSent is idempotent via WHERE sent_at IS NULL)
-      await dispatchReminderNotifications(appt.id, kind, recipients);
+      // H-4 FIX — mark BEFORE enqueuing email:
+      //
+      // Old order (notify → mark) had a double-email risk: if markReminderSent
+      // failed after the email was enqueued, the next cron invocation would see
+      // the appointment as un-marked and enqueue a second email.
+      //
+      // New order (mark → notify):
+      //   • markReminderSent fails → appointment stays un-marked → next cron
+      //     invocation retries safely (no email sent yet, no duplicate risk).
+      //   • enqueueJob fails after mark → email is dropped this window but the
+      //     in-app notification is still inserted (idempotent dedupe_key). The
+      //     cron does NOT re-run the email (appointment is now marked). This is
+      //     the acceptable tradeoff: a missed email channel vs a duplicate email.
+      //     QStash job-level retries (if configured) handle transient enqueue failures.
+      //
+      // In-app notifications are idempotent by dedupe_key regardless of order.
 
-      // Mark idempotence flag — UPDATE WHERE sent_at IS NULL
+      // Step 1 — Mark idempotence flag (UPDATE WHERE sent_at IS NULL)
       const marked = await markReminderSent(appt.id, kind);
-      if (marked) {
-        totalProcessed += 1;
+      if (!marked) {
+        // Already marked by a concurrent invocation — skip to avoid double dispatch
+        continue;
       }
+      totalProcessed += 1;
+
+      // Step 2 — Dispatch in-app + email + push notifications
+      await dispatchReminderNotifications(appt.id, kind, recipients);
     }
   }
 

@@ -59,7 +59,8 @@ function mapErr(err: unknown): Err {
   if (err instanceof KanbanError || err instanceof SchedulingError) {
     return { ok: false, error: { code: err.code } };
   }
-  console.error("[ventas action] unexpected error:", err);
+  // H-5: log only the message, never the raw Error object (may carry PII in stack/metadata)
+  console.error("[ventas action] unexpected:", (err as Error)?.message ?? String(err));
   return { ok: false, error: { code: "internal" } };
 }
 

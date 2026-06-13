@@ -457,7 +457,10 @@ export function materializeSlots(input: MaterializeSlotsInput): Slot[] {
       if (roundTrippedStart !== rule.startLocal) {
         // The start_local falls in a DST gap (spring forward).
         // Advance startUtc to the next valid local moment past the gap.
-        // DST gaps are typically 1h. Try +1h and see if it's still within the rule.
+        // M-8: This recovery assumes DST gaps are exactly 1h — which is valid
+        // for all US/LatAm timezones this product targets (IANA zones where the
+        // spring-forward offset change is always 60 minutes). If ever extended
+        // to half-hour DST regions (e.g. Lord Howe Island) this must be revisited.
         const candidate = new Date(startUtc.getTime() + 3_600_000);
         const candidateLocal = formatInTimeZone(candidate, tz, "HH:mm");
         if (candidateLocal > rule.startLocal && candidate < endUtc) {

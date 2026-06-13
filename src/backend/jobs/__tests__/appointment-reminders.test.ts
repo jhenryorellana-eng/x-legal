@@ -388,3 +388,81 @@ describe("handleAppointmentReminders — edge cases", () => {
     expect(mockInsertNotificationIdempotent).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// H-4: mark-before-enqueue ordering — no double-email on cron re-delivery
+// ---------------------------------------------------------------------------
+
+describe("H-4: mark-before-enqueue ordering", () => {
+  it("calls markReminderSent BEFORE dispatchReminderNotifications (enqueueJob)", async () => {
+    mockFindDueReminders.mockImplementation(async (kind: string) => {
+      if (kind === "1d") return [makeReminderRow(APPT_ID_1)];
+      return [];
+    });
+
+    const callOrder: string[] = [];
+    mockMarkReminderSent.mockImplementation(async () => {
+      callOrder.push("markReminderSent");
+      return true;
+    });
+    mockInsertNotificationIdempotent.mockImplementation(async () => {
+      callOrder.push("insertNotification");
+      return { row: { id: NOTIF_ID }, created: true };
+    });
+    mockEnqueueJob.mockImplementation(async () => {
+      callOrder.push("enqueueJob");
+      return { messageId: "msg-1" };
+    });
+
+    await handleAppointmentReminders(VALID_PAYLOAD);
+
+    const markIdx = callOrder.indexOf("markReminderSent");
+    const enqueueIdx = callOrder.indexOf("enqueueJob");
+    expect(markIdx).toBeGreaterThanOrEqual(0);
+    expect(enqueueIdx).toBeGreaterThanOrEqual(0);
+    // markReminderSent must come before the first enqueueJob
+    expect(markIdx).toBeLessThan(enqueueIdx);
+  });
+
+  it("skips dispatch entirely when markReminderSent returns false (already marked by concurrent run)", async () => {
+    mockFindDueReminders.mockImplementation(async (kind: string) => {
+      if (kind === "1d") return [makeReminderRow(APPT_ID_1)];
+      return [];
+    });
+    // Simulate: already marked by a concurrent cron invocation
+    mockMarkReminderSent.mockResolvedValue(false);
+
+    await handleAppointmentReminders(VALID_PAYLOAD);
+
+    // No notifications sent, no emails enqueued
+    expect(mockInsertNotificationIdempotent).not.toHaveBeenCalled();
+    expect(mockEnqueueJob).not.toHaveBeenCalled();
+  });
+
+  it("double-delivery safe: if markReminderSent already ran, skip avoids duplicate email", async () => {
+    // Simulate cron running twice for the same window
+    mockFindDueReminders.mockImplementation(async (kind: string) => {
+      if (kind === "1d") return [makeReminderRow(APPT_ID_1)];
+      return [];
+    });
+
+    // First invocation: marks sent
+    mockMarkReminderSent.mockResolvedValueOnce(true);
+    await handleAppointmentReminders(VALID_PAYLOAD);
+    const firstEnqueues = mockEnqueueJob.mock.calls.length;
+
+    vi.clearAllMocks();
+    mockFindDueReminders.mockImplementation(async (kind: string) => {
+      if (kind === "1d") return [makeReminderRow(APPT_ID_1)];
+      return [];
+    });
+
+    // Second invocation: already marked → returns false
+    mockMarkReminderSent.mockResolvedValueOnce(false);
+    await handleAppointmentReminders(VALID_PAYLOAD);
+    const secondEnqueues = mockEnqueueJob.mock.calls.length;
+
+    expect(firstEnqueues).toBeGreaterThan(0); // first run sent notifications
+    expect(secondEnqueues).toBe(0);           // second run skipped entirely
+  });
+});

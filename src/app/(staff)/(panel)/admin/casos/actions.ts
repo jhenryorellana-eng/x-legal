@@ -45,7 +45,8 @@ function mapErr(err: unknown): Err {
   }
   // Unexpected (non-domain) errors: surface server-side for observability.
   // Domain errors already carry a stable code to the client.
-  console.error("[casos action] unexpected error:", err);
+  // H-5: log only the message, never the raw Error object (may carry PII in stack/metadata)
+  console.error("[casos action] unexpected:", (err as Error)?.message ?? String(err));
   return { ok: false, error: { code: "internal" } };
 }
 

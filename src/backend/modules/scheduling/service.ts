@@ -10,7 +10,7 @@
  */
 
 import { z } from "zod";
-import { addMinutes } from "date-fns";
+import { addMinutes, addDays } from "date-fns";
 import { fromZonedTime } from "date-fns-tz";
 
 import { can, requireCaseAccess, AuthzError } from "@/backend/platform/authz";
@@ -699,10 +699,25 @@ export async function rescheduleAppointment(
     }
   }
 
-  // Mark old appointment as rescheduled
-  await repo.updateAppointment(a.id, { status: "rescheduled" });
+  // Atomicity invariant (C-1):
+  //   Step 1 — Insert the new appointment FIRST (can fail on EXCLUDE constraint
+  //            or any DB error). If it fails, the old appointment remains
+  //            'scheduled' — no data loss, fully recoverable.
+  //   Step 2 — Only if Step 1 succeeds, mark the old appointment 'rescheduled'.
+  //            If Step 2 fails, both rows are 'scheduled' simultaneously.
+  //            This is VISIBLE (two active rows) and therefore recoverable by
+  //            support/cron, never a silent orphan.
+  //
+  // This order is strictly safer than the inverse (mark-old first) because:
+  //   - insert fail → old stays 'scheduled' (clean state, user can retry)
+  //   - mark-old fail → two 'scheduled' rows (visible, never lost)
+  //
+  // Optional improvement: replace steps 1+2 with a single Postgres RPC
+  // (reschedule_appointment_tx) defined in migration 0016_scheduling_rpcs.sql.
+  // The RPC wraps both in a BEGIN/COMMIT. Until the migration is applied, the
+  // two-step reorder below is the active implementation.
 
-  // Insert new appointment — inherits sequence_number (no quota increase)
+  // Step 1 — Insert new appointment
   let fresh: AppointmentRow;
   try {
     fresh = await repo.insertAppointment({
@@ -722,15 +737,16 @@ export async function rescheduleAppointment(
     });
   } catch (err) {
     const code = (err as { code?: string }).code;
-    // If the new slot was taken, restore old appointment to scheduled
     if (code === "SLOT_TAKEN_DB") {
-      await repo.updateAppointment(a.id, { status: "scheduled" });
+      // Old appointment is still 'scheduled' — no data loss.
       throw new SchedulingError("SLOT_TAKEN");
     }
-    // Restore old appointment on any other failure
-    await repo.updateAppointment(a.id, { status: "scheduled" });
+    // Old appointment is still 'scheduled' — caller can retry.
     throw err;
   }
+
+  // Step 2 — Mark old appointment as rescheduled (only reached if Step 1 ok)
+  await repo.updateAppointment(a.id, { status: "rescheduled" });
 
   // Set LiveKit room ID for video
   if (fresh.kind === "video") {
@@ -1028,13 +1044,14 @@ export async function getWeekAgenda(
   const staffId = input.staffId ?? actor.userId;
   const staffTimezone = await getUserTimezone(staffId);
 
-  // Convert local week boundaries to UTC (DOC-23 §6.1 — fromZonedTime by concrete date)
+  // Convert local week boundaries to UTC (DOC-23 §6.1 — fromZonedTime by concrete date).
+  // M-7 FIX: add 7 CIVIL days in the staff timezone before converting to UTC.
+  // Using addDays() on the local date string avoids the DST drift that occurs
+  // when adding 7×86400s to a UTC timestamp (clocks shift by 1h across a DST
+  // boundary, so 7×86400s ≠ exactly 7 local days in spring/fall).
   const fromUtc = fromZonedTime(`${input.weekStartLocal}T00:00:00`, staffTimezone);
-  // Add 7 days
-  const weekEndLocal = new Date(fromZonedTime(`${input.weekStartLocal}T00:00:00`, staffTimezone));
-  weekEndLocal.setDate(weekEndLocal.getDate() + 7);
   const toUtc = fromZonedTime(
-    new Date(fromUtc.getTime() + 7 * 86_400_000).toISOString().slice(0, 10) + "T00:00:00",
+    `${addDays(new Date(`${input.weekStartLocal}T00:00:00`), 7).toISOString().slice(0, 10)}T00:00:00`,
     staffTimezone,
   );
 

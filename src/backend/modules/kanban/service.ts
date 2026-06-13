@@ -50,6 +50,7 @@ export class KanbanError extends Error {
       | "CARD_NOT_FOUND"
       | "CARD_DUPLICATE"
       | "CARD_REF_INVALID"
+      | "LEAD_NOT_FOUND"
       | "LEAD_PHONE_INVALID"
       | "LEAD_LOST_REASON_REQUIRED"
       | "LEAD_NOT_WON"
@@ -282,40 +283,59 @@ export async function moveCard(
     throw new KanbanError("COLUMN_TARGET_INVALID");
   }
 
-  // Update card position
+  // H-3 — Ordering invariant (non-transactional divergence mitigation):
+  //   Read the lead BEFORE the card move so we have a consistent snapshot
+  //   of its state regardless of where in the sequence an error occurs.
+  //
+  //   Order chosen for minimum silent data loss:
+  //     1. Lead side effects first (contacted_at, won/lost status) — these
+  //        are the business-critical writes. If they fail, the card is still
+  //        in its original column (visible inconsistency, recoverable).
+  //     2. Card position update — if this fails after step 1, the lead state
+  //        is updated but the card is still in the source column. Support can
+  //        see and correct the card; the lead status is never silently wrong.
+  //     3. Audit log — non-fatal; a missing audit entry is better than a
+  //        missing lead state change.
+  //     4. Domain event + Realtime broadcast — emitted ONLY after all DB
+  //        writes succeed. This prevents downstream consumers from acting on
+  //        state that was never actually persisted.
+  //
+  // Ideal fix: a Postgres RPC (move_card_tx) wrapping steps 1+2 in a single
+  // BEGIN/COMMIT. See migration 0016_scheduling_rpcs.sql (apply via orchestrator).
+
+  // Pre-read lead if this is a leads board card
+  const isLeadsBoard = boardRow.board_kind === "leads";
+  let lead: LeadRow | null = null;
+  if (isLeadsBoard && card.ref_type === "lead") {
+    lead = await repo.findLead(card.ref_id);
+  }
+
+  // Step 1 — Lead side effects (contacted_at, won/lost)
+  if (lead) {
+    const columns = await repo.listColumns(boardRow.id);
+    const entryColumn = columns.reduce((min, c) =>
+      c.position < min.position ? c : min,
+    );
+    if (fromColumn.id === entryColumn.id && lead.contacted_at === null) {
+      await repo.updateLead(card.ref_id, {
+        contacted_at: now().toISOString(),
+      });
+    }
+
+    if (toColumn.is_terminal_won) {
+      await markLeadWonInternal(actor, lead);
+    } else if (toColumn.is_terminal_lost) {
+      await markLeadLostInternal(actor, lead, input.lostReason);
+    }
+  }
+
+  // Step 2 — Update card position
   await repo.updateCard(input.cardId, {
     column_id: input.toColumnId,
     position: input.toPosition,
   });
 
-  // Leads-specific rules
-  const isLeadsBoard = boardRow.board_kind === "leads";
-  if (isLeadsBoard && card.ref_type === "lead") {
-    const lead = await repo.findLead(card.ref_id);
-    if (lead) {
-      // contacted_at: set on first move out of entry column (if still null)
-      const columns = await repo.listColumns(boardRow.id);
-      const entryColumn = columns.reduce((min, c) =>
-        c.position < min.position ? c : min,
-      );
-      if (
-        fromColumn.id === entryColumn.id &&
-        lead.contacted_at === null
-      ) {
-        await repo.updateLead(card.ref_id, {
-          contacted_at: now().toISOString(),
-        });
-      }
-
-      // Terminal won/lost
-      if (toColumn.is_terminal_won) {
-        await markLeadWonInternal(actor, lead);
-      } else if (toColumn.is_terminal_lost) {
-        await markLeadLostInternal(actor, lead, input.lostReason);
-      }
-    }
-  }
-
+  // Step 3 — Audit log
   await writeAudit(
     actor,
     "kanban.card.moved",
@@ -327,7 +347,7 @@ export async function moveCard(
     },
   );
 
-  // Emit domain event
+  // Step 4 — Domain event + Realtime broadcast (post-commit, fire-and-forget)
   appEvents.emit({
     type: "card.moved",
     payload: {
@@ -344,7 +364,7 @@ export async function moveCard(
     occurredAt: now(),
   });
 
-  // Realtime broadcast (after commit — fire-and-forget)
+  // Realtime broadcast (after all writes — fire-and-forget)
   await broadcastCardMoved(boardRow.id, {
     card_id: card.id,
     from_column_id: fromColumn.id,
@@ -752,7 +772,7 @@ export async function updateLead(
   can(actor, "leads", "edit");
 
   const lead = await repo.findLead(input.leadId);
-  if (!lead) throw new KanbanError("LEAD_PHONE_INVALID"); // reuse closest error; 404 by id
+  if (!lead) throw new KanbanError("LEAD_NOT_FOUND");
 
   const update: Record<string, unknown> = {};
 
@@ -859,7 +879,7 @@ export async function updateLead(
 export async function markLeadWon(actor: Actor, leadId: string): Promise<LeadRow> {
   can(actor, "leads", "edit");
   const lead = await repo.findLead(leadId);
-  if (!lead) throw new KanbanError("LEAD_PHONE_INVALID");
+  if (!lead) throw new KanbanError("LEAD_NOT_FOUND");
   return markLeadWonInternal(actor, lead);
 }
 
@@ -907,7 +927,7 @@ export async function markLeadLost(
   }
 
   const lead = await repo.findLead(leadId);
-  if (!lead) throw new KanbanError("LEAD_PHONE_INVALID");
+  if (!lead) throw new KanbanError("LEAD_NOT_FOUND");
 
   return markLeadLostInternal(actor, lead, lostReason);
 }
@@ -964,7 +984,7 @@ export async function createCaseFromLead(
   can(actor, "leads", "edit");
 
   const lead = await repo.findLead(input.leadId);
-  if (!lead) throw new KanbanError("LEAD_PHONE_INVALID");
+  if (!lead) throw new KanbanError("LEAD_NOT_FOUND");
 
   if (lead.status !== "won") {
     throw new KanbanError("LEAD_NOT_WON");
@@ -1029,7 +1049,7 @@ export async function createLeadCategory(
  */
 export async function expressServiceInterest(
   input: ExpressServiceInterestInput,
-): Promise<{ created: boolean }> {
+): Promise<{ created: boolean; reason?: string }> {
   const Zod = await import("zod");
   const schema = Zod.z.object({
     interestedServiceId: Zod.z.string().uuid(),
@@ -1039,8 +1059,34 @@ export async function expressServiceInterest(
   });
   schema.parse(input);
 
-  // Check for recent duplicate (same client + service in the last 7 days)
   const client = createServiceClient();
+
+  // C-2(a): Validate clientUserId belongs to clientOrgId.
+  // A mismatch means the caller is trying to create a lead on behalf of a user
+  // in a different org — reject it. Anti-enumeration: same error shape as not-found.
+  const { data: clientUserRow } = await client
+    .from("users")
+    .select("org_id, phone_e164")
+    .eq("id", input.clientUserId)
+    .maybeSingle();
+
+  if (!clientUserRow || clientUserRow.org_id !== input.clientOrgId) {
+    logger.warn(
+      { clientUserId: input.clientUserId, clientOrgId: input.clientOrgId },
+      "kanban: expressServiceInterest — clientUserId/clientOrgId mismatch or user not found",
+    );
+    return { created: false, reason: "org_mismatch" };
+  }
+
+  // C-2(c): If the user has no phone, we cannot create a lead (phone_e164 is NOT NULL).
+  // Return no_phone instead of inventing a placeholder that would pollute real data.
+  if (!clientUserRow.phone_e164) {
+    return { created: false, reason: "no_phone" };
+  }
+
+  const phone = clientUserRow.phone_e164;
+
+  // Check for recent duplicate (same client + service in the last 7 days)
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const { data: existing } = await client
     .from("leads")
@@ -1055,15 +1101,6 @@ export async function expressServiceInterest(
     // Aviso "ya en proceso de contacto" — not an error
     return { created: false };
   }
-
-  // Resolve client phone from users table (needed for lead phone field)
-  const { data: userRow } = await client
-    .from("users")
-    .select("phone_e164")
-    .eq("id", input.clientUserId)
-    .maybeSingle();
-
-  const phone = userRow?.phone_e164 ?? "+10000000000"; // placeholder if no phone
 
   const { normalizePhoneE164 } = await import(
     "@/backend/modules/identity" as string
