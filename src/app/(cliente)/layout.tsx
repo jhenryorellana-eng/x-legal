@@ -1,28 +1,36 @@
 /**
- * Cliente surface layout — server-side guard + mobile shell.
+ * Cliente surface layout — mobile shell + account-level chrome.
  *
- * Guard: verifies Actor kind === 'client'. Public sub-routes
- * (welcome, phone, otp, no-access) bypass this via middleware
- * before reaching this layout. This is a defense-in-depth check
- * for the authenticated routes (/home, /servicios, etc.).
+ * The (cliente) route group spans three contexts (DOC-51 §0.1):
+ *   - ACCESO  (welcome/phone/otp/no-access) — NO chrome
+ *   - CUENTA  (home/servicios/comunidad/avisos/pagos/config) — AccountNav + launcher
+ *   - CASO    (/caso/[caseId]/…) — its own CaseNav (rendered by the case layout)
  *
- * Note: welcome, phone, otp, no-access are in this route group but
- * are PUBLIC (no guard needed) — the middleware handles them.
- * This layout's guard only activates for /home and deeper routes.
+ * Auth routing is handled by the middleware. The CUENTA chrome is rendered by
+ * `AccountChrome` (client), which shows the nav ONLY on account routes by
+ * matching the pathname — mirroring the prototype's `App` chrome table.
  */
 
-// Middleware handles auth routing for this surface group.
+import { getTranslations } from "next-intl/server";
+import { AccountChrome } from "./account-chrome";
 
 export default async function ClienteLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  // For public paths within the group, render without guard.
-  // (The middleware already handled redirection; this is extra safety.)
-  // We can't easily get the pathname in a layout without a hook,
-  // so we use getActor() conservatively: if null on a public path, it's fine.
-  // The middleware ensures authenticated paths get here only with valid session.
+  const tNav = await getTranslations("cliente.nav");
+  const tTeam = await getTranslations("cliente.team");
+
+  const navLabels = {
+    servicios: tNav("servicios"),
+    casos: tNav("casos"),
+    comunidad: tNav("comunidad"),
+    avisos: tNav("avisos"),
+    pagos: tNav("pagos"),
+    navAccount: tNav("ariaAccount"),
+    navCase: tNav("ariaCase"),
+  };
 
   return (
     <div
@@ -36,6 +44,7 @@ export default async function ClienteLayout({
       }}
     >
       {children}
+      <AccountChrome navLabels={navLabels} teamLabel={tTeam("launcher")} />
     </div>
   );
 }

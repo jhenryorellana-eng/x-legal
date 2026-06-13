@@ -9,7 +9,35 @@
     "close": "Close"
   },
   "design": {
-    "title": "Design system — component showcase"
+    "title": "Design system — component showcase",
+    "mobile": {
+      "title": "Mobile — client app (F2)",
+      "hint": "ScreenHead · BottomNav (account/case) · BottomSheet · Confetti · Tutorial · SignaturePad · FABs (DOC-01 §5.2). Switch to «Surface: Client» above.",
+      "screenHead": "ScreenHead (back + Lex)",
+      "screenHeadTitle": "Your services",
+      "screenHeadSub": "Everything we can do for your family.",
+      "navAccount": "BottomNav · account",
+      "navCase": "BottomNav · case",
+      "sheet": "BottomSheet (drag-to-close)",
+      "sheetOpen": "Open sheet",
+      "sheetTitle": "What is SIJS?",
+      "sheetBody": "It's a process that helps minors under court protection regularize their status. We explain it in plain language.",
+      "sheetCta": "Got it",
+      "confetti": "Confetti + chime",
+      "confettiFire": "Celebrate!",
+      "confettiCaption": "Document approved · case completed",
+      "tutorial": "Tutorial (coach-marks)",
+      "tutorialFire": "Show tutorial",
+      "tutorialT1": "Let's start here",
+      "tutorialB1": "Tap «Continue» to upload your documents. I'll guide you every step.",
+      "tutorialT2": "You did it = we celebrate",
+      "tutorialB2": "Every time you finish something, we celebrate together.",
+      "tutorialT3": "I'm always with you",
+      "tutorialB3": "If you have questions, tap «Your team» at the bottom left.",
+      "signature": "SignaturePad",
+      "fabs": "FABs (Your team · Lex)",
+      "fabHint": "Positioned inside the phone frame."
+    }
   },
   "cliente": {
     "welcome": {
@@ -65,6 +93,42 @@
       "greeting": "Hello, {name}",
       "subtitle": "Here are your active cases.",
       "noCases": "You have no active cases at this time."
+    },
+    "nav": {
+      "servicios": "Services",
+      "casos": "My cases",
+      "comunidad": "Community",
+      "avisos": "Alerts",
+      "pagos": "Payments",
+      "inicio": "Home",
+      "citas": "Meetings",
+      "documentos": "Documents",
+      "formularios": "Forms",
+      "mas": "More",
+      "ariaAccount": "Account navigation",
+      "ariaCase": "Case navigation"
+    },
+    "case": {
+      "caseLabel": "Case"
+    },
+    "team": {
+      "launcher": "Your team"
+    },
+    "signature": {
+      "draw": "Draw",
+      "upload": "Upload image",
+      "placeholder": "Sign here with your finger",
+      "legend": "Account holder's signature",
+      "uploadPrompt": "Tap to upload your signature",
+      "required": "Your signature is required",
+      "ready": "Signature ready",
+      "clear": "Clear",
+      "undo": "Undo"
+    },
+    "tutorial": {
+      "skip": "Skip",
+      "next": "Next",
+      "done": "Got it!"
     }
   },
   "staff": {

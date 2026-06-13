@@ -43,6 +43,19 @@ import {
   toast,
   type Column,
 } from "@/frontend/components/desktop";
+import { useTranslations } from "next-intl";
+import {
+  ScreenHead,
+  BottomNav,
+  BottomSheet,
+  Confetti,
+  playChime,
+  Tutorial,
+  SignaturePad,
+  MessagingLauncher,
+  LexFab,
+  type TutorialStep,
+} from "@/frontend/components/mobile";
 
 /* ── Layout helpers ─────────────────────────────────────────────────────── */
 
@@ -144,6 +157,50 @@ export default function DesignShowcasePage() {
     id: "number",
     dir: "desc",
   });
+
+  // Mobile showcase state (F2)
+  const [sheetOpen, setSheetOpen] = React.useState(false);
+  const [confettiRun, setConfettiRun] = React.useState(false);
+  const [tutorialOpen, setTutorialOpen] = React.useState(false);
+  const [sigReady, setSigReady] = React.useState(false);
+  const tutorialTargetRef = React.useRef<HTMLDivElement>(null);
+  const tm = useTranslations("design.mobile");
+  const tNav = useTranslations("cliente.nav");
+  const tTeam = useTranslations("cliente.team");
+  const tSig = useTranslations("cliente.signature");
+  const tTut = useTranslations("cliente.tutorial");
+
+  const accountNavLabels = {
+    servicios: tNav("servicios"),
+    casos: tNav("casos"),
+    comunidad: tNav("comunidad"),
+    avisos: tNav("avisos"),
+    pagos: tNav("pagos"),
+    navAccount: tNav("ariaAccount"),
+    navCase: tNav("ariaCase"),
+  };
+  const caseNavLabels = {
+    inicio: tNav("inicio"),
+    citas: tNav("citas"),
+    documentos: tNav("documentos"),
+    formularios: tNav("formularios"),
+    mas: tNav("mas"),
+    navAccount: tNav("ariaAccount"),
+    navCase: tNav("ariaCase"),
+  };
+  const tutorialSteps: TutorialStep[] = [
+    { title: tm("tutorialT1"), body: tm("tutorialB1"), targetRef: tutorialTargetRef },
+    { title: tm("tutorialT2"), body: tm("tutorialB2") },
+    { title: tm("tutorialT3"), body: tm("tutorialB3") },
+  ];
+
+  const fireConfetti = () => {
+    setConfettiRun(false);
+    requestAnimationFrame(() => {
+      setConfettiRun(true);
+      playChime();
+    });
+  };
 
   const caseColumns: Column<DemoCase>[] = [
     {
@@ -675,6 +732,245 @@ export default function DesignShowcasePage() {
             </Card>
           </Tile>
         </Section>
+
+        {/* ── Mobile components (app cliente · F2) ────────────────────────── */}
+        <Section title={tm("title")} hint={tm("hint")}>
+          {/* ScreenHead */}
+          <Tile label={tm("screenHead")} width={420}>
+            <div
+              style={{
+                background: "var(--bg)",
+                borderRadius: "var(--r-lg)",
+                padding: "24px 18px 12px",
+                boxShadow: "var(--shadow-soft)",
+              }}
+            >
+              <ScreenHead
+                eyebrow={tNav("servicios")}
+                title={tm("screenHeadTitle")}
+                sub={tm("screenHeadSub")}
+                lexMood="feliz"
+                onBack={() => {}}
+                backLabel="Volver"
+              />
+            </div>
+          </Tile>
+
+          {/* BottomNav — cuenta */}
+          <Tile label={tm("navAccount")} width={420}>
+            <div
+              style={{
+                position: "relative",
+                height: 86,
+                borderRadius: "var(--r-lg)",
+                overflow: "hidden",
+                border: "1px solid var(--line)",
+                background: "var(--card-alt)",
+              }}
+            >
+              <BottomNav
+                variant="cuenta"
+                labels={accountNavLabels}
+                notifCount={2}
+                absolute
+                activeOverride="casos"
+              />
+            </div>
+          </Tile>
+
+          {/* BottomNav — caso */}
+          <Tile label={tm("navCase")} width={420}>
+            <div
+              style={{
+                position: "relative",
+                height: 86,
+                borderRadius: "var(--r-lg)",
+                overflow: "hidden",
+                border: "1px solid var(--line)",
+                background: "var(--card-alt)",
+              }}
+            >
+              <BottomNav
+                variant="caso"
+                caseId="demo"
+                labels={caseNavLabels}
+                absolute
+                activeOverride="inicio"
+              />
+            </div>
+          </Tile>
+
+          {/* BottomSheet trigger */}
+          <Tile label={tm("sheet")} width={260}>
+            <GradientBtn size="md" icon="info" onClick={() => setSheetOpen(true)}>
+              {tm("sheetOpen")}
+            </GradientBtn>
+          </Tile>
+
+          {/* Confetti */}
+          <Tile label={tm("confetti")} width={300}>
+            <div
+              style={{
+                position: "relative",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 12,
+                padding: 18,
+                background: "var(--card)",
+                borderRadius: "var(--r-lg)",
+                boxShadow: "var(--shadow-soft)",
+                overflow: "hidden",
+                minHeight: 160,
+                justifyContent: "center",
+              }}
+            >
+              <Confetti run={confettiRun} />
+              <span
+                style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-2)", textAlign: "center" }}
+              >
+                {tm("confettiCaption")}
+              </span>
+              <GradientBtn size="sm" icon="trophy" full={false} onClick={fireConfetti}>
+                {tm("confettiFire")}
+              </GradientBtn>
+            </div>
+          </Tile>
+
+          {/* Tutorial — rendered inside a positioned phone-frame so the
+              coach-mark overlay (absolute inset:0) is scoped + visible. */}
+          <Tile label={tm("tutorial")} width={300}>
+            <div
+              style={{
+                position: "relative",
+                height: 340,
+                borderRadius: "var(--r-lg)",
+                overflow: "hidden",
+                border: "1px solid var(--line)",
+                background: "var(--card-alt)",
+                padding: 18,
+                display: "flex",
+                flexDirection: "column",
+                gap: 12,
+              }}
+            >
+              <div
+                ref={tutorialTargetRef}
+                style={{
+                  background: "var(--card)",
+                  borderRadius: "var(--r-md)",
+                  padding: 16,
+                  boxShadow: "var(--shadow-soft)",
+                }}
+              >
+                <GradientBtn size="md" icon="sparkle" onClick={() => setTutorialOpen(true)}>
+                  {tm("tutorialFire")}
+                </GradientBtn>
+              </div>
+              <Tutorial
+                open={tutorialOpen}
+                steps={tutorialSteps}
+                labels={{ skip: tTut("skip"), next: tTut("next"), done: tTut("done") }}
+                onClose={() => setTutorialOpen(false)}
+              />
+            </div>
+          </Tile>
+
+          {/* SignaturePad */}
+          <Tile label={tm("signature")} width={360}>
+            <div
+              style={{
+                padding: 16,
+                background: "var(--card-alt)",
+                borderRadius: "var(--r-lg)",
+                border: "1px solid var(--line)",
+              }}
+            >
+              <SignaturePad
+                labels={{
+                  draw: tSig("draw"),
+                  upload: tSig("upload"),
+                  placeholder: tSig("placeholder"),
+                  legend: tSig("legend"),
+                  uploadPrompt: tSig("uploadPrompt"),
+                  required: tSig("required"),
+                  ready: tSig("ready"),
+                  clear: tSig("clear"),
+                  undo: tSig("undo"),
+                }}
+                onChange={(signed) => setSigReady(signed)}
+              />
+              <div
+                style={{
+                  marginTop: 8,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: sigReady ? "var(--green)" : "var(--ink-3)",
+                }}
+              >
+                {sigReady ? "dataURL ✓" : "—"}
+              </div>
+            </div>
+          </Tile>
+
+          {/* FABs */}
+          <Tile label={tm("fabs")} width={300}>
+            <div
+              style={{
+                position: "relative",
+                height: 200,
+                borderRadius: "var(--r-lg)",
+                overflow: "hidden",
+                border: "1px solid var(--line)",
+                background: "var(--card-alt)",
+              }}
+            >
+              <span
+                style={{
+                  position: "absolute",
+                  top: 14,
+                  left: 0,
+                  right: 0,
+                  textAlign: "center",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: "var(--ink-3)",
+                }}
+              >
+                {tm("fabHint")}
+              </span>
+              <MessagingLauncher
+                label={tTeam("launcher")}
+                badge={2}
+                absolute
+                onClick={() => toast.info(tTeam("launcher"))}
+              />
+              <LexFab label="Lex" absolute onClick={() => toast("Lex")} />
+            </div>
+          </Tile>
+        </Section>
+
+        {/* Mobile overlays (anchor to the page; absolute showcase) */}
+        <BottomSheet
+          open={sheetOpen}
+          onClose={() => setSheetOpen(false)}
+          title={tm("sheetTitle")}
+        >
+          <p
+            style={{
+              margin: "0 0 18px",
+              fontSize: 16,
+              color: "var(--ink-2)",
+              fontWeight: 500,
+              lineHeight: 1.55,
+            }}
+          >
+            {tm("sheetBody")}
+          </p>
+          <GradientBtn icon="check" onClick={() => setSheetOpen(false)}>
+            {tm("sheetCta")}
+          </GradientBtn>
+        </BottomSheet>
 
         {/* ── Desktop components (staff panels) ──────────────────────────── */}
         <Section

@@ -35,6 +35,9 @@ const eslintConfig = [
       "boundaries/ignore": ["**/*.css"],
       // Order matters: first matching pattern wins (module-pub before module-int).
       "boundaries/elements": [
+        // Webhook route handlers authenticate by signature (platform) and
+        // dispatch jobs — DOC-21 §1: "registry.ts: lo consume api/webhooks/qstash".
+        { type: "app-webhooks", pattern: "src/app/api/webhooks/**", mode: "full" },
         { type: "app", pattern: "src/app/**", mode: "full" },
         {
           type: "module-pub",
@@ -64,6 +67,10 @@ const eslintConfig = [
         {
           default: "disallow",
           rules: [
+            {
+              from: "app-webhooks",
+              allow: ["module-pub", "platform", "jobs", "shared"],
+            },
             // app→app: co-located route files (page.tsx imports ./screen.tsx or ./action.ts)
             // are allowed. Pages MUST NOT import from unrelated routes.
             { from: "app", allow: ["app", "module-pub", "frontend", "shared"] },

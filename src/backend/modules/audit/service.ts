@@ -10,6 +10,7 @@
 
 import { can } from "@/backend/platform/authz";
 import { logger } from "@/backend/platform/logger";
+import { createServiceClient } from "@/backend/platform/supabase";
 import type { Actor } from "@/backend/platform/authz";
 import { insertAuditLog, listAuditLogRows } from "./repository";
 import type { ListAuditFilters, AuditPage } from "./repository";
@@ -136,6 +137,64 @@ export async function exportAuditCsv(
   ];
 
   return rows.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// appendCaseTimeline — sole writer for case_timeline (RF-TRX-024 CA3)
+// ---------------------------------------------------------------------------
+
+export interface CaseTimelineEntryInput {
+  caseId: string;
+  eventType: string;
+  actorKind: "client" | "team" | "system";
+  actorUserId?: string | null;
+  /** Must always provide bilingual title (title_i18n is NOT NULL in schema) */
+  titleI18n: { en: string; es: string };
+  bodyI18n?: { en: string; es: string } | null;
+  icon?: string;
+  color?: string;
+  visibleToClient?: boolean;
+  occurredAt?: Date;
+}
+
+/**
+ * Inserts a row into case_timeline.
+ *
+ * This is the ONLY function allowed to write to case_timeline (RF-TRX-024 CA3).
+ * Cases module delegates here via its internal writeTimeline helper.
+ *
+ * Never throws — timeline writes must not block business operations.
+ */
+export async function appendCaseTimeline(
+  entry: CaseTimelineEntryInput,
+): Promise<void> {
+  try {
+    const supabase = createServiceClient();
+    const { error } = await supabase.from("case_timeline").insert({
+      case_id: entry.caseId,
+      event_type: entry.eventType,
+      actor_kind: entry.actorKind,
+      actor_user_id: entry.actorUserId ?? null,
+      title_i18n: entry.titleI18n as unknown as import("@/shared/database.types").Json,
+      body_i18n: (entry.bodyI18n ?? null) as unknown as import("@/shared/database.types").Json,
+      icon: entry.icon ?? "info",
+      color: entry.color ?? "gray",
+      visible_to_client: entry.visibleToClient ?? false,
+      occurred_at: (entry.occurredAt ?? new Date()).toISOString(),
+    });
+
+    if (error) {
+      logger.error(
+        { err: error, caseId: entry.caseId, eventType: entry.eventType },
+        "audit: appendCaseTimeline failed — operation continues",
+      );
+    }
+  } catch (err) {
+    logger.error(
+      { err, caseId: entry.caseId, eventType: entry.eventType },
+      "audit: appendCaseTimeline threw — operation continues",
+    );
+  }
 }
 
 /**

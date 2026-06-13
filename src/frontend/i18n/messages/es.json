@@ -9,7 +9,35 @@
     "close": "Cerrar"
   },
   "design": {
-    "title": "Sistema de diseño — vitrina de componentes"
+    "title": "Sistema de diseño — vitrina de componentes",
+    "mobile": {
+      "title": "Móvil — app cliente (F2)",
+      "hint": "ScreenHead · BottomNav (cuenta/caso) · BottomSheet · Confetti · Tutorial · SignaturePad · FABs (DOC-01 §5.2). Activa «Superficie: Cliente» arriba.",
+      "screenHead": "ScreenHead (back + Lex)",
+      "screenHeadTitle": "Tus servicios",
+      "screenHeadSub": "Todo lo que podemos hacer por tu familia.",
+      "navAccount": "BottomNav · cuenta",
+      "navCase": "BottomNav · caso",
+      "sheet": "BottomSheet (drag-to-close)",
+      "sheetOpen": "Abrir hoja",
+      "sheetTitle": "¿Qué es SIJS?",
+      "sheetBody": "Es un trámite que ayuda a menores bajo protección de una corte a regularizar su situación. Te lo explicamos en español simple.",
+      "sheetCta": "Entendido",
+      "confetti": "Confetti + chime",
+      "confettiFire": "¡Celebrar!",
+      "confettiCaption": "Documento aprobado · caso completado",
+      "tutorial": "Tutorial (coach-marks)",
+      "tutorialFire": "Ver tutorial",
+      "tutorialT1": "Empecemos por aquí",
+      "tutorialB1": "Toca «Continuar» para subir tus documentos. Yo te guío en cada paso.",
+      "tutorialT2": "Lo lograste = celebramos",
+      "tutorialB2": "Cada vez que completes algo, lo celebramos juntos.",
+      "tutorialT3": "Siempre estoy contigo",
+      "tutorialB3": "Si tienes dudas, toca «Tu equipo» abajo a la izquierda.",
+      "signature": "SignaturePad",
+      "fabs": "FABs (Tu equipo · Lex)",
+      "fabHint": "Posicionados dentro del marco del teléfono."
+    }
   },
   "cliente": {
     "welcome": {
@@ -65,6 +93,42 @@
       "greeting": "Hola, {name}",
       "subtitle": "Aquí están tus casos activos.",
       "noCases": "No tienes casos activos en este momento."
+    },
+    "nav": {
+      "servicios": "Servicios",
+      "casos": "Mis casos",
+      "comunidad": "Comunidad",
+      "avisos": "Avisos",
+      "pagos": "Pagos",
+      "inicio": "Inicio",
+      "citas": "Citas",
+      "documentos": "Documentos",
+      "formularios": "Formularios",
+      "mas": "Más",
+      "ariaAccount": "Navegación de cuenta",
+      "ariaCase": "Navegación del caso"
+    },
+    "case": {
+      "caseLabel": "Caso"
+    },
+    "team": {
+      "launcher": "Tu equipo"
+    },
+    "signature": {
+      "draw": "Dibujar",
+      "upload": "Subir imagen",
+      "placeholder": "Firma aquí con tu dedo",
+      "legend": "Firma del titular",
+      "uploadPrompt": "Toca para subir tu firma",
+      "required": "Tu firma es obligatoria",
+      "ready": "Firma lista",
+      "clear": "Borrar",
+      "undo": "Deshacer"
+    },
+    "tutorial": {
+      "skip": "Saltar",
+      "next": "Siguiente",
+      "done": "¡Entendido!"
     }
   },
   "staff": {
