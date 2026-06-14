@@ -368,7 +368,8 @@
     },
     "historia": {
       "placeholderTitle": "Your story, coming soon",
-      "placeholderBody": "Here you'll be able to tell us your story in your own words. We're finishing this space for you."
+      "placeholderBody": "Here you'll be able to tell us your story in your own words. We're finishing this space for you.",
+      "listeningChip": "I'm listening carefully"
     },
     "config": {
       "backCases": "My cases",
@@ -473,6 +474,52 @@
       "errTitle": "We couldn't load your appointment",
       "errBody": "Something went wrong on our side. Try again, no rush.",
       "retry": "Try again"
+    },
+    "formWizard": {
+      "stepCounter": "Step {n} of {total}",
+      "back": "Back",
+      "saving": "Saving…",
+      "saved": "Saved",
+      "queued": "Will save when you're back online",
+      "saveError": "Retrying…",
+      "prefillChip": "We already have it",
+      "prefillFromDocument": "we took it from your document",
+      "prefillFromProfile": "we took it from your profile",
+      "prefillFromGeneration": "we took it from your application",
+      "prefillEdited": "You changed it",
+      "selectPlaceholder": "Choose an option",
+      "textareaPlaceholder": "Type here, or tap the mic to speak…",
+      "checkboxYes": "Yes",
+      "errRequired": "We need this to continue.",
+      "errRegex": "Please check the format.",
+      "errMin": "That's a bit short. Can you add more?",
+      "errMax": "That's too long. Shorten it a bit.",
+      "next": "Next",
+      "finish": "Finish",
+      "submitting": "Sending…",
+      "submitErrorTitle": "We couldn't send it",
+      "submitErrorBody": "Please try again in a moment.",
+      "privacyNote": "Your information is protected and confidential",
+      "dictateIdle": "Tap to speak",
+      "dictateActive": "Listening… tap to stop",
+      "dictateUnsupported": "Dictation isn't available here. You can type instead.",
+      "submittedPill": "Submitted",
+      "submittedTitle": "Done! We got it",
+      "submittedBody": "Your team is reviewing it."
+    },
+    "formularios": {
+      "eyebrow": "Your case",
+      "title": "Forms",
+      "subtitle": "Fill in what your team needs. Everything saves on its own.",
+      "draft": "Draft",
+      "submitted": "Submitted",
+      "pending": "To start",
+      "emptyTitle": "No forms right now",
+      "emptyBody": "When your team needs any details, they'll appear here.",
+      "notFoundTitle": "We couldn't find that form",
+      "notFoundBody": "It may no longer be available. Message your team if you have questions.",
+      "noVersionTitle": "This form isn't ready yet",
+      "noVersionBody": "Your team is preparing it. We'll let you know as soon as you can fill it in."
     }
   },
   "staff": {

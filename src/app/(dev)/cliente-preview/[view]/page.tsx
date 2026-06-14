@@ -24,6 +24,10 @@ const VIEWS = [
   "cita-completada",
   "agendar-bloqueado",
   "agendar-vacio",
+  "formulario",
+  "formulario-prefill",
+  "historia",
+  "formulario-enviado",
 ];
 
 export default async function ClientePreviewPage({

@@ -500,11 +500,11 @@ export async function findCasePrimaryClient(caseId: string): Promise<string | nu
 /** Finds a form definition by id. */
 export async function findFormDefinitionById(
   formDefinitionId: string,
-): Promise<{ id: string; slug: string; kind: string; filled_by: string; is_per_party: boolean; party_roles: string[] | null; is_active: boolean } | null> {
+): Promise<{ id: string; slug: string; kind: string; filled_by: string; is_per_party: boolean; party_roles: string[] | null; is_active: boolean; label_i18n: unknown } | null> {
   const supabase = createServiceClient();
   const { data } = await supabase
     .from("form_definitions")
-    .select("id, slug, kind, filled_by, is_per_party, party_roles, is_active")
+    .select("id, slug, kind, filled_by, is_per_party, party_roles, is_active, label_i18n")
     .eq("id", formDefinitionId)
     .maybeSingle();
   return data ?? null;

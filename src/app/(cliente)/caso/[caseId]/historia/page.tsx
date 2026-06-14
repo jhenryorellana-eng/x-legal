@@ -1,22 +1,91 @@
 /**
- * Mi Historia — `/caso/[caseId]/historia` · nivel CASO (pestaña "Formularios").
+ * Mi Historia — `/caso/[caseId]/historia` · nivel CASO (pestaña "Formularios")
+ * — DOC-51 §20.
  *
- * F2 scope: ONLY the navigation entry (the full dictation wizard lands in F4,
- * DOC-51 §20). We render a faithful placeholder so the "Formularios" tab and the
- * Camino "Cuéntanos tu historia" CTA resolve without a 500. The membership guard
- * lives in the case layout.
+ * Server component. Resolves the case's `ai_letter` ("Mi Historia") form for the
+ * current phase, reads it (+ saved draft) via `getFormForClient`, and mounts the
+ * shared FormWizard with Lex "atento", a listening chip and per-textarea voice
+ * dictation. Same engine as the generic wizard (chasis idéntico).
+ *
+ * If the phase has no Mi Historia form yet → friendly placeholder (never a 500).
  */
 
 import { redirect } from "next/navigation";
-import { getTranslations } from "next-intl/server";
+import { getLocale, getTranslations } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
+import { getClientFormsForCase, getFormForClient, CaseError } from "@/backend/modules/cases";
+import type { WizardForm, Locale } from "@/frontend/features/form-wizard";
+import { resolveWizardLabels } from "@/frontend/features/form-wizard";
+import { HistoriaScreen } from "@/frontend/features/cliente/historia/historia-screen";
 import { EmptyCase } from "@/frontend/features/cliente/shared/empty-case";
+import { saveDraftAction, submitFormAction } from "./actions";
 
-export default async function HistoriaPage() {
+export default async function HistoriaPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ caseId: string }>;
+  searchParams: Promise<{ party?: string; name?: string }>;
+}) {
+  const { caseId } = await params;
+  const { party, name } = await searchParams;
   const actor = await getActor();
   if (!actor || actor.kind !== "client") redirect("/welcome");
 
-  const t = await getTranslations("cliente.historia");
+  const locale = (await getLocale()) as Locale;
+  const t = await getTranslations("cliente.formWizard");
+  const tHist = await getTranslations("cliente.historia");
 
-  return <EmptyCase title={t("placeholderTitle")} body={t("placeholderBody")} lexMood="atento" />;
+  // Resolve the Mi Historia (ai_letter) form for the current phase.
+  let storyFormId = "";
+  let partyId: string | null = party ?? null;
+  let partyName: string | null = name ?? null;
+  try {
+    const forms = await getClientFormsForCase(actor, caseId);
+    const story = party
+      ? forms.find((f) => f.kind === "ai_letter" && f.partyId === party)
+      : forms.find((f) => f.kind === "ai_letter");
+    if (story) {
+      storyFormId = story.formDefinitionId;
+      partyId = story.partyId;
+      partyName = story.partyName ?? partyName;
+    }
+  } catch {
+    // membership / unexpected → fall through to placeholder
+  }
+
+  if (!storyFormId) {
+    return <EmptyCase title={tHist("placeholderTitle")} body={tHist("placeholderBody")} lexMood="atento" />;
+  }
+
+  let dto;
+  try {
+    dto = await getFormForClient(actor, { caseId, formDefinitionId: storyFormId, partyId });
+  } catch (err) {
+    if (err instanceof CaseError) {
+      return <EmptyCase title={tHist("placeholderTitle")} body={tHist("placeholderBody")} lexMood="atento" />;
+    }
+    return <EmptyCase title={tHist("placeholderTitle")} body={tHist("placeholderBody")} lexMood="atento" />;
+  }
+
+  if (!dto.versionId || dto.groups.length === 0) {
+    return <EmptyCase title={tHist("placeholderTitle")} body={tHist("placeholderBody")} lexMood="calma" />;
+  }
+
+  const form = dto as WizardForm;
+  const labels = resolveWizardLabels(t as unknown as (key: string) => string);
+
+  return (
+    <HistoriaScreen
+      caseId={caseId}
+      partyId={partyId}
+      partyName={partyName}
+      form={form}
+      locale={locale}
+      labels={labels}
+      lexChip={tHist("listeningChip")}
+      saveDraft={saveDraftAction}
+      submitForm={submitFormAction}
+    />
+  );
 }

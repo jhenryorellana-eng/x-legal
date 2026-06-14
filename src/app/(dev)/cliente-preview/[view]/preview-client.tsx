@@ -10,6 +10,7 @@ import { AgendarScreen } from "@/frontend/features/cliente/agendar/agendar-scree
 import { AgendarBlocked } from "@/frontend/features/cliente/agendar/agendar-blocked";
 import { CitaScreen } from "@/frontend/features/cliente/cita/cita-screen";
 import { EmptyCase } from "@/frontend/features/cliente/shared/empty-case";
+import { FormWizard } from "@/frontend/features/form-wizard";
 import {
   homeMock,
   caminoMock,
@@ -20,6 +21,12 @@ import {
   citaMock,
   citaCompletadaMock,
 } from "../mock";
+import {
+  wizardFormMock,
+  historiaFormMock,
+  wizardSubmittedMock,
+  wizardLabelsMock,
+} from "../wizard-mock";
 
 /**
  * Dev-only cliente preview switcher (Playwright evidence). Renders each client
@@ -65,6 +72,60 @@ export function ClientePreview({ view }: { view: string }) {
         title="Agenda llena por ahora"
         body="No quedan horarios disponibles. Escríbele a tu asesora y te buscamos un espacio."
         lexMood="atento"
+      />
+    );
+  } else if (view === "formulario") {
+    content = (
+      <FormWizard
+        caseId="demo"
+        partyId="party-mateo"
+        partyName="Datos del menor — Mateo"
+        form={wizardFormMock}
+        locale="es"
+        labels={wizardLabelsMock}
+        saveDraft={async () => ({ ok: true, responseId: "resp-1" })}
+        submitForm={async () => ({ ok: true, responseId: "resp-1" })}
+      />
+    );
+  } else if (view === "formulario-prefill") {
+    // Same form, but highlight the prefilled first step (Lex-free, chip visible).
+    content = (
+      <FormWizard
+        caseId="demo"
+        partyId="party-mateo"
+        partyName="Datos del menor — Mateo"
+        form={wizardFormMock}
+        locale="es"
+        labels={wizardLabelsMock}
+        saveDraft={async () => ({ ok: true, responseId: "resp-1" })}
+        submitForm={async () => ({ ok: true, responseId: "resp-1" })}
+      />
+    );
+  } else if (view === "historia") {
+    content = (
+      <FormWizard
+        caseId="demo"
+        partyId={null}
+        form={historiaFormMock}
+        locale="es"
+        labels={wizardLabelsMock}
+        withLex
+        lexChip="Te escucho con atención"
+        saveDraft={async () => ({ ok: true, responseId: "resp-h" })}
+        submitForm={async () => ({ ok: true, responseId: "resp-h" })}
+      />
+    );
+  } else if (view === "formulario-enviado") {
+    content = (
+      <FormWizard
+        caseId="demo"
+        partyId="party-mateo"
+        partyName="Datos del menor — Mateo"
+        form={wizardSubmittedMock}
+        locale="es"
+        labels={wizardLabelsMock}
+        saveDraft={async () => ({ ok: true })}
+        submitForm={async () => ({ ok: true })}
       />
     );
   }

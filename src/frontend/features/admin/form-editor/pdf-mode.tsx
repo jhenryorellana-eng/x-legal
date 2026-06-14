@@ -145,6 +145,7 @@ export function PdfMode({ vm, strings, actions, activeVersionId, onSelectVersion
           versionId={open.version.id}
           lang={lang}
           onLangChange={setLang}
+          formLabel={{ es: vm.form.label.es ?? "", en: vm.form.label.en ?? "" }}
           strings={strings}
           actions={actions}
         />

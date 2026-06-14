@@ -1,49 +1,87 @@
 "use client";
 
 import * as React from "react";
-import { GradientBtn, GhostBtn, Icon } from "@/frontend/components/brand";
+import { GradientBtn, Icon } from "@/frontend/components/brand";
 import { toast } from "@/frontend/components/desktop";
-import type { QuestionGroupVM, QuestionVM, FormEditorActions } from "./types";
+import { FormWizard } from "@/frontend/features/form-wizard";
+import type { WizardLabels } from "@/frontend/features/form-wizard";
+import type { QuestionGroupVM, FormEditorActions } from "./types";
 import type { FormEditorStrings } from "./strings";
+import { buildPreviewForm } from "./wizard-bridge";
 
 /**
  * PreviewStage — stage 3 (DOC-53 §5.1.3).
  *
- * A 390px mobile frame that renders a FAITHFUL preview of the client wizard from
- * the current groups/questions (the REAL client wizard engine ships in Ola 3 —
- * see TODO below to swap this for the shared component). Toggle ES|EN; prefilled
- * fields show an origin chip; "Generar PDF de prueba" calls generateTestPdf and
- * renders the filled PDF, listing required gaps without blocking.
+ * A 390px mobile frame that renders the FAITHFUL client wizard from the current
+ * groups/questions using the SHARED FormWizard engine (the same motor the client
+ * app uses — SOT-3, DOC-50 §6). Toggle ES|EN; prefilled fields show the "Ya lo
+ * tenemos" chip; "Generar PDF de prueba" calls generateTestPdf and renders the
+ * filled PDF, listing required gaps without blocking.
  *
- * TODO(Ola-3): replace ClientWizardPreview with the shared client wizard engine
- * (the same component the client app uses) once it exists — DOC-53 §5.1.3 wants
- * "render real, no captura". The structure (groups → steps, questions → fields)
- * is identical, so the swap is a drop-in.
+ * The preview injects no-op autosave/submit actions: the editor preview never
+ * persists (status stays null → never read-only; submit is a visual no-op).
  */
-
-const ORIGIN_LABEL: Record<string, string> = {
-  document_extraction: "extracción de doc.",
-  generation_output: "otra generación",
-  profile: "perfil",
-};
 
 export interface PreviewStageProps {
   groups: QuestionGroupVM[];
   versionId: string;
   lang: "es" | "en";
   onLangChange: (l: "es" | "en") => void;
+  formLabel: { es: string; en: string };
   strings: FormEditorStrings;
   actions: FormEditorActions;
 }
 
-export function PreviewStage({ groups, versionId, lang, onLangChange, strings, actions }: PreviewStageProps) {
-  const [step, setStep] = React.useState(0);
+/** Static WizardLabels for the editor preview (Spanish-leaning, EN parity). */
+function previewLabels(lang: "es" | "en"): WizardLabels {
+  const t = (es: string, en: string) => (lang === "es" ? es : en);
+  return {
+    stepCounter: t("Paso {n} de {total}", "Step {n} of {total}"),
+    back: t("Atrás", "Back"),
+    saving: t("Guardando…", "Saving…"),
+    saved: t("Guardado", "Saved"),
+    queued: t("Se guardará al reconectar", "Will save when online"),
+    saveError: t("Reintentando…", "Retrying…"),
+    prefillChip: t("Ya lo tenemos", "We already have it"),
+    prefillFromDocument: t("lo tomamos de tu documento", "from your document"),
+    prefillFromProfile: t("lo tomamos de tu perfil", "from your profile"),
+    prefillFromGeneration: t("lo tomamos de tu solicitud", "from your application"),
+    prefillEdited: t("Lo cambiaste tú", "You changed it"),
+    selectPlaceholder: t("Elige una opción", "Choose an option"),
+    textareaPlaceholder: t("Escribe aquí, o toca el micrófono para hablar…", "Type here, or tap the mic…"),
+    checkboxYes: t("Sí", "Yes"),
+    errRequired: t("Esto nos hace falta para continuar.", "We need this to continue."),
+    errRegex: t("Revisa el formato, por favor.", "Please check the format."),
+    errMin: t("Es un poco corto.", "That's a bit short."),
+    errMax: t("Es demasiado largo.", "That's too long."),
+    next: t("Siguiente", "Next"),
+    finish: t("Terminar", "Finish"),
+    submitting: t("Enviando…", "Sending…"),
+    submitErrorTitle: t("No pudimos enviarlo", "We couldn't send it"),
+    submitErrorBody: t("Vuelve a intentarlo.", "Please try again."),
+    privacyNote: t("Tu información está protegida y es confidencial", "Your information is protected and confidential"),
+    dictateIdle: t("Tocar para hablar", "Tap to speak"),
+    dictateActive: t("Escuchando… toca para parar", "Listening… tap to stop"),
+    dictateUnsupported: t("El dictado no está disponible aquí.", "Dictation isn't available here."),
+    submittedPill: t("Enviado", "Submitted"),
+    submittedTitle: t("¡Listo! Lo recibimos", "Done! We got it"),
+    submittedBody: t("Tu equipo lo está revisando.", "Your team is reviewing it."),
+  };
+}
+
+export function PreviewStage({ groups, versionId, lang, onLangChange, formLabel, strings, actions }: PreviewStageProps) {
   const [busy, setBusy] = React.useState(false);
   const [pdfUrl, setPdfUrl] = React.useState<string | null>(null);
   const [gaps, setGaps] = React.useState<Array<{ question_id: string; pdf_field_name: string }>>([]);
 
-  const visibleGroups = groups.filter((g) => g.questions.some((q) => q.source === "client_answer"));
-  const current = visibleGroups[step];
+  // Map the editor groups onto the shared wizard engine (SOT-3 — one motor).
+  // Remounting on group/lang changes keeps the preview in sync with edits.
+  const previewForm = React.useMemo(
+    () => buildPreviewForm(groups, versionId, formLabel),
+    [groups, versionId, formLabel],
+  );
+  const wizardLabels = React.useMemo(() => previewLabels(lang), [lang]);
+  const previewKey = `${versionId}:${lang}:${groups.length}`;
 
   async function generateTest() {
     setBusy(true);
@@ -77,26 +115,23 @@ export function PreviewStage({ groups, versionId, lang, onLangChange, strings, a
           data-theme-scope
           style={{ width: 390, height: 720, borderRadius: 36, border: "10px solid var(--navy)", background: "var(--bg)", overflow: "hidden", boxShadow: "0 24px 60px rgba(7,17,33,.28)", position: "relative" }}
         >
-          <div style={{ height: "100%", overflow: "auto", padding: "24px 20px" }}>
-            {!current && <p style={{ color: "var(--ink-3)", fontSize: 14, textAlign: "center", marginTop: 40 }}>—</p>}
-            {current && (
-              <ClientWizardPreview
-                group={current}
-                lang={lang}
-                stepIndex={step}
-                stepCount={visibleGroups.length}
-                strings={strings}
+          <div style={{ height: "100%", overflow: "auto" }}>
+            {previewForm.groups.length === 0 ? (
+              <p style={{ color: "var(--ink-3)", fontSize: 14, textAlign: "center", marginTop: 40 }}>—</p>
+            ) : (
+              <FormWizard
+                key={previewKey}
+                caseId="preview"
+                partyId={null}
+                form={previewForm}
+                locale={lang}
+                labels={wizardLabels}
+                saveDraft={async () => ({ ok: true })}
+                submitForm={async () => ({ ok: true })}
               />
             )}
           </div>
         </div>
-        {visibleGroups.length > 1 && (
-          <div style={{ display: "flex", gap: 10 }}>
-            <GhostBtn size="md" full={false} onClick={() => setStep((s) => Math.max(0, s - 1))} disabled={step === 0}>←</GhostBtn>
-            <span style={{ fontSize: 12.5, color: "var(--ink-2)", alignSelf: "center" }}>{step + 1} / {visibleGroups.length}</span>
-            <GhostBtn size="md" full={false} onClick={() => setStep((s) => Math.min(visibleGroups.length - 1, s + 1))} disabled={step >= visibleGroups.length - 1}>→</GhostBtn>
-          </div>
-        )}
       </div>
 
       {/* Test PDF panel */}
@@ -121,67 +156,3 @@ export function PreviewStage({ groups, versionId, lang, onLangChange, strings, a
     </div>
   );
 }
-
-function ClientWizardPreview({ group, lang, stepIndex, stepCount, strings }: { group: QuestionGroupVM; lang: "es" | "en"; stepIndex: number; stepCount: number; strings: FormEditorStrings }) {
-  const pick = (v: { es?: string; en?: string }) => (lang === "es" ? v.es : v.en) || v.es || v.en || "";
-  const clientQuestions = group.questions.filter((q) => q.source === "client_answer");
-  const prefilled = group.questions.filter((q) => q.source !== "client_answer");
-
-  return (
-    <div>
-      <div style={{ display: "flex", gap: 4, marginBottom: 18 }}>
-        {Array.from({ length: stepCount }).map((_, i) => (
-          <div key={i} style={{ flex: 1, height: 4, borderRadius: 99, background: i <= stepIndex ? "var(--accent)" : "var(--chip)" }} />
-        ))}
-      </div>
-      <h2 style={{ fontSize: 20, fontWeight: 800, color: "var(--ink)", margin: "0 0 16px", fontFamily: "var(--font-title)" }}>{pick(group.title_i18n)}</h2>
-      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        {clientQuestions.map((q) => <FieldPreview key={q.id} q={q} lang={lang} pick={pick} />)}
-        {prefilled.map((q) => (
-          <div key={q.id} style={{ borderRadius: 14, border: "1px dashed var(--accent)", background: "var(--accent-soft)", padding: "10px 12px" }}>
-            <span style={{ fontSize: 11.5, fontWeight: 700, color: "var(--accent)", display: "inline-flex", alignItems: "center", gap: 5 }}>
-              <Icon name="sparkle" size={12} /> {strings.prefillFrom.replace("{origin}", ORIGIN_LABEL[q.source] ?? q.source)}
-            </span>
-            <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--ink-2)" }}>{pick(q.question_i18n)}</p>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function FieldPreview({ q, pick }: { q: QuestionVM; lang: "es" | "en"; pick: (v: { es?: string; en?: string }) => string }) {
-  const label = pick(q.question_i18n);
-  const help = pick(q.help_i18n);
-  return (
-    <div>
-      <label style={{ display: "block", fontSize: 14, fontWeight: 700, color: "var(--ink)", marginBottom: help ? 2 : 7 }}>
-        {label} {q.is_required && <span style={{ color: "var(--red)" }}>*</span>}
-      </label>
-      {help && <p style={{ margin: "0 0 7px", fontSize: 12, color: "var(--ink-3)" }}>{help}</p>}
-      {q.field_type === "textarea" ? (
-        <textarea disabled style={previewInput} />
-      ) : q.field_type === "checkbox" ? (
-        <input type="checkbox" disabled style={{ width: 22, height: 22 }} />
-      ) : q.field_type === "select" ? (
-        <select disabled style={previewInput}>
-          {(q.options ?? []).map((o) => <option key={o.value}>{pick(o.label_i18n)}</option>)}
-        </select>
-      ) : (
-        <input disabled type={q.field_type === "date" ? "date" : q.field_type === "number" ? "number" : "text"} style={previewInput} />
-      )}
-    </div>
-  );
-}
-
-const previewInput: React.CSSProperties = {
-  width: "100%",
-  boxSizing: "border-box",
-  minHeight: 46,
-  borderRadius: 14,
-  border: "1.5px solid var(--line)",
-  background: "var(--card, #fff)",
-  padding: "0 14px",
-  fontSize: 15,
-  color: "var(--ink)",
-};

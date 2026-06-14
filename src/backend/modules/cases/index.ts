@@ -27,6 +27,7 @@ export {
   getClientDisplayName,
   // F4-Ola3: form runtime (API-CASE-16 through API-CASE-19)
   getFormForClient,
+  getClientFormsForCase,
   saveFormDraft,
   submitFormResponse,
   approveFormResponse,
@@ -49,6 +50,7 @@ export type {
   FormForClientDto,
   FormGroupDto,
   FormQuestionDto,
+  ClientFormListItem,
   DocumentExtractionSummary,
 } from "./service";
 

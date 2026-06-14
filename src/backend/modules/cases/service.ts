@@ -1734,6 +1734,13 @@ export interface FormQuestionDto {
   isRequired: boolean;
   position: number;
   source: string;
+  /**
+   * Validation rules from `form_questions.validation` jsonb ({regex?, min?, max?}).
+   * Consumed by the client wizard to GENERATE its Zod schema (DOC-50 §6.2) — this
+   * mirrors the same jsonb the server enforces in `validateAnswerTypes` (the
+   * server is the source of truth; the client schema is UX courtesy).
+   */
+  validation: { regex?: string; min?: number; max?: number } | null;
   /** Pre-filled value from resolveBySource (null for client_answer). */
   prefillValue: unknown;
   /** Whether this value comes from a non-client source (pre-filled, client may not edit). */
@@ -1752,6 +1759,12 @@ export interface FormGroupDto {
 export interface FormForClientDto {
   responseId: string | null;
   formDefinitionId: string;
+  /** form_definitions.label_i18n — the wizard header title. */
+  labelI18n: I18nValue;
+  /** 'pdf_automation' | 'ai_letter' (Mi Historia is ai_letter). */
+  kind: string;
+  /** True when the form is answered once per party (DOC-51 §21 list). */
+  isPerParty: boolean;
   versionId: string | null;
   status: string | null;
   submittedAt: string | null;
@@ -1797,6 +1810,7 @@ export async function getFormForClient(
       position: number;
       source: string;
       source_ref: unknown;
+      validation: unknown;
     }>>;
   };
 
@@ -1832,6 +1846,15 @@ export async function getFormForClient(
         }
 
         const opts = q.options as Array<{ value: string; label_i18n: unknown }> | null;
+        const rawVal = q.validation as { regex?: string; min?: number; max?: number } | null | undefined;
+        const validation =
+          rawVal && (rawVal.regex !== undefined || rawVal.min !== undefined || rawVal.max !== undefined)
+            ? {
+                ...(rawVal.regex !== undefined ? { regex: rawVal.regex } : {}),
+                ...(rawVal.min !== undefined ? { min: rawVal.min } : {}),
+                ...(rawVal.max !== undefined ? { max: rawVal.max } : {}),
+              }
+            : null;
         return {
           id: q.id,
           groupId: g.id,
@@ -1844,6 +1867,7 @@ export async function getFormForClient(
           isRequired: q.is_required,
           position: q.position,
           source: q.source,
+          validation,
           prefillValue,
           isPrefilled,
           currentAnswer: answers[q.id] ?? null,
@@ -1864,6 +1888,9 @@ export async function getFormForClient(
   return {
     responseId: existingResponse?.id ?? null,
     formDefinitionId: input.formDefinitionId,
+    labelI18n: asI18n(formDef.label_i18n) ?? { en: "", es: "" },
+    kind: formDef.kind,
+    isPerParty: formDef.is_per_party,
     versionId,
     status: existingResponse?.status ?? null,
     submittedAt: existingResponse?.submitted_at ?? null,
@@ -1871,6 +1898,98 @@ export async function getFormForClient(
     filledBy: formDef.filled_by,
     groups,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Forms LIST for the client (DOC-51 §21 list view)
+// ---------------------------------------------------------------------------
+
+export interface ClientFormListItem {
+  formDefinitionId: string;
+  labelI18n: I18nValue;
+  /** 'ai_letter' | 'pdf_automation'. */
+  kind: string;
+  /** null (case-level) or a party id (one entry per party when is_per_party). */
+  partyId: string | null;
+  /** Party display name when this is a per-party entry (e.g. "Mateo"). */
+  partyName: string | null;
+  /** null (untouched) | 'draft' | 'submitted' | 'approved' | … */
+  status: string | null;
+  position: number;
+}
+
+/**
+ * Lists the client-facing forms of the case's current phase (DOC-51 §21).
+ *
+ * Only `filled_by ∈ {client, both}` forms appear (staff-only forms are never
+ * exposed, RF-CLI-031). A per-party form yields one entry per case party with
+ * the party name visible. Each entry carries the response status so the list can
+ * show the "Borrador"/"Enviado" pill.
+ *
+ * Trivial read (follows the getCaseWorkspace pattern) — the gates and RLS behind
+ * `requireCaseAccess` are the real authority.
+ *
+ * @api-id (read — consumed by the forms list UI)
+ */
+export async function getClientFormsForCase(
+  actor: Actor,
+  caseId: string,
+): Promise<ClientFormListItem[]> {
+  await requireCaseAccess(actor, caseId);
+
+  const caseRow = await findCaseById(caseId);
+  if (!caseRow || !caseRow.current_phase_id) return [];
+
+  const catalog = (await import("@/backend/modules/catalog" as string)) as {
+    listFormDefinitions?: (phaseId: string) => Promise<
+      Array<{
+        id: string;
+        label_i18n: unknown;
+        kind: string;
+        filled_by: string;
+        is_per_party: boolean;
+        position: number;
+      }>
+    >;
+  };
+  if (!catalog.listFormDefinitions) return [];
+
+  const defs = await catalog.listFormDefinitions(caseRow.current_phase_id);
+  const clientDefs = defs.filter((d) => d.filled_by === "client" || d.filled_by === "both");
+
+  const parties = await getCaseParties(caseId);
+  const items: ClientFormListItem[] = [];
+
+  for (const d of clientDefs) {
+    const label = asI18n(d.label_i18n) ?? { en: "", es: "" };
+    if (d.is_per_party && parties.length > 0) {
+      for (const p of parties) {
+        const resp = await findFormResponse(caseId, d.id, p.id);
+        items.push({
+          formDefinitionId: d.id,
+          labelI18n: label,
+          kind: d.kind,
+          partyId: p.id,
+          partyName: await resolvePartyName(p),
+          status: resp?.status ?? null,
+          position: d.position,
+        });
+      }
+    } else {
+      const resp = await findFormResponse(caseId, d.id, null);
+      items.push({
+        formDefinitionId: d.id,
+        labelI18n: label,
+        kind: d.kind,
+        partyId: null,
+        partyName: null,
+        status: resp?.status ?? null,
+        position: d.position,
+      });
+    }
+  }
+
+  return items.sort((a, b) => a.position - b.position);
 }
 
 // ---------------------------------------------------------------------------

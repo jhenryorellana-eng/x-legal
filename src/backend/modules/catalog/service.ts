@@ -1639,6 +1639,14 @@ export async function listQuestions(groupId: string) {
   return repo.listQuestions(groupId);
 }
 
+/**
+ * Lists the active form definitions for a phase.
+ * Exported for cases/form-runtime use (client forms list — DOC-51 §21).
+ */
+export async function listFormDefinitions(phaseId: string) {
+  return repo.listFormDefinitions(phaseId);
+}
+
 export async function listDatasets(actor: Actor) {
   can(actor, "datasets", "view");
   return repo.listDatasets(actor.orgId);

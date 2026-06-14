@@ -368,7 +368,8 @@
     },
     "historia": {
       "placeholderTitle": "Tu historia, muy pronto",
-      "placeholderBody": "Aquí podrás contarnos tu historia con tus palabras. Estamos terminando este espacio para ti."
+      "placeholderBody": "Aquí podrás contarnos tu historia con tus palabras. Estamos terminando este espacio para ti.",
+      "listeningChip": "Te escucho con atención"
     },
     "config": {
       "backCases": "Mis casos",
@@ -473,6 +474,52 @@
       "errTitle": "No pudimos cargar tu cita",
       "errBody": "Algo falló de nuestro lado. Inténtalo de nuevo, sin prisa.",
       "retry": "Reintentar"
+    },
+    "formWizard": {
+      "stepCounter": "Paso {n} de {total}",
+      "back": "Atrás",
+      "saving": "Guardando…",
+      "saved": "Guardado",
+      "queued": "Se guardará al reconectar",
+      "saveError": "Reintentando…",
+      "prefillChip": "Ya lo tenemos",
+      "prefillFromDocument": "lo tomamos de tu documento",
+      "prefillFromProfile": "lo tomamos de tu perfil",
+      "prefillFromGeneration": "lo tomamos de tu solicitud",
+      "prefillEdited": "Lo cambiaste tú",
+      "selectPlaceholder": "Elige una opción",
+      "textareaPlaceholder": "Escribe aquí, o toca el micrófono para hablar…",
+      "checkboxYes": "Sí",
+      "errRequired": "Esto nos hace falta para continuar.",
+      "errRegex": "Revisa el formato, por favor.",
+      "errMin": "Es un poco corto. ¿Puedes ampliar?",
+      "errMax": "Es demasiado largo. Acórtalo un poco.",
+      "next": "Siguiente",
+      "finish": "Terminar",
+      "submitting": "Enviando…",
+      "submitErrorTitle": "No pudimos enviarlo",
+      "submitErrorBody": "Vuelve a intentarlo en un momento.",
+      "privacyNote": "Tu información está protegida y es confidencial",
+      "dictateIdle": "Tocar para hablar",
+      "dictateActive": "Escuchando… toca para parar",
+      "dictateUnsupported": "El dictado no está disponible aquí. Puedes escribir.",
+      "submittedPill": "Enviado",
+      "submittedTitle": "¡Listo! Lo recibimos",
+      "submittedBody": "Tu equipo lo está revisando."
+    },
+    "formularios": {
+      "eyebrow": "Tu caso",
+      "title": "Formularios",
+      "subtitle": "Completa lo que tu equipo necesita. Todo se guarda solo.",
+      "draft": "Borrador",
+      "submitted": "Enviado",
+      "pending": "Por empezar",
+      "emptyTitle": "No hay formularios por ahora",
+      "emptyBody": "Cuando tu equipo necesite algún dato, aparecerá aquí.",
+      "notFoundTitle": "No encontramos ese formulario",
+      "notFoundBody": "Puede que ya no esté disponible. Escríbele a tu equipo si tienes dudas.",
+      "noVersionTitle": "Este formulario aún no está listo",
+      "noVersionBody": "Tu equipo lo está preparando. Te avisaremos en cuanto puedas completarlo."
     }
   },
   "staff": {
