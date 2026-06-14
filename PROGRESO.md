@@ -23,8 +23,19 @@ Réplica del prototipo `V2/UI Vanessa/` con los componentes desktop (DOC-52, pro
 - **E2E flujo F1** (DOC-81 §4.1): specs Playwright vanessa + maria (storageState; login email del cliente sembrado por sesión — el OTP en vivo espera SMTP). _(resultado en verificación — ver línea Gates F3.)_
 - **EV-01/EV-02** (`service.published`/`form_version.published`): ya se emiten en `catalog/service.ts` — gap del plan ya cerrado.
 
-| Gates F3 | typecheck **0** · lint **0/0** · **507 unit tests** · build ✓ (28.6s) · **1128 claves i18n** (paridad) · E2E _en verificación_ |
+| Gates F3 | typecheck **0** · lint **0/0** · **510 unit tests** · build ✓ · **1128 claves i18n** (paridad) · verificación en vivo MCP ✓ |
 |---|---|
+
+### Verificación EN VIVO con navegador (MCP Playwright, 2026-06-13)
+Dev server limpio + sesiones autenticadas reales (login real de Vanessa + sesión inyectada de María). **Las 8 vistas de Vanessa + home/agendar/cita del cliente renderizan con datos reales y 0 errores de consola.** Confirmado el feature núcleo: **hora dual** "10:00 AM (Florida ET) · 8:00 AM en Utah" en la cita real de María; calendario de agendar con días disponibles tappables + aviso de penalización 7 días.
+
+**5 bugs reales encontrados SOLO por el dogfooding en vivo** (ninguno lo veía el build —páginas `force-dynamic`— ni los unit tests —no existía sesión cliente real antes del auth email—):
+1. `ventas/mi-dia`: `onScheduleLead={() => {}}` pasado Server→Client (crash RSC, 500). Fix: prop opcional + default por router cliente.
+2. `ventas/metricas`: `onPeriodChange={() => {}}` mismo crash RSC (500). Mismo patrón (default empuja `?period=`).
+3. `cases.getCasesForClient`: llamaba `can()` (staff-only) → `AuthzError wrong_kind` en el `/home` del cliente (500). Fix: guard de kind cliente (RLS escopa filas) + **test de regresión**.
+4-6. `cliente/home` i18n: `t()` sobre `phaseShort`/`greeting`/`documentsLeft` lanzaba FORMATTING_ERROR (mostraba las claves crudas) — son templates crudos sustituidos aguas abajo. Fix: `t.raw()`.
+
+Evidencia: `docs/_evidence/f3-verify/verify.cjs` + screenshots MCP. Limitación conocida (no bug): la cita muestra "Tu asesora legal" genérico — falta un read client-safe del nombre del asesor (`<<NEED-BACKEND>>`, flag de Ola 3). Pendiente menor de datos: `getWeekAgenda` aún no cableado a la vista Citas (muestra semana scaffold); agregados de Métricas pendientes (estructura presente, DOC-50 §5).
 
 **Pendiente externo (no bloquea la construcción, paso de Henry)**: SMTP en Supabase Auth (Resend) para el login email en vivo del cliente; aplicar migración 0016 si se quiere la atomicidad por RPC (opcional).
 
