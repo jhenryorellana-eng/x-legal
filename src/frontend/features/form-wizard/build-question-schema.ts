@@ -60,7 +60,15 @@ export function buildQuestionSchema(question: WizardQuestion): z.ZodTypeAny {
     );
   }
 
-  // text / textarea / date / select → string with optional regex + min/max length
+  // select → value must be one of the declared options (mirrors the server-side
+  // whitelist in validateAnswerTypes; UX courtesy, server remains the source of truth)
+  if (question.fieldType === "select" && question.options && question.options.length > 0) {
+    const values = question.options.map((o) => o.value) as [string, ...string[]];
+    const sel = z.enum(values, { message: "type" });
+    return required ? sel : sel.optional().or(z.literal(""));
+  }
+
+  // text / textarea / date → string with optional regex + min/max length
   let s = z.string();
   if (v?.regex) {
     try {

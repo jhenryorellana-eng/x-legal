@@ -308,6 +308,21 @@ describe("validateAnswerTypes", () => {
     expect(validateAnswerTypes(answers, questions)).toHaveLength(0);
   });
 
+  it("rejects a select value outside the declared options (server whitelist)", () => {
+    const questions = [
+      makeQuestion({
+        id: "q1",
+        field_type: "select",
+        is_required: false,
+        options: [{ value: "male" }, { value: "female" }],
+      }),
+    ];
+    expect(validateAnswerTypes({ q1: "other" }, questions)).toEqual([
+      { questionId: "q1", code: "type" },
+    ]);
+    expect(validateAnswerTypes({ q1: "female" }, questions)).toHaveLength(0);
+  });
+
   it("validates regex rule", () => {
     const questions = [
       makeQuestion({
@@ -526,6 +541,11 @@ describe("submitFormResponse", () => {
 
   it("transitions draft → submitted when all required fields answered", async () => {
     mockFindFormResponse.mockResolvedValue(draftResponse);
+    // A published version resolves to its questions (none required → empty answers pass).
+    mockListQuestionGroups.mockResolvedValue([{ id: "grp1" }]);
+    mockListQuestions.mockResolvedValue([
+      { id: "q1", field_type: "text", is_required: false, options: null, validation: null },
+    ]);
     const updated = { ...submittedResponse };
     mockFindFormResponseById.mockResolvedValue(updated);
 
@@ -585,8 +605,29 @@ describe("submitFormResponse", () => {
     ).rejects.toThrow("FORM_VALIDATION_FAILED");
   });
 
+  it("fails closed when a versioned form resolves to zero questions (no silent skip)", async () => {
+    mockFindFormResponse.mockResolvedValue(draftResponse);
+    // Catalog read returns no questions for a pdf_automation version → unresolvable.
+    mockListQuestionGroups.mockResolvedValue([]);
+    mockListQuestions.mockResolvedValue([]);
+
+    await expect(
+      submitFormResponse(clientActor, {
+        caseId: CASE_ID,
+        formDefinitionId: FORM_DEF_ID,
+        partyId: null,
+      }),
+    ).rejects.toThrow("FORM_VERSION_NOT_PUBLISHED");
+
+    expect(mockUpdateFormResponse).not.toHaveBeenCalled();
+  });
+
   it("emits timeline entry on successful submit", async () => {
     mockFindFormResponse.mockResolvedValue(draftResponse);
+    mockListQuestionGroups.mockResolvedValue([{ id: "grp1" }]);
+    mockListQuestions.mockResolvedValue([
+      { id: "q1", field_type: "text", is_required: false, options: null, validation: null },
+    ]);
     mockFindFormResponseById.mockResolvedValue(submittedResponse);
 
     await submitFormResponse(staffActor, {
@@ -609,6 +650,7 @@ describe("approveFormResponse", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCan.mockReturnValue(undefined);
+    mockRequireCaseAccess.mockResolvedValue(undefined);
   });
 
   it("approves a submitted response", async () => {
@@ -662,6 +704,17 @@ describe("approveFormResponse", () => {
 
     expect(mockFindFormResponseById).not.toHaveBeenCalled();
   });
+
+  it("blocks cross-tenant approve (requireCaseAccess rejects → no mutation)", async () => {
+    mockFindFormResponseById.mockResolvedValue(submittedResponse);
+    mockRequireCaseAccess.mockRejectedValue(new Error("forbidden_case"));
+
+    await expect(
+      approveFormResponse(staffActor, { responseId: RESPONSE_ID }),
+    ).rejects.toThrow("forbidden_case");
+
+    expect(mockUpdateFormResponse).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -672,6 +725,7 @@ describe("generateFilledPdf", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCan.mockReturnValue(undefined);
+    mockRequireCaseAccess.mockResolvedValue(undefined);
     mockGetPublishedAutomationVersion.mockResolvedValue(publishedVersion);
     mockListQuestionGroups.mockResolvedValue([]);
     mockListQuestions.mockResolvedValue([]);
@@ -688,6 +742,18 @@ describe("generateFilledPdf", () => {
     await expect(
       generateFilledPdf(staffActor, { responseId: RESPONSE_ID }),
     ).rejects.toThrow("FORM_RESPONSE_NOT_FOUND");
+  });
+
+  it("blocks cross-tenant PDF generation (requireCaseAccess rejects → no PII leak)", async () => {
+    mockFindFormResponseById.mockResolvedValue(approvedResponse);
+    mockRequireCaseAccess.mockRejectedValue(new Error("forbidden_case"));
+
+    await expect(
+      generateFilledPdf(staffActor, { responseId: RESPONSE_ID }),
+    ).rejects.toThrow("forbidden_case");
+
+    // Never reaches the form-definition read / PDF fill if cross-tenant.
+    expect(mockFindFormDefinitionById).not.toHaveBeenCalled();
   });
 
   it("throws FORM_PDF_BLOCKED when response is still draft", async () => {

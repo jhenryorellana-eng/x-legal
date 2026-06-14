@@ -251,6 +251,16 @@ export function validateAnswerTypes(
 
     if (isEmpty) continue; // optional and empty — skip validation rules
 
+    // Select: value must be one of the declared options (server-side whitelist).
+    // The client Zod schema also enforces this, but the server is the source of truth.
+    if (q.field_type === "select" && q.options && q.options.length > 0) {
+      const allowedValues = q.options.map((o) => o.value);
+      if (!allowedValues.includes(String(value))) {
+        errors.push({ questionId: q.id, code: "type" });
+        continue;
+      }
+    }
+
     // Type/format validation
     const val = q.validation as { regex?: string; min?: number; max?: number } | null | undefined;
 

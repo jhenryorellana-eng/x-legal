@@ -274,12 +274,39 @@ export async function insertFormResponse(row: {
 /**
  * Merges a patch of answers into the existing answers JSONB.
  * Last-written-per-key wins (RF-DIA-023 CA2).
+ *
+ * Preferred path: the `merge_form_answers` RPC does `answers || patch` in a single
+ * atomic statement — no read-modify-write race between concurrent autosaves
+ * (multi-device / multi-tab). Falls back to read-then-write if the RPC migration
+ * (0018) is not yet applied; the fallback is functionally correct, only losing
+ * atomicity under truly-simultaneous saves.
  */
 export async function mergeFormAnswers(
   responseId: string,
   patch: Record<string, unknown>,
 ): Promise<void> {
   const supabase = createServiceClient();
+
+  // Typed as a localized cast: the RPC is added in migration 0018; until the DB
+  // types are regenerated post-apply it isn't in the generated function union.
+  const callRpc = supabase.rpc as unknown as (
+    fn: "merge_form_answers",
+    args: { p_response_id: string; p_patch: import("@/shared/database.types").Json },
+  ) => Promise<{ error: { message?: string } | null }>;
+  const { error: rpcErr } = await callRpc("merge_form_answers", {
+    p_response_id: responseId,
+    p_patch: patch as import("@/shared/database.types").Json,
+  });
+  if (!rpcErr) return;
+
+  // Only fall back when the function is genuinely absent (migration not applied).
+  const fnAbsent = /merge_form_answers/i.test(rpcErr.message ?? "") &&
+    /does not exist|could not find|schema cache/i.test(rpcErr.message ?? "");
+  if (!fnAbsent) {
+    throw new Error(`cases.repository: mergeFormAnswers rpc failed — ${rpcErr.message}`);
+  }
+
+  // Fallback: read-modify-write (apply migration 0018 to remove the race window).
   const { data: current, error: fetchErr } = await supabase
     .from("case_form_responses")
     .select("answers")

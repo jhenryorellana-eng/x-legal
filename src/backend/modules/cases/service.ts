@@ -2113,9 +2113,18 @@ export async function submitFormResponse(
     throw new CaseError("FORM_NOT_SUBMITTABLE");
   }
 
-  // Full server-side validation (RF-TRX-027 — client is never the source of truth)
+  // Full server-side validation (RF-TRX-027 — client is never the source of truth).
+  // A pdf_automation form ALWAYS resolves to ≥1 question; an empty result means the
+  // version couldn't be resolved (catalog read failed / version unpublished) — fail
+  // CLOSED rather than silently submitting an unvalidated response.
   if (response.automation_version_id) {
     const questions = await getQuestionsForVersion(response.automation_version_id);
+    if (questions.length === 0) {
+      throw new CaseError("FORM_VERSION_NOT_PUBLISHED", {
+        reason: "questions_unresolvable",
+        versionId: response.automation_version_id,
+      });
+    }
     const answers = (response.answers ?? {}) as Record<string, unknown>;
     const errors = validateAnswerTypes(answers, questions);
     if (errors.length > 0) {
@@ -2176,6 +2185,10 @@ export async function approveFormResponse(
 
   const response = await findFormResponseById(parsed.responseId);
   if (!response) throw new CaseError("FORM_RESPONSE_NOT_FOUND");
+  // Cross-tenant guard: findFormResponseById uses the service client (RLS bypass);
+  // verify the actor belongs to this response's case before approving (else org A
+  // could approve org B's response). (Same pattern as reviewDocument.)
+  await requireCaseAccess(actor, response.case_id);
 
   if (response.status !== "submitted") {
     throw new CaseError("FORM_NOT_SUBMITTABLE");
@@ -2224,6 +2237,10 @@ export async function generateFilledPdf(
 
   const response = await findFormResponseById(parsed.responseId);
   if (!response) throw new CaseError("FORM_RESPONSE_NOT_FOUND");
+  // Cross-tenant guard (CRITICAL): the filled PDF contains decrypted PII (SSN,
+  // A-number, passport) resolved from the case's client. findFormResponseById
+  // bypasses RLS — verify the actor owns this response's case before filling.
+  await requireCaseAccess(actor, response.case_id);
 
   const formDef = await findFormDefinitionById(response.form_definition_id);
   if (!formDef) throw new CaseError("FORM_NOT_FOUND");

@@ -53,7 +53,11 @@ export function buildInitialAnswers(groups: { questions: WizardQuestion[] }[]): 
   return { answers, prefilledIds };
 }
 
-/** True when the form is read-only for the client (submitted / approved). */
+/**
+ * True when the form is read-only for the client. A case_form_responses row can
+ * only be draft/submitted/approved (DB CHECK) — 'in_validation' is a CASE status,
+ * never a form-response status, so it's not checked here.
+ */
 export function isReadOnly(status: string | null): boolean {
-  return status === "submitted" || status === "approved" || status === "in_validation";
+  return status === "submitted" || status === "approved";
 }
