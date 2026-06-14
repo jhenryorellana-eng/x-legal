@@ -3,8 +3,32 @@
 > Archivo de continuidad entre sesiones (PROMPT-CONSTRUCCION-V2 §4). Actualizar al cierre de cada sesión.
 > Biblioteca SoT: `C:\Users\mauri\Documents\Trabajos\USALATINO V2\V2\docs\` · Supabase: **USALATINO V2** `uexxyokexcamyjcknxua`
 
-**Fase actual: F3 — Scheduling + Vanessa (en curso) · Parte A auth email ✅ COMPLETA**
+**Fase actual: F3 — Scheduling + Vanessa (3 olas construidas, en verificación E2E) · Parte A auth email ✅ COMPLETA**
 Última sesión: 2026-06-13
+
+## F3 — Scheduling + Vanessa (por olas)
+
+### Ola 1 — Backend `scheduling` + `kanban`/`leads` (TDD) ✅
+- **`scheduling`** (DOC-43): `domain.ts` puro con `materializeSlots` (impl. literal DOC-23 §6.4: días civiles en la TZ de la regla, conversión por instante con date-fns-tz, DST gap/overlap, franjas cruzando medianoche, resta de excepciones/booked con buffer, min_notice/max_advance), `effectivePolicy` (override caso > política fase > default), penalizaciones, `validateRuleSet`, máquina de estados. `service.ts` API-SCH-01..15 (`getAvailableSlots`, `bookAppointment` con EXCLUDE gist anti-solape→SLOT_TAKEN, `cancel`/`reschedule` atómicos con penalización, `complete`/`noShow`, disponibilidad, `getWeekAgenda`). Eventos `appointment.booked/cancelled/rescheduled/completed`.
+- **`kanban`+leads** (DOC-47): tableros lazy con columnas semilla exactas (§2.2 por kind), `moveCard` + broadcast Realtime `board:{id}`, leads (`createLead` con aviso duplicado 2-niveles, `markLeadWon/Lost`, `createCaseFromLead`→delega a cases), `expressServiceInterest` API-LEAD-08 (CTA público), `staff_tasks`. Listeners §3.8: `case.assigned`/`contract.signed`/`downpayment.confirmed`.
+- **notifications** extendido (matriz F3: appointment.*, lead.created) + **job** `appointment-reminders` (QStash */15, idempotente por `reminder_1d/1h_sent_at`) + `jobs/registry.ts`.
+
+### Ola 2 — Panel Vanessa: 8 vistas ✅
+Réplica del prototipo `V2/UI Vanessa/` con los componentes desktop (DOC-52, prompts vanessa/01..08): **Mi día** (KPIs, por-atender-ahora con time-badge, agenda, tareas, embudo, Lex), **Leads** (kanban tarjeta §2.2 + DnD `moveCard`, modales Nuevo lead / Nuevo caso 2 pasos), **Citas** (CalendarGrid semana/día/lista, horas duales con etiqueta ET, SidePanel, modal Nueva cita Cliente/Prospecto), **Disponibilidad** (grid recurrencia, excepciones, settings, levantar bloqueo, migración TZ), **Clientes** (lista casos + shared-case reusado de F2), **Métricas** (embudo/barras/donuts SVG), **Configuración**, **LexDock**. Evidencia: `docs/_evidence/f3-vanessa/*.png`.
+
+### Ola 3 — Cliente agendar/cita + E2E + review ✅ (construido)
+- **Pantallas cliente** (`caso/[caseId]/agendar` + `cita/[appointmentId]`, DOC-51 §18-19, prompts cliente/18-19): calendario navegable, slots en **TZ dual** ("2:00 PM" / "12:00 PM en Utah" — reusa `frontend/lib/datetime.ts`), recordatorios 1d/1h, nota, CTA agendar (maneja SLOT_TAKEN→refetch, REBOOKING_BLOCKED→pantalla bloqueo con fecha de desbloqueo); detalle de cita con reagendar/cancelar, estado completada, botón videollamada (deshabilitado "Pronto" — LiveKit es F7), confetti. Actions `getSlots/book/cancel/reschedule`.
+- **Two-stage review** (`code-reviewer`): NEEDS-REVISION → 10 hallazgos corregidos (TDD): **C-1** reschedule atómico (insert-primero: cero pérdida silenciosa, invariante documentado), **C-2** `expressServiceInterest` valida pertenencia a org + `no_phone` + limiter por IP, **H-3** orden de `moveCard`, **H-4** reminder mark-antes-de-encolar (anti doble email) + comentario, **H-5** logs PII-safe, **H-6** `LEAD_NOT_FOUND`, **M-7** `getWeekAgenda` DST-safe, **M-8** doc. Migración opcional `0016_scheduling_rpcs.sql` (RPCs atómicas) escrita pero NO aplicada — el reorder es la impl. activa.
+- **BUG-LEADS-001** (encontrado por el E2E): `/ventas/leads` y `/ventas/mi-dia` (Server Components) crasheaban al llamar `sourceMeta()` de un módulo `"use client"`. Fix: helpers puros extraídos a `vanessa/shared/source-meta.ts` (sin "use client"); `ui.tsx` re-exporta. Build ✓.
+- **E2E flujo F1** (DOC-81 §4.1): specs Playwright vanessa + maria (storageState; login email del cliente sembrado por sesión — el OTP en vivo espera SMTP). _(resultado en verificación — ver línea Gates F3.)_
+- **EV-01/EV-02** (`service.published`/`form_version.published`): ya se emiten en `catalog/service.ts` — gap del plan ya cerrado.
+
+| Gates F3 | typecheck **0** · lint **0/0** · **507 unit tests** · build ✓ (28.6s) · **1128 claves i18n** (paridad) · E2E _en verificación_ |
+|---|---|
+
+**Pendiente externo (no bloquea la construcción, paso de Henry)**: SMTP en Supabase Auth (Resend) para el login email en vivo del cliente; aplicar migración 0016 si se quiere la atomicidad por RPC (opcional).
+
+---
 
 ## Parte A — Auth cliente por EMAIL (cambio al SoT DOC-22 §1) ✅
 > Decisión del dueño: el cliente se autentica por **email** (capturado en el alta del caso), NO por OTP de teléfono. El teléfono queda como contacto opcional. Sustituto: **email OTP de 6 dígitos (Supabase nativo, cero Twilio)**.

@@ -931,7 +931,14 @@ export async function getCasesForClient(
   actor: Actor,
   filters: { status?: string; cursor?: string; limit?: number },
 ): Promise<CasesPage> {
-  can(actor, "cases", "view");
+  // Client-only endpoint: a client lists their OWN cases. can() is staff-only
+  // (it throws wrong_kind for clients — DOC-22 §5.2), so it must NOT be used
+  // here. Row scoping to the client's cases is enforced by RLS (case_members);
+  // listCases runs through the user-scoped server client. Staff use
+  // listCasesAdmin instead.
+  if (actor.kind !== "client") {
+    throw new AuthzError("wrong_kind");
+  }
   return listCases({
     orgId: actor.orgId,
     status: filters.status,

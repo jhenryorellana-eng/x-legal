@@ -121,7 +121,11 @@ export default defineConfig({
   ],
   webServer: {
     command: "npm run dev",
-    url: "http://localhost:3000/welcome",
+    // /favicon.ico always returns 200 on the Next.js dev server.
+    // reuseExistingServer: true means Playwright will NOT start a new process
+    // if this URL already responds — requires a 2xx status to be considered "ready".
+    // /welcome and /login render RSC errors (500) during dev so they can't be used here.
+    url: "http://localhost:3000/favicon.ico",
     reuseExistingServer: true,
     timeout: 120_000,
   },

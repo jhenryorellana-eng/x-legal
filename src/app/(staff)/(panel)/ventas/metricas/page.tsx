@@ -61,7 +61,6 @@ export default async function VentasMetricasPage({
           secondary={empty.secondary}
           period={period}
           strings={strings}
-          onPeriodChange={() => {}}
         />
       </MetricasClient>
     </LexPrefsProvider>

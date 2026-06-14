@@ -10,6 +10,7 @@
  */
 
 import * as React from "react";
+import { useRouter, usePathname } from "next/navigation";
 import { MSym } from "../shared/msym";
 import { Chip } from "../shared/ui";
 import { LexBubble } from "../shared/lex";
@@ -76,7 +77,12 @@ export interface MetricasViewProps {
   secondary: SecondaryCard[];
   period: "week" | "month" | "custom";
   strings: MetricasStrings;
-  onPeriodChange: (p: "week" | "month" | "custom") => void;
+  /**
+   * Optional override. Omitted by the server page (a Server Component can't pass
+   * a function across the RSC boundary); when absent we push `?period=…` so the
+   * server recomputes the §6.2 aggregates for the chosen window.
+   */
+  onPeriodChange?: (p: "week" | "month" | "custom") => void;
 }
 
 function Donut({ pct, color, label, sub }: DonutVM) {
@@ -125,6 +131,12 @@ export function MetricasView({
   onPeriodChange,
 }: MetricasViewProps) {
   const { bubbles } = useLexPrefs();
+  const router = useRouter();
+  const pathname = usePathname();
+  // Client-side default: a Server Component can't hand us an event handler, so
+  // when none is provided we drive the period through the URL (RSC recompute).
+  const changePeriod =
+    onPeriodChange ?? ((p: "week" | "month" | "custom") => router.push(`${pathname}?period=${p}`));
   const maxBar = Math.max(1, ...weekBars.map((b) => b.value));
   const periods: { id: "week" | "month" | "custom"; label: string }[] = [
     { id: "week", label: strings.thisWeek },
@@ -141,7 +153,7 @@ export function MetricasView({
         </div>
         <div className="seg">
           {periods.map((p) => (
-            <button key={p.id} type="button" className={period === p.id ? "on" : ""} onClick={() => onPeriodChange(p.id)}>
+            <button key={p.id} type="button" className={period === p.id ? "on" : ""} onClick={() => changePeriod(p.id)}>
               {p.label}
             </button>
           ))}

@@ -99,7 +99,13 @@ export interface MiDiaViewProps {
   totalUncontacted: number;
   strings: MiDiaStrings;
   actions: MiDiaActions;
-  onScheduleLead: (leadId: string) => void;
+  /**
+   * Optional override for the "schedule this lead" affordance. Omitted by the
+   * server page (a Server Component cannot pass a function across the RSC
+   * boundary); when absent we navigate to the Citas view with the lead
+   * preselected, using the client router that already lives in this component.
+   */
+  onScheduleLead?: (leadId: string) => void;
 }
 
 export function MiDiaView({
@@ -114,6 +120,10 @@ export function MiDiaView({
 }: MiDiaViewProps) {
   const router = useRouter();
   const toast = useToast();
+  // Client-side default: a Server Component can't hand us an event handler, so
+  // when none is provided we route to Citas with the lead preselected.
+  const scheduleLead =
+    onScheduleLead ?? ((leadId: string) => router.push(`/ventas/citas?lead=${leadId}`));
   const { bubbles } = useLexPrefs();
   const [tasks, setTasks] = React.useState(initialTasks);
   const [rows, setRows] = React.useState(attend);
@@ -283,7 +293,7 @@ export function MiDiaView({
                       className="mini-btn cal"
                       title={strings.schedule}
                       aria-label={`${strings.schedule} ${l.title}`}
-                      onClick={() => onScheduleLead(l.id)}
+                      onClick={() => scheduleLead(l.id)}
                     >
                       <MSym name="event" size={18} />
                     </button>

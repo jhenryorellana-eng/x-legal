@@ -57,7 +57,11 @@ export default async function HomePage() {
     unreadCount = 0;
   }
 
-  const phaseTpl = t("phaseShort"); // "Fase {x} de {y} · {phase}"
+  // Raw ICU templates: these carry placeholders ({x}/{y}/{phase}, {name}, {n})
+  // that are substituted downstream (here for phase, in DashboardScreen for the
+  // others). t() would try to format them and throw FORMATTING_ERROR because the
+  // values aren't passed at call time — t.raw() returns the literal template.
+  const phaseTpl = t.raw("phaseShort") as string; // "Fase {x} de {y} · {phase}"
   const reviewLabel = t("inReview");
 
   const cases: DashboardCase[] = workspaces.map((ws, idx) => {
@@ -95,9 +99,9 @@ export default async function HomePage() {
       unreadCount={unreadCount}
       labels={{
         greetingEyebrow: t("greetingEyebrow"),
-        greeting: t("greeting"),
+        greeting: t.raw("greeting") as string, // "Hola, {name}" — interpolated in DashboardScreen
         yourCases: t("yourCases"),
-        documentsLeft: t("documentsLeft"),
+        documentsLeft: t.raw("documentsLeft") as string, // "Te faltan {n} documentos" — {n} per card
         openCase: t("openCase"),
         quickAccess: t("quickAccess"),
         qServices: tNav("servicios"),

@@ -78,41 +78,9 @@ const LEAD_NAME = `E2E Lead F1 ${TS}`;
 
 /* ─────────────────────────────────────────────────────────────────
    S1 — Leads board renders
-   BUG-LEADS-001: /ventas/leads Runtime Error (sourceMeta server/client boundary)
    ───────────────────────────────────────────────────────────────── */
 
-/**
- * BUG-LEADS-001 (discovered by this E2E run, 2026-06-13)
- * ═══════════════════════════════════════════════════════
- * /ventas/leads throws a Runtime Server Error on load:
- *   "Attempted to call sourceMeta() from the server but sourceMeta is on the
- *    client. It's not possible to invoke a client function from the server."
- *
- * Root cause: ventas/leads/page.tsx (line 57) calls `sourceMeta(lead?.source)`
- * inside the server component's `map()`. The `sourceMeta` function is imported
- * from "@/frontend/features/vanessa/shared/ui" which is a CLIENT module
- * (marked or imported as "use client"). Next.js 15 enforces the server/client
- * boundary strictly — a server component cannot call a client function.
- *
- * Fix options (for ui-builder):
- *   A. Move the sourceMeta() call into the LeadsClient (client component):
- *      Pass raw source strings in LeadCardVM and call sourceMeta() inside
- *      the client render.
- *   B. Extract sourceMeta() to a shared (non-"use client") utility module and
- *      re-export it from both server and client paths.
- *
- * ACTIVATION: once BUG-LEADS-001 is fixed, remove `test.fixme(true, ...)` from
- * S1, S2, and S3 tests below.
- *
- * <<NEEDS-REVISION>>: BUG-LEADS-001 blocks S1, S2, S3 from running.
- */
-
 test.describe("F3-F1 Staff: S1 — leads board", () => {
-  test.fixme(
-    true,
-    "BUG-LEADS-001: /ventas/leads crashes with Runtime Server Error (sourceMeta client fn called from server). Fix: move sourceMeta call to LeadsClient or extract to shared util.",
-  );
-
   test.beforeEach(async ({ page }) => {
     await page.goto("/ventas/leads");
     await expect(
@@ -136,15 +104,9 @@ test.describe("F3-F1 Staff: S1 — leads board", () => {
 /* ─────────────────────────────────────────────────────────────────
    S2 — Create a new lead via the "Nuevo lead" modal
    UI-driven: click → fill → submit → assert card appears
-   Blocked by BUG-LEADS-001 (page crashes before modal renders).
    ───────────────────────────────────────────────────────────────── */
 
 test.describe("F3-F1 Staff: S2 — create new lead", () => {
-  test.fixme(
-    true,
-    "BUG-LEADS-001: /ventas/leads crashes before modal renders. Fix first, then activate.",
-  );
-
   test.beforeEach(async ({ page }) => {
     await page.goto("/ventas/leads");
     await expect(page.getByText("Nuevos").first()).toBeVisible({ timeout: 20_000 });
@@ -189,15 +151,9 @@ test.describe("F3-F1 Staff: S2 — create new lead", () => {
 
 /* ─────────────────────────────────────────────────────────────────
    S3 — Move lead card to "Ganado" column
-   Blocked by BUG-LEADS-001.
    ───────────────────────────────────────────────────────────────── */
 
 test.describe("F3-F1 Staff: S3 — move lead to Ganado", () => {
-  test.fixme(
-    true,
-    "BUG-LEADS-001: /ventas/leads crashes before kanban cards render. Fix first, then activate.",
-  );
-
   test.beforeEach(async ({ page }) => {
     await page.goto("/ventas/leads");
     await expect(page.getByText("Nuevos").first()).toBeVisible({ timeout: 20_000 });

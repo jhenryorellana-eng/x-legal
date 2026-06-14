@@ -116,7 +116,6 @@ export default async function MiDiaPage() {
         totalUncontacted={uncontactedCount}
         strings={strings}
         actions={{ contactLead: contactLeadAction, toggleTask: toggleTaskDoneAction }}
-        onScheduleLead={() => {}}
       />
     </MiDiaClientShell>
   );
