@@ -19,9 +19,14 @@
 - **Decisión de arquitectura**: `mupdf` es el motor de formularios PDF (desviación documentada del SoT que asumía pdf-lib; evidencia en `docs/_evidence/f4-spike/SPIKE-FINDINGS.md`). pdf-lib/@cantoo removidos.
 - Gates: tsc 0 · eslint 0/0 · **525 tests**. Commit `3dd644b`.
 
+### Ola F4-1 — Motor `ai-engine` (backend, TDD) ✅
+Módulo `ai-engine` (domain 13 funcs puras, service API-AI-01..10, repository, events) + `platform/pdf.ts` (mupdf: render md→pdf/docx + detect/fill AcroForm) + 5 jobs (run-generation/extract-document/translate-document/ai-budget-aggregation/job-failed) + hook de extracción en `confirmDocumentUpload` + migración aditiva 0017. Whitelist sonnet-4-6 (default) + opus-4-7.
+- **Two-stage review aplicado** (code-reviewer → 2 críticos + PII + evento roto + nits). El agente de fixes se estancó → **tomé los fixes directamente**: **C-1** barrier de idempotencia `webhook_events` en la ruta QStash (nuevo `platform/webhook-events.ts` + orgId en payloads; crons exentos); **C-2** guard cross-tenant en cancel/regenerate/retry; **B-3** `completeRun` ahora SÍ emite `generation.completed`; **H-4** `maskPii` recursivo; **H-5** traducción sin fuente → `failed`; **M-8** guard colisión `raw_text`; **L-13/14/15** + tests de regresión. Deferido **M-12** (structured outputs del editor T2) → Ola 2.
+- Gates: tsc 0 · eslint 0/0 · **672 tests** · build ✓ (mupdf wasm). Commits `91ab66b` + `d8416bc`.
+- **Pendiente externo (Henry, no bloquea Olas 2-3)**: aplicar migración 0017; cargar `ANTHROPIC_API_KEY` + `GEMINI_API_KEY` para los runs reales de la demo.
+
 ### Olas pendientes
-- **F4-1** Motor `ai-engine` (backend TDD) — prompt assembly, extracción Gemini, generación Claude+caching+chunking, jobs, presupuesto, migración 0017 aditiva.
-- **F4-2** Editor de formularios admin (los 6 stubs + UI pdf_automation/ai_letter + datasets + costes).
+- **F4-2** Editor de formularios admin (los 6 stubs + UI pdf_automation/ai_letter + datasets + costes) — **aquí ya hay UI → verificación en vivo con navegador MCP**.
 - **F4-3** Form-wizard runtime + cliente + E2E (prueba de fuego) + demo.
 
 ---
