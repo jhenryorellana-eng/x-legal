@@ -866,9 +866,18 @@ export function validateExtractionSchema(schema: unknown): { valid: boolean; rea
   if (found.length > 0) {
     return { valid: false, reason: `Forbidden keys: ${found.join(", ")}` };
   }
+  // H-3: "raw_text" is injected by the extraction engine at runtime.
+  // Schemas that define it as a property would conflict with the engine's output.
+  const properties = obj.properties as Record<string, unknown> | undefined;
+  if (properties && "raw_text" in properties) {
+    return {
+      valid: false,
+      reason: '"raw_text" es un campo reservado inyectado por el motor de extracción.',
+    };
+  }
   // Recurse into properties (object schemas) and items (array schemas)
   const nestedContainers: unknown[] = [
-    ...Object.values(obj.properties && typeof obj.properties === "object" ? (obj.properties as Record<string, unknown>) : {}),
+    ...Object.values(properties ?? {}),
     obj.items,
   ].filter(Boolean);
   for (const nested of nestedContainers) {

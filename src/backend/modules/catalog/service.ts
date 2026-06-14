@@ -652,16 +652,18 @@ export async function createAutomationVersion(
   if (!form) throw catalogError("CATALOG_FORM_NOT_FOUND");
   if (form.kind !== "pdf_automation") throw catalogError("CATALOG_FORM_KIND_MISMATCH");
 
-  // Verify the file exists in storage (confirms the upload completed)
-  const supabase = createServiceClient();
-  const { data: existsList } = await supabase.storage
-    .from("catalog-assets")
-    .list(input.uploaded_pdf_path.split("/").slice(0, -1).join("/"), {
-      search: input.uploaded_pdf_path.split("/").pop()!,
-      limit: 1,
-    });
-  if (!existsList || existsList.length === 0) {
-    throw catalogError("CATALOG_PDF_UNREADABLE", "Uploaded PDF not found in storage.");
+  // H-1: Enforce path-prefix isolation — prevents a staff user from pointing at
+  // another entity's PDF in catalog-assets (cross-entity path traversal).
+  if (!input.uploaded_pdf_path.startsWith(`forms/${input.form_definition_id}/`)) {
+    throw catalogError("CATALOG_PDF_INVALID_PATH", "uploaded_pdf_path must be scoped to the form definition.");
+  }
+
+  // H-1: Validate the uploaded object (extension allowlist + magic-bytes check).
+  // Also confirms the upload actually completed (object exists in storage).
+  const { validateUploadedObject } = await import("@/backend/platform/storage");
+  const storageCheck = await validateUploadedObject("catalog-assets", input.uploaded_pdf_path, "catalog-assets");
+  if (!storageCheck.ok) {
+    throw catalogError("CATALOG_PDF_UNREADABLE", storageCheck.reason ?? "PDF storage validation failed.");
   }
 
   // Determine next version number
@@ -800,6 +802,8 @@ export async function aiProposeStructure(
     page: f.page,
   }));
 
+  // M-4: Call AI FIRST, then delete existing groups — reduces the window where
+  // the version is empty. If AI fails, existing groups are preserved intact.
   // Import ai-engine via its public index (module boundary — no direct service import)
   const { proposeFormSegmentation } = await import("@/backend/modules/ai-engine");
   const proposal = await proposeFormSegmentation(actor, {
@@ -812,7 +816,8 @@ export async function aiProposeStructure(
   let totalQuestions = 0;
 
   if (input.mode === "replace" && !input.group_id) {
-    // Replace mode (full version): delete all existing groups + questions
+    // Replace mode (full version): delete all existing groups + questions.
+    // Done AFTER the AI call — if proposeFormSegmentation threw, we skip deletion.
     const existingGroups = await repo.listQuestionGroups(input.version_id);
     for (const g of existingGroups) {
       await repo.deleteQuestionGroup(g.id);
@@ -954,6 +959,14 @@ export async function upsertQuestion(
  */
 export async function deleteQuestion(actor: Actor, questionId: string): Promise<void> {
   can(actor, "catalog", "edit");
+
+  // M-3: Guard — questions on published/archived versions are immutable.
+  // Resolves via: question → group → automation_version.
+  const version = await repo.findVersionByQuestion(questionId);
+  if (version && version.status !== "draft") {
+    throw catalogError("CATALOG_VERSION_PUBLISHED_IMMUTABLE");
+  }
+
   await repo.deleteQuestion(questionId);
   await writeAudit(actor, "catalog.form_questions.updated", "form_questions", questionId, {});
 }
@@ -1230,6 +1243,15 @@ export async function testGeneration(
 ): Promise<{ run_id: string }> {
   can(actor, "catalog", "edit");
 
+  // M-2: Verify the form belongs to the actor's org before running a generation.
+  // form_definition → service_phase → service → org_id.
+  const formDef = await repo.findFormDefinition(input.form_definition_id);
+  if (!formDef) throw catalogError("CATALOG_FORM_NOT_FOUND");
+  const phase = await repo.findPhaseById(formDef.service_phase_id);
+  if (!phase) throw catalogError("CATALOG_FORM_NOT_FOUND");
+  const service = await repo.findServiceById(phase.service_id);
+  if (!service || service.org_id !== actor.orgId) throw catalogError("CATALOG_FORM_NOT_FOUND");
+
   // Verify form exists and has a generation config (RF-ADM-037 pre-check)
   const config = await repo.findGenerationConfig(input.form_definition_id);
   if (!config) throw catalogError("CATALOG_GENERATION_NOT_CONFIGURED");
@@ -1282,6 +1304,10 @@ export async function updateDataset(
 ): Promise<Dataset> {
   can(actor, "datasets", "edit");
 
+  // M-1: Verify org ownership before mutating (service client bypasses RLS).
+  const existing = await repo.findDataset(id);
+  if (!existing || existing.org_id !== actor.orgId) throw catalogError("CATALOG_DATASET_NOT_FOUND");
+
   const ds = await repo.updateDataset(
     id,
     patch as Parameters<typeof repo.updateDataset>[1],
@@ -1309,6 +1335,18 @@ export async function createDatasetItem(
 
   if (!input.content && !input.file_path) {
     throw catalogError("CATALOG_DATASET_ITEM_EMPTY");
+  }
+
+  // H-2: Enforce path-prefix isolation for uploaded files.
+  if (input.file_path) {
+    if (!input.file_path.startsWith(`datasets/${input.dataset_id}/`)) {
+      throw catalogError("CATALOG_FILE_PATH_INVALID", "file_path must be scoped to the dataset.");
+    }
+    const { validateUploadedObject } = await import("@/backend/platform/storage");
+    const storageCheck = await validateUploadedObject("catalog-assets", input.file_path, "catalog-assets");
+    if (!storageCheck.ok) {
+      throw catalogError("CATALOG_PDF_UNREADABLE", storageCheck.reason ?? "Dataset file storage validation failed.");
+    }
   }
 
   // Count tokens for the item text (RF-ADM-039 §3 / DOC-74 §4.2)
@@ -1366,6 +1404,24 @@ export async function updateDatasetItem(
   },
 ): Promise<DatasetItem> {
   can(actor, "datasets", "edit");
+
+  // M-1: Verify item → dataset → org ownership (service client bypasses RLS).
+  const existingItem = await repo.findDatasetItem(itemId);
+  if (!existingItem) throw catalogError("CATALOG_DATASET_NOT_FOUND");
+  const ownerDs = await repo.findDataset(existingItem.dataset_id);
+  if (!ownerDs || ownerDs.org_id !== actor.orgId) throw catalogError("CATALOG_DATASET_NOT_FOUND");
+
+  // H-2: Enforce path-prefix isolation when replacing the file reference.
+  if (patch.file_path) {
+    if (!patch.file_path.startsWith(`datasets/${existingItem.dataset_id}/`)) {
+      throw catalogError("CATALOG_FILE_PATH_INVALID", "file_path must be scoped to the dataset.");
+    }
+    const { validateUploadedObject } = await import("@/backend/platform/storage");
+    const storageCheck = await validateUploadedObject("catalog-assets", patch.file_path, "catalog-assets");
+    if (!storageCheck.ok) {
+      throw catalogError("CATALOG_PDF_UNREADABLE", storageCheck.reason ?? "Dataset file storage validation failed.");
+    }
+  }
 
   const contentChanged = "content" in patch || "file_path" in patch;
   let token_count: number | null | undefined = undefined; // undefined = don't update
@@ -1567,9 +1623,9 @@ export async function getAutomationVersionById(versionId: string) {
   return repo.getAutomationVersionById(versionId);
 }
 
-export async function listDatasets(orgId: string) {
-  can({ kind: "staff", role: "admin", permissions: new Map(), userId: "", orgId } as Actor, "datasets", "view");
-  return repo.listDatasets(orgId);
+export async function listDatasets(actor: Actor) {
+  can(actor, "datasets", "view");
+  return repo.listDatasets(actor.orgId);
 }
 
 export { isServiceContractable };

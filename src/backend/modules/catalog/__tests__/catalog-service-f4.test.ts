@@ -37,10 +37,15 @@ const mocks = vi.hoisted(() => {
     upsertQuestionGroup: vi.fn(),
     upsertQuestion: vi.fn(),
     findGenerationConfig: vi.fn(),
+    findDataset: vi.fn(),
+    findDatasetItem: vi.fn(),
     insertDatasetItem: vi.fn(),
     updateDatasetItem: vi.fn(),
     deleteDataset: vi.fn(),
     deleteDatasetItem: vi.fn(),
+    findPhaseById: vi.fn(),
+    findServiceById: vi.fn(),
+    findVersionByQuestion: vi.fn(),
   };
 
   // Supabase storage
@@ -87,6 +92,9 @@ const mocks = vi.hoisted(() => {
   // logger
   const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
+  // platform/storage
+  const validateUploadedObject = vi.fn();
+
   return {
     repo,
     storageList,
@@ -102,6 +110,7 @@ const mocks = vi.hoisted(() => {
     messagesCreate,
     messagesCountTokens,
     getAnthropicClient,
+    validateUploadedObject,
   };
 });
 
@@ -122,10 +131,15 @@ vi.mock("../repository", () => ({
   upsertQuestionGroup: mocks.repo.upsertQuestionGroup,
   upsertQuestion: mocks.repo.upsertQuestion,
   findGenerationConfig: mocks.repo.findGenerationConfig,
+  findDataset: mocks.repo.findDataset,
+  findDatasetItem: mocks.repo.findDatasetItem,
   insertDatasetItem: mocks.repo.insertDatasetItem,
   updateDatasetItem: mocks.repo.updateDatasetItem,
   deleteDataset: mocks.repo.deleteDataset,
   deleteDatasetItem: mocks.repo.deleteDatasetItem,
+  findPhaseById: mocks.repo.findPhaseById,
+  findServiceById: mocks.repo.findServiceById,
+  findVersionByQuestion: mocks.repo.findVersionByQuestion,
 }));
 
 vi.mock("@/backend/platform/supabase", () => ({
@@ -169,6 +183,13 @@ vi.mock("@/shared/constants/profile-fields", () => ({
 
 vi.mock("@/shared/constants/ai-models", () => ({
   GENERATION_MODELS: ["claude-fable-5", "claude-sonnet-4-6", "claude-haiku-4-5"],
+}));
+
+// platform/storage is imported dynamically inside service functions — mock it at module level
+vi.mock("@/backend/platform/storage", () => ({
+  validateUploadedObject: mocks.validateUploadedObject,
+  createSignedUploadUrl: vi.fn(),
+  createSignedDownloadUrl: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -248,7 +269,7 @@ describe("createAutomationVersion", () => {
 
   it("creates a draft version and chains detectAcroFields", async () => {
     mocks.repo.findFormDefinition.mockResolvedValue(makePdfFormRow());
-    mocks.storageList.mockResolvedValue({ data: [{ name: "i765.pdf" }], error: null });
+    mocks.validateUploadedObject.mockResolvedValue({ ok: true });
     mocks.repo.listVersions.mockResolvedValue([]);
     mocks.repo.insertAutomationVersion.mockResolvedValue(makeDraftVersion());
     mocks.repo.findVersionById.mockResolvedValue(makeDraftVersion());
@@ -303,7 +324,7 @@ describe("createAutomationVersion", () => {
 
   it("increments version number when prior versions exist", async () => {
     mocks.repo.findFormDefinition.mockResolvedValue(makePdfFormRow());
-    mocks.storageList.mockResolvedValue({ data: [{ name: "i765.pdf" }], error: null });
+    mocks.validateUploadedObject.mockResolvedValue({ ok: true });
     mocks.repo.listVersions.mockResolvedValue([
       { ...makeDraftVersion(), version: 1, status: "published" },
       { ...makeDraftVersion(), id: "v2", version: 2, status: "archived" },
@@ -660,6 +681,22 @@ describe("testGeneration", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mocks.can.mockReturnValue(undefined);
+    // M-2: wire form→phase→service org check
+    mocks.repo.findFormDefinition.mockResolvedValue(makePdfFormRow());
+    mocks.repo.findPhaseById.mockResolvedValue({
+      id: "phase-id-111",
+      service_id: "service-id-111",
+      slug: "principal",
+      label_i18n: { es: "Principal", en: "Main" },
+      position: 0,
+    });
+    mocks.repo.findServiceById.mockResolvedValue({
+      id: "service-id-111",
+      org_id: "22222222-2222-4222-8222-222222222222", // matches makeActor().orgId
+      slug: "i-765",
+      label_i18n: { es: "I-765", en: "I-765" },
+      is_active: true,
+    });
   });
 
   it("delegates to startGeneration with isTest=true and returns run_id", async () => {
@@ -694,7 +731,7 @@ describe("testGeneration", () => {
 
     await expect(
       testGeneration(makeActor(), {
-        form_definition_id: "unconfigured-form",
+        form_definition_id: "form-id-111",
         case_id: "33333333-3333-4333-8333-333333333333",
       }),
     ).rejects.toMatchObject({ code: "CATALOG_GENERATION_NOT_CONFIGURED" });
@@ -712,6 +749,12 @@ describe("updateDatasetItem", () => {
     vi.resetAllMocks();
     mocks.can.mockReturnValue(undefined);
     mocks.writeAudit.mockResolvedValue(undefined);
+    // M-1: wire item → dataset → org ownership check
+    mocks.repo.findDatasetItem.mockResolvedValue({ id: "item-1", dataset_id: "ds-1" });
+    mocks.repo.findDataset.mockResolvedValue({
+      id: "ds-1",
+      org_id: "22222222-2222-4222-8222-222222222222", // matches makeActor().orgId
+    });
   });
 
   it("recalculates token_count when content changes", async () => {

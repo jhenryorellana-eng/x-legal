@@ -10,6 +10,7 @@
  */
 
 import { createServiceClient } from "@/backend/platform/supabase";
+import { logger } from "@/backend/platform/logger";
 import type { Tables, TablesInsert, TablesUpdate } from "@/shared/database.types";
 
 // ---------------------------------------------------------------------------
@@ -516,6 +517,7 @@ export async function publishVersionTx(versionId: string): Promise<void> {
     // If RPC doesn't exist yet (migration not applied), do a manual two-step.
     // The partial unique index `unique(form_definition_id) where status='published'`
     // will catch concurrent publishes with a unique violation.
+    logger.warn({ versionId, rpcError: rpcError.message }, "catalog: catalog_publish_version RPC unavailable — falling back to two-step update");
     const row = await findVersionById(versionId);
     if (!row) throw new Error("CATALOG_VERSION_NOT_FOUND");
 
@@ -603,6 +605,17 @@ export async function findVersionByGroup(groupId: string): Promise<AutomationVer
   return findVersionById(group.automation_version_id);
 }
 
+/** Resolves the automation version that owns a given question (via its group). */
+export async function findVersionByQuestion(questionId: string): Promise<AutomationVersionRow | null> {
+  const { data: question } = await db()
+    .from("form_questions")
+    .select("group_id")
+    .eq("id", questionId)
+    .maybeSingle();
+  if (!question) return null;
+  return findVersionByGroup(question.group_id);
+}
+
 // ---------------------------------------------------------------------------
 // Generation configs
 // ---------------------------------------------------------------------------
@@ -664,6 +677,11 @@ export async function updateDataset(
     .select()
     .single();
   return throwOnError(data, error, "updateDataset");
+}
+
+export async function findDatasetItem(id: string): Promise<DatasetItemRow | null> {
+  const { data } = await db().from("ai_dataset_items").select("*").eq("id", id).maybeSingle();
+  return data;
 }
 
 export async function insertDatasetItem(
