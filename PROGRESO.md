@@ -3,8 +3,8 @@
 > Archivo de continuidad entre sesiones (PROMPT-CONSTRUCCION-V2 §4). Actualizar al cierre de cada sesión.
 > Biblioteca SoT: `C:\Users\mauri\Documents\Trabajos\USALATINO V2\V2\docs\` · Supabase: **USALATINO V2** `uexxyokexcamyjcknxua`
 
-**Fase actual: F3 — Scheduling + Vanessa (3 olas construidas, en verificación E2E) · Parte A auth email ✅ COMPLETA**
-Última sesión: 2026-06-13
+**Fase actual: F3 — Scheduling + Vanessa ✅ COMPLETA y verificada en vivo (3 olas + pendientes de datos cerrados) · Parte A auth email ✅**
+Última sesión: 2026-06-14
 
 ## F3 — Scheduling + Vanessa (por olas)
 
@@ -23,7 +23,7 @@ Réplica del prototipo `V2/UI Vanessa/` con los componentes desktop (DOC-52, pro
 - **E2E flujo F1** (DOC-81 §4.1): specs Playwright vanessa + maria (storageState; login email del cliente sembrado por sesión — el OTP en vivo espera SMTP). _(resultado en verificación — ver línea Gates F3.)_
 - **EV-01/EV-02** (`service.published`/`form_version.published`): ya se emiten en `catalog/service.ts` — gap del plan ya cerrado.
 
-| Gates F3 | typecheck **0** · lint **0/0** · **510 unit tests** · build ✓ · **1128 claves i18n** (paridad) · verificación en vivo MCP ✓ |
+| Gates F3 | typecheck **0** · lint **0/0** · **525 unit tests** · build ✓ · **1138 claves i18n** (paridad) · verificación en vivo MCP ✓ (8 vistas Vanessa + home/agendar/cita cliente, datos reales, 0 errores) |
 |---|---|
 
 ### Verificación EN VIVO con navegador (MCP Playwright, 2026-06-13)
@@ -35,7 +35,14 @@ Dev server limpio + sesiones autenticadas reales (login real de Vanessa + sesió
 3. `cases.getCasesForClient`: llamaba `can()` (staff-only) → `AuthzError wrong_kind` en el `/home` del cliente (500). Fix: guard de kind cliente (RLS escopa filas) + **test de regresión**.
 4-6. `cliente/home` i18n: `t()` sobre `phaseShort`/`greeting`/`documentsLeft` lanzaba FORMATTING_ERROR (mostraba las claves crudas) — son templates crudos sustituidos aguas abajo. Fix: `t.raw()`.
 
-Evidencia: `docs/_evidence/f3-verify/verify.cjs` + screenshots MCP. Limitación conocida (no bug): la cita muestra "Tu asesora legal" genérico — falta un read client-safe del nombre del asesor (`<<NEED-BACKEND>>`, flag de Ola 3). Pendiente menor de datos: `getWeekAgenda` aún no cableado a la vista Citas (muestra semana scaffold); agregados de Métricas pendientes (estructura presente, DOC-50 §5).
+Evidencia: `docs/_evidence/f3-verify/verify.cjs` + screenshots MCP.
+
+### Pendientes menores de datos — CERRADOS (2026-06-14, verificados en vivo)
+1. **Nombre del asesor en la cita del cliente** ✅ — `scheduling.getAppointmentAdvisor` (requireCaseAccess + read service-role de solo `{displayName, avatarUrl}`). La cita muestra "Vanessa, tu asesora" + avatar. +6 tests.
+2. **`getWeekAgenda` cableado a la vista Citas** ✅ — semana actual real (DST-safe) + cada cita enriquecida con `clientName` (batch client_profiles+leads, sin N+1). El bloque del calendario muestra "María", no el UUID. +5 tests.
+3. **Agregados de Métricas reales** ✅ — `kanban.getSalesMetrics` (§6.2: embudo, fuentes, donuts, velocidad, asistencia); em-dash donde el dato es genuinamente desconocido (DOC-50 §5). +4 tests · +10 claves i18n.
+
+Verificado en vivo (login real Vanessa + sesión de María acuñada con signInWithPassword contra el proyecto real): los 3 renderizan datos reales, 0 errores de consola. **Gates: tsc 0 · eslint 0/0 · 525 tests · i18n 1138 paridad.** Queda solo lo externo de Henry (SMTP para login email en vivo del cliente; migración 0016 opcional).
 
 **Pendiente externo (no bloquea la construcción, paso de Henry)**: SMTP en Supabase Auth (Resend) para el login email en vivo del cliente; aplicar migración 0016 si se quiere la atomicidad por RPC (opcional).
 
