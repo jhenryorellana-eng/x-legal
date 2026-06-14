@@ -51,6 +51,9 @@ export {
   onDownpaymentConfirmedKanban,
 } from "./service";
 
+// Sales metrics aggregations (DOC-52 §6.2, API-MET-01)
+export { getSalesMetrics } from "./service";
+
 // Input / output types
 export type {
   GetBoardInput,
@@ -66,6 +69,13 @@ export type {
   ExpressServiceInterestInput,
   CreateTaskInput,
   UpdateTaskInput,
+  // Metrics
+  SalesMetricsInput,
+  SalesMetricsResult,
+  MetricsPeriod,
+  FunnelCounts,
+  WeekActivityBar,
+  SourceMetric,
 } from "./service";
 
 // Domain types

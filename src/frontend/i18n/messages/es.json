@@ -1211,7 +1211,17 @@
         "secVelocity": "Velocidad 1er contacto",
         "secAttendance": "Asistencia a citas",
         "secCycle": "Tiempo de ciclo",
-        "secReschedules": "Reprogramaciones"
+        "secReschedules": "Reprogramaciones",
+        "kpiHintWeek": "esta semana",
+        "kpiHintReady": "docs + formularios completos",
+        "kpiHintConversion": "vs período anterior",
+        "donutAttSub": "citas",
+        "donutFormsSub": "prom.",
+        "donutDocsSub": "docs",
+        "secVelocitySub": "meta < 5 min",
+        "secNoShows": "No-shows: {n}",
+        "secCycleSub": "meta 2–3 semanas",
+        "secRescheduleSub": "este período"
       },
       "config": {
         "title": "Configuración",

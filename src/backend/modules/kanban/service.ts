@@ -1436,6 +1436,332 @@ export async function onContractSigned(payload: {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Sales metrics aggregations (DOC-52 §6.2) — API-MET-01
+// ---------------------------------------------------------------------------
+
+export type MetricsPeriod = "week" | "month" | "custom";
+
+export interface SalesMetricsInput {
+  period: MetricsPeriod;
+  /** ISO date string; required when period="custom". Defaults to 7-day lookback. */
+  from?: string;
+  to?: string;
+}
+
+/**
+ * Funnel stage counts (DOC-52 §6.2):
+ *  stage0 = leads created in period
+ *  stage1 = leads with contacted_at (contacted)
+ *  stage2 = leads with won_case_id or status="won" (converted to case/appointment booked)
+ *  stage3 = completed appointments of the actor in period
+ *  stage4 = contracts signed (via cases assigned to actor) in period
+ *  stage5 = cases with assigned_paralegal_id set (transferred to Diana)
+ */
+export interface FunnelCounts {
+  stage0: number; // Leads
+  stage1: number; // Contactados
+  stage2: number; // Cita agendada
+  stage3: number; // Cita asistida
+  stage4: number; // Contrato
+  stage5: number; // Traspasado
+}
+
+export interface WeekActivityBar {
+  dayLabel: string;   // "L" / "M" / "X" / "J" / "V" / "S" / "D" (ISO weekday 1=Mon)
+  dayIso: string;     // "YYYY-MM-DD"
+  count: number;      // total lead + appointment activities
+}
+
+export interface SourceMetric {
+  source: string;
+  total: number;
+  won: number;
+}
+
+export interface SalesMetricsResult {
+  /** Leads created in period (for KPI). */
+  newLeadsCount: number;
+  /** Contracts signed (cierres) in period. */
+  closuresCount: number;
+  /** Cases ready to transfer (assigned_paralegal_id NOT null, period-agnostic for this actor). */
+  readyForDianaCount: number;
+  /** Conversion: closures / newLeads (null if 0 leads). */
+  conversionPct: number | null;
+  /** Previous period counts for trend deltas. */
+  prevClosuresCount: number;
+  prevNewLeadsCount: number;
+  /** Funnel stage counts. */
+  funnel: FunnelCounts;
+  /** Per-day activity bars for the period (7 days for week, 28-31 for month). */
+  weekBars: WeekActivityBar[];
+  /** Leads grouped by source with conversion rate. */
+  sources: SourceMetric[];
+  /** Appointment attendance: completed / (completed + no_show). null if 0 denominator. */
+  attendancePct: number | null;
+  /** Rescheduled appointments count in period. */
+  rescheduledCount: number;
+  /** Median minutes from lead created_at → contacted_at (null if < 3 leads). */
+  medianContactMinutes: number | null;
+}
+
+/**
+ * Computes the [from, to) UTC date range for a given period.
+ */
+function periodRange(input: SalesMetricsInput): { from: Date; to: Date; prevFrom: Date; prevTo: Date } {
+  const now = new Date();
+  let from: Date;
+  let to: Date = now;
+
+  if (input.period === "week") {
+    from = new Date(now.getTime() - 7 * 86_400_000);
+  } else if (input.period === "month") {
+    from = new Date(now.getTime() - 28 * 86_400_000);
+  } else {
+    // custom
+    from = input.from ? new Date(input.from) : new Date(now.getTime() - 7 * 86_400_000);
+    to   = input.to   ? new Date(input.to)   : now;
+  }
+
+  const span = to.getTime() - from.getTime();
+  const prevTo   = new Date(from.getTime());
+  const prevFrom = new Date(from.getTime() - span);
+
+  return { from, to, prevFrom, prevTo };
+}
+
+/**
+ * Returns the median of a numeric array (null if < 3 values per DOC-52 §6.2 A1).
+ */
+function median(values: number[]): number | null {
+  if (values.length < 3) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[mid - 1] + sorted[mid]) / 2
+    : sorted[mid];
+}
+
+/**
+ * Aggregates sales metrics for the given actor and period (DOC-52 §6.2).
+ *
+ * All queries use createServiceClient (service_role) for org-scoped reads;
+ * filtering by actor.userId / actor.orgId provides the actor-scoping without
+ * relying on RLS (this is a server-only RSC read, never exposed client-side).
+ *
+ * @api-id API-MET-01
+ */
+export async function getSalesMetrics(
+  actor: Actor,
+  input: SalesMetricsInput,
+): Promise<SalesMetricsResult> {
+  can(actor, "metrics", "view");
+
+  const { from, to, prevFrom, prevTo } = periodRange(input);
+  const fromIso = from.toISOString();
+  const toIso   = to.toISOString();
+  const prevFromIso = prevFrom.toISOString();
+  const prevToIso   = prevTo.toISOString();
+
+  const client = createServiceClient();
+
+  // ─── Parallel reads ───────────────────────────────────────────────────────
+
+  const [
+    leadsRes,
+    prevLeadsRes,
+    contractsRes,
+    prevContractsRes,
+    readyForDianaRes,
+    apptCurrRes,
+  ] = await Promise.all([
+    // Current period leads assigned to this actor
+    client
+      .from("leads")
+      .select("id, contacted_at, won_case_id, status, source, created_at")
+      .eq("org_id", actor.orgId)
+      .eq("assigned_to", actor.userId)
+      .gte("created_at", fromIso)
+      .lt("created_at", toIso),
+
+    // Previous period leads (for trend)
+    client
+      .from("leads")
+      .select("id")
+      .eq("org_id", actor.orgId)
+      .eq("assigned_to", actor.userId)
+      .gte("created_at", prevFromIso)
+      .lt("created_at", prevToIso),
+
+    // Contracts signed in current period (via cases assigned to actor)
+    client
+      .from("contracts")
+      .select("id, signed_at, case_id")
+      .eq("org_id", actor.orgId)
+      .not("signed_at", "is", null)
+      .gte("signed_at", fromIso)
+      .lt("signed_at", toIso),
+
+    // Previous period contracts signed
+    client
+      .from("contracts")
+      .select("id, case_id")
+      .eq("org_id", actor.orgId)
+      .not("signed_at", "is", null)
+      .gte("signed_at", prevFromIso)
+      .lt("signed_at", prevToIso),
+
+    // Cases assigned to this actor with a paralegal assigned (ready/transferred)
+    client
+      .from("cases")
+      .select("id")
+      .eq("org_id", actor.orgId)
+      .eq("assigned_sales_id", actor.userId)
+      .not("assigned_paralegal_id", "is", null),
+
+    // Appointments for this staff in current period (scheduled/completed/no_show/rescheduled)
+    client
+      .from("appointments")
+      .select("id, status, starts_at, case_id, lead_id")
+      .eq("staff_id", actor.userId)
+      .gte("starts_at", fromIso)
+      .lt("starts_at", toIso),
+  ]);
+
+  const leads         = leadsRes.data ?? [];
+  const prevLeads     = prevLeadsRes.data ?? [];
+  const contracts     = contractsRes.data ?? [];
+  const prevContracts = prevContractsRes.data ?? [];
+  const readyCases    = readyForDianaRes.data ?? [];
+  const apptsCurr     = apptCurrRes.data ?? [];
+
+  // Need case IDs of signed contracts to verify they belong to this actor's cases.
+  // Filter: only count contracts whose case was assigned to this actor.
+  const caseIdsForSigned = contracts.map((c) => c.case_id).filter(Boolean) as string[];
+  let actorSignedCount = 0;
+  let prevActorSignedCount = 0;
+
+  if (caseIdsForSigned.length > 0) {
+    const { data: actorCases } = await client
+      .from("cases")
+      .select("id")
+      .eq("assigned_sales_id", actor.userId)
+      .in("id", caseIdsForSigned);
+    const actorCaseIdSet = new Set((actorCases ?? []).map((c) => c.id));
+    actorSignedCount = contracts.filter((c) => c.case_id && actorCaseIdSet.has(c.case_id)).length;
+  }
+
+  if (prevContracts.length > 0) {
+    const prevCaseIds = prevContracts.map((c) => c.case_id).filter(Boolean) as string[];
+    if (prevCaseIds.length > 0) {
+      const { data: prevActorCases } = await client
+        .from("cases")
+        .select("id")
+        .eq("assigned_sales_id", actor.userId)
+        .in("id", prevCaseIds);
+      const prevActorCaseIdSet = new Set((prevActorCases ?? []).map((c) => c.id));
+      prevActorSignedCount = prevContracts.filter((c) => c.case_id && prevActorCaseIdSet.has(c.case_id)).length;
+    }
+  }
+
+  // ─── Funnel ───────────────────────────────────────────────────────────────
+
+  const stage0 = leads.length;
+  const stage1 = leads.filter((l) => l.contacted_at !== null).length;
+  const stage2 = leads.filter((l) => l.won_case_id !== null || l.status === "won").length;
+  const stage3 = apptsCurr.filter((a) => a.status === "completed").length;
+  const stage4 = actorSignedCount;
+  const stage5 = readyCases.length;
+
+  // ─── Conversion ───────────────────────────────────────────────────────────
+
+  const conversionPct = stage0 > 0 ? Math.round((stage4 / stage0) * 100) : null;
+
+  // ─── Attendance ───────────────────────────────────────────────────────────
+
+  const completedCount = apptsCurr.filter((a) => a.status === "completed").length;
+  const noShowCount    = apptsCurr.filter((a) => a.status === "no_show").length;
+  const attendanceDenom = completedCount + noShowCount;
+  const attendancePct =
+    attendanceDenom > 0 ? Math.round((completedCount / attendanceDenom) * 100) : null;
+
+  // ─── Rescheduled ──────────────────────────────────────────────────────────
+
+  const rescheduledCount = apptsCurr.filter((a) => a.status === "rescheduled").length;
+
+  // ─── Week bars: per-day activity (lead creation + appointment activity) ───
+
+  const spanDays = Math.ceil((to.getTime() - from.getTime()) / 86_400_000);
+  const DAY_ABBR_ES = ["D", "L", "M", "X", "J", "V", "S"]; // Sunday=0 in JS
+
+  const barMap = new Map<string, number>();
+  for (let i = 0; i < spanDays; i++) {
+    const d = new Date(from.getTime() + i * 86_400_000);
+    barMap.set(d.toISOString().slice(0, 10), 0);
+  }
+
+  for (const lead of leads) {
+    const day = lead.created_at.slice(0, 10);
+    if (barMap.has(day)) barMap.set(day, (barMap.get(day) ?? 0) + 1);
+  }
+  for (const appt of apptsCurr) {
+    const day = appt.starts_at.slice(0, 10);
+    if (barMap.has(day)) barMap.set(day, (barMap.get(day) ?? 0) + 1);
+  }
+
+  const weekBars: WeekActivityBar[] = Array.from(barMap.entries()).map(([dayIso, count]) => {
+    const d = new Date(dayIso + "T12:00:00Z");
+    const jsDay = d.getUTCDay(); // 0=Sun, 1=Mon, …
+    return { dayLabel: DAY_ABBR_ES[jsDay], dayIso, count };
+  });
+
+  // ─── Source metrics ────────────────────────────────────────────────────────
+
+  const sourceMap = new Map<string, { total: number; won: number }>();
+  // Include ALL leads by this actor (not just period) for conversion accuracy
+  // when period is short. For now, use only the period leads (consistent with §6.2).
+  for (const lead of leads) {
+    const src = lead.source ?? "unknown";
+    const existing = sourceMap.get(src) ?? { total: 0, won: 0 };
+    existing.total++;
+    if (lead.status === "won" || lead.won_case_id !== null) existing.won++;
+    sourceMap.set(src, existing);
+  }
+  const sources: SourceMetric[] = Array.from(sourceMap.entries())
+    .map(([source, { total, won }]) => ({ source, total, won }))
+    .sort((a, b) => b.total - a.total);
+
+  // ─── Median contact velocity ───────────────────────────────────────────────
+
+  const contactMinutes = leads
+    .filter((l) => l.contacted_at !== null)
+    .map((l) => {
+      const created   = new Date(l.created_at).getTime();
+      const contacted = new Date(l.contacted_at!).getTime();
+      return Math.round((contacted - created) / 60_000);
+    })
+    .filter((m) => m >= 0);
+
+  const medianContactMinutes = median(contactMinutes);
+
+  // ─── Result ───────────────────────────────────────────────────────────────
+
+  return {
+    newLeadsCount: stage0,
+    closuresCount: stage4,
+    readyForDianaCount: stage5,
+    conversionPct,
+    prevClosuresCount: prevActorSignedCount,
+    prevNewLeadsCount: prevLeads.length,
+    funnel: { stage0, stage1, stage2, stage3, stage4, stage5 },
+    weekBars,
+    sources,
+    attendancePct,
+    rescheduledCount,
+    medianContactMinutes,
+  };
+}
+
 /**
  * Handles downpayment.confirmed → remove card from "Por cobrar inicial" if still there.
  * If Andrium moved it already → no-op. Does NOT create cards.

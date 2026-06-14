@@ -27,6 +27,7 @@ export {
   migrateAvailabilityTimezone,
   getAppointmentForClient,
   getCaseAppointments,
+  getAppointmentAdvisor,
   // Error class
   SchedulingError,
 } from "./service";
@@ -47,6 +48,7 @@ export type {
   PhasePolicyInput,
   CaseOverrideInput,
   BookingWarning,
+  AppointmentAdvisorResult,
 } from "./service";
 
 // Repository functions consumed by other modules via index.ts (DOC-43 §8)

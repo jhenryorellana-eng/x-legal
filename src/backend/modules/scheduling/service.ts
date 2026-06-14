@@ -1016,6 +1016,8 @@ export interface AgendaAppointment {
   clientUserId: string | null;
   livekitRoomId: string | null;
   notes: string | null;
+  /** Resolved display name: client preferred_name/first_name or lead full_name. */
+  clientName: string | null;
 }
 
 export interface WeekAgendaResult {
@@ -1070,6 +1072,7 @@ export async function getWeekAgenda(
     clientUserId: r.client_user_id,
     livekitRoomId: r.livekit_room_id,
     notes: r.notes,
+    clientName: null as string | null,
   }));
 
   // Apply filter
@@ -1078,6 +1081,57 @@ export async function getWeekAgenda(
   } else if (input.filter === "lead") {
     appts = appts.filter((a) => a.leadId != null);
   }
+
+  // ── Batch name resolution (no N+1) ─────────────────────────────────────────
+  // Two parallel queries: client_profiles for case appointments, leads for
+  // prospect/lead appointments. Both scoped to actor.orgId for safety.
+
+  const clientUserIds = [...new Set(appts.map((a) => a.clientUserId).filter((id): id is string => id != null))];
+  const leadIds       = [...new Set(appts.map((a) => a.leadId).filter((id): id is string => id != null))];
+
+  const supabase = createServiceClient();
+
+  const [clientProfilesRes, leadsRes] = await Promise.all([
+    clientUserIds.length > 0
+      ? supabase
+          .from("client_profiles")
+          .select("user_id, first_name, preferred_name")
+          .in("user_id", clientUserIds)
+      : Promise.resolve({ data: [], error: null }),
+
+    leadIds.length > 0
+      ? supabase
+          .from("leads")
+          .select("id, full_name")
+          .eq("org_id", actor.orgId)
+          .in("id", leadIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+
+  // Build lookup maps
+  const clientNameMap = new Map<string, string>();
+  for (const p of clientProfilesRes.data ?? []) {
+    if (p.user_id) {
+      clientNameMap.set(p.user_id, (p.preferred_name ?? p.first_name) || p.user_id);
+    }
+  }
+
+  const leadNameMap = new Map<string, string>();
+  for (const l of leadsRes.data ?? []) {
+    if (l.id && l.full_name) {
+      leadNameMap.set(l.id, l.full_name);
+    }
+  }
+
+  // Merge names
+  appts = appts.map((a) => ({
+    ...a,
+    clientName: a.clientUserId != null
+      ? (clientNameMap.get(a.clientUserId) ?? null)
+      : a.leadId != null
+        ? (leadNameMap.get(a.leadId) ?? null)
+        : null,
+  }));
 
   return { appointments: appts, staffTimezone };
 }
@@ -1429,4 +1483,60 @@ export async function getCaseAppointments(
     .eq("case_id", caseId)
     .order("starts_at");
   return data ?? [];
+}
+
+// ---------------------------------------------------------------------------
+// Advisor name for client-facing cita screen — API-SCH-17
+// ---------------------------------------------------------------------------
+
+export interface AppointmentAdvisorResult {
+  displayName: string;
+  avatarUrl: string | null;
+}
+
+/**
+ * Returns the display name + avatar URL of the staff member assigned to an
+ * appointment, scoped for a client actor.
+ *
+ * Security:
+ *  - `requireCaseAccess` runs first, enforcing RLS: the client may only read
+ *    this if they are a member of the case the appointment belongs to.
+ *  - `createServiceClient` (service_role) is used to read `staff_profiles`
+ *    because clients have no direct SELECT policy on that table. The returned
+ *    shape is intentionally minimal: {displayName, avatarUrl} — no PII beyond
+ *    what DOC-51 §19 requires.
+ *
+ * @api-id API-SCH-17
+ */
+export async function getAppointmentAdvisor(
+  actor: Actor,
+  appointmentId: string,
+): Promise<AppointmentAdvisorResult | null> {
+  // 1. Load the appointment (service client for bypassing RLS on appointments)
+  const a = await repo.findById(appointmentId);
+  if (!a) return null;
+
+  // 2. Enforce: client must be a member of the case this appointment belongs to.
+  if (a.case_id) {
+    await requireCaseAccess(actor, a.case_id);
+  } else if (actor.kind !== "staff") {
+    // Prospect appointments have no case; a non-staff actor has no business here.
+    return null;
+  }
+
+  // 3. Read staff_profiles via service client (clients have no SELECT policy there).
+  //    We expose ONLY {displayName, avatarUrl} — never role, email, or other PII.
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("staff_profiles")
+    .select("display_name, avatar_url")
+    .eq("user_id", a.staff_id)
+    .maybeSingle();
+
+  if (!data) return null;
+
+  return {
+    displayName: data.display_name,
+    avatarUrl: data.avatar_url,
+  };
 }

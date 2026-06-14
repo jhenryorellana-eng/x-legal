@@ -10,10 +10,9 @@
  * because LiveKit is F7; the screen still reads naturally. Confetti fires when the
  * client just booked (`?nueva=1`).
  *
- * ADVISOR NAME GAP: no client-accessible module-pub read exposes the assigned
- * advisor's display name today (getCurrentStaffProfile reads only the staff
- * actor; org/identity staff reads are dashboard-gated). We render the advisor
- * generically ("Tu asesora legal") with a neutral avatar; flag <<NEED-BACKEND>>.
+ * ADVISOR NAME: resolved via getAppointmentAdvisor (API-SCH-17, scheduling/index.ts).
+ * Uses service_role to read staff_profiles; returns only {displayName, avatarUrl}.
+ * requireCaseAccess enforces RLS before the profile lookup.
  */
 
 import { notFound, redirect } from "next/navigation";
@@ -21,6 +20,7 @@ import { getLocale, getTimeZone, getTranslations } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
 import {
   getAppointmentForClient,
+  getAppointmentAdvisor,
   SchedulingError,
 } from "@/backend/modules/scheduling";
 import { fmtHeaderDate, fmtTime, fmtTimeZoned, tzLabel } from "@/frontend/lib/datetime";
@@ -66,6 +66,11 @@ export default async function CitaPage({
   // Guard: this appointment must belong to the case in the URL.
   if (appt.case_id !== caseId) notFound();
 
+  // Advisor lookup — non-fatal: falls back to generic if staff profile missing.
+  // requireCaseAccess already passed (getAppointmentForClient enforces it), so
+  // getAppointmentAdvisor will pass the same check from the cache.
+  const advisorProfile = await getAppointmentAdvisor(actor, appointmentId).catch(() => null);
+
   const status = appt.status as
     | "scheduled"
     | "completed"
@@ -96,9 +101,14 @@ export default async function CitaPage({
     ? `${clientHourPlain} (${region})`
     : `${clientHourPlain} (${region}) · ${officeHour} ${inWord} ${OFFICE_CITY_ES}`;
 
-  // Advisor: no client-readable name source today → generic fallback (see header).
-  const advisorText = t("advisorFallback");
-  const advisorInitial = "•";
+  // Advisor: use real name if available; fall back to generic when not assigned.
+  // DOC-51 §19 expects "{name}, tu asesora" (advisorValue key) when name is known.
+  const advisorText = advisorProfile
+    ? t("advisorValue", { name: advisorProfile.displayName })
+    : t("advisorFallback");
+  const advisorInitial = advisorProfile
+    ? advisorProfile.displayName.charAt(0).toUpperCase()
+    : "•";
 
   // Objective: the appointment note, when present.
   const objectiveText = appt.notes && status === "scheduled" ? appt.notes : null;

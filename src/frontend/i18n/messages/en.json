@@ -1211,7 +1211,17 @@
         "secVelocity": "First-contact speed",
         "secAttendance": "Appointment attendance",
         "secCycle": "Cycle time",
-        "secReschedules": "Reschedules"
+        "secReschedules": "Reschedules",
+        "kpiHintWeek": "this week",
+        "kpiHintReady": "docs + forms complete",
+        "kpiHintConversion": "vs previous period",
+        "donutAttSub": "appts",
+        "donutFormsSub": "avg.",
+        "donutDocsSub": "docs",
+        "secVelocitySub": "goal < 5 min",
+        "secNoShows": "No-shows: {n}",
+        "secCycleSub": "goal 2–3 weeks",
+        "secRescheduleSub": "this period"
       },
       "config": {
         "title": "Settings",
