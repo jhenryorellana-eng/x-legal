@@ -19,6 +19,7 @@ import {
   getCurrentStaffProfile,
 } from "@/backend/modules/identity";
 import { listServicesAdmin } from "@/backend/modules/catalog";
+import { staffHomePath } from "@/shared/staff-routes";
 import {
   DashboardView,
   type DashboardMessages,
@@ -28,16 +29,31 @@ export default async function AdminDashboardPage() {
   const actor = await getActor();
   if (!actor || actor.kind !== "staff") redirect("/login");
 
+  // Role-aware landing: only admins (or catalog-capable staff) belong on this
+  // dashboard, which reads catalog/employee KPIs. A non-admin role (sales,
+  // paralegal, finance) is routed to its own panel — otherwise listServicesAdmin
+  // would throw forbidden_module and crash the page (DOC-22 §5.4).
+  if (actor.role && actor.role !== "admin") {
+    redirect(staffHomePath(actor.role));
+  }
+
   const t = await getTranslations("staff.dashboard");
 
   // Real KPIs available at F1: active employees (identity) + active services
   // (catalog). Active cases land when the cases module ships (em-dash until then).
-  const [activeEmployees, profile, services] = await Promise.all([
+  const [activeEmployees, profile] = await Promise.all([
     countActiveEmployees(),
     getCurrentStaffProfile(),
-    listServicesAdmin(actor),
   ]);
-  const activeServices = services.filter((s) => s.is_active && s.archived_at === null).length;
+  // Catalog KPI degrades to em-dash (null) if the actor lacks catalog access —
+  // never crash the dashboard on a permission check (defense in depth).
+  let activeServices: number | null = null;
+  try {
+    const services = await listServicesAdmin(actor);
+    activeServices = services.filter((s) => s.is_active && s.archived_at === null).length;
+  } catch {
+    activeServices = null;
+  }
   const firstName = (profile?.displayName ?? "").split(" ")[0] || "";
 
   const messages: DashboardMessages = {
