@@ -25,9 +25,16 @@ Módulo `ai-engine` (domain 13 funcs puras, service API-AI-01..10, repository, e
 - Gates: tsc 0 · eslint 0/0 · **672 tests** · build ✓ (mupdf wasm). Commits `91ab66b` + `d8416bc`.
 - **Pendiente externo (Henry, no bloquea Olas 2-3)**: aplicar migración 0017; cargar `ANTHROPIC_API_KEY` + `GEMINI_API_KEY` para los runs reales de la demo.
 
-### Olas pendientes
-- **F4-2** Editor de formularios admin (los 6 stubs + UI pdf_automation/ai_letter + datasets + costes) — **aquí ya hay UI → verificación en vivo con navegador MCP**.
-- **F4-3** Form-wizard runtime + cliente + E2E (prueba de fuego) + demo.
+### Ola F4-2 — Editor de formularios admin ✅
+- **Backend** (los 6 stubs `CATALOG_STUB_F4` completados): `createAutomationVersion` (PDF→`detectAcroFields` mupdf→versión draft), `redetectFields`, `aiProposeStructure` (T2→grupos+preguntas ES/EN), `generateTestPdf` (`fillAcroForm`), `proposeExtractionSchema` (T2, schema Gemini-portable), `testGeneration` (→`startGeneration` isTest); datasets CRUD + auto-conteo de tokens; M-12 (structured outputs/retry de T2).
+- **UI**: editor `/admin/catalogo/[serviceId]/formularios/[formId]` (modo PDF 4-etapas con **visor pdfjs** + overlays de campos en 3 estados; modo ai_letter config|prueba, **modelo default `claude-sonnet-4-6`**), `/admin/datasets` (CRUD + banner anti-PII), `/admin/ai-costs` (KPIs + barra de presupuesto).
+- **Verificación EN VIVO (Henry admin, navegador MCP)**: las 4 pantallas renderizan con datos reales, 0 errores. **2 bugs cazados+arreglados en vivo**: hydration mismatch (token locale en ai_letter) + crash RSC en `/admin/datasets` (arrow-action inline).
+- **Two-stage review** (code-reviewer → NEEDS-REVISION): 3 HIGH de seguridad + 5 MEDIUM, TODOS corregidos: **path injection en uploads** (`createAutomationVersion`/datasets validan prefijo de bucket + `validateUploadedObject` magic-bytes), **`raw_text` guard en save-time**, **cross-tenant** en updateDataset/updateDatasetItem/testGeneration, guard de versión en deleteQuestion, orden IA-antes-de-borrar en aiProposeStructure, `listDatasets` con actor real.
+- Gates: tsc 0 · eslint 0/0 · **727 tests** (+27) · build ✓. Commits `d931bab`+`19d4367`+`9dfe5c0`.
+- **0017 aplicada al remoto** ✓ (vía MCP). **Claves IA cargadas + validadas** (ping real: sonnet-4-6 y gemini-2.5-flash responden).
+
+### Ola pendiente
+- **F4-3** Form-wizard runtime + cliente + E2E (prueba de fuego: servicio nuevo end-to-end sin código) + demo.
 
 ---
 
