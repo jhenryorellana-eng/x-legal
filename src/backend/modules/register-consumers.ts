@@ -18,6 +18,7 @@ import {
   onContractSigned,
   onDownpaymentConfirmedKanban,
 } from "@/backend/modules/kanban";
+import { registerAiEngineConsumers } from "@/backend/modules/ai-engine";
 // scheduling: no in-process event consumers in V2.0 (DOC-43 §5 — scheduling does
 // NOT consume events from other modules; the reminder job uses polling, not events)
 
@@ -132,5 +133,10 @@ export function registerConsumers(): void {
     await notifyFromEvent(event);
   });
 
-  logger.info({}, "consumers: F2+F3 event consumers registered (kanban listeners included)");
+  // -------------------------------------------------------------------------
+  // ai-engine consumers (F4 — no-op in V2.0, hook for future wiring)
+  // -------------------------------------------------------------------------
+  registerAiEngineConsumers();
+
+  logger.info({}, "consumers: F2+F3+F4 event consumers registered (kanban + ai-engine)");
 }

@@ -21,6 +21,9 @@ import {
   validateUploadedObject,
 } from "@/backend/platform/storage";
 import { logger } from "@/backend/platform/logger";
+// Note: enqueueJob is imported dynamically in confirmDocumentUpload to avoid
+// pulling qstash (which requires env vars) into the module at load time.
+// This keeps the cases/__tests__ working without real env vars.
 import { writeAudit, appendCaseTimeline } from "@/backend/modules/audit";
 
 import type { TablesUpdate } from "@/shared/database.types";
@@ -693,6 +696,39 @@ export async function confirmDocumentUpload(
   // Mark previous as replaced
   if (prev) {
     await updateDocument(prev.id, { status: "replaced" });
+  }
+
+  // Hook F4: auto-enqueue extraction if the requirement has ai_extract=true (DOC-26 §2.2)
+  if (parsed.requirementId) {
+    try {
+      const supabase = createServiceClient();
+      const { data: rdt } = await supabase
+        .from("required_document_types")
+        .select("ai_extract")
+        .eq("id", parsed.requirementId)
+        .maybeSingle();
+
+      if (rdt?.ai_extract) {
+        const { enqueueJob } = await import("@/backend/platform/qstash");
+        await enqueueJob(
+          {
+            jobKey: "extract-document",
+            entityId: doc.id,
+            attempt: 1,
+            dedupeId: `extract-document:${doc.id}:v1`,
+            caseDocumentId: doc.id,
+          },
+          { retries: 3 },
+        );
+        logger.info(
+          { caseDocumentId: doc.id, requirementId: parsed.requirementId },
+          "cases: enqueued extract-document job (ai_extract=true)",
+        );
+      }
+    } catch (err) {
+      // Non-fatal: extraction is async assistance, never blocks the upload confirmation
+      logger.warn({ err, docId: doc.id }, "cases: failed to enqueue extract-document — continuing");
+    }
   }
 
   appEvents.emit({

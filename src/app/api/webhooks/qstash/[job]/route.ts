@@ -15,9 +15,14 @@
  * from its file in src/backend/jobs/. This route is in app-webhooks layer
  * which is allowed to import from jobs/ (DOC-21 boundary rules).
  *
- * Current registry (F2 + F3):
- *   deliver-notification   — email / push channel delivery (DOC-26 SOT-7)
- *   appointment-reminders  — 24h / 1h appointment reminder cron (DOC-26 §2.7)
+ * Current registry (F2 + F3 + F4):
+ *   deliver-notification      — email / push channel delivery (DOC-26 SOT-7)
+ *   appointment-reminders     — 24h / 1h appointment reminder cron (DOC-26 §2.7)
+ *   run-generation            — T1 legal generation via Claude (DOC-26 §2.1, F4)
+ *   extract-document          — T3 extraction via Gemini (DOC-26 §2.2, F4)
+ *   translate-document        — T4 translation via Gemini (DOC-26 §2.3, F4)
+ *   ai-budget-aggregation     — AI spend threshold/close cron (DOC-26 §2.9, F4)
+ *   job-failed                — QStash failure callback (DOC-26 §5.2, F4)
  */
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -25,6 +30,11 @@ import { verifyQStashSignature } from "@/backend/platform/qstash";
 import { logger } from "@/backend/platform/logger";
 import { handleDeliverNotification } from "@/backend/jobs/deliver-notification";
 import { handleAppointmentReminders } from "@/backend/jobs/appointment-reminders";
+import { handleRunGeneration } from "@/backend/jobs/run-generation";
+import { handleExtractDocument } from "@/backend/jobs/extract-document";
+import { handleTranslateDocument } from "@/backend/jobs/translate-document";
+import { handleAiBudgetAggregation } from "@/backend/jobs/ai-budget-aggregation";
+import { handleJobFailed } from "@/backend/jobs/job-failed";
 
 // ---------------------------------------------------------------------------
 // Job registry — jobKey → handler
@@ -41,6 +51,12 @@ type JobHandler = (payload: unknown) => Promise<void>;
 const JOB_REGISTRY: Record<string, JobHandler> = {
   "deliver-notification": handleDeliverNotification,
   "appointment-reminders": handleAppointmentReminders,
+  // F4 AI jobs
+  "run-generation": handleRunGeneration,
+  "extract-document": handleExtractDocument,
+  "translate-document": handleTranslateDocument,
+  "ai-budget-aggregation": handleAiBudgetAggregation,
+  "job-failed": handleJobFailed,
 };
 
 // Export for tests that need to verify registry contents

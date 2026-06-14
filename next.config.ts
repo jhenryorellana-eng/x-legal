@@ -6,7 +6,10 @@ import createNextIntlPlugin from "next-intl/plugin";
 const withNextIntl = createNextIntlPlugin("./src/frontend/i18n/request.ts");
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // mupdf is an ESM/WASM package — must NOT be bundled by Next.js webpack.
+  // It loads its own .wasm file at runtime via Node.js resolution.
+  // Without this, the build fails with "WASM module not found" errors.
+  serverExternalPackages: ["mupdf"],
 };
 
 export default withNextIntl(nextConfig);
