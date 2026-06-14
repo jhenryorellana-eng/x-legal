@@ -259,6 +259,32 @@ export async function validateUploadedObject(
   return { ok: true };
 }
 
+/**
+ * Uploads raw bytes to a private bucket (server-side, no signed URL).
+ * Used for machine-generated files (filled PDFs, generated documents).
+ *
+ * @returns The canonical storage path of the uploaded file.
+ */
+export async function uploadBytesToStorage(
+  bucket: string,
+  path: string,
+  bytes: Uint8Array,
+  contentType: string,
+): Promise<string> {
+  const storage = createServiceClient().storage;
+  const blob = new Blob([bytes.buffer as ArrayBuffer], { type: contentType });
+  const { error } = await storage
+    .from(bucket)
+    .upload(path, blob, { contentType, upsert: true });
+
+  if (error) {
+    logger.error({ bucket, path, err: error }, "storage: failed to upload bytes");
+    throw new Error(`Failed to upload bytes to storage: ${error.message}`);
+  }
+
+  return path;
+}
+
 async function deleteObject(bucket: string, path: string): Promise<void> {
   const { error } = await createServiceClient().storage
     .from(bucket)

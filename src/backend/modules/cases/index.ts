@@ -25,6 +25,15 @@ export {
   getDocumentsMatrix,
   getCaseMilestones,
   getClientDisplayName,
+  // F4-Ola3: form runtime (API-CASE-16 through API-CASE-19)
+  getFormForClient,
+  saveFormDraft,
+  submitFormResponse,
+  approveFormResponse,
+  generateFilledPdf,
+  resolveBySource,
+  // Staff reads
+  getCaseExtractions,
 } from "./service";
 
 // createCaseFromContract types
@@ -32,6 +41,15 @@ export type {
   CreateCaseFromContractInput,
   CreateCaseFromContractResult,
   CasePartyInput,
+  // F4-Ola3 form types
+  SaveFormDraftInput,
+  SubmitFormResponseInput,
+  ApproveFormResponseInput,
+  GenerateFilledPdfInput,
+  FormForClientDto,
+  FormGroupDto,
+  FormQuestionDto,
+  DocumentExtractionSummary,
 } from "./service";
 
 // Client-surface read DTO types
@@ -81,4 +99,8 @@ export type {
 } from "./events";
 
 // Repository types (for cross-module reads e.g. billing → cases)
-export type { CaseRow, CaseDocumentRow, CasesPage } from "./repository";
+export type { CaseRow, CaseDocumentRow, CaseFormResponseRow, CasesPage } from "./repository";
+
+// Domain types for form state machine
+export type { FormResponseStatus, QuestionValidationRule, AnswerValidationError } from "./domain";
+export { canTransitionFormResponse, validateAnswerTypes } from "./domain";

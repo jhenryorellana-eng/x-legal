@@ -1623,6 +1623,22 @@ export async function getAutomationVersionById(versionId: string) {
   return repo.getAutomationVersionById(versionId);
 }
 
+/**
+ * Lists question groups for a given automation version.
+ * Exported for cases/form-runtime use (form wizard + PDF fill).
+ */
+export async function listQuestionGroups(versionId: string) {
+  return repo.listQuestionGroups(versionId);
+}
+
+/**
+ * Lists questions for a given question group.
+ * Exported for cases/form-runtime use (form wizard + PDF fill).
+ */
+export async function listQuestions(groupId: string) {
+  return repo.listQuestions(groupId);
+}
+
 export async function listDatasets(actor: Actor) {
   can(actor, "datasets", "view");
   return repo.listDatasets(actor.orgId);

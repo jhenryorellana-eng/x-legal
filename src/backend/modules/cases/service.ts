@@ -32,8 +32,11 @@ import {
   canTransitionCase,
   canTransitionDocument,
   computePhaseProgress,
+  validateAnswerTypes,
   PRODUCTION_STATUSES,
   type CaseStatus,
+  type FormResponseStatus,
+  type QuestionValidationRule,
 } from "./domain";
 import {
   findCaseById,
@@ -59,8 +62,22 @@ import {
   findPersonRecord,
   findClientDisplayName,
   findPlanKind,
+  findFormResponse,
+  findFormResponseById,
+  insertFormResponse,
+  mergeFormAnswers,
+  updateFormResponse,
+  findApprovedDocumentBySlug,
+  findDocumentExtractionByCaseDocId,
+  findCompletedGenerationByFormSlug,
+  findClientProfileForForm,
+  findUserContactFields,
+  listDocumentExtractionsForCase,
+  findCasePrimaryClient,
+  findFormDefinitionById,
   type CaseRow,
   type CaseDocumentRow,
+  type CaseFormResponseRow,
   type TimelinePage,
   type CasesPage,
 } from "./repository";
@@ -85,7 +102,17 @@ export class CaseError extends Error {
       | "DOC_REJECTION_REASON_REQUIRED"
       | "DOC_REQUIREMENT_NOT_FOUND"
       | "DOC_PARTY_NOT_ELIGIBLE"
-      | "DOC_UPLOAD_INVALID",
+      | "DOC_UPLOAD_INVALID"
+      | "FORM_NOT_FOUND"
+      | "FORM_VERSION_NOT_PUBLISHED"
+      | "FORM_VERSION_MISMATCH"
+      | "FORM_NOT_EDITABLE_BY_CLIENT"
+      | "FORM_NOT_SUBMITTABLE"
+      | "FORM_VALIDATION_FAILED"
+      | "FORM_PDF_BLOCKED"
+      | "FORM_PDF_REQUIRED_MISSING"
+      | "FORM_RESPONSE_NOT_FOUND"
+      | "FORM_PROFILE_FIELD_FORBIDDEN",
     public readonly details?: Record<string, unknown>,
   ) {
     super(code);
@@ -1535,5 +1562,715 @@ export async function getCaseMilestones(
 export async function getClientDisplayName(actor: Actor): Promise<string | null> {
   if (actor.kind !== "client") return null;
   return findClientDisplayName(actor.userId);
+}
+
+// ---------------------------------------------------------------------------
+// Form runtime — F4-Ola3 (API-CASE-16 through API-CASE-19)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves question definitions for an automation version.
+ * Fetches groups then questions for each group.
+ */
+async function getQuestionsForVersion(
+  versionId: string,
+): Promise<QuestionValidationRule[]> {
+  const { listQuestionGroups: listGroups, listQuestions } = await import(
+    "@/backend/modules/catalog" as string
+  ) as {
+    listQuestionGroups?: (versionId: string) => Promise<Array<{ id: string }>>;
+    listQuestions?: (groupId: string) => Promise<QuestionValidationRule[]>;
+  };
+
+  if (!listGroups || !listQuestions) {
+    // catalog module not yet exposing these — degrade gracefully
+    return [];
+  }
+
+  const groups = await listGroups(versionId);
+  const questionArrays = await Promise.all(groups.map((g) => listQuestions(g.id)));
+  return questionArrays.flat();
+}
+
+/**
+ * Resolves a single answer value based on the question's source.
+ *
+ * Source routing (DOC-41 §3.10):
+ * - client_answer      → answers[q.id] from the saved response
+ * - document_extraction → approved doc by slug → document_extractions.payload @ json_path
+ * - generation_output  → completed generation by form_slug → output @ output_path
+ * - profile            → client profile fields (PII decrypted LOCALLY, never leaves server)
+ *
+ * PII fields are resolved locally via platform/crypto — they NEVER go to AI (DOC-74 §7.1).
+ *
+ * @api-id (helper — consumed by getFormForClient and generateFilledPdf)
+ */
+export async function resolveBySource(
+  question: {
+    id: string;
+    source: string;
+    source_ref: unknown;
+  },
+  responseAnswers: Record<string, unknown>,
+  caseId: string,
+  partyId: string | null,
+): Promise<unknown> {
+  const source = question.source;
+  const sourceRef = (question.source_ref ?? {}) as Record<string, unknown>;
+
+  if (source === "client_answer") {
+    return responseAnswers[question.id] ?? null;
+  }
+
+  if (source === "document_extraction") {
+    const documentSlug = sourceRef["document_slug"] as string | undefined;
+    const jsonPath = sourceRef["json_path"] as string | undefined;
+    if (!documentSlug) return null;
+
+    const approvedDoc = await findApprovedDocumentBySlug(caseId, documentSlug, partyId);
+    if (!approvedDoc) return null;
+
+    const extraction = await findDocumentExtractionByCaseDocId(approvedDoc.id);
+    if (!extraction || extraction.status !== "completed") return null;
+
+    if (!jsonPath) return extraction.payload;
+
+    // Navigate JSON path (dot-notation, no array support needed for V2)
+    const parts = jsonPath.split(".");
+    let current: unknown = extraction.payload;
+    for (const part of parts) {
+      if (current == null || typeof current !== "object") return null;
+      current = (current as Record<string, unknown>)[part];
+    }
+    return current ?? null;
+  }
+
+  if (source === "generation_output") {
+    const formSlug = sourceRef["form_slug"] as string | undefined;
+    const outputPath = sourceRef["output_path"] as string | undefined;
+    if (!formSlug) return null;
+
+    const run = await findCompletedGenerationByFormSlug(caseId, formSlug, partyId);
+    if (!run) return null;
+
+    if (!outputPath) return run.output;
+
+    const parts = outputPath.split(".");
+    let current: unknown = run.output;
+    for (const part of parts) {
+      if (current == null || typeof current !== "object") return null;
+      current = (current as Record<string, unknown>)[part];
+    }
+    return current ?? null;
+  }
+
+  if (source === "profile") {
+    const profileField = sourceRef["profile_field"] as string | undefined;
+    if (!profileField) return null;
+
+    // Whitelist check — PROFILE_SOURCE_FIELDS (DOC-40 §2.7 / DOC-74 §7.1)
+    const { PROFILE_SOURCE_FIELDS } = await import("@/shared/constants/profile-fields");
+    if (!(PROFILE_SOURCE_FIELDS as readonly string[]).includes(profileField)) {
+      logger.warn({ profileField }, "resolveBySource: forbidden profile field attempted");
+      throw new CaseError("FORM_PROFILE_FIELD_FORBIDDEN", { field: profileField });
+    }
+
+    // Find primary client for the case
+    const primaryClientId = await findCasePrimaryClient(caseId);
+    if (!primaryClientId) return null;
+
+    // PII resolution is LOCAL — never forwarded to AI (DOC-74 §7.1)
+    if (profileField.startsWith("pii.")) {
+      const piiKey = profileField.slice(4); // e.g. "ssn"
+      const profile = await findClientProfileForForm(primaryClientId);
+      if (!profile) return null;
+
+      const piiEncrypted = profile.pii_encrypted as Record<string, unknown> | null;
+      if (!piiEncrypted || !piiEncrypted[piiKey]) return null;
+
+      const { decryptPiiField } = await import("@/backend/platform/crypto");
+      try {
+        return decryptPiiField(piiEncrypted[piiKey] as import("@/backend/platform/crypto").EncryptedField);
+      } catch {
+        logger.warn({ piiKey }, "resolveBySource: PII decryption failed — returning null");
+        return null;
+      }
+    }
+
+    // Address sub-fields
+    if (profileField.startsWith("address.")) {
+      const addrKey = profileField.slice(8);
+      const profile = await findClientProfileForForm(primaryClientId);
+      const address = (profile?.address ?? {}) as Record<string, unknown>;
+      return address[addrKey] ?? null;
+    }
+
+    // Contact fields on users table
+    if (profileField === "phone_e164" || profileField === "email") {
+      const user = await findUserContactFields(primaryClientId);
+      return profileField === "phone_e164" ? (user?.phone_e164 ?? null) : (user?.email ?? null);
+    }
+
+    // Standard profile fields
+    const profile = await findClientProfileForForm(primaryClientId);
+    if (!profile) return null;
+    return (profile as unknown as Record<string, unknown>)[profileField] ?? null;
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Wizard shape types
+// ---------------------------------------------------------------------------
+
+export interface FormQuestionDto {
+  id: string;
+  groupId: string;
+  questionI18n: I18nValue;
+  helpI18n: I18nValue | null;
+  fieldType: string;
+  options: Array<{ value: string; labelI18n: I18nValue }> | null;
+  isRequired: boolean;
+  position: number;
+  source: string;
+  /** Pre-filled value from resolveBySource (null for client_answer). */
+  prefillValue: unknown;
+  /** Whether this value comes from a non-client source (pre-filled, client may not edit). */
+  isPrefilled: boolean;
+  /** Current answer saved in the response (null if none yet). */
+  currentAnswer: unknown;
+}
+
+export interface FormGroupDto {
+  id: string;
+  titleI18n: I18nValue;
+  position: number;
+  questions: FormQuestionDto[];
+}
+
+export interface FormForClientDto {
+  responseId: string | null;
+  formDefinitionId: string;
+  versionId: string | null;
+  status: string | null;
+  submittedAt: string | null;
+  filledPdfPath: string | null;
+  filledBy: string;
+  groups: FormGroupDto[];
+}
+
+/**
+ * Resolves the published form version + questions + pre-filled values for the wizard.
+ *
+ * @api-id (read — consumed by wizard UI)
+ */
+export async function getFormForClient(
+  actor: Actor,
+  input: { caseId: string; formDefinitionId: string; partyId?: string | null },
+): Promise<FormForClientDto> {
+  await requireCaseAccess(actor, input.caseId);
+
+  const formDef = await findFormDefinitionById(input.formDefinitionId);
+  if (!formDef || !formDef.is_active) throw new CaseError("FORM_NOT_FOUND");
+
+  // Clients cannot see staff-only forms
+  if (actor.kind === "client" && formDef.filled_by === "staff") {
+    throw new CaseError("FORM_NOT_EDITABLE_BY_CLIENT");
+  }
+
+  const partyId = input.partyId ?? null;
+  const existingResponse = await findFormResponse(input.caseId, input.formDefinitionId, partyId);
+
+  // Get published version (for pdf_automation)
+  const catalog = await import("@/backend/modules/catalog" as string) as {
+    getPublishedAutomationVersion: (id: string) => Promise<{ id: string; detected_fields: unknown } | null>;
+    listQuestionGroups: (versionId: string) => Promise<Array<{ id: string; title_i18n: unknown; position: number }>>;
+    listQuestions: (groupId: string) => Promise<Array<{
+      id: string;
+      group_id: string;
+      question_i18n: unknown;
+      help_i18n: unknown;
+      field_type: string;
+      options: unknown;
+      is_required: boolean;
+      position: number;
+      source: string;
+      source_ref: unknown;
+    }>>;
+  };
+
+  const published = await catalog.getPublishedAutomationVersion(input.formDefinitionId);
+
+  const versionId = existingResponse?.automation_version_id ?? published?.id ?? null;
+
+  let groups: FormGroupDto[] = [];
+
+  if (versionId && catalog.listQuestionGroups && catalog.listQuestions) {
+    const rawGroups = await catalog.listQuestionGroups(versionId);
+    const answers = (existingResponse?.answers ?? {}) as Record<string, unknown>;
+
+    groups = await Promise.all(rawGroups.map(async (g) => {
+      const rawQuestions = await catalog.listQuestions(g.id);
+
+      const questions: FormQuestionDto[] = await Promise.all(rawQuestions.map(async (q) => {
+        const isPrefilled = q.source !== "client_answer";
+        let prefillValue: unknown = null;
+
+        if (isPrefilled) {
+          try {
+            prefillValue = await resolveBySource(
+              { id: q.id, source: q.source, source_ref: q.source_ref },
+              answers,
+              input.caseId,
+              partyId,
+            );
+          } catch {
+            // Non-fatal — show as empty
+            prefillValue = null;
+          }
+        }
+
+        const opts = q.options as Array<{ value: string; label_i18n: unknown }> | null;
+        return {
+          id: q.id,
+          groupId: g.id,
+          questionI18n: asI18n(q.question_i18n) ?? { en: "", es: "" },
+          helpI18n: asI18n(q.help_i18n),
+          fieldType: q.field_type,
+          options: opts
+            ? opts.map((o) => ({ value: o.value, labelI18n: asI18n(o.label_i18n) ?? { en: o.value, es: o.value } }))
+            : null,
+          isRequired: q.is_required,
+          position: q.position,
+          source: q.source,
+          prefillValue,
+          isPrefilled,
+          currentAnswer: answers[q.id] ?? null,
+        };
+      }));
+
+      return {
+        id: g.id,
+        titleI18n: asI18n(g.title_i18n) ?? { en: "", es: "" },
+        position: g.position,
+        questions: questions.sort((a, b) => a.position - b.position),
+      };
+    }));
+
+    groups.sort((a, b) => a.position - b.position);
+  }
+
+  return {
+    responseId: existingResponse?.id ?? null,
+    formDefinitionId: input.formDefinitionId,
+    versionId,
+    status: existingResponse?.status ?? null,
+    submittedAt: existingResponse?.submitted_at ?? null,
+    filledPdfPath: existingResponse?.filled_pdf_path ?? null,
+    filledBy: formDef.filled_by,
+    groups,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// API-CASE-16: saveFormDraft
+// ---------------------------------------------------------------------------
+
+const SaveFormDraftSchema = z.object({
+  caseId: z.string().uuid(),
+  formDefinitionId: z.string().uuid(),
+  partyId: z.string().uuid().nullable().optional(),
+  patch: z.record(z.string(), z.unknown()),
+});
+
+export type SaveFormDraftInput = z.infer<typeof SaveFormDraftSchema>;
+
+/**
+ * Creates or updates a form draft with a partial patch of answers.
+ * Merge per-key: only keys present in patch are updated (RF-DIA-023).
+ * Freezes automation_version_id to the published version on first create.
+ * FORM_VERSION_MISMATCH if patch keys don't belong to the saved version.
+ *
+ * @api-id API-CASE-16
+ */
+export async function saveFormDraft(
+  actor: Actor,
+  input: SaveFormDraftInput,
+): Promise<CaseFormResponseRow> {
+  await requireCaseAccess(actor, input.caseId);
+  const parsed = SaveFormDraftSchema.parse(input);
+  const partyId = parsed.partyId ?? null;
+
+  const formDef = await findFormDefinitionById(parsed.formDefinitionId);
+  if (!formDef || !formDef.is_active) throw new CaseError("FORM_NOT_FOUND");
+
+  // Clients cannot edit staff-only forms
+  if (actor.kind === "client" && formDef.filled_by === "staff") {
+    throw new CaseError("FORM_NOT_EDITABLE_BY_CLIENT");
+  }
+
+  let response = await findFormResponse(parsed.caseId, parsed.formDefinitionId, partyId);
+
+  if (!response) {
+    // First save: freeze the published version
+    const catalog = await import("@/backend/modules/catalog" as string) as {
+      getPublishedAutomationVersion: (id: string) => Promise<{ id: string } | null>;
+    };
+    const published = await catalog.getPublishedAutomationVersion(parsed.formDefinitionId);
+
+    if (formDef.kind === "pdf_automation" && !published) {
+      throw new CaseError("FORM_VERSION_NOT_PUBLISHED");
+    }
+
+    response = await insertFormResponse({
+      case_id: parsed.caseId,
+      form_definition_id: parsed.formDefinitionId,
+      automation_version_id: published?.id ?? null,
+      party_id: partyId,
+      status: "draft",
+    });
+  } else {
+    // Existing response: only draft can be edited
+    if (response.status !== "draft") {
+      throw new CaseError("FORM_NOT_SUBMITTABLE");
+    }
+  }
+
+  // Validate answer types + check keys belong to the frozen version (FORM_VERSION_MISMATCH)
+  if (response.automation_version_id && Object.keys(parsed.patch).length > 0) {
+    const questions = await getQuestionsForVersion(response.automation_version_id);
+
+    if (questions.length > 0) {
+      const validQuestionIds = new Set(questions.map((q) => q.id));
+      const unknownKeys = Object.keys(parsed.patch).filter((k) => !validQuestionIds.has(k));
+      if (unknownKeys.length > 0) {
+        throw new CaseError("FORM_VERSION_MISMATCH", { unknownKeys });
+      }
+
+      const errors = validateAnswerTypes(parsed.patch, questions);
+      if (errors.length > 0) {
+        throw new CaseError("FORM_VALIDATION_FAILED", { errors });
+      }
+    }
+  }
+
+  // Merge patch into existing answers
+  await mergeFormAnswers(response.id, parsed.patch);
+
+  const updated = await findFormResponseById(response.id);
+  if (!updated) throw new CaseError("FORM_RESPONSE_NOT_FOUND");
+  return updated;
+}
+
+// ---------------------------------------------------------------------------
+// API-CASE-17: submitFormResponse
+// ---------------------------------------------------------------------------
+
+const SubmitFormResponseSchema = z.object({
+  caseId: z.string().uuid(),
+  formDefinitionId: z.string().uuid(),
+  partyId: z.string().uuid().nullable().optional(),
+});
+
+export type SubmitFormResponseInput = z.infer<typeof SubmitFormResponseSchema>;
+
+/**
+ * Submits a form response: validates all required answers server-side, transitions
+ * draft → submitted.
+ *
+ * @api-id API-CASE-17
+ */
+export async function submitFormResponse(
+  actor: Actor,
+  input: SubmitFormResponseInput,
+): Promise<CaseFormResponseRow> {
+  await requireCaseAccess(actor, input.caseId);
+  const parsed = SubmitFormResponseSchema.parse(input);
+  const partyId = parsed.partyId ?? null;
+
+  const response = await findFormResponse(parsed.caseId, parsed.formDefinitionId, partyId);
+  if (!response || response.status !== "draft") {
+    throw new CaseError("FORM_NOT_SUBMITTABLE");
+  }
+
+  // Full server-side validation (RF-TRX-027 — client is never the source of truth)
+  if (response.automation_version_id) {
+    const questions = await getQuestionsForVersion(response.automation_version_id);
+    const answers = (response.answers ?? {}) as Record<string, unknown>;
+    const errors = validateAnswerTypes(answers, questions);
+    if (errors.length > 0) {
+      throw new CaseError("FORM_VALIDATION_FAILED", { errors });
+    }
+  }
+
+  await updateFormResponse(response.id, {
+    status: "submitted",
+    submitted_at: new Date().toISOString(),
+  });
+
+  appEvents.emit({
+    type: "form_response.submitted",
+    payload: { caseId: parsed.caseId, responseId: response.id },
+    occurredAt: new Date(),
+  });
+
+  await writeTimeline({
+    caseId: parsed.caseId,
+    eventType: "form_response.submitted",
+    actorKind: actor.kind === "client" ? "client" : "team",
+    actorUserId: actor.userId,
+    visibleToClient: true,
+    titleI18n: {
+      en: "Form submitted",
+      es: "Formulario enviado",
+    },
+  });
+
+  const updated = await findFormResponseById(response.id);
+  if (!updated) throw new CaseError("FORM_RESPONSE_NOT_FOUND");
+  return updated;
+}
+
+// ---------------------------------------------------------------------------
+// API-CASE-18: approveFormResponse (staff only)
+// ---------------------------------------------------------------------------
+
+const ApproveFormResponseSchema = z.object({
+  responseId: z.string().uuid(),
+});
+
+export type ApproveFormResponseInput = z.infer<typeof ApproveFormResponseSchema>;
+
+/**
+ * Staff approves a submitted form response: submitted → approved.
+ * Gate: only applicable when filled_by='client' (DOC-41 §3.9).
+ *
+ * @api-id API-CASE-18
+ */
+export async function approveFormResponse(
+  actor: Actor,
+  input: ApproveFormResponseInput,
+): Promise<void> {
+  can(actor, "cases", "edit");
+  const parsed = ApproveFormResponseSchema.parse(input);
+
+  const response = await findFormResponseById(parsed.responseId);
+  if (!response) throw new CaseError("FORM_RESPONSE_NOT_FOUND");
+
+  if (response.status !== "submitted") {
+    throw new CaseError("FORM_NOT_SUBMITTABLE");
+  }
+
+  await updateFormResponse(response.id, { status: "approved" });
+
+  await writeAudit(
+    actor,
+    "case.form_response.approved",
+    "case_form_responses",
+    response.id,
+    { after: { status: "approved" } },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// API-CASE-19: generateFilledPdf (DOC-41 §3.10)
+// ---------------------------------------------------------------------------
+
+const GenerateFilledPdfSchema = z.object({
+  responseId: z.string().uuid(),
+});
+
+export type GenerateFilledPdfInput = z.infer<typeof GenerateFilledPdfSchema>;
+
+/**
+ * Generates a filled PDF for an approved (or submitted-by-staff) form response.
+ *
+ * Gates:
+ * - FORM_PDF_BLOCKED: response not in submitted/approved; or filled_by='client' and not approved.
+ * - FORM_VERSION_MISMATCH: response was saved against a different version than the current published.
+ *
+ * Resolves all question values via resolveBySource, fills AcroForm via mupdf,
+ * stores in bucket 'generated', updates filled_pdf_path.
+ * Returns signed download URL.
+ *
+ * @api-id API-CASE-19
+ */
+export async function generateFilledPdf(
+  actor: Actor,
+  input: GenerateFilledPdfInput,
+): Promise<string> {
+  can(actor, "cases", "edit");
+  const parsed = GenerateFilledPdfSchema.parse(input);
+
+  const response = await findFormResponseById(parsed.responseId);
+  if (!response) throw new CaseError("FORM_RESPONSE_NOT_FOUND");
+
+  const formDef = await findFormDefinitionById(response.form_definition_id);
+  if (!formDef) throw new CaseError("FORM_NOT_FOUND");
+
+  // Gate: FORM_PDF_BLOCKED — status not in {submitted, approved}, OR client-filled not yet approved
+  const validStatuses: FormResponseStatus[] = ["submitted", "approved"];
+  if (!validStatuses.includes(response.status as FormResponseStatus)) {
+    throw new CaseError("FORM_PDF_BLOCKED", { reason: "status", status: response.status });
+  }
+  if (formDef.filled_by === "client" && response.status !== "approved") {
+    throw new CaseError("FORM_PDF_BLOCKED", { reason: "requires_approval", filledBy: formDef.filled_by });
+  }
+
+  // Gate: FORM_VERSION_MISMATCH — only fill against the currently published version
+  const catalog = await import("@/backend/modules/catalog" as string) as {
+    getPublishedAutomationVersion: (id: string) => Promise<{ id: string; source_pdf_path: string; detected_fields: unknown } | null>;
+    listQuestionGroups: (versionId: string) => Promise<Array<{ id: string }>>;
+    listQuestions: (groupId: string) => Promise<Array<{
+      id: string;
+      source: string;
+      source_ref: unknown;
+      pdf_field_name: string | null;
+      is_required: boolean;
+    }>>;
+  };
+
+  const published = await catalog.getPublishedAutomationVersion(response.form_definition_id);
+  if (!published) {
+    throw new CaseError("FORM_VERSION_NOT_PUBLISHED");
+  }
+  if (response.automation_version_id !== published.id) {
+    throw new CaseError("FORM_VERSION_MISMATCH", {
+      savedVersion: response.automation_version_id,
+      publishedVersion: published.id,
+    });
+  }
+
+  // Collect all questions for the version
+  const questions: Array<{
+    id: string;
+    source: string;
+    source_ref: unknown;
+    pdf_field_name: string | null;
+    is_required: boolean;
+  }> = [];
+
+  if (catalog.listQuestionGroups && catalog.listQuestions) {
+    const groups = await catalog.listQuestionGroups(published.id);
+    for (const g of groups) {
+      const qs = await catalog.listQuestions(g.id);
+      questions.push(...qs);
+    }
+  }
+
+  const answers = (response.answers ?? {}) as Record<string, unknown>;
+  const caseId = response.case_id;
+  const partyId = response.party_id;
+
+  // Resolve all field values
+  const fieldValues: Record<string, string | boolean> = {};
+  const missingRequired: string[] = [];
+
+  for (const q of questions) {
+    if (!q.pdf_field_name) continue; // intermediate data — no AcroField mapping
+
+    const resolved = await resolveBySource(
+      { id: q.id, source: q.source, source_ref: q.source_ref },
+      answers,
+      caseId,
+      partyId,
+    );
+
+    const isEmpty = resolved === null || resolved === undefined || resolved === "";
+    if (isEmpty && q.is_required) {
+      missingRequired.push(q.pdf_field_name);
+      continue;
+    }
+
+    if (!isEmpty) {
+      if (typeof resolved === "boolean") {
+        fieldValues[q.pdf_field_name] = resolved;
+      } else {
+        fieldValues[q.pdf_field_name] = String(resolved);
+      }
+    }
+  }
+
+  if (missingRequired.length > 0) {
+    throw new CaseError("FORM_PDF_REQUIRED_MISSING", { missing: missingRequired });
+  }
+
+  // Download source PDF from catalog-assets bucket
+  const { createSignedDownloadUrl: getDownloadUrl, uploadBytesToStorage } = await import(
+    "@/backend/platform/storage"
+  );
+  const sourcePdfUrl = await getDownloadUrl("catalog-assets", published.source_pdf_path);
+
+  // Fetch PDF bytes
+  const pdfResponse = await fetch(sourcePdfUrl);
+  if (!pdfResponse.ok) {
+    throw new Error(`generateFilledPdf: failed to fetch source PDF — ${pdfResponse.status}`);
+  }
+  const pdfBuffer = await pdfResponse.arrayBuffer();
+  const pdfBytes = new Uint8Array(pdfBuffer);
+
+  // Fill AcroForm via mupdf
+  const { fillAcroForm } = await import("@/backend/platform/pdf");
+  const filledBytes = await fillAcroForm(pdfBytes, {}, fieldValues);
+
+  // Store in generated bucket
+  const storagePath = `case/${caseId}/forms/${formDef.slug}-${response.id}.pdf`;
+  await uploadBytesToStorage("generated", storagePath, filledBytes, "application/pdf");
+
+  // Update response with the filled PDF path
+  await updateFormResponse(response.id, { filled_pdf_path: storagePath });
+
+  await writeAudit(
+    actor,
+    "case.form_response.pdf_generated",
+    "case_form_responses",
+    response.id,
+    { after: { filledPdfPath: storagePath } },
+  );
+
+  await writeTimeline({
+    caseId,
+    eventType: "form.pdf_generated",
+    actorKind: "team",
+    actorUserId: actor.userId,
+    visibleToClient: false,
+    titleI18n: {
+      en: "PDF generated",
+      es: "PDF generado",
+    },
+  });
+
+  // Return signed download URL
+  const { createSignedDownloadUrl } = await import("@/backend/platform/storage");
+  return createSignedDownloadUrl("generated", storagePath);
+}
+
+// ---------------------------------------------------------------------------
+// Staff Información tab: document extractions read
+// ---------------------------------------------------------------------------
+
+export interface DocumentExtractionSummary {
+  caseDocumentId: string;
+  requirementSlug: string | null;
+  partyId: string | null;
+  documentStatus: string;
+  extractionStatus: string | null;
+  extractionPayload: unknown;
+}
+
+/**
+ * Returns document extraction statuses + payloads for a case.
+ * Used by the staff shared-case Información tab.
+ *
+ * @api-id (staff read — DOC-53 Información tab)
+ */
+export async function getCaseExtractions(
+  actor: Actor,
+  caseId: string,
+): Promise<DocumentExtractionSummary[]> {
+  can(actor, "cases", "view");
+  await requireCaseAccess(actor, caseId);
+  return listDocumentExtractionsForCase(caseId);
 }
 

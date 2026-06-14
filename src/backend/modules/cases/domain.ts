@@ -188,6 +188,113 @@ export function computePhaseProgress(input: PhaseProgressInput): number {
 }
 
 // ---------------------------------------------------------------------------
+// FormResponse state machine
+// ---------------------------------------------------------------------------
+
+export type FormResponseStatus = "draft" | "submitted" | "approved";
+
+const FORM_RESPONSE_TRANSITIONS: Map<FormResponseStatus, FormResponseStatus[]> = new Map([
+  ["draft", ["submitted"]],
+  ["submitted", ["approved"]],
+  // "approved" is terminal
+]);
+
+/**
+ * Returns null if the form response status transition is valid, error code otherwise.
+ */
+export function canTransitionFormResponse(
+  from: FormResponseStatus,
+  to: FormResponseStatus,
+): null | "FORM_INVALID_TRANSITION" {
+  const allowed = FORM_RESPONSE_TRANSITIONS.get(from) ?? [];
+  return allowed.includes(to) ? null : "FORM_INVALID_TRANSITION";
+}
+
+// ---------------------------------------------------------------------------
+// Answer validation (server-side, RF-TRX-027)
+// ---------------------------------------------------------------------------
+
+export interface QuestionValidationRule {
+  id: string;
+  field_type: "text" | "number" | "date" | "checkbox" | "select" | "textarea";
+  is_required: boolean;
+  options?: Array<{ value: string }> | null;
+  /** JSON: {regex?, min?: number, max?: number} */
+  validation?: Record<string, unknown> | null;
+}
+
+export interface AnswerValidationError {
+  questionId: string;
+  code: "required" | "regex" | "min" | "max" | "type";
+}
+
+/**
+ * Validates a set of answers against the question definitions.
+ * Returns an array of validation errors (empty = valid).
+ * server-side enforcement — never trust the client (RF-TRX-027).
+ */
+export function validateAnswerTypes(
+  answers: Record<string, unknown>,
+  questions: QuestionValidationRule[],
+): AnswerValidationError[] {
+  const errors: AnswerValidationError[] = [];
+
+  for (const q of questions) {
+    const value = answers[q.id];
+    const isEmpty = value === undefined || value === null || value === "";
+
+    // Required check
+    if (q.is_required && isEmpty) {
+      errors.push({ questionId: q.id, code: "required" });
+      continue;
+    }
+
+    if (isEmpty) continue; // optional and empty — skip validation rules
+
+    // Type/format validation
+    const val = q.validation as { regex?: string; min?: number; max?: number } | null | undefined;
+
+    if (val?.regex) {
+      try {
+        const re = new RegExp(val.regex);
+        if (typeof value === "string" && !re.test(value)) {
+          errors.push({ questionId: q.id, code: "regex" });
+          continue;
+        }
+      } catch {
+        // Invalid regex in catalog — skip silently
+      }
+    }
+
+    if (val?.min !== undefined) {
+      const num = Number(value);
+      if (!isNaN(num) && num < val.min) {
+        errors.push({ questionId: q.id, code: "min" });
+        continue;
+      }
+      if (typeof value === "string" && value.length < val.min) {
+        errors.push({ questionId: q.id, code: "min" });
+        continue;
+      }
+    }
+
+    if (val?.max !== undefined) {
+      const num = Number(value);
+      if (!isNaN(num) && num > val.max) {
+        errors.push({ questionId: q.id, code: "max" });
+        continue;
+      }
+      if (typeof value === "string" && value.length > val.max) {
+        errors.push({ questionId: q.id, code: "max" });
+        continue;
+      }
+    }
+  }
+
+  return errors;
+}
+
+// ---------------------------------------------------------------------------
 // Party eligibility
 // ---------------------------------------------------------------------------
 

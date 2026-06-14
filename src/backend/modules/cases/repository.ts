@@ -198,6 +198,318 @@ export async function insertPhaseHistory(row: {
 // Documents
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Form responses (case_form_responses)
+// ---------------------------------------------------------------------------
+
+export type CaseFormResponseRow = Tables<"case_form_responses">;
+
+/**
+ * Finds an existing form response for a case/form/party triple.
+ * Uses service client (bypasses RLS — caller must verify case access first).
+ */
+export async function findFormResponse(
+  caseId: string,
+  formDefinitionId: string,
+  partyId: string | null,
+): Promise<CaseFormResponseRow | null> {
+  const supabase = createServiceClient();
+  let query = supabase
+    .from("case_form_responses")
+    .select("*")
+    .eq("case_id", caseId)
+    .eq("form_definition_id", formDefinitionId);
+
+  if (partyId) {
+    query = query.eq("party_id", partyId);
+  } else {
+    query = query.is("party_id", null);
+  }
+
+  const { data } = await query.maybeSingle();
+  return data ?? null;
+}
+
+/** Finds a form response by its primary key. */
+export async function findFormResponseById(
+  responseId: string,
+): Promise<CaseFormResponseRow | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("case_form_responses")
+    .select("*")
+    .eq("id", responseId)
+    .maybeSingle();
+  return data ?? null;
+}
+
+/** Inserts a new form response row (draft, frozen version). */
+export async function insertFormResponse(row: {
+  case_id: string;
+  form_definition_id: string;
+  automation_version_id: string | null;
+  party_id: string | null;
+  status: string;
+}): Promise<CaseFormResponseRow> {
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("case_form_responses")
+    .insert({
+      case_id: row.case_id,
+      form_definition_id: row.form_definition_id,
+      automation_version_id: row.automation_version_id,
+      party_id: row.party_id,
+      status: row.status,
+      answers: {},
+    })
+    .select()
+    .single();
+
+  if (error || !data) {
+    throw new Error(`cases.repository: insertFormResponse failed — ${error?.message}`);
+  }
+  return data;
+}
+
+/**
+ * Merges a patch of answers into the existing answers JSONB.
+ * Last-written-per-key wins (RF-DIA-023 CA2).
+ */
+export async function mergeFormAnswers(
+  responseId: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  const supabase = createServiceClient();
+  const { data: current, error: fetchErr } = await supabase
+    .from("case_form_responses")
+    .select("answers")
+    .eq("id", responseId)
+    .single();
+
+  if (fetchErr || !current) {
+    throw new Error(`cases.repository: mergeFormAnswers fetch failed — ${fetchErr?.message}`);
+  }
+
+  const existingAnswers = (current.answers as Record<string, unknown>) ?? {};
+  const merged = { ...existingAnswers, ...patch };
+
+  const { error } = await supabase
+    .from("case_form_responses")
+    .update({ answers: merged as import("@/shared/database.types").Json, updated_at: new Date().toISOString() })
+    .eq("id", responseId);
+
+  if (error) {
+    throw new Error(`cases.repository: mergeFormAnswers update failed — ${error.message}`);
+  }
+}
+
+/** Updates status and optional fields on a form response. */
+export async function updateFormResponse(
+  responseId: string,
+  fields: Partial<{
+    status: string;
+    submitted_at: string;
+    filled_pdf_path: string;
+  }>,
+): Promise<void> {
+  const supabase = createServiceClient();
+  const { error } = await supabase
+    .from("case_form_responses")
+    .update({ ...fields, updated_at: new Date().toISOString() })
+    .eq("id", responseId);
+
+  if (error) {
+    throw new Error(`cases.repository: updateFormResponse failed — ${error.message}`);
+  }
+}
+
+/** Lists all form responses for a case. */
+export async function listFormResponsesForCase(
+  caseId: string,
+): Promise<CaseFormResponseRow[]> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("case_form_responses")
+    .select("*")
+    .eq("case_id", caseId);
+  return data ?? [];
+}
+
+/**
+ * Finds the most recently approved document for a (case, requirement_slug, party_id).
+ * Used by resolveBySource when source='document_extraction'.
+ */
+export async function findApprovedDocumentBySlug(
+  caseId: string,
+  requirementSlug: string,
+  partyId: string | null,
+): Promise<{ id: string; storage_path: string } | null> {
+  const supabase = createServiceClient();
+  let query = supabase
+    .from("case_documents")
+    .select("id, storage_path, required_document_types!inner(slug)")
+    .eq("case_id", caseId)
+    .eq("required_document_types.slug", requirementSlug)
+    .eq("status", "approved")
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  if (partyId) {
+    query = query.eq("party_id", partyId);
+  } else {
+    query = query.is("party_id", null);
+  }
+
+  const { data } = await query;
+  if (!data || data.length === 0) return null;
+  return { id: data[0].id, storage_path: data[0].storage_path };
+}
+
+/**
+ * Finds a document extraction row by case_document_id.
+ */
+export async function findDocumentExtractionByCaseDocId(
+  caseDocumentId: string,
+): Promise<{ status: string; payload: unknown } | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("document_extractions")
+    .select("status, payload")
+    .eq("case_document_id", caseDocumentId)
+    .maybeSingle();
+  return data ?? null;
+}
+
+/**
+ * Finds the most-recent completed ai_generation_run for (case, form_slug, party_id).
+ */
+export async function findCompletedGenerationByFormSlug(
+  caseId: string,
+  formSlug: string,
+  partyId: string | null,
+): Promise<{ output: unknown } | null> {
+  const supabase = createServiceClient();
+  let query = supabase
+    .from("ai_generation_runs")
+    .select("output, form_definitions!inner(slug)")
+    .eq("case_id", caseId)
+    .eq("form_definitions.slug", formSlug)
+    .eq("status", "completed")
+    .order("version", { ascending: false })
+    .limit(1);
+
+  if (partyId) {
+    query = query.eq("party_id", partyId);
+  } else {
+    query = query.is("party_id", null);
+  }
+
+  const { data } = await query;
+  if (!data || data.length === 0) return null;
+  return { output: (data[0] as unknown as { output: unknown }).output };
+}
+
+/**
+ * Finds client profile fields for a user.
+ * PII fields are returned as-is (encrypted); decryption is caller's responsibility.
+ */
+export async function findClientProfileForForm(userId: string): Promise<{
+  first_name: string;
+  last_name: string;
+  preferred_name: string | null;
+  country_of_origin: string | null;
+  address: unknown;
+  pii_encrypted: unknown;
+} | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("client_profiles")
+    .select("first_name, last_name, preferred_name, country_of_origin, address, pii_encrypted")
+    .eq("user_id", userId)
+    .maybeSingle();
+  return data ?? null;
+}
+
+/** Finds user-level contact fields (phone, email) for a user. */
+export async function findUserContactFields(userId: string): Promise<{
+  phone_e164: string | null;
+  email: string | null;
+} | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("users")
+    .select("phone_e164, email")
+    .eq("id", userId)
+    .maybeSingle();
+  return data ?? null;
+}
+
+/**
+ * Lists all non-replaced documents with their extraction status for the staff tab.
+ */
+export async function listDocumentExtractionsForCase(caseId: string): Promise<Array<{
+  caseDocumentId: string;
+  requirementSlug: string | null;
+  partyId: string | null;
+  documentStatus: string;
+  extractionStatus: string | null;
+  extractionPayload: unknown;
+}>> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("case_documents")
+    .select(`
+      id,
+      status,
+      party_id,
+      required_document_types(slug),
+      document_extractions(status, payload)
+    `)
+    .eq("case_id", caseId)
+    .neq("status", "replaced");
+
+  if (!data) return [];
+
+  return data.map((row) => {
+    const rec = row as unknown as Record<string, unknown>;
+    const rdt = rec["required_document_types"] as { slug?: string } | null;
+    const ext = rec["document_extractions"] as Array<{ status?: string; payload?: unknown }> | null;
+    const extraction = Array.isArray(ext) ? ext[0] : null;
+    return {
+      caseDocumentId: row.id,
+      requirementSlug: rdt?.slug ?? null,
+      partyId: row.party_id,
+      documentStatus: row.status,
+      extractionStatus: extraction?.status ?? null,
+      extractionPayload: extraction?.payload ?? null,
+    };
+  });
+}
+
+/** Finds the primary_client_id for a case. */
+export async function findCasePrimaryClient(caseId: string): Promise<string | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("cases")
+    .select("primary_client_id")
+    .eq("id", caseId)
+    .maybeSingle();
+  return data?.primary_client_id ?? null;
+}
+
+/** Finds a form definition by id. */
+export async function findFormDefinitionById(
+  formDefinitionId: string,
+): Promise<{ id: string; slug: string; kind: string; filled_by: string; is_per_party: boolean; party_roles: string[] | null; is_active: boolean } | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("form_definitions")
+    .select("id, slug, kind, filled_by, is_per_party, party_roles, is_active")
+    .eq("id", formDefinitionId)
+    .maybeSingle();
+  return data ?? null;
+}
+
 /** Finds a case document by ID using the server client. */
 export async function findDocumentById(
   documentId: string,

@@ -17,6 +17,9 @@ export {
   listContractableServices,
   getCatalogFirstPhase,
   isServiceContractable,
+  // Form runtime reads (consumed by cases/form-runtime — API-CASE-16 through API-CASE-19)
+  listQuestionGroups,
+  listQuestions,
   // Admin panel reads (DOC-53 §4 — page-initial RSC reads)
   listServicesAdmin,
   getServiceEditorTree,
