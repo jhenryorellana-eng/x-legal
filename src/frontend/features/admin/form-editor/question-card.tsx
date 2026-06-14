@@ -1,0 +1,435 @@
+"use client";
+
+import * as React from "react";
+import { Icon, Chip } from "@/frontend/components/brand";
+import { Switch } from "@/frontend/components/desktop";
+import { I18nField } from "../shared/i18n-field";
+import { FieldLabel, SelectInput, TextInput } from "../shared/chrome";
+import type {
+  QuestionVM,
+  FieldType,
+  QuestionSource,
+  DetectedFieldVM,
+  SourceDocumentVM,
+} from "./types";
+import type { FormEditorStrings } from "./strings";
+
+const PII_FIELDS = new Set(["pii.ssn", "pii.a_number", "pii.passport"]);
+
+const FIELD_TYPES: { id: FieldType; key: string }[] = [
+  { id: "text", key: "ftText" },
+  { id: "number", key: "ftNumber" },
+  { id: "date", key: "ftDate" },
+  { id: "checkbox", key: "ftCheckbox" },
+  { id: "select", key: "ftSelect" },
+  { id: "textarea", key: "ftTextarea" },
+];
+
+const ORIGINS: { id: QuestionSource; key: string; icon: Parameters<typeof Icon>[0]["name"] }[] = [
+  { id: "client_answer", key: "originClient", icon: "user" },
+  { id: "document_extraction", key: "originDoc", icon: "doc" },
+  { id: "generation_output", key: "originGen", icon: "sparkle" },
+  { id: "profile", key: "originProfile", icon: "shield" },
+];
+
+export interface QuestionCardProps {
+  question: QuestionVM;
+  expanded: boolean;
+  selected: boolean;
+  duplicateMapping: boolean;
+  detectedFields: DetectedFieldVM[];
+  sources: { documents: SourceDocumentVM[]; forms: string[]; profileFields: string[] };
+  groups: { id: string; label: string }[];
+  strings: FormEditorStrings;
+  readOnly: boolean;
+  onToggle: () => void;
+  onChange: (patch: Partial<QuestionVM>) => void;
+  onDelete: () => void;
+  onMoveToGroup: (groupId: string) => void;
+  onFocusField: (name: string | null) => void;
+}
+
+export function QuestionCard({
+  question,
+  expanded,
+  selected,
+  duplicateMapping,
+  detectedFields,
+  sources,
+  groups,
+  strings,
+  readOnly,
+  onToggle,
+  onChange,
+  onDelete,
+  onMoveToGroup,
+  onFocusField,
+}: QuestionCardProps) {
+  const q = question;
+  const title = q.question_i18n.es || q.question_i18n.en || "Pregunta sin redactar";
+  const originMeta = ORIGINS.find((o) => o.id === q.source)!;
+
+  return (
+    <div
+      style={{
+        borderRadius: 14,
+        border: `1.5px solid ${selected ? "var(--accent)" : "var(--line)"}`,
+        background: "var(--card, #fff)",
+        marginBottom: 8,
+        boxShadow: selected ? "0 0 0 4px var(--accent-soft)" : "none",
+        transition: "box-shadow .15s, border-color .15s",
+      }}
+    >
+      {/* Compact row */}
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onToggle}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "10px 12px",
+          cursor: "pointer",
+        }}
+      >
+        <span aria-hidden style={{ color: "var(--ink-3)", display: "inline-flex" }}>
+          <Icon name="route" size={16} />
+        </span>
+        <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 700, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {title}
+        </span>
+        {q.proposed && (
+          <Chip tone="amber">
+            <Icon name="sparkle" size={12} /> {strings.proposed}
+          </Chip>
+        )}
+        {q.source !== "client_answer" && (
+          <span aria-hidden style={{ color: "var(--accent)", display: "inline-flex" }}>
+            <Icon name={originMeta.icon} size={14} />
+          </span>
+        )}
+        <span style={{ display: "inline-flex", alignItems: "center", height: 22, padding: "0 9px", borderRadius: 999, background: "var(--chip)", color: "var(--ink-2)", fontSize: 11.5, fontWeight: 800, whiteSpace: "nowrap" }}>
+          {tType(q.field_type, strings)}
+        </span>
+        <span aria-hidden style={{ color: "var(--ink-3)", transform: expanded ? "rotate(90deg)" : "none", transition: "transform .15s", display: "inline-flex" }}>
+          <Icon name="chevR" size={16} />
+        </span>
+      </div>
+
+      {/* Expanded editor */}
+      {expanded && (
+        <div style={{ padding: "0 14px 14px", display: "flex", flexDirection: "column", gap: 14, borderTop: "1px solid var(--line)" }}>
+          <div style={{ marginTop: 12 }}>
+            <I18nField
+              label={strings.questionWording}
+              value={q.question_i18n}
+              onChange={(v) => onChange({ question_i18n: v, proposed: false })}
+            />
+          </div>
+          <I18nField
+            label={strings.questionHelp}
+            value={q.help_i18n}
+            onChange={(v) => onChange({ help_i18n: v })}
+            multiline
+            flagMissingEn={false}
+          />
+
+          {/* Type + required */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 14, alignItems: "end" }}>
+            <div>
+              <FieldLabel>{strings.fieldType}</FieldLabel>
+              <SelectInput
+                value={q.field_type}
+                disabled={readOnly}
+                onChange={(e) => onChange({ field_type: e.target.value as FieldType })}
+                aria-label={strings.fieldType}
+              >
+                {FIELD_TYPES.map((ft) => (
+                  <option key={ft.id} value={ft.id}>
+                    {strings[ft.key]}
+                  </option>
+                ))}
+              </SelectInput>
+            </div>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, paddingBottom: 9 }}>
+              <Switch
+                checked={q.is_required}
+                onCheckedChange={(c) => onChange({ is_required: c })}
+                disabled={readOnly}
+                aria-label={strings.required}
+              />
+              <span style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>{strings.required}</span>
+            </label>
+          </div>
+
+          {/* Options editor (select only) */}
+          {q.field_type === "select" && (
+            <OptionsEditor question={q} strings={strings} readOnly={readOnly} onChange={onChange} />
+          )}
+
+          {/* PDF mapping */}
+          <div>
+            <FieldLabel>{strings.pdfMapping}</FieldLabel>
+            <SelectInput
+              value={q.pdf_field_name ?? ""}
+              disabled={readOnly}
+              onChange={(e) => {
+                const v = e.target.value || null;
+                onChange({ pdf_field_name: v });
+                onFocusField(v);
+              }}
+              aria-label={strings.pdfMapping}
+              style={duplicateMapping ? { borderColor: "var(--gold-deep)" } : undefined}
+            >
+              <option value="">{strings.noPdfField}</option>
+              {detectedFields.map((f) => (
+                <option key={f.pdf_field_name} value={f.pdf_field_name}>
+                  {f.pdf_field_name} · {strings.pageLabel} {f.page} · {f.field_type}
+                </option>
+              ))}
+            </SelectInput>
+            {duplicateMapping && (
+              <p style={{ margin: "6px 0 0", fontSize: 12, color: "var(--gold-deep)" }}>{strings.dupFieldWarn}</p>
+            )}
+          </div>
+
+          {/* Origin segmented selector */}
+          <div>
+            <FieldLabel>{strings.origin}</FieldLabel>
+            <div role="radiogroup" aria-label={strings.origin} style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
+              {ORIGINS.map((o) => {
+                const on = q.source === o.id;
+                return (
+                  <button
+                    key={o.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={on}
+                    disabled={readOnly}
+                    onClick={() => onChange({ source: o.id, source_ref: defaultRef(o.id) })}
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      gap: 5,
+                      padding: "10px 6px",
+                      borderRadius: 12,
+                      border: `1.5px solid ${on ? "var(--accent)" : "var(--line)"}`,
+                      background: on ? "var(--accent-soft)" : "var(--panel-2, var(--card-alt))",
+                      color: on ? "var(--accent)" : "var(--ink-2)",
+                      cursor: readOnly ? "default" : "pointer",
+                      fontSize: 11.5,
+                      fontWeight: 800,
+                      textAlign: "center",
+                    }}
+                  >
+                    <Icon name={o.icon} size={16} />
+                    {strings[o.key]}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Origin-specific pickers */}
+            {q.source === "client_answer" && (
+              <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--ink-3)" }}>{strings.originClientNote}</p>
+            )}
+            {q.source !== "client_answer" && (
+              <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--ink-2)", lineHeight: 1.4 }}>{strings.originNotShown}</p>
+            )}
+
+            {q.source === "document_extraction" && (
+              <DocExtractionPicker q={q} sources={sources} strings={strings} readOnly={readOnly} onChange={onChange} />
+            )}
+            {q.source === "generation_output" && (
+              <GenOutputPicker q={q} sources={sources} strings={strings} readOnly={readOnly} onChange={onChange} />
+            )}
+            {q.source === "profile" && (
+              <ProfilePicker q={q} sources={sources} strings={strings} readOnly={readOnly} onChange={onChange} />
+            )}
+          </div>
+
+          {/* Validation (advanced) */}
+          <ValidationPopover q={q} strings={strings} readOnly={readOnly} onChange={onChange} />
+
+          {/* Footer actions */}
+          {!readOnly && (
+            <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "var(--ink-2)" }}>
+                {strings.moveToGroup}
+                <SelectInput
+                  value=""
+                  onChange={(e) => e.target.value && onMoveToGroup(e.target.value)}
+                  aria-label={strings.moveToGroup}
+                  style={{ height: 34, width: "auto", minWidth: 160 }}
+                >
+                  <option value="">—</option>
+                  {groups.filter((g) => g.id !== q.group_id).map((g) => (
+                    <option key={g.id} value={g.id}>{g.label}</option>
+                  ))}
+                </SelectInput>
+              </label>
+              <button
+                type="button"
+                onClick={onDelete}
+                style={{ border: "none", background: "none", color: "var(--red)", fontSize: 12.5, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}
+              >
+                <Icon name="x" size={14} /> {strings.deleteQuestion}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function tType(ft: FieldType, s: FormEditorStrings): string {
+  return s[{ text: "ftText", number: "ftNumber", date: "ftDate", checkbox: "ftCheckbox", select: "ftSelect", textarea: "ftTextarea" }[ft]];
+}
+
+function defaultRef(source: QuestionSource): Record<string, unknown> | null {
+  switch (source) {
+    case "document_extraction":
+      return { document_slug: "", json_path: "" };
+    case "generation_output":
+      return { form_slug: "", output_path: "" };
+    case "profile":
+      return { profile_field: "" };
+    default:
+      return null;
+  }
+}
+
+function OptionsEditor({
+  question,
+  strings,
+  readOnly,
+  onChange,
+}: {
+  question: QuestionVM;
+  strings: FormEditorStrings;
+  readOnly: boolean;
+  onChange: (patch: Partial<QuestionVM>) => void;
+}) {
+  const opts = question.options ?? [];
+  const update = (next: typeof opts) => onChange({ options: next });
+  return (
+    <div>
+      <FieldLabel>{strings.options}</FieldLabel>
+      {opts.length === 0 && (
+        <p style={{ margin: "0 0 8px", fontSize: 12, color: "var(--gold-deep)" }}>{strings.optionsRequired}</p>
+      )}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {opts.map((o, i) => (
+          <div key={i} style={{ display: "grid", gridTemplateColumns: "120px 1fr 1fr auto", gap: 6, alignItems: "center" }}>
+            <TextInput value={o.value} placeholder="value" disabled={readOnly} onChange={(e) => { const n = [...opts]; n[i] = { ...o, value: e.target.value }; update(n); }} style={{ height: 36 }} aria-label={`option value ${i + 1}`} />
+            <TextInput value={o.label_i18n.es ?? ""} placeholder="ES" disabled={readOnly} onChange={(e) => { const n = [...opts]; n[i] = { ...o, label_i18n: { ...o.label_i18n, es: e.target.value } }; update(n); }} style={{ height: 36 }} aria-label={`option ES ${i + 1}`} />
+            <TextInput value={o.label_i18n.en ?? ""} placeholder="EN" disabled={readOnly} onChange={(e) => { const n = [...opts]; n[i] = { ...o, label_i18n: { ...o.label_i18n, en: e.target.value } }; update(n); }} style={{ height: 36 }} aria-label={`option EN ${i + 1}`} />
+            <button type="button" disabled={readOnly} onClick={() => update(opts.filter((_, j) => j !== i))} style={{ border: "none", background: "none", color: "var(--ink-3)", cursor: "pointer", display: "inline-flex" }} aria-label="remove option"><Icon name="x" size={15} /></button>
+          </div>
+        ))}
+      </div>
+      {!readOnly && (
+        <button type="button" onClick={() => update([...opts, { value: "", label_i18n: { es: "", en: "" } }])} style={{ marginTop: 8, border: "none", background: "none", color: "var(--accent)", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>{strings.addOption}</button>
+      )}
+    </div>
+  );
+}
+
+function DocExtractionPicker({ q, sources, strings, readOnly, onChange }: PickerProps) {
+  const ref = (q.source_ref ?? {}) as { document_slug?: string; json_path?: string };
+  const doc = sources.documents.find((d) => d.slug === ref.document_slug);
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
+      <div>
+        <FieldLabel>{strings.pickDocument}</FieldLabel>
+        <SelectInput value={ref.document_slug ?? ""} disabled={readOnly} aria-label={strings.pickDocument} onChange={(e) => onChange({ source_ref: { ...ref, document_slug: e.target.value, json_path: "" } })}>
+          <option value="">—</option>
+          {sources.documents.map((d) => <option key={d.slug} value={d.slug}>{d.slug}</option>)}
+        </SelectInput>
+      </div>
+      <div>
+        <FieldLabel>{strings.pickPath}</FieldLabel>
+        <SelectInput value={ref.json_path ?? ""} disabled={readOnly || !doc} aria-label={strings.pickPath} onChange={(e) => onChange({ source_ref: { ...ref, json_path: e.target.value } })}>
+          <option value="">—</option>
+          {(doc?.paths ?? []).map((p) => <option key={p} value={p}>{p}</option>)}
+        </SelectInput>
+      </div>
+    </div>
+  );
+}
+
+function GenOutputPicker({ q, sources, strings, readOnly, onChange }: PickerProps) {
+  const ref = (q.source_ref ?? {}) as { form_slug?: string; output_path?: string };
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
+      <div>
+        <FieldLabel>{strings.pickForm}</FieldLabel>
+        <SelectInput value={ref.form_slug ?? ""} disabled={readOnly} aria-label={strings.pickForm} onChange={(e) => onChange({ source_ref: { ...ref, form_slug: e.target.value } })}>
+          <option value="">—</option>
+          {sources.forms.map((f) => <option key={f} value={f}>{f}</option>)}
+        </SelectInput>
+      </div>
+      <div>
+        <FieldLabel>{strings.pickPath}</FieldLabel>
+        <TextInput value={ref.output_path ?? ""} disabled={readOnly} placeholder="output.field" aria-label={strings.pickPath} onChange={(e) => onChange({ source_ref: { ...ref, output_path: e.target.value } })} />
+      </div>
+    </div>
+  );
+}
+
+function ProfilePicker({ q, sources, strings, readOnly, onChange }: PickerProps) {
+  const ref = (q.source_ref ?? {}) as { profile_field?: string };
+  const isPii = PII_FIELDS.has(ref.profile_field ?? "");
+  return (
+    <div style={{ marginTop: 10 }}>
+      <FieldLabel>{strings.pickProfileField}</FieldLabel>
+      <SelectInput value={ref.profile_field ?? ""} disabled={readOnly} aria-label={strings.pickProfileField} onChange={(e) => onChange({ source_ref: { profile_field: e.target.value } })}>
+        <option value="">—</option>
+        {sources.profileFields.map((f) => (
+          <option key={f} value={f}>{PII_FIELDS.has(f) ? `🔒 ${f}` : f}</option>
+        ))}
+      </SelectInput>
+      {isPii && (
+        <p style={{ margin: "8px 0 0", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--green)", fontWeight: 600 }}>
+          <Icon name="shield" size={13} /> {strings.piiLocked}
+        </p>
+      )}
+    </div>
+  );
+}
+
+interface PickerProps {
+  q: QuestionVM;
+  sources: { documents: SourceDocumentVM[]; forms: string[]; profileFields: string[] };
+  strings: FormEditorStrings;
+  readOnly: boolean;
+  onChange: (patch: Partial<QuestionVM>) => void;
+}
+
+function ValidationPopover({ q, strings, readOnly, onChange }: { q: QuestionVM; strings: FormEditorStrings; readOnly: boolean; onChange: (patch: Partial<QuestionVM>) => void }) {
+  const [open, setOpen] = React.useState(false);
+  const v = (q.validation ?? {}) as { regex?: string; min?: number; max?: number };
+  return (
+    <div>
+      <button type="button" onClick={() => setOpen((o) => !o)} style={{ border: "none", background: "none", color: "var(--accent)", fontSize: 12.5, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}>
+        <Icon name="gear" size={14} /> {strings.validation}
+      </button>
+      {open && (
+        <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 8 }}>
+          <TextInput value={v.regex ?? ""} placeholder="regex" disabled={readOnly} aria-label="regex" onChange={(e) => onChange({ validation: { ...v, regex: e.target.value } })} style={{ height: 36 }} />
+          <TextInput type="number" value={v.min ?? ""} placeholder="min" disabled={readOnly} aria-label="min" onChange={(e) => onChange({ validation: { ...v, min: e.target.value === "" ? undefined : Number(e.target.value) } })} style={{ height: 36 }} />
+          <TextInput type="number" value={v.max ?? ""} placeholder="max" disabled={readOnly} aria-label="max" onChange={(e) => onChange({ validation: { ...v, max: e.target.value === "" ? undefined : Number(e.target.value) } })} style={{ height: 36 }} />
+        </div>
+      )}
+    </div>
+  );
+}

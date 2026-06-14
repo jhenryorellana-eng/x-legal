@@ -22,6 +22,12 @@ const VIEWS = [
   "casos",
   "caso-detalle",
   "firma",
+  // F4-Ola2 — form editor / datasets / costs
+  "form-editor-pdf",
+  "form-editor-ai",
+  "datasets",
+  "dataset-detalle",
+  "ai-costs",
 ];
 
 export default async function AdminPreviewPage({

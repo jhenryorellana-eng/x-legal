@@ -75,6 +75,7 @@ export const STAFF_NAV: NavGroup[] = [
     items: [
       { labelKey: "payments", href: "/finanzas/pagos", icon: "card", module: "billing", badge: "pagos" },
       { labelKey: "accounting", href: "/finanzas/contabilidad", icon: "wallet", module: "accounting" },
+      { labelKey: "aiCosts", href: "/admin/ai-costs", icon: "dollar", module: "metrics" },
       { labelKey: "campaigns", href: "/finanzas/campanas", icon: "megaphone", module: "campaigns" },
     ],
   },

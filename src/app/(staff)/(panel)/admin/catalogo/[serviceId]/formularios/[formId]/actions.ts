@@ -1,0 +1,140 @@
+"use server";
+
+/**
+ * Form editor server actions (DOC-53 §5).
+ *
+ * Thin "use server" wrappers over the catalog module-pub actions, normalized to
+ * the `{ success, data?, error? }` envelope the editor client consumes. The
+ * underlying actions already carry requireActor + can(catalog, edit). The app
+ * boundary never imports platform/* — signed uploads live in the catalog module
+ * (createFormPdfUploadUrl), wrapped here.
+ */
+
+import {
+  createFormPdfUploadUrlAction,
+  getVersionPdfUrlAction,
+  createAutomationVersionAction,
+  redetectFieldsAction,
+  aiProposeStructureAction,
+  upsertQuestionGroupAction,
+  deleteQuestionGroupAction,
+  upsertQuestionAction,
+  deleteQuestionAction,
+  generateTestPdfAction,
+  publishVersionAction,
+  unpublishVersionAction,
+  updateGenerationConfigAction,
+  testGenerationAction,
+} from "@/backend/modules/catalog/actions";
+
+type Res<T> = { success: boolean; data?: T; error?: { code: string; message: string } };
+
+function envelope<T>(r: { success: boolean; data?: T; error?: { code: string; message: string } }): Res<T> {
+  return r.success ? { success: true, data: r.data } : { success: false, error: r.error };
+}
+
+// --- Stage 1: Upload PDF ---------------------------------------------------
+
+export async function createFormPdfUploadUrlUi(input: {
+  form_definition_id: string;
+  filename: string;
+}): Promise<Res<{ signedUrl: string; path: string }>> {
+  return envelope(await createFormPdfUploadUrlAction(input));
+}
+
+export async function createAutomationVersionUi(input: {
+  form_definition_id: string;
+  uploaded_pdf_path: string;
+}): Promise<Res<unknown>> {
+  return envelope(await createAutomationVersionAction(input));
+}
+
+export async function redetectFieldsUi(versionId: string): Promise<Res<unknown>> {
+  return envelope(await redetectFieldsAction(versionId));
+}
+
+export async function getVersionPdfUrlUi(versionId: string): Promise<Res<string | null>> {
+  return envelope(await getVersionPdfUrlAction(versionId));
+}
+
+// --- Stage 2: Structure ----------------------------------------------------
+
+export async function aiProposeStructureUi(input: {
+  version_id: string;
+  group_id?: string;
+  mode: "replace" | "merge";
+}): Promise<Res<{ groups: number; questions: number }>> {
+  return envelope(await aiProposeStructureAction(input));
+}
+
+export async function upsertGroupUi(input: {
+  id?: string;
+  automation_version_id: string;
+  title_i18n?: Record<string, string>;
+  position?: number;
+}): Promise<Res<{ id: string }>> {
+  const r = await upsertQuestionGroupAction(input);
+  return r.success
+    ? { success: true, data: { id: (r.data as { id: string }).id } }
+    : { success: false, error: r.error };
+}
+
+export async function deleteGroupUi(groupId: string): Promise<Res<unknown>> {
+  return envelope(await deleteQuestionGroupAction(groupId));
+}
+
+export async function upsertQuestionUi(input: Record<string, unknown>): Promise<Res<{ id: string }>> {
+  const r = await upsertQuestionAction(input);
+  return r.success
+    ? { success: true, data: { id: (r.data as { id: string }).id } }
+    : { success: false, error: r.error };
+}
+
+export async function deleteQuestionUi(questionId: string): Promise<Res<unknown>> {
+  return envelope(await deleteQuestionAction(questionId));
+}
+
+// --- Stage 3: Preview ------------------------------------------------------
+
+export async function generateTestPdfUi(input: {
+  version_id: string;
+  sample_answers: Record<string, unknown>;
+}): Promise<Res<{ pdfBase64: string; gaps: Array<{ question_id: string; pdf_field_name: string }> }>> {
+  return envelope(await generateTestPdfAction(input));
+}
+
+// --- Stage 4: Publish ------------------------------------------------------
+
+export async function publishVersionUi(input: {
+  version_id: string;
+  acknowledge_unmapped?: boolean;
+}): Promise<Res<{ ok: boolean; issues: Array<{ code: string; severity: "blocking" | "warning"; detail: string }> }>> {
+  const r = await publishVersionAction(input);
+  if (!r.success) return { success: false, error: r.error };
+  const check = r.data as { ok: boolean; issues: Array<{ code: string; severity: "blocking" | "warning"; detail: string }> };
+  return { success: true, data: { ok: check.ok, issues: check.issues } };
+}
+
+export async function unpublishVersionUi(versionId: string): Promise<Res<unknown>> {
+  return envelope(await unpublishVersionAction(versionId));
+}
+
+// --- ai_letter mode --------------------------------------------------------
+
+export async function updateGenerationConfigUi(
+  input: Record<string, unknown>,
+): Promise<Res<unknown>> {
+  return envelope(
+    await updateGenerationConfigAction(
+      input as Parameters<typeof updateGenerationConfigAction>[0],
+    ),
+  );
+}
+
+export async function testGenerationUi(input: {
+  form_definition_id: string;
+  case_id: string;
+  party_id?: string;
+}): Promise<Res<{ run_id: string }>> {
+  return envelope(await testGenerationAction(input));
+}

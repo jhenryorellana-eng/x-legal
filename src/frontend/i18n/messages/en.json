@@ -545,6 +545,7 @@
         "salesMetrics": "Sales metrics",
         "payments": "Payments & collections",
         "accounting": "Accounting",
+        "aiCosts": "AI spend",
         "campaigns": "Campaigns",
         "services": "Services",
         "datasets": "AI datasets",

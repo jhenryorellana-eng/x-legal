@@ -696,6 +696,47 @@ export async function deleteDatasetItem(id: string): Promise<void> {
   if (error) throw error;
 }
 
+/** Lists every item of a dataset (admin detail view, RF-ADM-039). */
+export async function listDatasetItems(datasetId: string): Promise<DatasetItemRow[]> {
+  const { data, error } = await db()
+    .from("ai_dataset_items")
+    .select("*")
+    .eq("dataset_id", datasetId)
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(`catalog.repo.listDatasetItems: ${error.message}`);
+  return data ?? [];
+}
+
+/** Counts the generation configs that inject a given dataset (RF-ADM-040 "Usado por"). */
+export async function countDatasetUsage(datasetId: string): Promise<number> {
+  const { count, error } = await db()
+    .from("ai_generation_configs")
+    .select("form_definition_id", { count: "exact", head: true })
+    .eq("dataset_id", datasetId);
+  if (error) throw new Error(`catalog.repo.countDatasetUsage: ${error.message}`);
+  return count ?? 0;
+}
+
+/** Lists the generation configs that reference a dataset, enriched for the "Usos" tab. */
+export async function listDatasetUsage(
+  datasetId: string,
+): Promise<Array<{ formId: string; formSlug: string; phaseId: string }>> {
+  const { data, error } = await db()
+    .from("ai_generation_configs")
+    .select("form_definition_id, form_definitions(slug, service_phase_id)")
+    .eq("dataset_id", datasetId);
+  if (error) throw new Error(`catalog.repo.listDatasetUsage: ${error.message}`);
+  return (data ?? []).map((r) => {
+    const fd = (r as { form_definitions?: { slug?: string; service_phase_id?: string } })
+      .form_definitions;
+    return {
+      formId: r.form_definition_id as string,
+      formSlug: fd?.slug ?? "",
+      phaseId: fd?.service_phase_id ?? "",
+    };
+  });
+}
+
 // ---------------------------------------------------------------------------
 // getPhaseCatalog — runtime resolver
 // ---------------------------------------------------------------------------

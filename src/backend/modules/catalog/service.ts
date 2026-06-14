@@ -1706,3 +1706,265 @@ export async function getServiceEditorTree(
     phases,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Form editor reads (DOC-53 §5) — page-initial RSC reads for the editor.
+// ---------------------------------------------------------------------------
+
+export interface EditorVersionTree {
+  version: AutomationVersion;
+  groups: Array<QuestionGroup & { questions: Question[] }>;
+}
+
+export interface FormEditorSourceOption {
+  /** document slug or ai_letter form slug */
+  slug: string;
+  /** json_path keys derived from extraction_schema (document_extraction) */
+  paths?: string[];
+}
+
+export interface FormEditorData {
+  form: { id: string; slug: string; kind: string; label_i18n: import("./domain").I18nTextDraft; service_phase_id: string };
+  service: { id: string; slug: string; label_i18n: import("./domain").I18nTextDraft };
+  versions: AutomationVersion[];
+  /** Editor tree of the open version (the draft, or the version requested). */
+  openVersion: EditorVersionTree | null;
+  /** Source pickers for the origin selector (RF-ADM-033). */
+  sources: {
+    documents: FormEditorSourceOption[];
+    forms: string[];
+    profileFields: string[];
+  };
+  /** ai_letter config (null for pdf_automation or unconfigured). */
+  generationConfig: GenerationConfig | null;
+}
+
+/**
+ * Returns everything the form editor needs for its initial render: the form +
+ * its service, every automation version (chips), the editor tree of the open
+ * version, the source pickers for the origin selector, and the ai_letter config.
+ *
+ * @api-id API-CAT-03 (form editor detail — page-initial RSC read, DOC-53 §5)
+ */
+export async function getFormEditorData(
+  actor: Actor,
+  formDefinitionId: string,
+  openVersionId?: string,
+): Promise<FormEditorData | null> {
+  can(actor, "catalog", "view");
+
+  const form = await repo.findFormDefinition(formDefinitionId);
+  if (!form) return null;
+
+  const phase = await repo.findPhaseById(form.service_phase_id);
+  if (!phase) return null;
+  const service = await repo.findServiceById(phase.service_id);
+  if (!service) return null;
+
+  const versionRows = await repo.listVersions(form.id);
+  const versions = versionRows as unknown as AutomationVersion[];
+
+  // The open version: explicit id, else the draft, else the latest.
+  const targetId =
+    openVersionId ??
+    versionRows.find((v) => v.status === "draft")?.id ??
+    versionRows[versionRows.length - 1]?.id;
+
+  let openVersion: EditorVersionTree | null = null;
+  if (targetId) {
+    const tree = await repo.getVersionTree(targetId);
+    if (tree) {
+      openVersion = {
+        version: tree.version as unknown as AutomationVersion,
+        groups: tree.groups.map((g) => ({
+          ...(g as unknown as QuestionGroup),
+          questions: g.questions as unknown as Question[],
+        })),
+      };
+    }
+  }
+
+  const slugIndex = await repo.getServiceSlugIndex(service.id);
+  const documents: FormEditorSourceOption[] = Object.keys(slugIndex.documentsWithSchema).map(
+    (slug) => ({
+      slug,
+      paths: schemaPaths(slugIndex.documentsWithSchema[slug]),
+    }),
+  );
+
+  const generationConfig =
+    form.kind === "ai_letter"
+      ? ((await repo.findGenerationConfig(form.id)) as unknown as GenerationConfig | null)
+      : null;
+
+  return {
+    form: {
+      id: form.id,
+      slug: form.slug,
+      kind: form.kind,
+      label_i18n: (form.label_i18n ?? {}) as import("./domain").I18nTextDraft,
+      service_phase_id: form.service_phase_id,
+    },
+    service: {
+      id: service.id,
+      slug: service.slug,
+      label_i18n: (service.label_i18n ?? {}) as import("./domain").I18nTextDraft,
+    },
+    versions,
+    openVersion,
+    sources: {
+      documents,
+      forms: slugIndex.aiLetterSlugs,
+      profileFields: Array.from(PROFILE_SOURCE_FIELDS),
+    },
+    generationConfig,
+  };
+}
+
+/** Derives top-level + one-level-nested keys from an extraction_schema object. */
+function schemaPaths(schema: object | null): string[] {
+  if (!schema || typeof schema !== "object") return [];
+  const props = (schema as { properties?: Record<string, unknown> }).properties;
+  if (!props || typeof props !== "object") return [];
+  const paths: string[] = [];
+  for (const [key, val] of Object.entries(props)) {
+    paths.push(key);
+    const nested = (val as { properties?: Record<string, unknown> }).properties;
+    if (nested && typeof nested === "object") {
+      for (const sub of Object.keys(nested)) paths.push(`${key}.${sub}`);
+    }
+  }
+  return paths;
+}
+
+/**
+ * Builds a signed upload URL for an official PDF (catalog-assets, kind=form_pdf).
+ * The path is generated server-side — clients never control it (DOC-27 §5).
+ * Lives in module-pub because app/ cannot import platform/storage (boundary R).
+ *
+ * @api-id API-CAT-07 (assets upload-url, kind: form_pdf)
+ */
+export async function createFormPdfUploadUrl(
+  actor: Actor,
+  input: { form_definition_id: string; filename: string },
+): Promise<{ signedUrl: string; path: string }> {
+  can(actor, "catalog", "edit");
+  const { createSignedUploadUrl } = await import("@/backend/platform/storage");
+  const safe = input.filename.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-80);
+  const path = `forms/${input.form_definition_id}/${Date.now()}-${safe}`;
+  return createSignedUploadUrl("catalog-assets", path);
+}
+
+/**
+ * Returns a short-lived signed download URL for a version's source PDF, so the
+ * editor's PDF viewer (pdfjs in the browser) can render it. The bucket is
+ * private; this is the boundary-clean way to expose it to the client.
+ *
+ * @api-id API-CAT-04 (form pdf download — editor viewer)
+ */
+export async function getVersionPdfUrl(actor: Actor, versionId: string): Promise<string | null> {
+  can(actor, "catalog", "view");
+  const version = await repo.findVersionById(versionId);
+  if (!version) return null;
+  const { createSignedDownloadUrl } = await import("@/backend/platform/storage");
+  return createSignedDownloadUrl("catalog-assets", version.source_pdf_path);
+}
+
+/**
+ * Builds a signed upload URL for a dataset file (catalog-assets, kind=dataset_file).
+ *
+ * @api-id API-CAT-07 (assets upload-url, kind: dataset_file)
+ */
+export async function createDatasetFileUploadUrl(
+  actor: Actor,
+  input: { dataset_id: string; filename: string },
+): Promise<{ signedUrl: string; path: string }> {
+  can(actor, "datasets", "edit");
+  const { createSignedUploadUrl } = await import("@/backend/platform/storage");
+  const safe = input.filename.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-80);
+  const path = `datasets/${input.dataset_id}/${Date.now()}-${safe}`;
+  return createSignedUploadUrl("catalog-assets", path);
+}
+
+// ---------------------------------------------------------------------------
+// Dataset detail reads (DOC-53 §6.2) — page-initial RSC reads.
+// ---------------------------------------------------------------------------
+
+export interface DatasetSummary {
+  id: string;
+  name: string;
+  purpose: string | null;
+  source_kind: string;
+  is_active: boolean;
+  item_count: number;
+  total_tokens: number;
+  used_by: number;
+}
+
+/** Lists datasets enriched with item count, total tokens and usage count (RF-ADM-038). */
+export async function listDatasetsAdmin(actor: Actor): Promise<DatasetSummary[]> {
+  can(actor, "datasets", "view");
+  const rows = await repo.listDatasets(actor.orgId);
+  return Promise.all(
+    rows.map(async (ds) => {
+      const [items, usedBy] = await Promise.all([
+        repo.listDatasetItems(ds.id),
+        repo.countDatasetUsage(ds.id),
+      ]);
+      return {
+        id: ds.id,
+        name: ds.name,
+        purpose: ds.purpose,
+        source_kind: ds.source_kind,
+        is_active: ds.is_active,
+        item_count: items.length,
+        total_tokens: items.reduce((sum, it) => sum + (it.token_count ?? 0), 0),
+        used_by: usedBy,
+      };
+    }),
+  );
+}
+
+export interface DatasetDetail {
+  dataset: DatasetSummary;
+  items: DatasetItem[];
+  usage: Array<{ formId: string; formSlug: string; phaseId: string; serviceId: string }>;
+}
+
+/** Returns a dataset with its items and usage list (RF-ADM-039/040). */
+export async function getDatasetDetail(
+  actor: Actor,
+  datasetId: string,
+): Promise<DatasetDetail | null> {
+  can(actor, "datasets", "view");
+  const ds = await repo.findDataset(datasetId);
+  if (!ds || ds.org_id !== actor.orgId) return null;
+
+  const [items, usageRows, usedBy] = await Promise.all([
+    repo.listDatasetItems(datasetId),
+    repo.listDatasetUsage(datasetId),
+    repo.countDatasetUsage(datasetId),
+  ]);
+
+  const usage = await Promise.all(
+    usageRows.map(async (u) => {
+      const phase = u.phaseId ? await repo.findPhaseById(u.phaseId) : null;
+      return { ...u, serviceId: phase?.service_id ?? "" };
+    }),
+  );
+
+  return {
+    dataset: {
+      id: ds.id,
+      name: ds.name,
+      purpose: ds.purpose,
+      source_kind: ds.source_kind,
+      is_active: ds.is_active,
+      item_count: items.length,
+      total_tokens: items.reduce((sum, it) => sum + (it.token_count ?? 0), 0),
+      used_by: usedBy,
+    },
+    items: items as unknown as DatasetItem[],
+    usage,
+  };
+}

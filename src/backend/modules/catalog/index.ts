@@ -20,13 +20,23 @@ export {
   // Admin panel reads (DOC-53 §4 — page-initial RSC reads)
   listServicesAdmin,
   getServiceEditorTree,
+  // Form editor + datasets reads (DOC-53 §5 / §6 — page-initial RSC reads)
+  getFormEditorData,
+  getVersionPdfUrl,
+  listDatasetsAdmin,
+  getDatasetDetail,
 } from "./service";
 
-// Admin read types (DOC-53 §4)
+// Admin read types (DOC-53 §4 / §5 / §6)
 export type {
   AdminServiceSummary,
   ServiceEditorTree,
   ServiceEditorPhase,
+  FormEditorData,
+  EditorVersionTree,
+  FormEditorSourceOption,
+  DatasetSummary,
+  DatasetDetail,
 } from "./service";
 
 // Types needed by other modules

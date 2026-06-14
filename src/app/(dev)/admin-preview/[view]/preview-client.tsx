@@ -13,6 +13,18 @@ import { SharedCaseView } from "@/frontend/features/shared-case";
 import { SigningView } from "@/app/(public)/firma/[token]/signing-view";
 import { buildSigningStrings } from "@/app/(public)/firma/[token]/strings";
 import { BrandToaster } from "@/frontend/components/desktop";
+import { FormEditorView, FORM_EDITOR_STRINGS_ES, type FormEditorActions } from "@/frontend/features/admin/form-editor";
+import { DatasetsListView, DatasetDetailView } from "@/frontend/features/admin/datasets";
+import { AiCostsView } from "@/frontend/features/admin/ai-costs";
+import {
+  formEditorPdfMock,
+  formEditorAiMock,
+  datasetsListMock,
+  datasetHeaderMock,
+  datasetItemsMock,
+  datasetUsageMock,
+  aiCostsMock,
+} from "../f4-mock";
 import {
   employeesMock,
   employeesMessages,
@@ -162,9 +174,59 @@ export function PreviewClient({ view }: { view: string }) {
           />
         </div>
       )}
+
+      {view === "form-editor-pdf" && (
+        <FormEditorView vm={formEditorPdfMock} strings={FORM_EDITOR_STRINGS_ES} actions={formEditorNoopActions} lang="es" datasetsHref="#" />
+      )}
+
+      {view === "form-editor-ai" && (
+        <FormEditorView vm={formEditorAiMock} strings={FORM_EDITOR_STRINGS_ES} actions={formEditorNoopActions} lang="es" datasetsHref="#" />
+      )}
+
+      {view === "datasets" && (
+        <DatasetsListView
+          rows={datasetsListMock}
+          detailBasePath="#"
+          actions={{ create: async () => ({ success: true, data: { id: "new" } }), setActive: noopRes, remove: noopRes }}
+        />
+      )}
+
+      {view === "dataset-detalle" && (
+        <DatasetDetailView
+          header={datasetHeaderMock}
+          items={datasetItemsMock}
+          usage={datasetUsageMock}
+          initialTab="items"
+          catalogBasePath="#"
+          actions={{
+            createItem: async () => ({ success: true, data: { id: "it-new", token_count: 2400 } }),
+            deleteItem: noopRes,
+            createUploadUrl: async () => ({ success: true, data: { signedUrl: "#", path: "x" } }),
+          }}
+        />
+      )}
+
+      {view === "ai-costs" && <AiCostsView vm={aiCostsMock} />}
     </div>
   );
 }
+
+const formEditorNoopActions: FormEditorActions = {
+  createUploadUrl: async () => ({ success: true, data: { signedUrl: "#", path: "x" } }),
+  createVersion: async () => ({ success: true }),
+  redetect: async () => ({ success: true }),
+  getPdfUrl: async () => ({ success: true, data: null }),
+  aiPropose: async () => ({ success: true, data: { groups: 3, questions: 12 } }),
+  upsertGroup: async () => ({ success: true, data: { id: "g-new" } }),
+  deleteGroup: async () => ({ success: true }),
+  upsertQuestion: async () => ({ success: true, data: { id: "q-new" } }),
+  deleteQuestion: async () => ({ success: true }),
+  generateTestPdf: async () => ({ success: true, data: { pdfBase64: "", gaps: [] } }),
+  publish: async () => ({ success: true, data: { ok: false, issues: [{ code: "CATALOG_PDF_FIELD_UNMAPPED", severity: "warning", detail: "Pt3Line1_Signature · pág. 3 sin pregunta" }] } }),
+  unpublish: async () => ({ success: true }),
+  saveGenerationConfig: async () => ({ success: true }),
+  testGeneration: async () => ({ success: true, data: { run_id: "run-demo-001" } }),
+};
 
 /** Public signing surface preview (mobile tokens). */
 function FirmaPreview() {

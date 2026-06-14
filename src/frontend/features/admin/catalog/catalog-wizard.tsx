@@ -314,7 +314,7 @@ export function CatalogWizard({
         {step === "docs" && (
           <DocsStep phases={phases} setPhases={setPhases} actions={actions} t={t} />
         )}
-        {step === "forms" && <FormsStep t={t} />}
+        {step === "forms" && <FormsStep t={t} serviceId={serviceId} phases={phases} />}
         {step === "publish" && <PublishStep issues={pubIssues} published={published} label={label.es ?? slug} t={t} onGoToStep={setStep} />}
       </Card>
 
@@ -908,12 +908,36 @@ function DocsStep({
 
 /* ───────────────────────── Step 5: Forms (F4 stub) ───────────────────────── */
 
-function FormsStep({ t }: { t: Record<string, string> }) {
+function FormsStep({ t, serviceId, phases }: { t: Record<string, string>; serviceId: string | null; phases: WizardPhase[] }) {
+  const allForms = phases.flatMap((ph) => ph.forms.map((f) => ({ ...f, phaseLabel: ph.label.es || ph.label.en || ph.slug })));
+
+  if (!serviceId || allForms.length === 0) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: 8, padding: "40px 24px" }}>
+        <Lex size={120} mood="señala" />
+        <h3 style={{ margin: "6px 0 0", fontFamily: "var(--font-title)", fontWeight: 800, fontSize: 17, color: "var(--ink)" }}>{t.formStub}</h3>
+        <p style={{ margin: 0, maxWidth: 420, fontSize: 14, lineHeight: 1.5, color: "var(--ink-2)" }}>{t.formStubSub}</p>
+      </div>
+    );
+  }
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: 8, padding: "40px 24px" }}>
-      <Lex size={120} mood="señala" />
-      <h3 style={{ margin: "6px 0 0", fontFamily: "var(--font-title)", fontWeight: 800, fontSize: 17, color: "var(--ink)" }}>{t.formStub}</h3>
-      <p style={{ margin: 0, maxWidth: 420, fontSize: 14, lineHeight: 1.5, color: "var(--ink-2)" }}>{t.formStubSub}</p>
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {allForms.map((f) => (
+        <a
+          key={f.id}
+          href={`/admin/catalogo/${serviceId}/formularios/${f.id}`}
+          style={{ display: "flex", alignItems: "center", gap: 12, textDecoration: "none", borderRadius: 14, border: "1px solid var(--line)", background: "var(--card,#fff)", padding: "14px 16px" }}
+        >
+          <Icon name={f.kind === "ai_letter" ? "sparkle" : "form"} size={20} color={f.kind === "ai_letter" ? "var(--gold-deep)" : "var(--accent)"} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--ink)" }}>{f.label.es || f.label.en || f.slug}</div>
+            <div style={{ fontSize: 12, color: "var(--ink-3)" }}>{f.phaseLabel}</div>
+          </div>
+          <Chip tone={f.kind === "ai_letter" ? "gold" : "blue"}>{f.kind === "ai_letter" ? "Generación IA" : "PDF oficial"}</Chip>
+          <Icon name="chevR" size={16} color="var(--ink-3)" />
+        </a>
+      ))}
     </div>
   );
 }

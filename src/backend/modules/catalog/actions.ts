@@ -356,6 +356,95 @@ export async function deleteQuestionAction(questionId: string): Promise<ActionRe
   }
 }
 
+/**
+ * Paso 1 — upload-url for the official PDF (signed URL to catalog-assets).
+ * @api-id API-CAT-07 (form_pdf)
+ */
+export async function createFormPdfUploadUrlAction(
+  input: Parameters<typeof svc.createFormPdfUploadUrl>[1],
+): Promise<ActionResult<Awaited<ReturnType<typeof svc.createFormPdfUploadUrl>>>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.createFormPdfUploadUrl(actor, input));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** @api-id API-CAT-04 — signed download URL for the version PDF (editor viewer) */
+export async function getVersionPdfUrlAction(
+  versionId: string,
+): Promise<ActionResult<string | null>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.getVersionPdfUrl(actor, versionId));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** @api-id API-CAT-32 — create version + chained detection */
+export async function createAutomationVersionAction(
+  input: Parameters<typeof svc.createAutomationVersion>[1],
+): Promise<ActionResult<Awaited<ReturnType<typeof svc.createAutomationVersion>>>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.createAutomationVersion(actor, input));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** @api-id API-CAT-33 — re-detect AcroForm fields */
+export async function redetectFieldsAction(
+  versionId: string,
+): Promise<ActionResult<Awaited<ReturnType<typeof svc.redetectFields>>>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.redetectFields(actor, versionId));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** @api-id API-CAT-34 — AI-assisted form segmentation */
+export async function aiProposeStructureAction(
+  input: Parameters<typeof svc.aiProposeStructure>[1],
+): Promise<ActionResult<Awaited<ReturnType<typeof svc.aiProposeStructure>>>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.aiProposeStructure(actor, input));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** @api-id API-CAT-42 — test PDF (in-memory). Returns base64 PDF + gaps. */
+export async function generateTestPdfAction(
+  input: Parameters<typeof svc.generateTestPdf>[1],
+): Promise<ActionResult<{ pdfBase64: string; gaps: Array<{ question_id: string; pdf_field_name: string }> }>> {
+  try {
+    const actor = await requireActor();
+    const r = await svc.generateTestPdf(actor, input);
+    const pdfBase64 = Buffer.from(r.pdfBytes).toString("base64");
+    return ok({ pdfBase64, gaps: r.gaps });
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** @api-id API-CAT-28 — propose extraction schema with AI */
+export async function proposeExtractionSchemaAction(
+  input: Parameters<typeof svc.proposeExtractionSchema>[1],
+): Promise<ActionResult<Awaited<ReturnType<typeof svc.proposeExtractionSchema>>>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.proposeExtractionSchema(actor, input));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 /** @api-id API-CAT-43 */
 export async function publishVersionAction(
   input: Parameters<typeof svc.publishVersion>[1],
@@ -409,6 +498,18 @@ export async function updateGenerationConfigAction(
   }
 }
 
+/** @api-id API-CAT-47 — test generation (is_test=true) */
+export async function testGenerationAction(
+  input: Parameters<typeof svc.testGeneration>[1],
+): Promise<ActionResult<Awaited<ReturnType<typeof svc.testGeneration>>>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.testGeneration(actor, input));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Datasets
 // ---------------------------------------------------------------------------
@@ -450,12 +551,48 @@ export async function createDatasetItemAction(
   }
 }
 
+/** @api-id API-CAT-51 */
+export async function updateDatasetItemAction(
+  itemId: string,
+  patch: Parameters<typeof svc.updateDatasetItem>[2],
+): Promise<ActionResult<Awaited<ReturnType<typeof svc.updateDatasetItem>>>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.updateDatasetItem(actor, itemId, patch));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 /** @api-id API-CAT-52 */
 export async function deleteDatasetItemAction(itemId: string): Promise<ActionResult<void>> {
   try {
     const actor = await requireActor();
     await svc.deleteDatasetItem(actor, itemId);
     return ok(undefined);
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** @api-id API-CAT-53 — delete dataset (FK-restricted; CATALOG_DATASET_IN_USE) */
+export async function deleteDatasetAction(datasetId: string): Promise<ActionResult<void>> {
+  try {
+    const actor = await requireActor();
+    await svc.deleteDataset(actor, datasetId);
+    return ok(undefined);
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** @api-id API-CAT-07 (dataset_file) — signed upload URL for a dataset file. */
+export async function createDatasetFileUploadUrlAction(
+  input: Parameters<typeof svc.createDatasetFileUploadUrl>[1],
+): Promise<ActionResult<Awaited<ReturnType<typeof svc.createDatasetFileUploadUrl>>>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.createDatasetFileUploadUrl(actor, input));
   } catch (e) {
     return fail(e);
   }
