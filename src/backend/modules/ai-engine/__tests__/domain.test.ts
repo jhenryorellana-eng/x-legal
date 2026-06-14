@@ -661,6 +661,26 @@ describe("assemblePrompt", () => {
     expect(result.messages[0].content).toContain("Maria Garcia");
   });
 
+  it("masks PII in extraction payload values, including nested arrays (recursive)", () => {
+    const inputs: ResolvedInputs = {
+      ...BASE_INPUTS,
+      documents: [
+        {
+          slug: "passport",
+          // top-level string SSN + an SSN nested inside an array value
+          extractionPayload: { ssn: "123-45-6789", aliases: ["John 987-65-4321 Doe"] },
+          rawText: "no pii here",
+        },
+      ],
+    };
+    const content = assemblePrompt(BASE_SNAPSHOT, inputs, NO_DATASET).messages[0].content;
+    // Neither the top-level nor the array-nested SSN may reach the AI provider.
+    expect(content).not.toContain("123-45-6789");
+    expect(content).not.toContain("987-65-4321");
+    expect(content).toContain("•••-••-6789");
+    expect(content).toContain("•••-••-4321");
+  });
+
   it("includes raw_text of documents in user message", () => {
     const result = assemblePrompt(BASE_SNAPSHOT, BASE_INPUTS, NO_DATASET);
     expect(result.messages[0].content).toContain("PASSPORT");

@@ -433,10 +433,15 @@ describe("cancelGeneration", () => {
 
     await cancelGeneration(ADMIN_ACTOR, RUN_ID);
 
+    // Cancels only a still-queued/running run (TOCTOU guard via conditional WHERE).
     expect(mocks.repo.updateRunStatus).toHaveBeenCalledWith(
       RUN_ID,
       "cancelled",
+      undefined,
+      ["queued", "running"],
     );
+    // Cross-tenant guard runs before the mutation.
+    expect(mocks.authz.requireCaseAccess).toHaveBeenCalledWith(ADMIN_ACTOR, CASE_ID);
   });
 
   it("throws AI_RUN_NOT_FOUND when run does not exist", async () => {

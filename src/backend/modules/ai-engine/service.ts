@@ -275,6 +275,7 @@ export async function startGeneration(
       attempt: 1,
       dedupeId: `run-generation:${run.id}:v${run.version}`,
       runId: run.id,
+      orgId: actor.orgId,
     },
     { retries: 2 },
   );
@@ -322,6 +323,8 @@ export interface RunGenerationPayload {
   entityId: string;
   attempt: number;
   dedupeId: string;
+  /** Org of the run — enables the webhook_events idempotency barrier at ingress. */
+  orgId: string;
   chunk?: {
     index: number;
     partPaths: string[];
@@ -376,6 +379,7 @@ export async function executeGenerationJob(
         attempt: deferAttempt + 1,
         dedupeId: `run-generation:${run.id}:v${run.version}:defer-${deferAttempt}`,
         runId: run.id,
+        orgId: run.orgId,
       },
       { delay: 60, retries: 2 },
     );
@@ -627,11 +631,15 @@ export async function cancelGeneration(
   can(actor, "cases", "edit");
   const run = await findRunById(runId);
   if (!run) throw new AiEngineError("AI_RUN_NOT_FOUND");
+  // Cross-tenant guard: findRunById fetches by UUID globally; verify the actor
+  // belongs to this run's case before mutating (else org A could cancel org B's run).
+  await requireCaseAccess(actor, run.case_id);
   if (!canTransitionRun(run.status as Parameters<typeof canTransitionRun>[0], "cancelled")) {
     throw new AiEngineError("AI_RUN_INVALID_STATE");
   }
 
-  await updateRunStatus(runId, "cancelled");
+  // Conditional WHERE guards the TOCTOU window: only cancel a run still queued/running.
+  await updateRunStatus(runId, "cancelled", undefined, ["queued", "running"]);
   await writeAudit(actor, "ai.generation.cancelled", "ai_generation_run", runId, {});
 }
 
@@ -651,6 +659,8 @@ export async function regenerate(
 ): Promise<StartGenerationResult> {
   const prev = await findRunById(runId);
   if (!prev) throw new AiEngineError("AI_RUN_NOT_FOUND");
+  // Cross-tenant guard (also enforced transitively by startGeneration, made explicit here).
+  await requireCaseAccess(actor, prev.case_id);
 
   return startGeneration(actor, {
     caseId: prev.case_id,
@@ -678,6 +688,8 @@ export async function retryRunSameVersion(
 
   const run = await findRunById(runId);
   if (!run) throw new AiEngineError("AI_RUN_NOT_FOUND");
+  // Cross-tenant guard: an admin is org-scoped — verify the run's case is in their org.
+  await requireCaseAccess(actor, run.case_id);
   if (!canTransitionRun(run.status as Parameters<typeof canTransitionRun>[0], "queued")) {
     throw new AiEngineError("AI_RUN_INVALID_STATE");
   }
@@ -691,6 +703,7 @@ export async function retryRunSameVersion(
       attempt: attempt + 1,
       dedupeId: `run-generation:${run.id}:v${run.version}:retry-${attempt}`,
       runId: run.id,
+      orgId: actor.orgId,
     },
     { retries: 2 },
   );
@@ -807,6 +820,19 @@ export async function executeExtractionJob(
 
   const fileBytes = new Uint8Array(await fileData.arrayBuffer());
   const fileBase64 = Buffer.from(fileBytes).toString("base64");
+
+  // Guard: `raw_text` is a reserved injected field. If the configured
+  // extraction_schema already declares it, our injection would silently
+  // overwrite it (and corrupt the extracted payload). Fail loudly instead.
+  // (The catalog editor should also validate this, but defend at runtime.)
+  const baseSchema = (rdt.extractionSchema ?? {}) as Record<string, unknown>;
+  const baseProps =
+    (baseSchema.properties as Record<string, unknown> | undefined) ?? baseSchema;
+  if (baseProps && typeof baseProps === "object" && "raw_text" in baseProps) {
+    throw new AiEngineError("AI_CONFIG_NOT_FOUND", {
+      reason: "extraction_schema declares the reserved field name 'raw_text'",
+    });
+  }
 
   // Build schema with raw_text field injected (DOC-42 §3.6 / DOC-74 §3.4)
   const extractionSchemaWithRawText = {
@@ -996,6 +1022,7 @@ export async function reprocessExtraction(
       attempt: n,
       dedupeId: `extract-document:${caseDocumentId}:retry-${n}`,
       caseDocumentId,
+      orgId: actor.orgId,
     },
     { retries: 3 },
   );
@@ -1044,6 +1071,7 @@ export async function translateDocument(
         dedupeId: `translate-document:${p.caseDocumentId}:${p.direction}:retry-${attempt + 1}`,
         translationId: existing.id,
         direction: p.direction,
+        orgId: actor.orgId,
       },
       { retries: 3 },
     );
@@ -1067,6 +1095,7 @@ export async function translateDocument(
         dedupeId: `translate-document:${p.caseDocumentId}:${p.direction}`,
         translationId: row.id,
         direction: p.direction,
+        orgId: actor.orgId,
       },
       { retries: 3 },
     );
@@ -1171,17 +1200,22 @@ export async function executeTranslationJob(
         },
       });
     } else {
-      await completeTranslation(translation.id, {
-        status: "completed",
-        translatedText: "",
-        translatedPdfPath: null,
-        model,
-        inputTokens: 0,
-        outputTokens: 0,
-        costUsd: 0,
-        completedAt: new Date().toISOString(),
-      });
-      return "skipped";
+      // No source text AND no source PDF — this is a data gap, NOT a success.
+      // Marking it 'completed' with empty text would poison the UNIQUE
+      // (case_document_id, direction) cache and serve empty text on the next call.
+      // Mark 'failed' so it can be retried once a source exists.
+      const { createServiceClient } = await import("@/backend/platform/supabase");
+      const supabase = createServiceClient();
+      await supabase
+        .from("document_translations")
+        .update({ status: "failed", updated_at: new Date().toISOString() })
+        .eq("id", translation.id)
+        .in("status", ["processing"]);
+      logger.warn(
+        { translationId: translation.id },
+        "translate-document: no source text or PDF available — marked failed",
+      );
+      return "failed";
     }
 
     translatedText = response.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
@@ -1236,8 +1270,10 @@ export async function markTranslationFailed(
 ): Promise<void> {
   const { createServiceClient } = await import("@/backend/platform/supabase");
   const supabase = createServiceClient();
-  // Note: document_translations has no error column; log error externally
-  void errorMsg; // consumed by caller for logging
+  // document_translations has no `error` column (unlike document_extractions), so
+  // we persist the failure status and surface the reason via the structured logger
+  // (PII-redacted) rather than dropping it silently.
+  logger.warn({ translationId, errorMsg }, "ai-engine: translation marked failed by callback");
   await supabase
     .from("document_translations")
     .update({

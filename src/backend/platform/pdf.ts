@@ -62,6 +62,7 @@ export async function renderMarkdownToPdf(md: string): Promise<Uint8Array> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const htmlDoc = (mupdf.Document as any).openDocument(buf, "text/html");
 
+  try {
   // US Letter: 612 × 792 pt, 11pt base font
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (htmlDoc as any).layout(612, 792, 11);
@@ -99,6 +100,11 @@ export async function renderMarkdownToPdf(md: string): Promise<Uint8Array> {
   (writer as any).close();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (writerBuf as any).asUint8Array() as Uint8Array;
+  } finally {
+    // Release the mupdf WASM document (linear allocator — avoid a per-call leak).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    try { (htmlDoc as any).destroy?.(); } catch { /* already freed */ }
+  }
 }
 
 // ---------------------------------------------------------------------------

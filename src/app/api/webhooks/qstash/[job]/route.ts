@@ -27,7 +27,9 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { verifyQStashSignature } from "@/backend/platform/qstash";
+import { claimWebhookEvent, markWebhookEventProcessed } from "@/backend/platform/webhook-events";
 import { logger } from "@/backend/platform/logger";
+import type { Json } from "@/shared/database.types";
 import { handleDeliverNotification } from "@/backend/jobs/deliver-notification";
 import { handleAppointmentReminders } from "@/backend/jobs/appointment-reminders";
 import { handleRunGeneration } from "@/backend/jobs/run-generation";
@@ -98,6 +100,38 @@ export async function POST(
     return NextResponse.json({ ok: false, reason: "unknown_job" });
   }
 
+  // 4. Idempotency barrier (DOC-26 §1.1 / DOC-27 §3.2). Only org-scoped jobs
+  //    carry orgId + dedupeId; global crons rely on their own internal dedupe.
+  const envelope = payload as Record<string, unknown> | null;
+  const dedupeId = typeof envelope?.dedupeId === "string" ? envelope.dedupeId : null;
+  const orgId = typeof envelope?.orgId === "string" ? envelope.orgId : null;
+
+  if (dedupeId && orgId) {
+    const claim = await claimWebhookEvent({
+      source: "qstash",
+      idempotencyKey: dedupeId,
+      orgId,
+      eventType: job,
+      rawBody: payload as Json,
+      signatureValid: true,
+    });
+    if (claim === "duplicate") {
+      logger.info({ job, dedupeId }, "qstash: duplicate delivery skipped (already processed)");
+      return NextResponse.json({ ok: true, reason: "duplicate" });
+    }
+    // "fresh" or "retry" (prior attempt died mid-flight) → run the idempotent handler.
+    try {
+      await handler(payload);
+      await markWebhookEventProcessed("qstash", dedupeId);
+      logger.info({ job, dedupeId }, "qstash: job completed");
+      return NextResponse.json({ ok: true });
+    } catch (err) {
+      logger.error({ err, job }, "qstash: job handler threw — will retry");
+      return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    }
+  }
+
+  // Crons / jobs without orgId: dispatch directly (handlers are internally idempotent).
   try {
     await handler(payload);
     logger.info({ job }, "qstash: job completed");

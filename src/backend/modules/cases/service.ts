@@ -715,8 +715,10 @@ export async function confirmDocumentUpload(
             jobKey: "extract-document",
             entityId: doc.id,
             attempt: 1,
-            dedupeId: `extract-document:${doc.id}:v1`,
+            // Canonical dedupe key (DOC-26 §4.2) — no version suffix; reprocess uses :retry-N.
+            dedupeId: `extract-document:${doc.id}`,
             caseDocumentId: doc.id,
+            orgId: actor.orgId,
           },
           { retries: 3 },
         );

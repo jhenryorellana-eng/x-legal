@@ -151,12 +151,18 @@ export async function updateRunStatus(
   runId: string,
   status: string,
   extra?: Partial<TablesUpdate<"ai_generation_runs">>,
+  /** Optional WHERE-status guard to close TOCTOU windows (e.g. cancel only queued/running). */
+  whereStatus?: string[],
 ): Promise<void> {
   const client = createServiceClient();
-  const { error } = await client
+  let query = client
     .from("ai_generation_runs")
     .update({ status, updated_at: new Date().toISOString(), ...extra })
     .eq("id", runId);
+  if (whereStatus && whereStatus.length > 0) {
+    query = query.in("status", whereStatus);
+  }
+  const { error } = await query;
 
   if (error) {
     logger.error({ err: error, runId, status }, "ai-engine: updateRunStatus failed");
@@ -183,7 +189,12 @@ export async function completeRun(
   },
 ): Promise<{ rowsAffected: number }> {
   const client = createServiceClient();
-  const { error, count } = await client
+  // .select("id") returns the affected rows. NOTE: Supabase JS only populates
+  // `count` when { count: 'exact' } is passed; without it, count is null and
+  // rowsAffected would always be 0 — which would suppress the generation.completed
+  // event. We count the returned rows instead (conditional WHERE status='running'
+  // makes the terminal transition atomic + tells us if another delivery won).
+  const { error, data } = await client
     .from("ai_generation_runs")
     .update({
       status: "completed",
@@ -202,13 +213,13 @@ export async function completeRun(
     })
     .eq("id", runId)
     .eq("status", "running")
-    .select();
+    .select("id");
 
   if (error) {
     logger.error({ err: error, runId }, "ai-engine: completeRun failed");
     throw new Error(`ai-engine: completeRun failed — ${error.message}`);
   }
-  return { rowsAffected: count ?? 0 };
+  return { rowsAffected: data?.length ?? 0 };
 }
 
 /**
@@ -269,6 +280,12 @@ export async function updateRunProgress(
 
 /**
  * Patches the config_snapshot jsonb with new fields (e.g. dataset_injection).
+ *
+ * NOTE: read-modify-write (not atomic). This is BENIGN here because the only
+ * caller writes `dataset_injection` exactly once, guarded by an
+ * `if (!snapshot.dataset_injection)` check before calling — concurrent chunk
+ * continuations would write the identical value. If future fields need
+ * concurrent patching, switch to a server-side `jsonb` merge (`||`).
  */
 export async function patchConfigSnapshot(
   runId: string,

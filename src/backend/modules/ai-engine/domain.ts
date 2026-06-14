@@ -561,13 +561,28 @@ function buildFormatInstructions(outputLanguage: string, maxOutputTokens: number
   ].join("\n");
 }
 
-/** Applies maskPii to every string value in a flat record */
-function maskObjectValues(obj: Record<string, unknown>): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(obj)) {
-    result[key] = typeof value === "string" ? maskPii(value) : value;
+/**
+ * Recursively masks PII in any nested string value (DOC-74 §7.1).
+ * extraction_schema payloads and form answers are arbitrary JSON — a US passport
+ * extraction nests SSN/A-number/passport at depth ≥2, so a shallow mask would let
+ * those reach the AI provider unmasked. Strings → maskPii; arrays/objects → recurse.
+ */
+function maskDeep(value: unknown): unknown {
+  if (typeof value === "string") return maskPii(value);
+  if (Array.isArray(value)) return value.map(maskDeep);
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = maskDeep(v);
+    }
+    return out;
   }
-  return result;
+  return value;
+}
+
+/** Applies maskPii to every (possibly nested) string value in a record. */
+function maskObjectValues(obj: Record<string, unknown>): Record<string, unknown> {
+  return maskDeep(obj) as Record<string, unknown>;
 }
 
 function escapeXml(s: string): string {
