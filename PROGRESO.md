@@ -33,8 +33,15 @@ Módulo `ai-engine` (domain 13 funcs puras, service API-AI-01..10, repository, e
 - Gates: tsc 0 · eslint 0/0 · **727 tests** (+27) · build ✓. Commits `d931bab`+`19d4367`+`9dfe5c0`.
 - **0017 aplicada al remoto** ✓ (vía MCP). **Claves IA cargadas + validadas** (ping real: sonnet-4-6 y gemini-2.5-flash responden).
 
-### Ola pendiente
-- **F4-3** Form-wizard runtime + cliente + E2E (prueba de fuego: servicio nuevo end-to-end sin código) + demo.
+### Ola F4-3 — Form-wizard runtime + cliente ✅ (construido + revisado; falta demo en vivo)
+- **Backend runtime** (`cases`, DOC-41 §3.8–3.10): `getFormForClient` (versión+grupos+preguntas+prellenado resuelto), `saveFormDraft` (congela `automation_version_id`, merge JSONB por clave), `submitFormResponse` (validación server-side requeridas+regex/min/max+**select whitelist**), `approveFormResponse` (gate `filled_by`), `generateFilledPdf` (`resolveBySource`→`fillAcroForm` mupdf→bucket `generated`, gates FORM_PDF_BLOCKED/FORM_VERSION_MISMATCH), `getCaseExtractions`. **PII de `profile` se descifra y resuelve LOCALMENTE, nunca a la IA.**
+- **Form-wizard cliente** (motor compartido `frontend/features/form-wizard/`, SOT-3 DOC-50 §6): data-driven por grupos, **Zod generado**, **autosave** (debounce + cola IndexedDB + backoff), prellenado **"Ya lo tenemos"**, dictado por voz; pantallas `formulario/[formId]`, lista, **Mi Historia**. **El preview del editor admin (F4-2) ahora usa el MISMO motor** (TODO resuelto). Verificado visual (10 screenshots, 0 errores).
+- **Two-stage review** (code-reviewer → NEEDS-REVISION): **2 CRÍTICOS cross-tenant** (approve/generate leían por responseId con service-client sin `requireCaseAccess` → un staff de otra org podía aprobar/generar el PDF con PII de un caso ajeno) + 3 HIGH (select whitelist, validación silenciosa con versión sin preguntas, merge no atómico) + nits — **TODOS corregidos** + tests de regresión cross-tenant. Migración aditiva **0018** (RPC `merge_form_answers` atómica) creada — **pendiente de aplicar** (código funciona vía fallback).
+- Gates: tsc 0 · eslint 0/0 · **799 tests** (+72) · build ✓ · i18n 1182. Commits `b0fe2e5`+`2dccfec`+`50c90b6`.
+
+### Pendiente para cerrar F4 (la "prueba de fuego" DOC-00 §5.2)
+- **E2E + demo en vivo**: Henry configura un ai_letter + publica un formulario → un cliente recorre el wizard prellenado → staff genera el PDF llenado con IA real. Necesita: (a) el **MCP de Playwright** reconectado (se desconectó) para manejar el flujo en vivo, **o** un setup por script; (b) un **formulario publicado + ai_generation_config** (hoy no hay ninguno en la BD). Las claves IA ya están probadas (ping real), así que la generación funcionará.
+- Aplicar migración **0018** (atomicidad del merge de autosave) con autorización de Henry.
 
 ---
 
