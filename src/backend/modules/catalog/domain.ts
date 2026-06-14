@@ -860,9 +860,20 @@ export function validateExtractionSchema(schema: unknown): { valid: boolean; rea
     return { valid: false, reason: "schema must be a plain object" };
   }
   const FORBIDDEN_KEYS = ["$ref", "if", "then", "else", "anyOf", "oneOf", "not", "$defs", "definitions"];
-  const found = FORBIDDEN_KEYS.filter((k) => k in (schema as Record<string, unknown>));
+  // Recursive walk — Gemini portability check must cover the entire schema tree.
+  const obj = schema as Record<string, unknown>;
+  const found = FORBIDDEN_KEYS.filter((k) => k in obj);
   if (found.length > 0) {
     return { valid: false, reason: `Forbidden keys: ${found.join(", ")}` };
+  }
+  // Recurse into properties (object schemas) and items (array schemas)
+  const nestedContainers: unknown[] = [
+    ...Object.values(obj.properties && typeof obj.properties === "object" ? (obj.properties as Record<string, unknown>) : {}),
+    obj.items,
+  ].filter(Boolean);
+  for (const nested of nestedContainers) {
+    const sub = validateExtractionSchema(nested);
+    if (!sub.valid) return sub;
   }
   return { valid: true };
 }

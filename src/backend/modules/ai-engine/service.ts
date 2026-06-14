@@ -1345,8 +1345,35 @@ export async function completeI18n(
 // assistCatalogEditor — T2 structured outputs (DOC-42 §3.9)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// M-12: tolerant JSON parse helper (strips ```json fences, retries on fail)
+// ---------------------------------------------------------------------------
+
 /**
- * Proposes form segmentation for a catalog AcroForm (RF-ADM-032).
+ * Strips Markdown code fences from AI text and attempts JSON.parse.
+ * Handles: ```json\n...\n```, ``` \n...\n```, and bare JSON.
+ */
+function stripFencesAndParse<T>(text: string): T | null {
+  // Remove ```json ... ``` or ``` ... ``` fences (case-insensitive, multiline)
+  const stripped = text
+    .replace(/^```(?:json)?\s*\n?/im, "")
+    .replace(/\n?```\s*$/m, "")
+    .trim();
+
+  // Try parsed form first (fences stripped), then original
+  for (const candidate of [stripped, text.trim()]) {
+    try {
+      return JSON.parse(candidate) as T;
+    } catch {
+      // continue
+    }
+  }
+  return null;
+}
+
+/**
+ * Proposes form segmentation for a catalog AcroForm (RF-ADM-032 / DOC-74 §2.6).
+ * M-12: tolerant JSON parsing (strips fences) + 1 retry with error feedback on parse fail.
  * Synchronous, uses Sonnet-4-6 (T2 model, DOC-74 §1).
  *
  * @api-id (internal — consumed by catalog module)
@@ -1358,42 +1385,72 @@ export async function proposeFormSegmentation(
     pdfText: string;
     groupScope?: string[];
   },
-): Promise<{ groups: Array<{ title: { es: string; en: string }; questions: unknown[] }> }> {
+): Promise<{ groups: Array<{ title_i18n?: { es: string; en: string }; title?: { es: string; en: string }; questions: unknown[] }> }> {
   can(actor, "catalog", "edit");
 
   const editorModel = process.env.AI_EDITOR_MODEL ?? "claude-sonnet-4-6";
   const client = getAnthropicClient();
 
-  const prompt = [
-    "You are an immigration law form expert. Analyze these AcroForm fields and propose a logical grouping into sections.",
-    "",
-    `Fields (${input.detectedFields.length}):`,
-    input.detectedFields.map((f) => `- ${f.name} (${f.type}, page ${f.page})`).join("\n"),
-    "",
-    "Return JSON: { groups: [{ title_i18n: {es, en}, position: number, questions: [{ question_i18n: {es, en}, field_type, pdf_field_name, is_required, position }] }] }",
-  ].join("\n");
+  const systemPrompt = "You are an immigration law form expert. Return ONLY valid JSON, no markdown code fences, no explanations.";
 
-  const response = await client.messages.create({
-    model: editorModel,
-    max_tokens: 16000,
-    messages: [{ role: "user", content: prompt }],
-  });
+  const buildUserPrompt = (feedback?: string): string => {
+    const lines = [
+      "Analyze these AcroForm fields and propose a logical grouping into sections for an immigration form.",
+      "",
+      `Fields (${input.detectedFields.length}):`,
+      input.detectedFields.map((f) => `- ${f.name} (${f.type}, page ${f.page})`).join("\n"),
+    ];
+    if (input.pdfText) {
+      lines.push("", `PDF context: ${input.pdfText.slice(0, 2000)}`);
+    }
+    lines.push(
+      "",
+      'Return JSON with this exact shape (NO code fences):',
+      '{ "groups": [{ "title_i18n": {"es": "...", "en": "..."}, "position": 0, "questions": [{ "question_i18n": {"es": "...", "en": "..."}, "field_type": "text|checkbox|select|textarea|date|number", "pdf_field_name": "...", "is_required": true, "position": 0 }] }] }',
+    );
+    if (feedback) {
+      lines.push("", `CORRECTION REQUIRED — previous response had errors: ${feedback}`, "Fix these issues and return valid JSON.");
+    }
+    return lines.join("\n");
+  };
 
-  const text = response.content
-    .filter((b) => b.type === "text")
-    .map((b) => (b as { text: string }).text)
-    .join("");
+  type SegmentationResult = { groups: Array<{ title_i18n?: { es: string; en: string }; title?: { es: string; en: string }; questions: unknown[] }> };
 
-  try {
-    const parsed = JSON.parse(text) as { groups: Array<{ title: { es: string; en: string }; questions: unknown[] }> };
-    return parsed;
-  } catch {
-    throw new AiEngineError("AI_OUTPUT_INVALID", "proposeFormSegmentation response was not valid JSON");
+  let lastError = "response was not valid JSON";
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await client.messages.create({
+      model: editorModel,
+      max_tokens: 16000,
+      system: systemPrompt,
+      messages: [{ role: "user", content: buildUserPrompt(attempt > 0 ? lastError : undefined) }],
+    });
+
+    const text = response.content
+      .filter((b) => b.type === "text")
+      .map((b) => (b as { text: string }).text)
+      .join("");
+
+    const parsed = stripFencesAndParse<SegmentationResult>(text);
+    if (parsed && Array.isArray(parsed.groups)) {
+      return parsed;
+    }
+
+    lastError = parsed
+      ? `parsed object has no 'groups' array (got keys: ${Object.keys(parsed as object).join(", ")})`
+      : "response was not valid JSON after stripping code fences";
+
+    if (attempt === 0) {
+      logger.warn({ attempt, lastError }, "ai-engine: proposeFormSegmentation — retrying with feedback");
+    }
   }
+
+  throw new AiEngineError("AI_OUTPUT_INVALID", `proposeFormSegmentation: ${lastError}`);
 }
 
 /**
- * Proposes an extraction_schema for a document requirement (RF-ADM-029).
+ * Proposes an extraction_schema for a document requirement (RF-ADM-029 / DOC-74 §2.6).
+ * M-12: tolerant JSON parsing (strips fences) + 1 retry with error feedback on parse fail.
  *
  * @api-id (internal — consumed by catalog module)
  */
@@ -1402,6 +1459,7 @@ export async function proposeExtractionSchema(
   input: {
     requirementLabel: { es: string; en: string };
     helpText?: string;
+    sampleDocRef?: string;
   },
 ): Promise<{ schema: Record<string, unknown> }> {
   can(actor, "catalog", "edit");
@@ -1409,29 +1467,60 @@ export async function proposeExtractionSchema(
   const editorModel = process.env.AI_EDITOR_MODEL ?? "claude-sonnet-4-6";
   const client = getAnthropicClient();
 
-  const prompt = [
-    `Create a JSON Schema for extracting key fields from a "${input.requirementLabel.en}" document.`,
-    input.helpText ? `Context: ${input.helpText}` : "",
-    "Use only: string, number, boolean types. Add descriptions in English. Include 'required' array.",
-    "Return JSON: { schema: { type: 'object', properties: {...}, required: [...] } }",
-  ].join("\n");
+  const systemPrompt = "You are a JSON Schema expert for document extraction. Return ONLY valid JSON, no markdown code fences.";
 
-  const response = await client.messages.create({
-    model: editorModel,
-    max_tokens: 8192,
-    messages: [{ role: "user", content: prompt }],
-  });
+  const buildUserPrompt = (feedback?: string): string => {
+    const lines = [
+      `Create a JSON Schema for extracting key fields from a "${input.requirementLabel.en}" document.`,
+      "Use only these types: string, number, boolean, object, array.",
+      "Add 'description' fields in English for each property.",
+      "Include a 'required' array for mandatory fields.",
+      "Do NOT use: $ref, allOf, anyOf, oneOf, if/then/else, or recursive structures.",
+    ];
+    if (input.helpText) lines.push(`Context: ${input.helpText}`);
+    lines.push(
+      "",
+      'Return JSON with this exact shape (NO code fences):',
+      '{ "schema": { "type": "object", "properties": { "field_name": { "type": "string", "description": "..." } }, "required": ["field_name"] } }',
+    );
+    if (feedback) {
+      lines.push("", `CORRECTION REQUIRED — previous response had errors: ${feedback}`, "Fix these issues and return valid JSON.");
+    }
+    return lines.join("\n");
+  };
 
-  const text = response.content
-    .filter((b) => b.type === "text")
-    .map((b) => (b as { text: string }).text)
-    .join("");
+  type SchemaResult = { schema: Record<string, unknown> };
 
-  try {
-    return JSON.parse(text) as { schema: Record<string, unknown> };
-  } catch {
-    throw new AiEngineError("AI_OUTPUT_INVALID", "proposeExtractionSchema response was not valid JSON");
+  let lastError = "response was not valid JSON";
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await client.messages.create({
+      model: editorModel,
+      max_tokens: 8192,
+      system: systemPrompt,
+      messages: [{ role: "user", content: buildUserPrompt(attempt > 0 ? lastError : undefined) }],
+    });
+
+    const text = response.content
+      .filter((b) => b.type === "text")
+      .map((b) => (b as { text: string }).text)
+      .join("");
+
+    const parsed = stripFencesAndParse<SchemaResult>(text);
+    if (parsed && typeof (parsed as SchemaResult).schema === "object" && (parsed as SchemaResult).schema !== null) {
+      return parsed as SchemaResult;
+    }
+
+    lastError = parsed
+      ? `parsed object has no 'schema' key (got keys: ${Object.keys(parsed as object).join(", ")})`
+      : "response was not valid JSON after stripping code fences";
+
+    if (attempt === 0) {
+      logger.warn({ attempt, lastError }, "ai-engine: proposeExtractionSchema — retrying with feedback");
+    }
   }
+
+  throw new AiEngineError("AI_OUTPUT_INVALID", `proposeExtractionSchema: ${lastError}`);
 }
 
 // ---------------------------------------------------------------------------

@@ -17,6 +17,10 @@ import type { Actor } from "@/backend/platform/authz";
 import { writeAudit } from "@/backend/modules/audit";
 import { PROFILE_SOURCE_FIELDS } from "@/shared/constants/profile-fields";
 import { GENERATION_MODELS } from "@/shared/constants/ai-models";
+import { detectAcroFields as platformDetectAcroFields, fillAcroForm } from "@/backend/platform/pdf";
+import { createServiceClient } from "@/backend/platform/supabase";
+import { logger } from "@/backend/platform/logger";
+import { getAnthropicClient } from "@/backend/platform/anthropic";
 
 import {
   CreateServiceDtoSchema,
@@ -39,6 +43,7 @@ import {
   catalogError,
   assertNoIssues,
   isFkViolation,
+  nextVersionNumber,
 } from "./domain";
 
 import { z } from "zod";
@@ -539,19 +544,38 @@ export async function updateRequiredDocument(
 }
 
 /**
- * Stub: IA-assisted extraction schema proposal.
- * STUB (F4) — requires platform/anthropic integration.
+ * Editor-assisted extraction schema proposal (RF-ADM-029 / DOC-74 §2.6).
+ *
+ * Delegates to ai-engine.proposeExtractionSchema (T2, Sonnet) which generates
+ * a JSON Schema portable to Gemini. Validates the result against the Gemini
+ * subset rules before returning. Does NOT persist — the Admin edits and saves
+ * via updateRequiredDocument.
  *
  * @api-id API-CAT-28
  */
 export async function proposeExtractionSchema(
   actor: Actor,
-  _input: { service_phase_id: string; label: string; help?: string; sample_pdf_path?: string },
-): Promise<never> {
+  input: { service_phase_id: string; label: string; help?: string; sample_pdf_path?: string },
+): Promise<object> {
   can(actor, "catalog", "edit");
-  throw new Error(
-    "CATALOG_STUB_F4: proposeExtractionSchema is available in F4 (requires AI editor integration).",
-  );
+
+  // Import ai-engine via module-pub boundary
+  const { proposeExtractionSchema: aiProposeExtractionSchema } = await import("@/backend/modules/ai-engine");
+
+  const result = await aiProposeExtractionSchema(actor, {
+    requirementLabel: { es: input.label, en: input.label }, // label supplied in the UI language; AI will enrich
+    helpText: input.help,
+    sampleDocRef: input.sample_pdf_path,
+  } as Parameters<typeof aiProposeExtractionSchema>[1]);
+
+  // Extract the schema from the result (ai-engine returns { schema: {...} })
+  const schema = (result as { schema?: Record<string, unknown> }).schema ?? result;
+
+  // Validate against Gemini subset (blocking — same check as when saving)
+  const { valid, reason } = validateExtractionSchema(schema);
+  if (!valid) throw catalogError("CATALOG_EXTRACTION_SCHEMA_INVALID", reason);
+
+  return schema;
 }
 
 // ---------------------------------------------------------------------------
@@ -609,41 +633,238 @@ export async function updateFormDefinition(
 }
 
 /**
+ * Paso 1 — upload PDF + create draft version + run AcroField detection.
+ *
+ * Flow: confirm storage upload → create form_automation_versions draft (version=max+1)
+ * → download PDF bytes → detectAcroFields (mupdf) → update detected_fields.
+ * 0 fields → version stays draft with empty detected_fields (RF-ADM-031 E1).
+ * PDF unreadable → CATALOG_PDF_UNREADABLE.
+ *
  * @api-id API-CAT-32
- * STUB (F4) — requires pdf-lib and storage integration.
  */
 export async function createAutomationVersion(
   actor: Actor,
-  _input: { form_definition_id: string; uploaded_pdf_path: string },
-): Promise<never> {
+  input: { form_definition_id: string; uploaded_pdf_path: string },
+): Promise<AutomationVersion> {
   can(actor, "catalog", "edit");
-  throw new Error(
-    "CATALOG_STUB_F4: createAutomationVersion (PDF upload + AcroForm detection) is available in F4.",
-  );
+
+  const form = await repo.findFormDefinition(input.form_definition_id);
+  if (!form) throw catalogError("CATALOG_FORM_NOT_FOUND");
+  if (form.kind !== "pdf_automation") throw catalogError("CATALOG_FORM_KIND_MISMATCH");
+
+  // Verify the file exists in storage (confirms the upload completed)
+  const supabase = createServiceClient();
+  const { data: existsList } = await supabase.storage
+    .from("catalog-assets")
+    .list(input.uploaded_pdf_path.split("/").slice(0, -1).join("/"), {
+      search: input.uploaded_pdf_path.split("/").pop()!,
+      limit: 1,
+    });
+  if (!existsList || existsList.length === 0) {
+    throw catalogError("CATALOG_PDF_UNREADABLE", "Uploaded PDF not found in storage.");
+  }
+
+  // Determine next version number
+  const existingVersions = await repo.listVersions(form.id);
+  const versionNumber = nextVersionNumber(existingVersions as unknown as AutomationVersion[]);
+
+  // Create draft version with empty detected_fields
+  const versionRow = await repo.insertAutomationVersion({
+    form_definition_id: form.id,
+    version: versionNumber,
+    source_pdf_path: input.uploaded_pdf_path,
+    detected_fields: [],
+    status: "draft",
+    created_by: actor.userId,
+  });
+
+  await writeAudit(actor, "catalog.form_version.created", "form_automation_versions", versionRow.id, {
+    after: { form_definition_id: form.id, version: versionNumber, source_pdf_path: input.uploaded_pdf_path },
+  });
+
+  // Chain: immediately run field detection on the newly created version
+  return redetectFields(actor, versionRow.id);
 }
 
 /**
+ * Paso 2 — (re-)detect AcroForm fields from the stored PDF.
+ *
+ * Downloads the PDF from catalog-assets, runs detectAcroFields (mupdf),
+ * and updates detected_fields on the draft version. Only operates on draft
+ * versions (RF-ADM-035 A2: published/archived are immutable).
+ *
  * @api-id API-CAT-33
- * STUB (F4) — requires pdf-lib.
  */
 export async function redetectFields(
   actor: Actor,
-  _versionId: string,
-): Promise<never> {
+  versionId: string,
+): Promise<AutomationVersion> {
   can(actor, "catalog", "edit");
-  throw new Error("CATALOG_STUB_F4: redetectFields is available in F4 (requires pdf-lib).");
+
+  const version = await repo.findVersionById(versionId);
+  if (!version) throw catalogError("CATALOG_VERSION_NOT_FOUND");
+  if (version.status !== "draft") throw catalogError("CATALOG_VERSION_PUBLISHED_IMMUTABLE");
+
+  // Download PDF bytes from catalog-assets
+  const supabase = createServiceClient();
+  const { data: fileData, error: dlErr } = await supabase.storage
+    .from("catalog-assets")
+    .download(version.source_pdf_path);
+
+  if (dlErr || !fileData) {
+    throw catalogError("CATALOG_PDF_UNREADABLE", `Cannot download PDF: ${dlErr?.message ?? "no data"}`);
+  }
+
+  const bytes = new Uint8Array(await fileData.arrayBuffer());
+
+  // Detect AcroForm fields using mupdf
+  let rawFields: import("@/backend/platform/pdf").DetectedField[];
+  try {
+    rawFields = await platformDetectAcroFields(bytes);
+  } catch (err) {
+    logger.warn({ err, versionId }, "catalog: detectAcroFields failed — PDF may be encrypted or malformed");
+    throw catalogError("CATALOG_PDF_UNREADABLE", `AcroField detection failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // Map platform DetectedField to domain DetectedField shape
+  // platform: { name, type, page, rect } — domain: { pdf_field_name, field_type, page, rect }
+  // field types: platform has 'combobox'/'radiobutton'/'button'; domain uses 'dropdown'/'radio'/'unknown'
+  const domainTypeMap: Record<string, string> = {
+    text: "text",
+    checkbox: "checkbox",
+    combobox: "dropdown",
+    radiobutton: "radio",
+    signature: "signature",
+    button: "unknown",
+  };
+
+  const detectedFields = rawFields.map((f) => ({
+    pdf_field_name: f.name,
+    field_type: (domainTypeMap[f.type] ?? "unknown") as "text" | "checkbox" | "radio" | "dropdown" | "signature" | "unknown",
+    page: f.page + 1, // mupdf is 0-indexed; domain schema uses 1-indexed
+    rect: f.rect as [number, number, number, number],
+  }));
+
+  // Update the version with the detected fields (empty = no AcroForm fields found)
+  const updated = await repo.updateVersion(versionId, {
+    detected_fields: detectedFields as unknown as import("@/shared/database.types").Json,
+  });
+
+  // Note: 0 fields is valid — the UI will show "PDF sin campos rellenables"
+  // and the checklist will block publication (RF-ADM-031 E1 / CATALOG_NO_ACROFORM_FIELDS)
+  return updated as unknown as AutomationVersion;
 }
 
 /**
+ * Paso 3 — AI-assisted form segmentation (RF-ADM-032 / DOC-74 §2.6).
+ *
+ * Reads detected_fields + optional PDF text context, calls ai-engine
+ * proposeFormSegmentation (T2, Sonnet), then materializes the proposal
+ * as draft groups + questions. Mode 'replace' overwrites non-confirmed
+ * groups; mode 'merge' appends without touching existing content.
+ *
  * @api-id API-CAT-34
- * STUB (F4) — requires platform/anthropic.
  */
 export async function aiProposeStructure(
   actor: Actor,
-  _input: { version_id: string; group_id?: string; mode: "replace" | "merge" },
-): Promise<never> {
+  input: { version_id: string; group_id?: string; mode: "replace" | "merge" },
+): Promise<{ groups: number; questions: number }> {
   can(actor, "catalog", "edit");
-  throw new Error("CATALOG_STUB_F4: aiProposeStructure is available in F4 (requires AI editor).");
+
+  const version = await repo.findVersionById(input.version_id);
+  if (!version) throw catalogError("CATALOG_VERSION_NOT_FOUND");
+  if (version.status !== "draft") throw catalogError("CATALOG_VERSION_PUBLISHED_IMMUTABLE");
+
+  const detectedFields = (version.detected_fields ?? []) as Array<{
+    pdf_field_name: string;
+    field_type: string;
+    page: number;
+  }>;
+
+  if (detectedFields.length === 0) {
+    throw catalogError("CATALOG_NO_ACROFORM_FIELDS");
+  }
+
+  // Narrow to group scope if re-proposing for a single group
+  let scopeFields = detectedFields;
+  if (input.group_id) {
+    const groupQs = await repo.listQuestions(input.group_id);
+    const groupFieldNames = new Set(groupQs.map((q) => q.pdf_field_name).filter(Boolean));
+    scopeFields = detectedFields.filter((f) => groupFieldNames.has(f.pdf_field_name));
+  }
+
+  // Map domain detected_fields to the shape proposeFormSegmentation expects
+  const aiFields = scopeFields.map((f) => ({
+    name: f.pdf_field_name,
+    type: f.field_type,
+    page: f.page,
+  }));
+
+  // Import ai-engine via its public index (module boundary — no direct service import)
+  const { proposeFormSegmentation } = await import("@/backend/modules/ai-engine");
+  const proposal = await proposeFormSegmentation(actor, {
+    detectedFields: aiFields,
+    pdfText: "", // PDF text extraction is a future enhancement (P-40-2)
+    groupScope: input.group_id ? [input.group_id] : undefined,
+  });
+
+  // Materialize proposal as draft groups + questions
+  let totalQuestions = 0;
+
+  if (input.mode === "replace" && !input.group_id) {
+    // Replace mode (full version): delete all existing groups + questions
+    const existingGroups = await repo.listQuestionGroups(input.version_id);
+    for (const g of existingGroups) {
+      await repo.deleteQuestionGroup(g.id);
+    }
+  }
+
+  for (let gi = 0; gi < proposal.groups.length; gi++) {
+    const g = proposal.groups[gi] as {
+      title_i18n?: { es: string; en: string };
+      title?: { es: string; en: string };
+      position?: number;
+      questions?: Array<{
+        question_i18n?: { es: string; en: string };
+        field_type?: string;
+        pdf_field_name?: string | null;
+        is_required?: boolean;
+        position?: number;
+      }>;
+    };
+
+    const titleI18n = g.title_i18n ?? g.title ?? { es: `Sección ${gi + 1}`, en: `Section ${gi + 1}` };
+    const group = await repo.upsertQuestionGroup({
+      automation_version_id: input.version_id,
+      title_i18n: titleI18n as import("@/shared/database.types").Json,
+      position: g.position ?? gi,
+    });
+
+    const questions = g.questions ?? [];
+    for (let qi = 0; qi < questions.length; qi++) {
+      const q = questions[qi];
+      await repo.upsertQuestion({
+        group_id: group.id,
+        question_i18n: (q.question_i18n ?? { es: "", en: "" }) as import("@/shared/database.types").Json,
+        help_i18n: null,
+        field_type: (q.field_type ?? "text") as "text" | "number" | "date" | "checkbox" | "select" | "textarea",
+        options: null,
+        pdf_field_name: q.pdf_field_name ?? null,
+        source: "client_answer",
+        source_ref: null,
+        is_required: q.is_required ?? true,
+        position: q.position ?? qi,
+        validation: null,
+      });
+      totalQuestions++;
+    }
+  }
+
+  await writeAudit(actor, "catalog.form_questions.updated", "form_automation_versions", input.version_id, {
+    after: { source: "ai_proposal", groups: proposal.groups.length, questions: totalQuestions },
+  });
+
+  return { groups: proposal.groups.length, questions: totalQuestions };
 }
 
 /**
@@ -738,17 +959,59 @@ export async function deleteQuestion(actor: Actor, questionId: string): Promise<
 }
 
 /**
+ * Paso 5 — PDF de prueba en memoria (RF-ADM-034).
+ *
+ * Downloads the PDF, maps sample_answers (question_id → value) to pdf_field_name
+ * using the same mapping as production, fills via fillAcroForm (mupdf), and
+ * returns the bytes WITHOUT persisting them. Returns both the PDF bytes and a
+ * list of required questions that had no sample answer (non-blocking).
+ *
  * @api-id API-CAT-42
- * STUB (F4) — requires pdf-lib for AcroForm fill.
  */
 export async function generateTestPdf(
   actor: Actor,
-  _input: { version_id: string; sample_answers: Record<string, unknown> },
-): Promise<never> {
+  input: { version_id: string; sample_answers: Record<string, unknown> },
+): Promise<{ pdfBytes: Uint8Array; gaps: Array<{ question_id: string; pdf_field_name: string }> }> {
   can(actor, "catalog", "edit");
-  throw new Error(
-    "CATALOG_STUB_F4: generateTestPdf (AcroForm fill preview) is available in F4 (requires pdf-lib).",
-  );
+
+  const tree = await repo.getVersionTree(input.version_id);
+  if (!tree) throw catalogError("CATALOG_VERSION_NOT_FOUND");
+
+  // Download PDF from catalog-assets
+  const supabase = createServiceClient();
+  const { data: fileData, error: dlErr } = await supabase.storage
+    .from("catalog-assets")
+    .download(tree.version.source_pdf_path);
+
+  if (dlErr || !fileData) {
+    throw catalogError("CATALOG_PDF_UNREADABLE", `Cannot download PDF: ${dlErr?.message ?? "no data"}`);
+  }
+
+  const bytes = new Uint8Array(await fileData.arrayBuffer());
+
+  // Map question answers to PDF field names (same mapping as production)
+  // sample_answers: { [question_id]: value }
+  const valuesByPdfName: Record<string, string | boolean> = {};
+  const gaps: Array<{ question_id: string; pdf_field_name: string }> = [];
+
+  for (const q of tree.questions) {
+    const fieldName = q.pdf_field_name;
+    if (!fieldName) continue; // intermediate field without AcroForm mapping
+
+    const answerId = q.id;
+    if (answerId in input.sample_answers) {
+      const val = input.sample_answers[answerId];
+      valuesByPdfName[fieldName] = typeof val === "boolean" ? val : String(val ?? "");
+    } else if (q.is_required) {
+      // Required field with no sample answer — record gap (non-blocking per RF-ADM-034 E1)
+      gaps.push({ question_id: q.id, pdf_field_name: fieldName });
+    }
+  }
+
+  // Fill AcroForm using mupdf (same engine as production)
+  const pdfBytes = await fillAcroForm(bytes, {}, valuesByPdfName);
+
+  return { pdfBytes, gaps };
 }
 
 /**
@@ -952,17 +1215,35 @@ export async function updateGenerationConfig(
 }
 
 /**
+ * Prueba de generación (RF-ADM-037): corrida real con is_test=true.
+ *
+ * Verifies the form has an ai_generation_config, then delegates entirely to
+ * ai-engine.startGeneration({ ..., isTest: true }). The same pipeline as
+ * production — no parallel code path. The admin can iterate: adjust config,
+ * then call testGeneration again (regenerate creates a new version).
+ *
  * @api-id API-CAT-47
- * STUB (F4) — requires ai-engine module.
  */
 export async function testGeneration(
   actor: Actor,
-  _input: { form_definition_id: string; case_id: string; party_id?: string },
-): Promise<never> {
+  input: { form_definition_id: string; case_id: string; party_id?: string },
+): Promise<{ run_id: string }> {
   can(actor, "catalog", "edit");
-  throw new Error(
-    "CATALOG_STUB_F4: testGeneration (AI generation test run) is available in F4 (requires ai-engine module).",
-  );
+
+  // Verify form exists and has a generation config (RF-ADM-037 pre-check)
+  const config = await repo.findGenerationConfig(input.form_definition_id);
+  if (!config) throw catalogError("CATALOG_GENERATION_NOT_CONFIGURED");
+
+  // Delegate to ai-engine (same pipeline as production, is_test=true)
+  const { startGeneration } = await import("@/backend/modules/ai-engine");
+  const result = await startGeneration(actor, {
+    caseId: input.case_id,
+    formDefinitionId: input.form_definition_id,
+    partyId: input.party_id ?? null,
+    isTest: true,
+  });
+
+  return { run_id: result.run.id };
 }
 
 // ---------------------------------------------------------------------------
@@ -1030,6 +1311,25 @@ export async function createDatasetItem(
     throw catalogError("CATALOG_DATASET_ITEM_EMPTY");
   }
 
+  // Count tokens for the item text (RF-ADM-039 §3 / DOC-74 §4.2)
+  // Uses claude-sonnet-4-6 tokenizer as a proxy for claude-fable-5
+  // (same Anthropic tokenizer family). NULL → excluded from dataset injection.
+  let token_count: number | null = null;
+  const textToCount = input.content ?? null;
+  if (textToCount !== null) {
+    try {
+      const client = getAnthropicClient();
+      const countResponse = await client.messages.countTokens({
+        model: "claude-sonnet-4-6",
+        messages: [{ role: "user", content: textToCount }],
+      });
+      token_count = countResponse.input_tokens;
+    } catch {
+      // Non-fatal — item saved with NULL token_count, excluded from injection
+      logger.warn({ dataset_id: input.dataset_id }, "catalog: token count failed — item will be excluded from injection");
+    }
+  }
+
   const item = await repo.insertDatasetItem({
     dataset_id: input.dataset_id,
     title: input.title,
@@ -1039,13 +1339,89 @@ export async function createDatasetItem(
     outcome: input.outcome ?? null,
     tags: input.tags ?? [],
     added_by: actor.userId,
-    token_count: null, // token counting delegated to F4 (requires ai-engine/anthropic)
+    token_count,
   });
 
   await writeAudit(actor, "catalog.dataset_item.created", "ai_dataset_items", item.id, {
     after: { ...item, content: item.content ? "[redacted]" : null },
   });
   return item as unknown as DatasetItem;
+}
+
+/**
+ * Updates a dataset item, recalculating token_count if content/file_path changed.
+ *
+ * @api-id API-CAT-51
+ */
+export async function updateDatasetItem(
+  actor: Actor,
+  itemId: string,
+  patch: {
+    title?: string;
+    content?: string | null;
+    file_path?: string | null;
+    jurisdiction?: string | null;
+    outcome?: string | null;
+    tags?: string[];
+  },
+): Promise<DatasetItem> {
+  can(actor, "datasets", "edit");
+
+  const contentChanged = "content" in patch || "file_path" in patch;
+  let token_count: number | null | undefined = undefined; // undefined = don't update
+
+  if (contentChanged) {
+    const textToCount = patch.content ?? null;
+    if (textToCount !== null) {
+      try {
+        const client = getAnthropicClient();
+        const response = await client.messages.countTokens({
+          model: "claude-sonnet-4-6",
+          messages: [{ role: "user", content: textToCount }],
+        });
+        token_count = response.input_tokens;
+      } catch {
+        // Non-parseable / provider unavailable → NULL (excluded from injection per DOC-74 §4.2)
+        token_count = null;
+        logger.warn({ itemId }, "catalog: token count failed on updateDatasetItem — item will be excluded from injection");
+      }
+    } else {
+      token_count = null; // file_path only (no in-memory text) → NULL until file parsed
+    }
+  }
+
+  const updatePayload: Record<string, unknown> = { ...patch };
+  if (token_count !== undefined) {
+    updatePayload.token_count = token_count;
+  }
+
+  const item = await repo.updateDatasetItem(
+    itemId,
+    updatePayload as Parameters<typeof repo.updateDatasetItem>[1],
+  );
+
+  await writeAudit(actor, "catalog.dataset_item.updated", "ai_dataset_items", itemId, {
+    after: { ...item, content: item.content ? "[redacted]" : null },
+  });
+  return item as unknown as DatasetItem;
+}
+
+/**
+ * Deletes a dataset. FK restrict prevents deletion if referenced by ai_generation_configs.
+ *
+ * @api-id API-CAT-53
+ */
+export async function deleteDataset(actor: Actor, datasetId: string): Promise<void> {
+  can(actor, "datasets", "edit");
+
+  try {
+    await repo.deleteDataset(datasetId);
+  } catch (e) {
+    if (isFkViolation(e)) throw catalogError("CATALOG_DATASET_IN_USE");
+    throw e;
+  }
+
+  await writeAudit(actor, "catalog.dataset.deleted", "ai_datasets", datasetId, {});
 }
 
 /**

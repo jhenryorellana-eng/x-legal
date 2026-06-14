@@ -673,6 +673,24 @@ export async function insertDatasetItem(
   return throwOnError(data, error, "insertDatasetItem");
 }
 
+export async function updateDatasetItem(
+  id: string,
+  patch: TablesUpdate<"ai_dataset_items">,
+): Promise<DatasetItemRow> {
+  const { data, error } = await db()
+    .from("ai_dataset_items")
+    .update(patch)
+    .eq("id", id)
+    .select()
+    .single();
+  return throwOnError(data, error, "updateDatasetItem");
+}
+
+export async function deleteDataset(id: string): Promise<void> {
+  const { error } = await db().from("ai_datasets").delete().eq("id", id);
+  if (error) throw error; // caller maps FK violation to CATALOG_DATASET_IN_USE
+}
+
 export async function deleteDatasetItem(id: string): Promise<void> {
   const { error } = await db().from("ai_dataset_items").delete().eq("id", id);
   if (error) throw error;
