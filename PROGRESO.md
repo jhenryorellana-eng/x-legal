@@ -3,8 +3,32 @@
 > Archivo de continuidad entre sesiones (PROMPT-CONSTRUCCION-V2 §4). Actualizar al cierre de cada sesión.
 > Biblioteca SoT: `C:\Users\mauri\Documents\Trabajos\USALATINO V2\V2\docs\` · Supabase: **USALATINO V2** `uexxyokexcamyjcknxua`
 
-**Fase actual: F3 — Scheduling + Vanessa ✅ COMPLETA y verificada en vivo (3 olas + pendientes de datos cerrados) · Parte A auth email ✅**
+**Fase actual: F4 — IA engine + formularios (EN CURSO, por olas) · F0–F3 ✅ COMPLETAS y verificadas en vivo**
 Última sesión: 2026-06-14
+
+## F4 — IA engine + formularios (por olas; cadencia: ola por ola con OK de Henry)
+
+> Decisiones Henry: modelo de generación legal = **Sonnet 4.6 (default) + Opus 4.7 (premium por formulario)**, conservando Fable 5 / Haiku 4.5 para tareas ligeras. Plan: `~/.claude/plans/analiza-mi-proyecto-y-twinkly-reddy.md`.
+
+### Ola F4-0 — Spike AcroForm (de-risk R1) ✅
+**Riesgo #1 del proyecto RESUELTO.** Spike contra 3 PDFs gubernamentales reales (I-765/I-360/EOIR-26):
+- **Hallazgo**: los formularios modernos de USCIS son **XFA híbridos** con object streams comprimidos → **pdf-lib los lee como 0 campos o crashea**. **mupdf (Artifex wasm, serverless-friendly) los lee completos**: I-765 = **161 widgets**, I-360 = **510 widgets** (name/type/page/rect).
+- **Receta confiable de llenado+aplanado** probada (drop XFA → setTextValue → update → bake → valor **visible en el PDF aplanado**, round-trip confirmado).
+- **mupdf también hace HTML→PDF** → un solo motor para llenado de forms + render de generaciones (md→html→pdf). DOCX vía lib `docx` (Ola 1).
+- EOIR-26 público es print-and-sign (0 campos → ruta de error del editor).
+- **Decisión de arquitectura**: `mupdf` es el motor de formularios PDF (desviación documentada del SoT que asumía pdf-lib; evidencia en `docs/_evidence/f4-spike/SPIKE-FINDINGS.md`). pdf-lib/@cantoo removidos.
+- Gates: tsc 0 · eslint 0/0 · **525 tests**. Commit `3dd644b`.
+
+### Olas pendientes
+- **F4-1** Motor `ai-engine` (backend TDD) — prompt assembly, extracción Gemini, generación Claude+caching+chunking, jobs, presupuesto, migración 0017 aditiva.
+- **F4-2** Editor de formularios admin (los 6 stubs + UI pdf_automation/ai_letter + datasets + costes).
+- **F4-3** Form-wizard runtime + cliente + E2E (prueba de fuego) + demo.
+
+---
+
+— F3 (cerrada): —
+
+**Fase F3 — Scheduling + Vanessa ✅ COMPLETA y verificada en vivo (3 olas + pendientes de datos cerrados)**
 
 ## F3 — Scheduling + Vanessa (por olas)
 
