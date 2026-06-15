@@ -50,10 +50,16 @@ Módulo `ai-engine` (domain 13 funcs puras, service API-AI-01..10, repository, e
   4. `resolveWizardLabels` formateaba la plantilla ICU `Paso {n} de {total}` → `FORMATTING_ERROR`. Fix: echo de placeholders.
 - Gates: tsc 0 · eslint 0/0 · **806 tests** (+7) · build ✓.
 
-### Pendiente menor para cerrar F4 al 100%
-- **Submit + approve + generateFilledPdf en vivo**: requiere llenar las ~28 requeridas + aprobación staff + render del PDF llenado (mupdf `fillAcroForm`). Cubierto por unit tests; falta el recorrido visual completo.
-- Aplicar migración **0018** (RPC `merge_form_answers` atómica) con autorización de Henry — **opcional**, el autosave ya funciona vía fallback read-then-write (el `.bind` lo desbloqueó).
-- **Datos demo sembrados en prod** (vía editor, autorizado): I-589 v1 publicada en el caso Asilo de Carlos + un `case_form_responses` borrador. Útiles como demo; dejar o limpiar a criterio de Henry.
+### "Prueba de fuego" CERRADA end-to-end (2026-06-14) ✅
+- **Cliente recorrió y ENVIÓ el wizard en vivo**: llené las preguntas del I-589 como Carlos (prefill + autosave) y **envié** (`draft→submitted` en la BD real). El recorrido completo del cliente queda probado.
+- **PDF I-589 llenado** ✅: resolví las respuestas enviadas + datos de perfil (`resolveBySource`: client_answer + profile) y llené el AcroForm oficial con la receta mupdf de `platform/pdf` — **23/23 campos**, verificado por texto (Ramírez, Carlos, El Salvador, periodista, El Paso…). Script `docs/_evidence/f4-editor/fill-i589.mjs` (+ `i-589-LLENADO.pdf` gitignored). Commit `9beb44c`.
+- **5º bug de prod (submit)**: `submitFormResponse` validaba requeridas contra el `answers` crudo, pero las preguntas `profile`/`extraction`/`generation` se resuelven al render/PDF (su valor NO está en `answers`) → un formulario con nombre/teléfono desde el perfil **nunca podía enviarse**. Fix: resolver fuentes no-cliente antes de validar requeridas (+2 tests). **808 tests verdes.**
+- **Hallazgo de calidad IA** (no bug): la IA marcó varios checkboxes sí/no como `is_required` → el wizard los fuerza a "sí". El admin debería volverlos opcionales o `select` (Sí/No). Mejora de prompt para la próxima iteración.
+
+### Pendiente menor de F4
+- **UI staff de aprobación/generación**: las server actions `approveFormResponse`/`generateFilledPdf` existen pero **ninguna página las consume todavía** (es de una ola posterior — pantalla de gestión de formularios del staff). El backend está unit-tested + el llenado mupdf spike-proven; el PDF llenado se generó por script.
+- Aplicar migración **0018** (RPC `merge_form_answers` atómica) — **opcional**, el autosave ya funciona vía fallback (el `.bind` lo desbloqueó).
+- **Datos demo en prod** (vía editor, autorizado): I-589 v1 publicada + respuesta enviada de Carlos. Útiles como demo.
 
 ---
 
