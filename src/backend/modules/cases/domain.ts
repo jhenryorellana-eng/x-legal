@@ -236,6 +236,12 @@ export interface AnswerValidationError {
 export function validateAnswerTypes(
   answers: Record<string, unknown>,
   questions: QuestionValidationRule[],
+  /**
+   * When true (submit), missing required answers are errors. When false (draft
+   * autosave), only the answers actually PRESENT are type-checked — a partial
+   * patch must never be rejected for the fields the user hasn't filled yet.
+   */
+  enforceRequired = true,
 ): AnswerValidationError[] {
   const errors: AnswerValidationError[] = [];
 
@@ -243,8 +249,8 @@ export function validateAnswerTypes(
     const value = answers[q.id];
     const isEmpty = value === undefined || value === null || value === "";
 
-    // Required check
-    if (q.is_required && isEmpty) {
+    // Required check (submit only)
+    if (enforceRequired && q.is_required && isEmpty) {
       errors.push({ questionId: q.id, code: "required" });
       continue;
     }

@@ -801,6 +801,19 @@ export async function aiProposeStructure(
     type: f.field_type,
     page: f.page,
   }));
+  const detectedNames = new Set(detectedFields.map((f) => f.pdf_field_name));
+
+  // Form + service context so the AI can research the right official instructions.
+  const formDef = await repo.findFormDefinition(version.form_definition_id);
+  const phase = formDef?.service_phase_id ? await repo.findPhaseById(formDef.service_phase_id) : null;
+  const service = phase?.service_id ? await repo.findServiceById(phase.service_id) : null;
+  const pickEs = (v: unknown): string | undefined => {
+    const o = v as { es?: string; en?: string } | null | undefined;
+    return o?.es || o?.en || undefined;
+  };
+  const serviceContext = phase
+    ? [pickEs(phase.label_i18n), pickEs(phase.client_explainer_i18n)].filter(Boolean).join(" — ")
+    : undefined;
 
   // M-4: Call AI FIRST, then delete existing groups — reduces the window where
   // the version is empty. If AI fails, existing groups are preserved intact.
@@ -810,6 +823,11 @@ export async function aiProposeStructure(
     detectedFields: aiFields,
     pdfText: "", // PDF text extraction is a future enhancement (P-40-2)
     groupScope: input.group_id ? [input.group_id] : undefined,
+    formName: pickEs(formDef?.label_i18n),
+    formSlug: formDef?.slug,
+    serviceName: pickEs(service?.label_i18n),
+    serviceContext,
+    profileFields: PROFILE_SOURCE_FIELDS,
   });
 
   // Materialize proposal as draft groups + questions
@@ -825,18 +843,7 @@ export async function aiProposeStructure(
   }
 
   for (let gi = 0; gi < proposal.groups.length; gi++) {
-    const g = proposal.groups[gi] as {
-      title_i18n?: { es: string; en: string };
-      title?: { es: string; en: string };
-      position?: number;
-      questions?: Array<{
-        question_i18n?: { es: string; en: string };
-        field_type?: string;
-        pdf_field_name?: string | null;
-        is_required?: boolean;
-        position?: number;
-      }>;
-    };
+    const g = proposal.groups[gi];
 
     const titleI18n = g.title_i18n ?? g.title ?? { es: `Sección ${gi + 1}`, en: `Section ${gi + 1}` };
     const group = await repo.upsertQuestionGroup({
@@ -847,19 +854,19 @@ export async function aiProposeStructure(
 
     const questions = g.questions ?? [];
     for (let qi = 0; qi < questions.length; qi++) {
-      const q = questions[qi];
+      const safe = sanitizeProposedQuestion(questions[qi], qi, detectedNames);
       await repo.upsertQuestion({
         group_id: group.id,
-        question_i18n: (q.question_i18n ?? { es: "", en: "" }) as import("@/shared/database.types").Json,
-        help_i18n: null,
-        field_type: (q.field_type ?? "text") as "text" | "number" | "date" | "checkbox" | "select" | "textarea",
-        options: null,
-        pdf_field_name: q.pdf_field_name ?? null,
-        source: "client_answer",
-        source_ref: null,
-        is_required: q.is_required ?? true,
-        position: q.position ?? qi,
-        validation: null,
+        question_i18n: safe.question_i18n as import("@/shared/database.types").Json,
+        help_i18n: safe.help_i18n as import("@/shared/database.types").Json | null,
+        field_type: safe.field_type,
+        options: safe.options as import("@/shared/database.types").Json | null,
+        pdf_field_name: safe.pdf_field_name,
+        source: safe.source,
+        source_ref: safe.source_ref as import("@/shared/database.types").Json | null,
+        is_required: safe.is_required,
+        position: safe.position,
+        validation: safe.validation as import("@/shared/database.types").Json | null,
       });
       totalQuestions++;
     }
@@ -870,6 +877,118 @@ export async function aiProposeStructure(
   });
 
   return { groups: proposal.groups.length, questions: totalQuestions };
+}
+
+const FIELD_TYPES = ["text", "number", "date", "checkbox", "select", "textarea"] as const;
+type FieldType = (typeof FIELD_TYPES)[number];
+const QUESTION_SOURCES = ["client_answer", "document_extraction", "generation_output", "profile"] as const;
+type QuestionSource = (typeof QUESTION_SOURCES)[number];
+
+interface SafeQuestion {
+  question_i18n: { es: string; en: string };
+  help_i18n: { es: string; en: string } | null;
+  field_type: FieldType;
+  options: Array<{ value: string; label_i18n: { es: string; en: string } }> | null;
+  pdf_field_name: string | null;
+  source: QuestionSource;
+  source_ref: Record<string, unknown> | null;
+  is_required: boolean;
+  position: number;
+  validation: { regex?: string; min?: number; max?: number } | null;
+}
+
+/**
+ * Sanitizes one AI-proposed question into a DB-safe draft row. The AI proposal is
+ * UNTRUSTED: every field is validated against the schema CHECK constraints and the
+ * profile whitelist before it can be persisted (fail-safe — unknown values degrade
+ * to client_answer / text rather than throwing). The admin reviews + the publish
+ * gate (validateSourceRef) is the final authority.
+ */
+function sanitizeProposedQuestion(
+  q: import("@/backend/modules/ai-engine").ProposedQuestion,
+  index: number,
+  detectedNames: Set<string>,
+): SafeQuestion {
+  const i18n = (v: unknown): { es: string; en: string } => {
+    const o = (v ?? {}) as { es?: unknown; en?: unknown };
+    return { es: typeof o.es === "string" ? o.es : "", en: typeof o.en === "string" ? o.en : "" };
+  };
+
+  // field_type — fall back to text when unknown
+  let fieldType: FieldType = (FIELD_TYPES as readonly string[]).includes(q.field_type ?? "")
+    ? (q.field_type as FieldType)
+    : "text";
+
+  // options — only meaningful for select; require at least one valid {value}
+  let options: SafeQuestion["options"] = null;
+  if (fieldType === "select") {
+    const raw = Array.isArray(q.options) ? q.options : [];
+    const cleaned = raw
+      .filter((o) => o && typeof o.value === "string" && o.value.length > 0)
+      .map((o) => ({ value: o.value, label_i18n: i18n(o.label_i18n) }));
+    if (cleaned.length > 0) options = cleaned;
+    else fieldType = "text"; // a select with no options is invalid → degrade
+  }
+
+  // source — validate enum + the profile whitelist; degrade to client_answer
+  let source: QuestionSource = (QUESTION_SOURCES as readonly string[]).includes(q.source ?? "")
+    ? (q.source as QuestionSource)
+    : "client_answer";
+  let sourceRef: Record<string, unknown> | null =
+    q.source_ref && typeof q.source_ref === "object" ? (q.source_ref as Record<string, unknown>) : null;
+
+  if (source === "profile") {
+    const field = sourceRef?.["profile_field"];
+    if (typeof field !== "string" || !(PROFILE_SOURCE_FIELDS as readonly string[]).includes(field)) {
+      source = "client_answer";
+      sourceRef = null;
+    } else {
+      sourceRef = { profile_field: field };
+    }
+  } else if (source === "document_extraction") {
+    if (typeof sourceRef?.["document_slug"] !== "string") {
+      source = "client_answer";
+      sourceRef = null;
+    }
+  } else if (source === "generation_output") {
+    if (typeof sourceRef?.["form_slug"] !== "string") {
+      source = "client_answer";
+      sourceRef = null;
+    }
+  } else {
+    sourceRef = null; // client_answer never carries a ref
+  }
+
+  // pdf_field_name — only keep names that actually exist in the AcroForm
+  const pdfFieldName =
+    typeof q.pdf_field_name === "string" && detectedNames.has(q.pdf_field_name) ? q.pdf_field_name : null;
+
+  // help_i18n — keep only if it carries text
+  const help = q.help_i18n ? i18n(q.help_i18n) : null;
+  const helpI18n = help && (help.es || help.en) ? help : null;
+
+  // validation — keep only well-typed {regex?, min?, max?}
+  let validation: SafeQuestion["validation"] = null;
+  if (q.validation && typeof q.validation === "object") {
+    const v: { regex?: string; min?: number; max?: number } = {};
+    if (typeof q.validation.regex === "string") v.regex = q.validation.regex;
+    if (typeof q.validation.min === "number") v.min = q.validation.min;
+    if (typeof q.validation.max === "number") v.max = q.validation.max;
+    if (Object.keys(v).length > 0) validation = v;
+  }
+
+  return {
+    question_i18n: i18n(q.question_i18n),
+    help_i18n: helpI18n,
+    field_type: fieldType,
+    options,
+    pdf_field_name: pdfFieldName,
+    source,
+    source_ref: sourceRef,
+    is_required: typeof q.is_required === "boolean" ? q.is_required : true,
+    position: typeof q.position === "number" ? q.position : index,
+    validation,
+  };
 }
 
 /**

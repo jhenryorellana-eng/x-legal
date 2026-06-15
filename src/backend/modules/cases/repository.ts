@@ -289,7 +289,9 @@ export async function mergeFormAnswers(
 
   // Typed as a localized cast: the RPC is added in migration 0018; until the DB
   // types are regenerated post-apply it isn't in the generated function union.
-  const callRpc = supabase.rpc as unknown as (
+  // NOTE: must `.bind(supabase)` — detaching the method (`const f = supabase.rpc`)
+  // loses `this`, so supabase-js reads `this.rest` on undefined and throws.
+  const callRpc = supabase.rpc.bind(supabase) as unknown as (
     fn: "merge_form_answers",
     args: { p_response_id: string; p_patch: import("@/shared/database.types").Json },
   ) => Promise<{ error: { message?: string } | null }>;

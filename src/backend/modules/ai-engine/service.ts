@@ -1368,13 +1368,60 @@ function stripFencesAndParse<T>(text: string): T | null {
       // continue
     }
   }
+
+  // Last resort: when the model wraps the JSON in prose (common once the
+  // web_search tool is in play), grab the widest {...} span and parse that.
+  const first = stripped.indexOf("{");
+  const last = stripped.lastIndexOf("}");
+  if (first !== -1 && last > first) {
+    try {
+      return JSON.parse(stripped.slice(first, last + 1)) as T;
+    } catch {
+      // give up
+    }
+  }
   return null;
+}
+
+/** A question proposed by the AI (rich shape — options/help/source/validation). */
+export interface ProposedQuestion {
+  question_i18n?: { es: string; en: string };
+  help_i18n?: { es: string; en: string } | null;
+  field_type?: string;
+  options?: Array<{ value: string; label_i18n: { es: string; en: string } }> | null;
+  pdf_field_name?: string | null;
+  source?: string;
+  source_ref?: Record<string, unknown> | null;
+  is_required?: boolean;
+  position?: number;
+  validation?: { regex?: string; min?: number; max?: number } | null;
+}
+
+export interface ProposedGroup {
+  title_i18n?: { es: string; en: string };
+  title?: { es: string; en: string };
+  position?: number;
+  questions: ProposedQuestion[];
+}
+
+export interface SegmentationProposal {
+  /** 1-2 sentence note on which official source(s) grounded the proposal. */
+  research_summary?: string;
+  groups: ProposedGroup[];
 }
 
 /**
  * Proposes form segmentation for a catalog AcroForm (RF-ADM-032 / DOC-74 §2.6).
- * M-12: tolerant JSON parsing (strips fences) + 1 retry with error feedback on parse fail.
- * Synchronous, uses Sonnet-4-6 (T2 model, DOC-74 §1).
+ *
+ * GROUNDED PROPOSAL: the model is given the form identity + the service it serves
+ * and is instructed to FIRST research the OFFICIAL filling instructions (USCIS/EOIR)
+ * and real filling guidance via the native `web_search` server tool, THEN map the
+ * detected AcroForm fields into clear, client-answerable questions — with the right
+ * field types, options, help text, source mapping and validation (REGLA #4 — live
+ * research on every invocation).
+ *
+ * M-12: tolerant JSON parsing (strips fences / extracts the {...} span) + 1 retry
+ * with error feedback on parse fail. Synchronous, uses Sonnet-4-6 (T2, DOC-74 §1).
  *
  * @api-id (internal — consumed by catalog module)
  */
@@ -1384,55 +1431,156 @@ export async function proposeFormSegmentation(
     detectedFields: Array<{ name: string; type: string; page: number }>;
     pdfText: string;
     groupScope?: string[];
+    /** Form identity so the model can research the right official instructions. */
+    formName?: string;
+    formSlug?: string;
+    /** The service (and its phase) the form is filled within. */
+    serviceName?: string;
+    serviceContext?: string;
+    /** Whitelist of profile fields the model may map source='profile' to. */
+    profileFields?: readonly string[];
   },
-): Promise<{ groups: Array<{ title_i18n?: { es: string; en: string }; title?: { es: string; en: string }; questions: unknown[] }> }> {
+): Promise<SegmentationProposal> {
   can(actor, "catalog", "edit");
 
   const editorModel = process.env.AI_EDITOR_MODEL ?? "claude-sonnet-4-6";
   const client = getAnthropicClient();
 
-  const systemPrompt = "You are an immigration law form expert. Return ONLY valid JSON, no markdown code fences, no explanations.";
+  const profileFields = input.profileFields ?? [];
+
+  // ---------------------------------------------------------------------------
+  // STEP A — RESEARCH (web_search → concise text brief). Separated from JSON
+  // generation so the search reasoning doesn't compete with the structured
+  // output for the token budget (the single-call variant truncated the JSON on
+  // large forms). Best-effort: a failure degrades to an ungrounded proposal.
+  // ---------------------------------------------------------------------------
+  let researchBrief = "";
+  if (input.formName || input.formSlug) {
+    try {
+      const researchResp = await client.messages.create(
+        {
+          model: editorModel,
+          max_tokens: 2500,
+          system:
+            "You are an immigration-forms research assistant. Use web_search to find the OFFICIAL filling instructions, then reply with a concise plain-text brief. No JSON, no markdown.",
+          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 4 }],
+          messages: [
+            {
+              role: "user",
+              content: [
+                `Research how to correctly fill the official U.S. immigration form: ${input.formName ?? input.formSlug}${input.formSlug ? ` [${input.formSlug}]` : ""}.`,
+                input.serviceName ? `It is used within the service "${input.serviceName}".` : "",
+                input.serviceContext ? `Service/phase context: ${input.serviceContext}` : "",
+                "Prefer uscis.gov / justice.gov/eoir and reputable legal-aid guides (3-4 searches).",
+                "Produce a concise brief (max ~500 words) covering: the form's Parts/sections in order;",
+                "which fields the applicant must personally provide; any enumerated choices and their",
+                "allowed values; and which fields map to standard identity/contact data. Plain text only.",
+              ]
+                .filter(Boolean)
+                .join("\n"),
+            },
+          ],
+        },
+        { timeout: 180_000, maxRetries: 1 },
+      );
+      researchBrief = researchResp.content
+        .filter((b) => b.type === "text")
+        .map((b) => (b as { text: string }).text)
+        .join("\n")
+        .trim();
+    } catch (err) {
+      // Research is best-effort — never block the proposal on a search failure.
+      logger.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        "ai-engine: proposeFormSegmentation — research step failed, proceeding ungrounded",
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // STEP B — GENERATE the JSON proposal (NO tools → full token budget for JSON).
+  // ---------------------------------------------------------------------------
+  const systemPrompt = [
+    "You are a senior U.S. immigration paralegal and official-forms expert. You design",
+    "client-facing intake wizards that collect EXACTLY the information needed to complete",
+    "an official USCIS/EOIR form correctly. Your audience is a non-lawyer immigrant who",
+    "answers in Spanish; every question must also have an accurate English translation.",
+    "Your message must be ONLY the JSON object — no prose, no markdown fences.",
+  ].join(" ");
 
   const buildUserPrompt = (feedback?: string): string => {
     const lines = [
-      "Analyze these AcroForm fields and propose a logical grouping into sections for an immigration form.",
-      "",
-      `Fields (${input.detectedFields.length}):`,
-      input.detectedFields.map((f) => `- ${f.name} (${f.type}, page ${f.page})`).join("\n"),
+      `Official form: ${input.formName ?? "(unknown immigration form)"}${input.formSlug ? ` [${input.formSlug}]` : ""}.`,
+      input.serviceName ? `Used within the service: "${input.serviceName}".` : "",
+      input.serviceContext ? `Service/phase context: ${input.serviceContext}` : "",
     ];
-    if (input.pdfText) {
-      lines.push("", `PDF context: ${input.pdfText.slice(0, 2000)}`);
+    if (researchBrief) {
+      lines.push("", "OFFICIAL RESEARCH BRIEF (ground your questions in this):", researchBrief.slice(0, 6000));
     }
     lines.push(
       "",
-      'Return JSON with this exact shape (NO code fences):',
-      '{ "groups": [{ "title_i18n": {"es": "...", "en": "..."}, "position": 0, "questions": [{ "question_i18n": {"es": "...", "en": "..."}, "field_type": "text|checkbox|select|textarea|date|number", "pdf_field_name": "...", "is_required": true, "position": 0 }] }] }',
+      "PROPOSE a FOCUSED client intake wizard. Map the detected AcroForm fields below into",
+      "clear, plain-language questions a client can answer. Rules:",
+      "- Aim for the 20-45 MOST IMPORTANT client-answerable questions. Do NOT try to map",
+      "  every field: SKIP signature, preparer, interpreter, attorney, page-number and",
+      "  purely-internal fields. Quality and correctness over coverage.",
+      "- Group questions following the form's official Parts/sections (logical order).",
+      "- Write question_i18n {es,en} in plain language; help_i18n {es,en} with a short",
+      "  hint grounded in the official instructions (or null).",
+      "- field_type ∈ text|textarea|date|number|checkbox|select. Use select WITH options",
+      "  (each {value, label_i18n}) for enumerated choices; use date for dates; checkbox",
+      "  for yes/no; textarea for narratives.",
+      "- is_required must match the official form.",
+      "- source: default 'client_answer'. Use 'profile' (with source_ref",
+      '  {"profile_field":"<one of the whitelist>"}) ONLY for identity/contact fields that',
+      `  match this EXACT whitelist: [${profileFields.join(", ")}] — never invent a field.`,
+      "  Use 'document_extraction' (source_ref {\"document_slug\":\"...\",\"json_path\":\"...\"})",
+      "  only when the value clearly comes from an uploaded document; otherwise client_answer.",
+      "- pdf_field_name: copy the EXACT detected field name this question fills, or null.",
+      "- Do NOT ask SSN / A-Number as free text — prefer the profile source when whitelisted.",
+      "- validation: optional {regex?, min?, max?} when clearly warranted (e.g. ZIP regex).",
+      "",
+      `Detected AcroForm fields (${input.detectedFields.length}${input.detectedFields.length > 180 ? ", showing the first 180" : ""}):`,
+      input.detectedFields.slice(0, 180).map((f) => `- ${f.name} (${f.type}, page ${f.page})`).join("\n"),
+    );
+    if (input.pdfText) {
+      lines.push("", `Extracted PDF text (truncated): ${input.pdfText.slice(0, 4000)}`);
+    }
+    lines.push(
+      "",
+      "Return ONLY this JSON object (no fences, no prose):",
+      '{ "research_summary": "...", "groups": [ { "title_i18n": {"es":"...","en":"..."}, "position": 0, "questions": [ { "question_i18n": {"es":"...","en":"..."}, "help_i18n": {"es":"...","en":"..."}, "field_type": "text", "options": null, "pdf_field_name": "...", "source": "client_answer", "source_ref": null, "is_required": true, "validation": null, "position": 0 } ] } ] }',
     );
     if (feedback) {
-      lines.push("", `CORRECTION REQUIRED — previous response had errors: ${feedback}`, "Fix these issues and return valid JSON.");
+      lines.push("", `CORRECTION REQUIRED — previous response had errors: ${feedback}`, "Fix these issues and return ONLY valid JSON.");
     }
-    return lines.join("\n");
+    return lines.filter((l) => l !== "").join("\n");
   };
-
-  type SegmentationResult = { groups: Array<{ title_i18n?: { es: string; en: string }; title?: { es: string; en: string }; questions: unknown[] }> };
 
   let lastError = "response was not valid JSON";
 
   for (let attempt = 0; attempt < 2; attempt++) {
-    const response = await client.messages.create({
-      model: editorModel,
-      max_tokens: 16000,
-      system: systemPrompt,
-      messages: [{ role: "user", content: buildUserPrompt(attempt > 0 ? lastError : undefined) }],
-    });
+    const response = await client.messages.create(
+      {
+        model: editorModel,
+        max_tokens: 12000,
+        system: systemPrompt,
+        messages: [{ role: "user", content: buildUserPrompt(attempt > 0 ? lastError : undefined) }],
+      },
+      // maxRetries:1 avoids a multi-minute retry storm on the (rare) timeout.
+      { timeout: 120_000, maxRetries: 1 },
+    );
 
     const text = response.content
       .filter((b) => b.type === "text")
       .map((b) => (b as { text: string }).text)
-      .join("");
+      .join("\n");
 
-    const parsed = stripFencesAndParse<SegmentationResult>(text);
+    const parsed = stripFencesAndParse<SegmentationProposal>(text);
     if (parsed && Array.isArray(parsed.groups)) {
+      if (researchBrief && !parsed.research_summary) {
+        parsed.research_summary = researchBrief.slice(0, 280);
+      }
       return parsed;
     }
 

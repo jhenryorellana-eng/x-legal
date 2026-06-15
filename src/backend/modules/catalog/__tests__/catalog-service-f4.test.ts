@@ -495,6 +495,51 @@ describe("aiProposeStructure", () => {
     expect(mocks.repo.upsertQuestion).toHaveBeenCalledTimes(2);
   });
 
+  it("materializes rich fields safely (options, help, profile whitelist, validation, pdf mapping)", async () => {
+    mocks.repo.findVersionById.mockResolvedValue({
+      ...makeDraftVersion(),
+      detected_fields: [{ pdf_field_name: "FirstName", field_type: "text", page: 1 }],
+    });
+    mocks.aiEngine.proposeFormSegmentation.mockResolvedValue({
+      groups: [
+        {
+          title_i18n: { es: "G", en: "G" },
+          position: 0,
+          questions: [
+            // a) valid select with options + valid pdf mapping → kept as-is
+            { question_i18n: { es: "País", en: "Country" }, field_type: "select",
+              options: [{ value: "US", label_i18n: { es: "EEUU", en: "USA" } }],
+              pdf_field_name: "FirstName", source: "client_answer", is_required: true, position: 0 },
+            // b) select WITHOUT options → degrades to text, options null
+            { question_i18n: { es: "X", en: "X" }, field_type: "select", options: [], pdf_field_name: null, position: 1 },
+            // c) profile + whitelisted field (email) → kept
+            { question_i18n: { es: "Email", en: "Email" }, field_type: "text", source: "profile",
+              source_ref: { profile_field: "email" }, position: 2 },
+            // d) profile + NON-whitelisted field (ssn) → degrades to client_answer
+            { question_i18n: { es: "SSN", en: "SSN" }, field_type: "text", source: "profile",
+              source_ref: { profile_field: "ssn" }, position: 3 },
+            // e) help + validation kept; unknown pdf field → null
+            { question_i18n: { es: "Y", en: "Y" }, field_type: "text",
+              help_i18n: { es: "Pista", en: "Hint" }, validation: { min: 5 },
+              pdf_field_name: "DoesNotExist", position: 4 },
+          ],
+        },
+      ],
+    });
+    mocks.repo.listQuestionGroups.mockResolvedValue([]);
+    mocks.repo.upsertQuestionGroup.mockResolvedValue({ id: "g1", automation_version_id: "version-id-111", title_i18n: {}, position: 0 });
+    mocks.repo.upsertQuestion.mockResolvedValue({ id: "q" });
+
+    await aiProposeStructure(makeActor(), { version_id: "version-id-111", mode: "replace" });
+
+    const calls = mocks.repo.upsertQuestion.mock.calls.map((c) => c[0] as Record<string, unknown>);
+    expect(calls[0]).toMatchObject({ field_type: "select", options: [{ value: "US" }], pdf_field_name: "FirstName", source: "client_answer" });
+    expect(calls[1]).toMatchObject({ field_type: "text", options: null });
+    expect(calls[2]).toMatchObject({ source: "profile", source_ref: { profile_field: "email" } });
+    expect(calls[3]).toMatchObject({ source: "client_answer", source_ref: null });
+    expect(calls[4]).toMatchObject({ help_i18n: { es: "Pista", en: "Hint" }, validation: { min: 5 }, pdf_field_name: null });
+  });
+
   it("throws CATALOG_NO_ACROFORM_FIELDS when version has no detected_fields", async () => {
     mocks.repo.findVersionById.mockResolvedValue(makeDraftVersion()); // detected_fields: []
 

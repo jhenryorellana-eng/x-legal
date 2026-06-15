@@ -46,3 +46,7 @@ next-env.d.ts
 /playwright-report/
 # playwright auth state (session cookies — never commit)
 /e2e/.auth/
+
+# Evidence session artifacts (real JWTs / cookies — never commit)
+docs/_evidence/**/*cookie*.json
+docs/_evidence/**/*-fresh.txt

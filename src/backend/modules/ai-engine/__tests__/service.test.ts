@@ -68,6 +68,8 @@ const mocks = vi.hoisted(() => {
       stream: vi.fn(() => ({
         finalMessage: anthropic.finalMessage,
       })),
+      // Non-streaming create — used by proposeFormSegmentation / proposeExtractionSchema.
+      create: vi.fn(),
     },
   };
 
@@ -230,6 +232,7 @@ import {
   markExtractionFailed,
   markTranslationFailed,
   getRunsForCase,
+  proposeFormSegmentation,
   AiEngineError,
 } from "../service";
 
@@ -636,5 +639,75 @@ describe("getRunsForCase", () => {
 
     // getRunsForCase uses requireCaseAccess, not can()
     expect(mocks.authz.can).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// proposeFormSegmentation — grounded proposal (web_search + context)
+// ---------------------------------------------------------------------------
+
+describe("proposeFormSegmentation", () => {
+  function mockCreateText(text: string) {
+    mocks.anthropicClient.messages.create.mockResolvedValue({
+      content: [
+        { type: "server_tool_use", id: "srv1", name: "web_search", input: { query: "USCIS I-589 instructions" } },
+        { type: "web_search_tool_result", tool_use_id: "srv1", content: [] },
+        { type: "text", text },
+      ],
+    });
+  }
+
+  it("researches via web_search (step A) then generates JSON tool-free (step B)", async () => {
+    mockCreateText(
+      '```json\n{"research_summary":"Per the official USCIS I-589 instructions","groups":[{"title_i18n":{"es":"A","en":"A"},"questions":[{"question_i18n":{"es":"N","en":"N"},"field_type":"text","source":"profile","source_ref":{"profile_field":"email"}}]}]}\n```',
+    );
+
+    const res = await proposeFormSegmentation(ADMIN_ACTOR, {
+      detectedFields: [{ name: "Pt1Line5_Email", type: "text", page: 1 }],
+      pdfText: "",
+      formName: "USCIS I-589",
+      formSlug: "uscis-i-589",
+      serviceName: "Asilo Político",
+      profileFields: ["email"],
+    });
+
+    expect(res.groups).toHaveLength(1);
+    expect(res.research_summary).toContain("I-589");
+    expect(mocks.anthropicClient.messages.create).toHaveBeenCalledTimes(2);
+
+    type Body = { tools?: Array<{ type: string; name: string }>; messages: Array<{ content: string }> };
+    // calls[0] = research (web_search tool + form/service context)
+    const research = mocks.anthropicClient.messages.create.mock.calls[0][0] as Body;
+    expect(research.tools?.[0]).toMatchObject({ type: "web_search_20250305", name: "web_search" });
+    expect(research.messages[0].content).toContain("uscis-i-589");
+    expect(research.messages[0].content).toContain("Asilo Político");
+    // calls[1] = generation (NO tools, full budget; whitelist surfaced here)
+    const generation = mocks.anthropicClient.messages.create.mock.calls[1][0] as Body;
+    expect(generation.tools).toBeUndefined();
+    expect(generation.messages[0].content).toContain("email");
+  });
+
+  it("extracts JSON even when wrapped in prose, and retries on invalid output", async () => {
+    mocks.anthropicClient.messages.create
+      .mockResolvedValueOnce({ content: [{ type: "text", text: "I could not find anything useful." }] })
+      .mockResolvedValueOnce({
+        content: [{ type: "text", text: 'Here is the structure:\n{"groups":[{"title_i18n":{"es":"B","en":"B"},"questions":[]}]}\nHope it helps!' }],
+      });
+
+    const res = await proposeFormSegmentation(ADMIN_ACTOR, {
+      detectedFields: [{ name: "F1", type: "text", page: 1 }],
+      pdfText: "",
+    });
+
+    expect(res.groups).toHaveLength(1);
+    expect(mocks.anthropicClient.messages.create).toHaveBeenCalledTimes(2);
+  });
+
+  it("throws AI_OUTPUT_INVALID after both attempts fail to parse", async () => {
+    mocks.anthropicClient.messages.create.mockResolvedValue({ content: [{ type: "text", text: "no json here at all" }] });
+
+    await expect(
+      proposeFormSegmentation(ADMIN_ACTOR, { detectedFields: [{ name: "F1", type: "text", page: 1 }], pdfText: "" }),
+    ).rejects.toMatchObject({ code: "AI_OUTPUT_INVALID" });
   });
 });

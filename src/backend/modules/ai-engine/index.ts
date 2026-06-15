@@ -47,6 +47,10 @@ export type {
   ExtractDocumentPayload,
   TranslateDocumentJobPayload,
   TranslateDocumentResult,
+  // Catalog editor assistance (consumed by catalog module)
+  ProposedQuestion,
+  ProposedGroup,
+  SegmentationProposal,
 } from "./service";
 
 // ---------------------------------------------------------------------------

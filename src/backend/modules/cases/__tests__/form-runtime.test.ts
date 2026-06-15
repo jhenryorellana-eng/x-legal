@@ -374,6 +374,18 @@ describe("validateAnswerTypes", () => {
     expect(validateAnswerTypes({ q1: null }, questions)[0]?.code).toBe("required");
     expect(validateAnswerTypes({ q1: undefined }, questions)[0]?.code).toBe("required");
   });
+
+  it("enforceRequired=false (draft) skips required, still type-checks present answers", () => {
+    const questions = [
+      makeQuestion({ id: "q1", is_required: true }),
+      makeQuestion({ id: "q2", is_required: true, field_type: "select", options: [{ value: "a" }, { value: "b" }] }),
+    ];
+    // q1 absent (would be "required" when enforced) → skipped; q2 present but invalid option → still flagged.
+    expect(validateAnswerTypes({ q2: "a" }, questions, false)).toHaveLength(0);
+    expect(validateAnswerTypes({ q2: "zzz" }, questions, false)).toEqual([{ questionId: "q2", code: "type" }]);
+    // submit (default true) still enforces required on the same partial answers.
+    expect(validateAnswerTypes({ q2: "a" }, questions).map((e) => e.questionId)).toEqual(["q1"]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -433,6 +445,42 @@ describe("saveFormDraft", () => {
 
     expect(mockInsertFormResponse).not.toHaveBeenCalled();
     expect(mockMergeFormAnswers).toHaveBeenCalled();
+  });
+
+  it("draft autosave does NOT enforce required on a partial patch (regression)", async () => {
+    // The version has two required questions; the client has only filled q1.
+    // A draft autosave of {q1} must persist — never reject because q2 is empty.
+    mockFindFormResponse.mockResolvedValue(draftResponse);
+    mockListQuestionGroups.mockResolvedValue([{ id: "grp1" }]);
+    mockListQuestions.mockResolvedValue([
+      { id: "q1", field_type: "text", is_required: true, options: null, validation: null },
+      { id: "q2", field_type: "text", is_required: true, options: null, validation: null },
+    ]);
+    mockFindFormResponseById.mockResolvedValue({ ...draftResponse, answers: { q1: "only this" } });
+
+    const result = await saveFormDraft(clientActor, {
+      caseId: CASE_ID,
+      formDefinitionId: FORM_DEF_ID,
+      partyId: null,
+      patch: { q1: "only this" },
+    });
+
+    expect(mockMergeFormAnswers).toHaveBeenCalledWith(RESPONSE_ID, { q1: "only this" });
+    expect(result.id).toBe(RESPONSE_ID);
+  });
+
+  it("accepts a Postgres-valid but non-RFC-4122 UUID caseId (zUuid, regression)", async () => {
+    mockFindFormResponse.mockResolvedValue(draftResponse);
+    mockFindFormResponseById.mockResolvedValue({ ...draftResponse, answers: { q1: "x" } });
+    // e.g. a seeded/demo id whose version nibble isn't 1-8 — Zod's .uuid() would reject it.
+    await expect(
+      saveFormDraft(clientActor, {
+        caseId: "00000000-0000-0000-0000-000000000302",
+        formDefinitionId: FORM_DEF_ID,
+        partyId: null,
+        patch: { q1: "x" },
+      }),
+    ).resolves.toBeTruthy();
   });
 
   it("throws FORM_NOT_SUBMITTABLE when trying to edit a submitted response", async () => {

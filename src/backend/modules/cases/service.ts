@@ -83,6 +83,17 @@ import {
 } from "./repository";
 
 // ---------------------------------------------------------------------------
+// Lenient UUID schema — matches the Postgres `uuid` type (any 8-4-4-4-12 hex),
+// NOT Zod's `.uuid()` which enforces RFC-4122 version/variant bits. The app must
+// accept every identifier its own database stores and returns (incl. non-v4 /
+// seeded placeholder IDs); requireCaseAccess + DB FKs are the real authority, not
+// the textual format. `.uuid()` rejected DB-valid IDs in write paths while reads
+// (no Zod) accepted them — a latent inconsistency this removes.
+// ---------------------------------------------------------------------------
+const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+const zUuid = z.string().regex(UUID_RE, "uuid");
+
+// ---------------------------------------------------------------------------
 // Error class
 // ---------------------------------------------------------------------------
 
@@ -196,19 +207,19 @@ export interface CasePartyInput {
 }
 
 const CreateCaseFromContractInputSchema = z.object({
-  primaryClientId: z.string().uuid(),
-  serviceId: z.string().uuid(),
-  servicePlanId: z.string().uuid(),
+  primaryClientId: zUuid,
+  serviceId: zUuid,
+  servicePlanId: zUuid,
   /** If set, idempotency check: skip if this contract already has a case. */
-  contractId: z.string().uuid().optional(),
-  leadId: z.string().uuid().nullable().optional(),
-  assignedParalegalId: z.string().uuid().nullable().optional(),
-  assignedSalesId: z.string().uuid().nullable().optional(),
+  contractId: zUuid.optional(),
+  leadId: zUuid.nullable().optional(),
+  assignedParalegalId: zUuid.nullable().optional(),
+  assignedSalesId: zUuid.nullable().optional(),
   parties: z
     .array(
       z.object({
         role: z.string().min(1),
-        userId: z.string().uuid().optional(),
+        userId: zUuid.optional(),
         person: z
           .object({
             firstName: z.string().min(1),
@@ -597,9 +608,9 @@ export async function onDownpaymentConfirmed(payload: {
 // ---------------------------------------------------------------------------
 
 const RequestUploadSchema = z.object({
-  caseId: z.string().uuid(),
-  requirementId: z.string().uuid().nullable().optional(),
-  partyId: z.string().uuid().nullable().optional(),
+  caseId: zUuid,
+  requirementId: zUuid.nullable().optional(),
+  partyId: zUuid.nullable().optional(),
   filename: z.string().min(1),
   mimeType: z.string().min(1),
   sizeBytes: z.number().int().positive(),
@@ -644,10 +655,10 @@ export async function startDocumentUpload(
 }
 
 const ConfirmUploadSchema = z.object({
-  caseId: z.string().uuid(),
+  caseId: zUuid,
   uploadRef: z.string().min(1),
-  requirementId: z.string().uuid().nullable().optional(),
-  partyId: z.string().uuid().nullable().optional(),
+  requirementId: zUuid.nullable().optional(),
+  partyId: zUuid.nullable().optional(),
   originalFilename: z.string().min(1),
 });
 
@@ -796,7 +807,7 @@ export async function confirmDocumentUpload(
 // ---------------------------------------------------------------------------
 
 const ReviewDocumentSchema = z.object({
-  documentId: z.string().uuid(),
+  documentId: zUuid,
   verdict: z.enum(["approve", "reject"]),
   reason: z
     .object({ en: z.string(), es: z.string() })
@@ -904,7 +915,7 @@ export async function reviewDocument(
 // ---------------------------------------------------------------------------
 
 const ChangeStatusSchema = z.object({
-  caseId: z.string().uuid(),
+  caseId: zUuid,
   target: z.enum([
     "active",
     "in_validation",
@@ -1997,9 +2008,9 @@ export async function getClientFormsForCase(
 // ---------------------------------------------------------------------------
 
 const SaveFormDraftSchema = z.object({
-  caseId: z.string().uuid(),
-  formDefinitionId: z.string().uuid(),
-  partyId: z.string().uuid().nullable().optional(),
+  caseId: zUuid,
+  formDefinitionId: zUuid,
+  partyId: zUuid.nullable().optional(),
   patch: z.record(z.string(), z.unknown()),
 });
 
@@ -2067,7 +2078,9 @@ export async function saveFormDraft(
         throw new CaseError("FORM_VERSION_MISMATCH", { unknownKeys });
       }
 
-      const errors = validateAnswerTypes(parsed.patch, questions);
+      // Draft autosave: type-check only the answers in this patch — never enforce
+      // required-ness on fields the user hasn't reached yet (that's submit's job).
+      const errors = validateAnswerTypes(parsed.patch, questions, false);
       if (errors.length > 0) {
         throw new CaseError("FORM_VALIDATION_FAILED", { errors });
       }
@@ -2087,9 +2100,9 @@ export async function saveFormDraft(
 // ---------------------------------------------------------------------------
 
 const SubmitFormResponseSchema = z.object({
-  caseId: z.string().uuid(),
-  formDefinitionId: z.string().uuid(),
-  partyId: z.string().uuid().nullable().optional(),
+  caseId: zUuid,
+  formDefinitionId: zUuid,
+  partyId: zUuid.nullable().optional(),
 });
 
 export type SubmitFormResponseInput = z.infer<typeof SubmitFormResponseSchema>;
@@ -2165,7 +2178,7 @@ export async function submitFormResponse(
 // ---------------------------------------------------------------------------
 
 const ApproveFormResponseSchema = z.object({
-  responseId: z.string().uuid(),
+  responseId: zUuid,
 });
 
 export type ApproveFormResponseInput = z.infer<typeof ApproveFormResponseSchema>;
@@ -2210,7 +2223,7 @@ export async function approveFormResponse(
 // ---------------------------------------------------------------------------
 
 const GenerateFilledPdfSchema = z.object({
-  responseId: z.string().uuid(),
+  responseId: zUuid,
 });
 
 export type GenerateFilledPdfInput = z.infer<typeof GenerateFilledPdfSchema>;

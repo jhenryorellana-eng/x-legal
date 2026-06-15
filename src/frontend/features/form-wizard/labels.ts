@@ -8,8 +8,12 @@ import type { WizardLabels } from "./types";
  * (cast to the loose signature). Keys live under `cliente.formWizard.*`.
  */
 export function resolveWizardLabels(t: (key: string) => string): WizardLabels {
+  // `stepCounter` is an ICU template ("Paso {n} de {total}") interpolated CLIENT-side
+  // via .replace(); echo the placeholders back so next-intl returns the raw template
+  // instead of throwing FORMATTING_ERROR for the missing {n}/{total} values.
+  const tWithValues = t as (key: string, values?: Record<string, string>) => string;
   return {
-    stepCounter: t("stepCounter"),
+    stepCounter: tWithValues("stepCounter", { n: "{n}", total: "{total}" }),
     back: t("back"),
     saving: t("saving"),
     saved: t("saved"),
