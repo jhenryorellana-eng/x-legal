@@ -3,14 +3,14 @@
 > Archivo de continuidad entre sesiones (PROMPT-CONSTRUCCION-V2 §4). Actualizar al cierre de cada sesión.
 > Biblioteca SoT: `C:\Users\mauri\Documents\Trabajos\USALATINO V2\V2\docs\` · Supabase: **USALATINO V2** `uexxyokexcamyjcknxua`
 
-**Fase actual: F4 — cierre del Definition of Done (E2E automatizados + QA visual + presupuesto IA + RLS test 4). F5-Ola1 construida pero PAUSADA hasta OK de F4. F0–F3 ✅**
+**Fase actual: F5 — Diana + expediente + Abogados (por olas). F5-Ola1 ✅ · F5-Ola2 ✅ (validación con abogado, V2 ↔ SaaS REAL). Siguiente: F5-Ola3 (Andrium + kanban Diana). F0–F4 ✅ (F4 DoD cerrada+commiteada).**
 Última sesión: 2026-06-15
 
-> **Corrección de rumbo (Henry, 2026-06-15):** me había adelantado a F5 sin cerrar el DoD de fase de F4 (DOC-80 §6 + criterios de salida §F4). Henry: "tienen que estar todas las olas terminadas para continuar con la siguiente fase". F4 tenía sus *features* construidas+verificadas en vivo, pero faltaban 4 entregables de DoD que se cierran en esta sesión (ver "F4 — Cierre de DoD" más abajo). Aclaración de numeración: en DOC-81 §4 los *flujos* E2E se numeran F1–F6 y NO coinciden con las *fases* (el "flujo F4" §4.4 es expediente/Abogados = fase F5).
+> **F4 DoD CERRADA y commiteada** (`8ebb64c`): E2E automatizados (§4.3/§4.6) + QA visual + axe + test presupuesto (RNF-042) + RLS test 4 + seam de IA env-gated. Aclaración de numeración: en DOC-81 §4 los *flujos* E2E se numeran F1–F6 y NO coinciden con las *fases* (el "flujo F4" §4.4 es expediente/Abogados = fase F5).
 
 ## F5 — Diana + expediente + Abogados (por olas; cadencia: ola por ola con OK de Henry)
 
-> Plan aprobado: `~/.claude/plans/analiza-mi-proyecto-y-twinkly-reddy.md`. Decisiones Henry: **simulador local del SaaS Abogados** (no tiene las claves aún — ver el plan §"Cómo conseguir las claves") + alcance **core de producción legal** (mensajería/notificaciones → F7). **El modelo de datos de F5 ya existe** (migraciones 0008/0009 aplicadas): no se necesitan migraciones de esquema.
+> Plan aprobado: `~/.claude/plans/analiza-mi-proyecto-y-twinkly-reddy.md`. **🔑 El SaaS Abogados REAL está disponible** (código `C:\Users\mauri\Documents\Trabajos\Abogados\Abogado`, Supabase propio `skmxmzwmrtjvslfccgan`, claves reales en su `.env.local`). Decisiones Henry: V2 se conecta al **SaaS real local (:3100)** para el loop E2E + **mejoras seguras del §10** al SaaS ahora (barrido completo después); alcance **core de producción legal** (mensajería/notificaciones → F7). **El modelo de datos de F5 ya existe** (migraciones 0008/0009): cero migraciones de esquema.
 
 ### Pre-ola — Migración 0018 ✅
 - **0018 (`merge_form_answers` RPC) aplicada y verificada** al remoto. El autosave de formularios ahora usa merge atómico (sin race window).
@@ -26,7 +26,21 @@
 - Títulos de material genéricos ("Automated Form"/"Cover") — usar el label real del form/generación (pulido).
 - Numeración de pie de página en el PDF compilado (mupdf WASM no soporta fuentes substitutas — requiere asset de fuente embebida).
 
-### Siguiente: Ola F5-2 — Validación abogado + simulador SaaS + UI Validaciones.
+### Ola F5-2 — Validación con abogado (V2 ↔ SaaS REAL) + mejoras al SaaS + UI Validaciones ✅ (construido + revisado + VERIFICADO EN VIVO contra el SaaS real). Commits V2 `bc714f2` · SaaS `03e07e1`.
+SoT: DOC-70 (contrato, verbatim) + DOC-26 §2.8 (cron) + DOC-54 §6/PROMPT-DIA-06 (UI). **Cero migraciones** (esquema ya existe; verificado por MCP: `legal_validations` con `cancelled`, `ai_generation_runs.output_text`, `webhook_events`).
+- **Módulo backend `integrations`** (domain/repository/service/events/index + **54 tests**, TDD): serializadores deterministas (`buildClientLabel`, `serializeAutomatedForm` §2.4.1, `buildAnnexIndex` — **PII jamás sale de V2**, solo texto); `sendToLawyer` (gates with_lawyer+compiled+sin-activa, paquete por `item_type`, `source` explícito, maneja 202/200-dedup/400/401/409/5xx); `applyVerdict` (único punto de efectos, idempotencia compartida webhook+polling vía `webhook_events` `'{validation_id}:{verdict_at}'`); `processVerdictWebhook` (HMAC-SHA256 sobre body crudo, `timingSafeEqual`, 401 firma ausente/inválida + fila forense, source guard); `reconcileFromPolling` (cron `retry-abogados-polling`, DOC-26 §2.8: 6h, sent_at<24h, escalación 72h). Route `/api/webhooks/abogados`. Consumers cableados.
+- **UI Diana** (diana/06): `/legal/validaciones` (global, filtros) + `[caseId]` (loop del intento: stepper, semáforo 🟢🟠🔴+IA score, 7 StatusPill, cards de findings por severidad con "Atendido"+atajos, modal "Crear intento de corrección", **"Reenviar intento corregido"**, timeline, CTA "Enviar a Andrium" deshabilitado→Ola-3). Simulador local `scripts/simulate-abogados-webhook.mjs` (DOC-70 §9.2, casos negativos).
+- **Mejoras seguras al SaaS** (repo `Abogados\Abogado`, §10, tsc/lint/build verdes): **§10.5 firma OBLIGATORIA** (no envía sin firmar), **§10.2 redelivery con retry/backoff** (3 intentos), **§10.7 409 con `validation_id`**. (§10.4 cancelled omitido: el SaaS no tiene flujo de cancelación.)
+- **Two-stage review** (code-reviewer → 3 blockers): #1 consumers no cableados (arreglado), #2 cutoff 24h (intencional, DOC-26 §2.8 manda — DOC-70 §6 le delega), #3 forense silencioso (arreglado: siempre loggea). + HIGH #4 (quitados 3 imports dinámicos `as string`), #8 (polling recupera filas sin external_validation_id), nit limit.
+- **🐛 Bug de PRODUCCIÓN cazado por el E2E en vivo**: `applyVerdict` corre en contexto webhook (**sin sesión**); `cases.changeCaseStatus`→`findCaseById` usa `createServerClient` (RLS) → `CASE_NOT_FOUND`. Fix: cambio de estado del caso vía **service-role** (`setCaseStatusSystem`, como expedientes) — también elimina el ruido de audit "system". +tests.
+- **VERIFICADO EN VIVO contra el SaaS REAL local (:3100)** (caso de Carlos → `with_lawyer` por UPDATE de 1 fila autorizado): Diana **"Enviar a abogado"** → **POST real → 202** → `queued`+`external_validation_id`+expediente `sent_to_lawyer`+caso `in_validation` → webhook `needs_corrections` (HMAC válida) → `corrections_needed`+findings+semáforo+score (UI renderiza Zona 3 exacta) → **"Crear intento de corrección"** (modal→intento 2 clonado→ensamblador) → **recompilar** (14 pág) → **"Reenviar"** (200-dedup manejado) → webhook `validated` → expediente **`approved`** + caso **`ready_for_delivery`** (UI card verde "Listo para radicar"). **Seguridad**: firma corrupta→401, sin firma→401, source ajeno→200 no-op. **0 errores de consola.**
+- Gates: **tsc 0 · eslint 0 · vitest 960/960** (+54) · **i18n 1247** (paridad es/en).
+
+### Pendiente menor de F5-2 / hallazgos
+- El loop **completo §5 "nueva validación al re-POST"** requiere que el SaaS REAL emita el veredicto (sesión de abogado); con el simulador el SaaS mantiene su validación activa → el reenvío recibe **200-dedup** (manejado correctamente). Para el §9.1 completo contra el SaaS real, configurar un abogado revisor en el SaaS.
+- "Mi Historia" (`cliente/historia`) sigue siendo placeholder (hallazgo de F4).
+
+### Siguiente: Ola F5-3 — Handoff Andrium (impresión) + kanban de Diana + E2E completo + demo → cierre de F5.
 
 ---
 
