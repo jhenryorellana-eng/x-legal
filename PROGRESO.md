@@ -3,8 +3,30 @@
 > Archivo de continuidad entre sesiones (PROMPT-CONSTRUCCION-V2 §4). Actualizar al cierre de cada sesión.
 > Biblioteca SoT: `C:\Users\mauri\Documents\Trabajos\USALATINO V2\V2\docs\` · Supabase: **USALATINO V2** `uexxyokexcamyjcknxua`
 
-**Fase actual: F4 — IA engine + formularios (EN CURSO, por olas) · F0–F3 ✅ COMPLETAS y verificadas en vivo**
-Última sesión: 2026-06-14
+**Fase actual: F5 — Diana + expediente + Abogados (EN CURSO, por olas) · F0–F4 ✅ COMPLETAS y verificadas en vivo**
+Última sesión: 2026-06-15
+
+## F5 — Diana + expediente + Abogados (por olas; cadencia: ola por ola con OK de Henry)
+
+> Plan aprobado: `~/.claude/plans/analiza-mi-proyecto-y-twinkly-reddy.md`. Decisiones Henry: **simulador local del SaaS Abogados** (no tiene las claves aún — ver el plan §"Cómo conseguir las claves") + alcance **core de producción legal** (mensajería/notificaciones → F7). **El modelo de datos de F5 ya existe** (migraciones 0008/0009 aplicadas): no se necesitan migraciones de esquema.
+
+### Pre-ola — Migración 0018 ✅
+- **0018 (`merge_form_answers` RPC) aplicada y verificada** al remoto. El autosave de formularios ahora usa merge atómico (sin race window).
+
+### Ola F5-1 — Módulo expediente + ensamblador + carátulas ✅ (construido + revisado + VERIFICADO EN VIVO)
+- **`platform/pdf`**: `renderCoverPdf` (carátula navy/gold determinista) + `compileExpedientePdf` (merge de N ítems PDF/imagen vía `graftPage` de mupdf + índice TOC two-pass con páginas de inicio). De-risk clave: `DocumentWriter` falla en forms USCIS ("substitute font creation") → `graftPage` lo resuelve; numeración de pie diferida (mupdf WASM no crea fuentes substitutas). Commit `7f92964`.
+- **Módulo backend `expediente`** (domain/service/repository/events/index + **73 tests**): carátulas (`generateCover`), ensamblador (`createExpediente` con guard 1-draft + attempt_no, `getExpedienteMaterial`, add/remove/reorder/updateItem con FK lógica + estado editable, archivo externo), `compileExpediente` (descarga de buckets → compileExpedientePdf → sube a `expedientes` → compiled/page_count; compile_failed on error), `createCorrectionAttempt` (clona ítems, attempt_no+1, inmutable). **Review fixes:** quité 2 emits `compiled` erróneos (create/correction) + añadí el guard de prefijo `external/{caseId}/` (path-injection). Commit `d8cc6a1`.
+- **UI ensamblador** `/legal/expediente/[caseId]` (server actions + page + `ensamblador-view`): crear expediente, generar carátula, agregar/ordenar/renombrar/TOC material, compilar, ver PDF. Commit `bf3d1d9`.
+- **Verificado en vivo como Henry** (caso de asilo de Carlos): crear expediente → generar carátula real → agregar carátula + I-589 llenado → **Compilar** → el `compileExpediente` REAL descargó ambos de storage, los fusionó y subió al bucket `expedientes` → **PDF de 14 páginas válido** (TOC "Índice del expediente" + carátula + I-589 con Ramírez/Houston/Carlos). 0 errores de consola.
+- Gates: tsc 0 · eslint 0/0 · **882 tests** (+73).
+
+### Pendiente menor de F5-1
+- Títulos de material genéricos ("Automated Form"/"Cover") — usar el label real del form/generación (pulido).
+- Numeración de pie de página en el PDF compilado (mupdf WASM no soporta fuentes substitutas — requiere asset de fuente embebida).
+
+### Siguiente: Ola F5-2 — Validación abogado + simulador SaaS + UI Validaciones.
+
+---
 
 ## F4 — IA engine + formularios (por olas; cadencia: ola por ola con OK de Henry)
 
