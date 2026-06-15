@@ -8,6 +8,7 @@
  * arrives in future phases).
  */
 
+import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { getLocale } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
@@ -130,8 +131,26 @@ export default async function AdminCasoDetailPage({
   };
 
   return (
-    <SharedCaseView
-      vm={vm}
+    <>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+        <Link
+          href={`/admin/casos/${caseId}/formularios`}
+          style={{
+            fontSize: 13,
+            fontWeight: 700,
+            color: "var(--accent)",
+            textDecoration: "none",
+            border: "1px solid var(--line)",
+            borderRadius: 999,
+            padding: "6px 14px",
+            background: "var(--card, #fff)",
+          }}
+        >
+          Formularios →
+        </Link>
+      </div>
+      <SharedCaseView
+        vm={vm}
       actions={{
         reviewDocument: reviewDocumentAction,
         registerPayment: registerPaymentAction,
@@ -143,5 +162,6 @@ export default async function AdminCasoDetailPage({
       backHref="/admin/casos"
       isAdmin={actor.role === "admin"}
     />
+    </>
   );
 }
