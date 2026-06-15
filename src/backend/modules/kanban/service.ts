@@ -233,10 +233,18 @@ export async function getBoard(
     );
   }
 
-  const [columns, cards] = await Promise.all([
+  const [initialColumns, cards] = await Promise.all([
     repo.listColumns(board.id),
     repo.listCards(board.id),
   ]);
+
+  // Self-heal: a board must never be column-less. If an earlier failed seed left
+  // it empty, re-seed now and re-read (idempotent).
+  let columns = initialColumns;
+  if (columns.length === 0) {
+    await repo.seedBoardColumns(board.id, seedColumnsFor(input.kind));
+    columns = await repo.listColumns(board.id);
+  }
 
   return { board, columns, cards };
 }
@@ -1794,5 +1802,143 @@ export async function onDownpaymentConfirmedKanban(payload: {
     }
   } catch (err) {
     logger.error({ err, payload }, "kanban: onDownpaymentConfirmedKanban failed");
+  }
+}
+
+/**
+ * Handles expediente.sent_to_finance → create card on Andrium's "Por imprimir" column.
+ *
+ * RF-AND-006 / DOC-45 §3.8 (consumer side).
+ * Idempotent: if a card for this caseId already exists on the board, skip.
+ * The DB unique (ref_type, ref_id, column_id) constraint also guards against duplicates.
+ */
+export async function onExpedienteSentToFinance(payload: {
+  caseId: string;
+  orgId: string;
+}): Promise<void> {
+  try {
+    const { caseId, orgId } = payload;
+
+    const financeStaff = await repo.findFinanceStaff(orgId);
+    if (financeStaff.length === 0) {
+      logger.warn({ orgId }, "kanban: onExpedienteSentToFinance — no finance staff found");
+      return;
+    }
+
+    for (const staff of financeStaff) {
+      let board = await repo.findBoard(staff.userId, "collections");
+      if (!board) {
+        board = await repo.createBoardWithSeed(
+          staff.userId,
+          orgId,
+          "collections",
+          seedColumnsFor("collections"),
+        );
+      }
+
+      // Idempotency: skip if card already exists on ANY column of this board
+      const existing = await repo.findCardByRef(board.id, "case", caseId);
+      if (existing) continue;
+
+      // Find the "Por imprimir" column. Self-heal a column-less board (e.g. one
+      // left empty by an earlier failed seed) before giving up.
+      let columns = await repo.listColumns(board.id);
+      if (columns.length === 0) {
+        await repo.seedBoardColumns(board.id, seedColumnsFor("collections"));
+        columns = await repo.listColumns(board.id);
+      }
+      const printCol = columns.find((c) => c.label === "Por imprimir");
+      if (!printCol) {
+        logger.warn({ boardId: board.id }, "kanban: onExpedienteSentToFinance — 'Por imprimir' column not found");
+        continue;
+      }
+
+      const maxPos = await repo.maxCardPosition(printCol.id);
+      const newCard = await repo.insertCard({
+        column_id: printCol.id,
+        ref_type: "case",
+        ref_id: caseId,
+        position: maxPos + 1,
+      });
+
+      logger.info({ caseId, staffId: staff.userId }, "kanban: expediente.sent_to_finance card created");
+
+      await broadcastCardMoved(board.id, {
+        card_id: newCard.id,
+        from_column_id: printCol.id,
+        to_column_id: printCol.id,
+        position: maxPos + 1,
+        actor_user_id: systemActor().userId,
+      });
+    }
+  } catch (err) {
+    logger.error({ err, payload }, "kanban: onExpedienteSentToFinance failed");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GAP-2 — backfillCasesBoard (F5-Ola3 kanban board support)
+// ---------------------------------------------------------------------------
+
+/**
+ * Ensures that each caseId in the list has a card on the actor's cases board.
+ * Missing cards are inserted at the entry column ("Por iniciar").
+ * Idempotent — safe to call on every page load; DB unique constraint on
+ * (ref_type, ref_id, column_id) provides final-layer protection.
+ *
+ * Design note: caseIds are passed in by the page (from listCasesForParalegal),
+ * keeping kanban agnostic of the cases schema (no cross-module query here).
+ *
+ * @GAP-2
+ */
+export async function backfillCasesBoard(
+  actor: Actor,
+  caseIds: string[],
+): Promise<void> {
+  can(actor, "cases", "view");
+
+  if (caseIds.length === 0) return;
+
+  // Find or create the actor's cases board
+  let board = await repo.findBoard(actor.userId, "cases");
+  if (!board) {
+    board = await repo.createBoardWithSeed(
+      actor.userId,
+      actor.orgId,
+      "cases",
+      seedColumnsFor("cases"),
+    );
+  }
+
+  // Find entry column ("Por iniciar" — lowest position). Self-heal a column-less
+  // board so a partially-seeded board never breaks the backfill.
+  let columns = await repo.listColumns(board.id);
+  if (columns.length === 0) {
+    await repo.seedBoardColumns(board.id, seedColumnsFor("cases"));
+    columns = await repo.listColumns(board.id);
+  }
+  if (columns.length === 0) return;
+
+  const entryCol = columns.reduce((min, c) =>
+    c.position < min.position ? c : min,
+  );
+
+  // Insert missing cards; skip existing ones (idempotent). Positions are tracked
+  // in-memory and incremented per insert so multiple new cards never collide on
+  // the (column_id, position) unique constraint.
+  let nextPos = (await repo.maxCardPosition(entryCol.id)) + 1;
+  for (const caseId of caseIds) {
+    const existing = await repo.findCardByRef(board.id, "case", caseId);
+    if (existing) continue;
+
+    await repo.insertCard({
+      column_id: entryCol.id,
+      ref_type: "case",
+      ref_id: caseId,
+      position: nextPos,
+    });
+    nextPos += 1;
+
+    logger.info({ caseId, paralegalId: actor.userId }, "kanban: backfillCasesBoard — card inserted");
   }
 }

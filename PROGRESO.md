@@ -3,7 +3,7 @@
 > Archivo de continuidad entre sesiones (PROMPT-CONSTRUCCION-V2 §4). Actualizar al cierre de cada sesión.
 > Biblioteca SoT: `C:\Users\mauri\Documents\Trabajos\USALATINO V2\V2\docs\` · Supabase: **USALATINO V2** `uexxyokexcamyjcknxua`
 
-**Fase actual: F5 — Diana + expediente + Abogados (por olas). F5-Ola1 ✅ · F5-Ola2 ✅ (validación con abogado, V2 ↔ SaaS REAL). Siguiente: F5-Ola3 (Andrium + kanban Diana). F0–F4 ✅ (F4 DoD cerrada+commiteada).**
+**Fase actual: F5 — Diana + expediente + Abogados (por olas). F5-Ola1 ✅ · F5-Ola2 ✅ · F5-Ola3 ✅ (handoff Andrium + kanban Diana, VERIFICADO EN VIVO). 🏁 F5 CERRADA. Siguiente: F6 (Billing + Panel Andrium /finanzas). F0–F4 ✅.**
 Última sesión: 2026-06-15
 
 > **F4 DoD CERRADA y commiteada** (`8ebb64c`): E2E automatizados (§4.3/§4.6) + QA visual + axe + test presupuesto (RNF-042) + RLS test 4 + seam de IA env-gated. Aclaración de numeración: en DOC-81 §4 los *flujos* E2E se numeran F1–F6 y NO coinciden con las *fases* (el "flujo F4" §4.4 es expediente/Abogados = fase F5).
@@ -40,7 +40,21 @@ SoT: DOC-70 (contrato, verbatim) + DOC-26 §2.8 (cron) + DOC-54 §6/PROMPT-DIA-0
 - El loop **completo §5 "nueva validación al re-POST"** requiere que el SaaS REAL emita el veredicto (sesión de abogado); con el simulador el SaaS mantiene su validación activa → el reenvío recibe **200-dedup** (manejado correctamente). Para el §9.1 completo contra el SaaS real, configurar un abogado revisor en el SaaS.
 - "Mi Historia" (`cliente/historia`) sigue siendo placeholder (hallazgo de F4).
 
-### Siguiente: Ola F5-3 — Handoff Andrium (impresión) + kanban de Diana + E2E completo + demo → cierre de F5.
+### Ola F5-3 — Handoff a Andrium (impresión) + kanban de casos de Diana + E2E §4.4 ✅ (construido + revisado APPROVED + VERIFICADO EN VIVO). 🏁 Cierra F5.
+SoT: DOC-45 §3.8–3.9 (handoff impresión, verbatim) + DOC-54 §0–1/PROMPT-DIA-01 (kanban Diana) + DOC-47 (motor kanban) + DOC-81 §4.4. **Decisión Henry: fiel a DOC-80 → la UI de impresión de Andrium (`/finanzas/impresion`) llega en F6; en F5 las actions quedan backend-ready.** **Cero migraciones** (columnas de impresión + `board_kind='cases'/'collections'` ya existían).
+- **Backend `expediente`** (handoff, TDD): `sendToFinance` (gate `approved` with_lawyer | `compiled` self; bloqueo de reenvío; `requireCaseAccess`), `markPrinted` (RF-AND-025: exige `sent_to_finance`+`compiled_pdf_path`), `markShipped`/`markFiled` (exigen `printed`, sin cambio de estado). Eventos `expediente.sent_to_finance` + `expediente.printed`.
+- **Consumers** (cableados en `register-consumers`): `kanban.onExpedienteSentToFinance` → tarjeta idempotente en board `collections` de Andrium, columna **"Por imprimir"**; `cases.onExpedienteSentToFinanceCase` → asegura `ready_for_delivery`; `cases.onExpedientePrintedCase` → `delivered`. **Lección de Ola-2 aplicada**: las transiciones de estado del caso en eventos usan **service-role** (`transitionCaseSystem`/`findCaseByCaseId`), NUNCA `findCaseById` (RLS sin sesión).
+- **Kanban de casos de Diana** `/legal` (molde del board de leads de Vanessa): `getBoard{kind:'cases'}`, 5 columnas semilla, tarjeta de caso (icono+`ULP-…`+chip "Con abogado"+cliente+servicio·fase+chips de alerta+TimeBadge+nota), drag&drop optimista, gestión de columnas, i18n `staff.legal.kanban.*`. Reads nuevos en `cases`/`kanban`: `listCasesForParalegal`, `backfillCasesBoard`, `getCaseBoardAlerts` (agregado batch: por revisar / correcciones del abogado / generación fallida / RFE vencida). + `sendToFinanceAction` y botón **"Enviar a Andrium"** habilitado en `validaciones/[caseId]` (con estado idempotente "Enviado a impresión").
+- **🐛 2 bugs cazados por el E2E en vivo** (no los veían los unit tests): (1) el seed del **motor kanban** (F3) reventaba al crear un board en runtime — `.upsert(onConflict:'board_id,position')` sobre una constraint **DEFERRABLE** (Postgres la rechaza como árbitro) → 0 columnas; **primera vez** que se crea un board fuera de un seed SQL. Fix: insert plano + swallow 23505 (`seedBoardColumns`) + **self-heal** en `getBoard`/backfill/consumer (si 0 columnas, re-siembra). (2) `backfillCasesBoard` colisionaba `unique(column_id,position)` (varias tarjetas a la misma posición) → posiciones incrementales en memoria. (3) i18n `FORMATTING_ERROR` por `t(key)` sobre templates con `{n}` → `t.raw()`.
+- **VERIFICADO EN VIVO** (Diana, navegador MCP + Supabase MCP; caso de Carlos `with_lawyer` validado, reset de 1 fila autorizado por Henry): **"Enviar a Andrium"** → expediente `sent_to_finance` (`by`=Diana) + caso `ready_for_delivery` + **tarjeta automática idempotente** en board `collections`/"Por imprimir" de Andrium (1, sin duplicar) + badge "Enviado a impresión". **`/legal` kanban** renderiza 2 casos (María/Carlos) con alerta real "Correcciones del abogado" + 5 columnas auto-sanadas, **0 errores de consola**. `markPrinted→delivered` cubierto por los 51 unit tests del handoff + el mecanismo de consumer→transición service-role ya probado en vivo (gemelo `ready_for_delivery`).
+- **Two-stage review** (code-reviewer → NEEDS-REVISION → **APPROVED**): 2 HIGH cerrados (`requireCaseAccess` en las 4 actions de impresión — gap de aislamiento por org) + STRONG (timestamp único en markShipped/Filed, `card_id` real en broadcast, typo es.json). `console.error`→`logger` descartado (boundaries prohíbe app→platform; va a stdout del server).
+- Gates: **tsc 0 · eslint 0 · vitest 1043/1043** (+83) · **i18n 1291** (paridad es/en) · **build 0**.
+
+### Pendiente menor de F5-3 / follow-up
+- Perf (no bloqueante): N+1 en `listCasesForParalegal` (mismo patrón pre-existente de `listCasesAdmin`, escala paralegal ~5-20 casos); batch de `findCardByRef` en backfill; constante para la etiqueta "Por imprimir"; double-read en `onExpedientePrintedCase`.
+- `markPrinted/Shipped/Filed` quedan **backend-ready sin UI** (la cola de impresión de Andrium `/finanzas/impresion` es F6, decisión DOC-80).
+
+### Siguiente: F6 — Billing completo + Panel Andrium `/finanzas` (kanban cobranza + cola de impresión [ver/descargar PDF + Impreso→Enviado→Radicado] + pagos/cuotas + contabilidad + campañas). DOC-44/55/71/73.
 
 ---
 

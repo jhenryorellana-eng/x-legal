@@ -49,7 +49,11 @@ export {
   onCaseAssigned,
   onContractSigned,
   onDownpaymentConfirmedKanban,
+  onExpedienteSentToFinance,
 } from "./service";
+
+// GAP-2 — board backfill for paralegal kanban page (F5-Ola3)
+export { backfillCasesBoard } from "./service";
 
 // Sales metrics aggregations (DOC-52 §6.2, API-MET-01)
 export { getSalesMetrics } from "./service";

@@ -78,9 +78,28 @@ export async function createBoardWithSeed(
     return existing;
   }
 
-  // Insert seed columns (ignore duplicate inserts — idempotent)
+  await seedBoardColumns(board.id, seedColumns);
+
+  return board;
+}
+
+/**
+ * Inserts the seed columns for a board. Idempotent and safe to call on a board
+ * that already has columns (the duplicate-position rows are rejected with 23505,
+ * which is swallowed). Used both at board creation and as a self-heal path in
+ * getBoard for boards that somehow ended up column-less.
+ *
+ * Plain insert (no ON CONFLICT): the (board_id, position) unique constraint is
+ * DEFERRABLE and Postgres rejects deferrable constraints as ON CONFLICT arbiters.
+ */
+export async function seedBoardColumns(
+  boardId: string,
+  seedColumns: SeedColumn[],
+): Promise<void> {
+  const client = createServiceClient();
+
   const colInserts: TablesInsert<"kanban_columns">[] = seedColumns.map((col) => ({
-    board_id: board.id,
+    board_id: boardId,
     label: col.label,
     color: col.color,
     position: col.position,
@@ -90,13 +109,11 @@ export async function createBoardWithSeed(
 
   const { error: colErr } = await client
     .from("kanban_columns")
-    .upsert(colInserts, { onConflict: "board_id,position", ignoreDuplicates: true });
+    .insert(colInserts);
 
-  if (colErr) {
-    logger.warn({ err: colErr.message, boardId: board.id }, "kanban: seed columns partial failure");
+  if (colErr && colErr.code !== "23505") {
+    logger.warn({ err: colErr.message, boardId }, "kanban: seed columns failure");
   }
-
-  return board;
 }
 
 // ---------------------------------------------------------------------------

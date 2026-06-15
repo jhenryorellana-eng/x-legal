@@ -438,6 +438,38 @@ export async function listFormResponsesForMaterial(
     }));
 }
 
+// ---------------------------------------------------------------------------
+// Handoff to Andrium — plan lookup (sendToFinance gate)
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns whether the service plan for a case requires lawyer validation.
+ * Reads cases → service_plan_id → service_plans.requires_lawyer_validation.
+ * Uses service_role (no RLS) — called from sendToFinance which already ran can().
+ *
+ * Returns null if the case or plan row is missing (caller should treat as not found).
+ */
+export async function findCasePlanRequiresLawyerValidation(
+  caseId: string,
+): Promise<boolean | null> {
+  const supabase = createServiceClient();
+  const { data: caseRow } = await supabase
+    .from("cases")
+    .select("service_plan_id")
+    .eq("id", caseId)
+    .maybeSingle();
+  if (!caseRow?.service_plan_id) return null;
+
+  const { data: planRow } = await supabase
+    .from("service_plans")
+    .select("requires_lawyer_validation")
+    .eq("id", caseRow.service_plan_id)
+    .maybeSingle();
+  if (!planRow) return null;
+
+  return planRow.requires_lawyer_validation ?? false;
+}
+
 /** Loads approved case_documents for a case. */
 export async function listApprovedDocumentsForMaterial(
   caseId: string,

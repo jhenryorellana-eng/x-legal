@@ -15,6 +15,7 @@ import {
 } from "@/backend/modules/integrations";
 import {
   createCorrectionAttempt,
+  sendToFinance,
   ExpedienteError,
   type ExpedienteRow,
 } from "@/backend/modules/expediente";
@@ -61,6 +62,27 @@ export async function createCorrectionAttemptAction(input: {
     const actor = await requireActor();
     const data = await createCorrectionAttempt(actor, input.expedienteId);
     return { ok: true, data };
+  } catch (err) {
+    if (err instanceof ExpedienteError) return { ok: false, error: { code: err.code } };
+    return { ok: false, error: { code: "UNEXPECTED" } };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// sendToFinanceAction  (RF-DIA-044) — handoff a Andrium (impresión)
+// ---------------------------------------------------------------------------
+
+export async function sendToFinanceAction(input: {
+  caseId: string;
+  expedienteId: string;
+}): Promise<ValidacionResult> {
+  try {
+    const actor = await requireActor();
+    await sendToFinance(actor, {
+      caseId: input.caseId,
+      expedienteId: input.expedienteId,
+    });
+    return { ok: true };
   } catch (err) {
     if (err instanceof ExpedienteError) return { ok: false, error: { code: err.code } };
     return { ok: false, error: { code: "UNEXPECTED" } };

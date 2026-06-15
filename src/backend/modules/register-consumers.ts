@@ -11,12 +11,13 @@
 
 import { appEvents } from "@/backend/platform/events";
 import { logger } from "@/backend/platform/logger";
-import { onDownpaymentConfirmed } from "@/backend/modules/cases";
+import { onDownpaymentConfirmed, onExpedienteSentToFinanceCase, onExpedientePrintedCase } from "@/backend/modules/cases";
 import { notifyFromEvent } from "@/backend/modules/notifications";
 import {
   onCaseAssigned,
   onContractSigned,
   onDownpaymentConfirmedKanban,
+  onExpedienteSentToFinance,
 } from "@/backend/modules/kanban";
 import { registerAiEngineConsumers } from "@/backend/modules/ai-engine";
 import { registerIntegrationsConsumers } from "@/backend/modules/integrations";
@@ -145,5 +146,30 @@ export function registerConsumers(): void {
   // -------------------------------------------------------------------------
   registerIntegrationsConsumers();
 
-  logger.info({}, "consumers: F2+F3+F4+F5 event consumers registered (kanban + ai-engine + integrations)");
+  // -------------------------------------------------------------------------
+  // expediente.sent_to_finance → kanban (card on Andrium's collections board)
+  //                            → cases (→ ready_for_delivery)
+  // -------------------------------------------------------------------------
+  appEvents.on("expediente.sent_to_finance", async (event) => {
+    const payload = event.payload as { caseId: string; orgId: string; expedienteId: string; attemptNo: number };
+    logger.info({ caseId: payload.caseId }, "kanban: consuming expediente.sent_to_finance");
+    await onExpedienteSentToFinance({ caseId: payload.caseId, orgId: payload.orgId });
+  });
+
+  appEvents.on("expediente.sent_to_finance", async (event) => {
+    const payload = event.payload as { caseId: string };
+    logger.info({ caseId: payload.caseId }, "cases: consuming expediente.sent_to_finance → ready_for_delivery");
+    await onExpedienteSentToFinanceCase({ caseId: payload.caseId });
+  });
+
+  // -------------------------------------------------------------------------
+  // expediente.printed → cases (ready_for_delivery → delivered)
+  // -------------------------------------------------------------------------
+  appEvents.on("expediente.printed", async (event) => {
+    const payload = event.payload as { caseId: string };
+    logger.info({ caseId: payload.caseId }, "cases: consuming expediente.printed → delivered");
+    await onExpedientePrintedCase({ caseId: payload.caseId });
+  });
+
+  logger.info({}, "consumers: F2+F3+F4+F5+F5-Ola3 event consumers registered (kanban + ai-engine + integrations + andrium)");
 }

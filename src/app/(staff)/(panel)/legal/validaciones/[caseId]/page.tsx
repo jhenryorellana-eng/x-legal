@@ -26,7 +26,11 @@ import {
   type ValidacionesDetailVM,
   type ValidationRowVM,
 } from "@/frontend/features/legal/validaciones/validaciones-detail-view";
-import { sendToLawyerAction, createCorrectionAttemptAction } from "./actions";
+import {
+  sendToLawyerAction,
+  createCorrectionAttemptAction,
+  sendToFinanceAction,
+} from "./actions";
 
 // ---------------------------------------------------------------------------
 // Mapper
@@ -70,6 +74,7 @@ export default async function ValidacionesDetailPage({
     caseId,
     validations: [],
     compiledExpedienteId: null,
+    handoffDone: false,
   };
 
   try {
@@ -78,12 +83,21 @@ export default async function ValidacionesDetailPage({
     // Sort DESC so index 0 = latest
     const sorted = [...validations].sort((a, b) => b.attempt_no - a.attempt_no);
 
-    // Find the compiled expediente id for the sendToLawyer gate
+    // Find the compiled expediente id for the sendToLawyer gate, and whether
+    // the latest validation's expediente was already handed off to finance.
     let compiledExpedienteId: string | null = null;
+    let handoffDone = false;
     try {
       const expedientes = await getCaseExpedientes(actor, caseId);
       const compiled = expedientes.find((e) => e.status === "compiled");
       compiledExpedienteId = compiled?.id ?? null;
+
+      const latest = sorted[0];
+      if (latest) {
+        const latestExp = expedientes.find((e) => e.id === latest.expediente_id);
+        handoffDone =
+          latestExp?.status === "sent_to_finance" || latestExp?.status === "printed";
+      }
     } catch {
       // Non-fatal: gate will just be disabled
     }
@@ -92,6 +106,7 @@ export default async function ValidacionesDetailPage({
       caseId,
       validations: sorted.map(toRowVM),
       compiledExpedienteId,
+      handoffDone,
     };
   } catch (err) {
     if (
@@ -111,6 +126,7 @@ export default async function ValidacionesDetailPage({
         actions={{
           sendToLawyer: sendToLawyerAction,
           createCorrectionAttempt: createCorrectionAttemptAction,
+          sendToFinance: sendToFinanceAction,
         }}
       />
     </div>

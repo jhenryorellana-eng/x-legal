@@ -76,6 +76,10 @@ import {
   listDocumentExtractionsForCase,
   findCasePrimaryClient,
   findFormDefinitionById,
+  countUploadedDocsByCases,
+  findCasesWithLawyerCorrections,
+  findCasesWithGenerationFailed,
+  findCasesWithRfeOverdue,
   type CaseRow,
   type CaseDocumentRow,
   type CaseFormResponseRow,
@@ -2519,5 +2523,198 @@ export async function getCaseExtractions(
   can(actor, "cases", "view");
   await requireCaseAccess(actor, caseId);
   return listDocumentExtractionsForCase(caseId);
+}
+
+// ---------------------------------------------------------------------------
+// GAP reads — kanban board support (F5-Ola3)
+// ---------------------------------------------------------------------------
+
+/**
+ * GAP-1: Lists cases assigned to the calling paralegal (or sales — whoever is actor.userId).
+ *
+ * Returns the same AdminCaseListItem shape as listCasesAdmin so the page needs no changes.
+ * Paralegal sees their own cases only; admin can still use listCasesAdmin for full view.
+ *
+ * Signature: listCasesForParalegal(actor) → Promise<AdminCaseListItem[]>
+ *
+ * @api-id API-CASE-20
+ */
+export async function listCasesForParalegal(
+  actor: Actor,
+): Promise<AdminCaseListItem[]> {
+  can(actor, "cases", "view");
+  const page = await listCases({
+    orgId: actor.orgId,
+    assignedParalegalId: actor.userId,
+  });
+
+  const items = await Promise.all(
+    page.items.map(async (c): Promise<AdminCaseListItem> => {
+      const [service, phases, clientName, planKind] = await Promise.all([
+        findServiceLite(c.service_id),
+        listServicePhases(c.service_id),
+        findClientDisplayName(c.primary_client_id),
+        findPlanKind(c.service_plan_id),
+      ]);
+      const currentIdx = c.current_phase_id
+        ? phases.findIndex((p) => p.id === c.current_phase_id)
+        : -1;
+      const currentPhase = currentIdx >= 0 ? phases[currentIdx] : null;
+      return {
+        id: c.id,
+        caseNumber: c.case_number,
+        status: c.status,
+        clientName,
+        serviceLabelI18n: asI18n(service?.label_i18n),
+        planKind,
+        phaseLabelI18n: asI18n(currentPhase?.label_i18n),
+        phaseIndex: currentIdx >= 0 ? currentIdx + 1 : 0,
+        phaseCount: phases.length,
+        openedAt: c.opened_at,
+        createdAt: c.created_at,
+      };
+    }),
+  );
+
+  return items;
+}
+
+/**
+ * GAP-3: Returns batch alert signals for a set of cases.
+ *
+ * All 4 signals are read via service_role (no RLS) — this is a staff-only read.
+ * Runs 4 parallel IN queries (no N+1).
+ *
+ * Signals:
+ *   needsReview      — count of case_documents with status='uploaded'
+ *   lawyerCorrections — true if any expediente has status='corrections_needed'
+ *   generationFailed  — true if any ai_generation_run has status='failed'
+ *                       (cases repo already queries ai_generation_runs — same data scope)
+ *   rfeOverdue        — true if any case_document has correction_due_at < now() and
+ *                       status in ('rejected','uploaded')
+ *
+ * Signature: getCaseBoardAlerts(actor, caseIds) → Promise<Record<string, CaseBoardAlert>>
+ *
+ * @api-id API-CASE-21
+ */
+export interface CaseBoardAlert {
+  needsReview: number;
+  lawyerCorrections: boolean;
+  generationFailed: boolean;
+  rfeOverdue: boolean;
+}
+
+export async function getCaseBoardAlerts(
+  actor: Actor,
+  caseIds: string[],
+): Promise<Record<string, CaseBoardAlert>> {
+  can(actor, "cases", "view");
+  if (caseIds.length === 0) return {};
+
+  const [uploadedCounts, lawyerCorrectionIds, generationFailedIds, rfeOverdueIds] =
+    await Promise.all([
+      countUploadedDocsByCases(caseIds),
+      findCasesWithLawyerCorrections(caseIds),
+      findCasesWithGenerationFailed(caseIds),
+      findCasesWithRfeOverdue(caseIds),
+    ]);
+
+  const uploadedByCase = new Map(uploadedCounts.map((r) => [r.case_id, r.count]));
+  const lawyerSet = new Set(lawyerCorrectionIds);
+  const genFailedSet = new Set(generationFailedIds);
+  const rfeSet = new Set(rfeOverdueIds);
+
+  const result: Record<string, CaseBoardAlert> = {};
+  for (const id of caseIds) {
+    result[id] = {
+      needsReview: uploadedByCase.get(id) ?? 0,
+      lawyerCorrections: lawyerSet.has(id),
+      generationFailed: genFailedSet.has(id),
+      rfeOverdue: rfeSet.has(id),
+    };
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Service-role case status transitions (for event consumers — no actor session)
+// ---------------------------------------------------------------------------
+
+/**
+ * Transitions cases.status using service_role (bypasses RLS).
+ * Safe to call from event consumers that have no actor session.
+ *
+ * Uses findCaseByCaseId (service_role) — NOT findCaseById (createServerClient/RLS)
+ * which would throw CASE_NOT_FOUND in event-consumer context (Ola-2 lesson).
+ *
+ * @internal — exported for event consumers only
+ */
+export async function transitionCaseSystem(
+  caseId: string,
+  target: CaseStatus,
+): Promise<void> {
+  const caseRow = await findCaseByCaseId(caseId);
+  if (!caseRow) {
+    logger.warn({ caseId, target }, "cases.transitionCaseSystem: case not found — skipping");
+    return;
+  }
+  const err = canTransitionCase(caseRow.status as CaseStatus, target, "admin");
+  if (err) {
+    logger.warn({ caseId, from: caseRow.status, to: target, err }, "cases.transitionCaseSystem: invalid transition — skipping");
+    return;
+  }
+  await updateCase(caseId, { status: target });
+}
+
+/**
+ * Consumer: expediente.sent_to_finance → case transitions to ready_for_delivery.
+ *
+ * Ruta corta (plan self): may jump from active → ready_for_delivery in one step,
+ * bypassing the standard state machine (same pattern as onDownpaymentConfirmed which
+ * directly sets status='active' without domain guard).
+ *
+ * Direct DB update via service_role — no canTransitionCase gate (event-driven system
+ * action where the state machine path may not match the expediente flow).
+ *
+ * Idempotent: if already ready_for_delivery or later, no-op.
+ */
+export async function onExpedienteSentToFinanceCase(payload: {
+  caseId: string;
+}): Promise<void> {
+  const { caseId } = payload;
+  const caseRow = await findCaseByCaseId(caseId);
+  if (!caseRow) {
+    logger.warn({ caseId }, "cases.onExpedienteSentToFinanceCase: case not found — skipping");
+    return;
+  }
+
+  // Idempotent: if already at or past ready_for_delivery, skip
+  const alreadyDone: string[] = ["ready_for_delivery", "delivered", "completed", "cancelled", "on_hold"];
+  if (alreadyDone.includes(caseRow.status)) return;
+
+  // Direct service_role update — ruta corta (bypasses canTransitionCase domain gate)
+  await updateCase(caseId, { status: "ready_for_delivery" });
+  logger.info({ caseId }, "cases: case transitioned to ready_for_delivery via expediente.sent_to_finance");
+}
+
+/**
+ * Consumer: expediente.printed → case transitions to delivered.
+ *
+ * Idempotent: if already delivered or later, no-op.
+ */
+export async function onExpedientePrintedCase(payload: {
+  caseId: string;
+}): Promise<void> {
+  const { caseId } = payload;
+  const caseRow = await findCaseByCaseId(caseId);
+  if (!caseRow) {
+    logger.warn({ caseId }, "cases.onExpedientePrintedCase: case not found — skipping");
+    return;
+  }
+
+  if (caseRow.status === "delivered" || caseRow.status === "completed") return;
+
+  await transitionCaseSystem(caseId, "delivered");
+  logger.info({ caseId }, "cases: case transitioned to delivered via expediente.printed");
 }
 

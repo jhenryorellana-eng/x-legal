@@ -914,3 +914,99 @@ export async function listCases(filters: ListCasesFilters): Promise<CasesPage> {
       hasMore && items.length > 0 ? items[items.length - 1].created_at : null,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Board-alert batch queries (service_role — no RLS, staff-only reads)
+// All functions accept a list of caseIds and return one row per distinct case_id
+// so callers can build Record<caseId, T> without N+1.
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns the count of documents with status='uploaded' per case_id.
+ * Used by getCaseBoardAlerts → needsReview signal.
+ */
+export async function countUploadedDocsByCases(
+  caseIds: string[],
+): Promise<Array<{ case_id: string; count: number }>> {
+  if (caseIds.length === 0) return [];
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("case_documents")
+    .select("case_id")
+    .in("case_id", caseIds)
+    .eq("status", "uploaded");
+  if (error) throw new Error(`cases.repository: countUploadedDocsByCases — ${error.message}`);
+  // Aggregate in JS (Supabase JS client doesn't expose GROUP BY directly)
+  const counts: Record<string, number> = {};
+  for (const row of data ?? []) {
+    counts[row.case_id] = (counts[row.case_id] ?? 0) + 1;
+  }
+  return Object.entries(counts).map(([case_id, count]) => ({ case_id, count }));
+}
+
+/**
+ * Returns the set of caseIds that have at least one expediente with
+ * status='corrections_needed'.
+ * Used by getCaseBoardAlerts → lawyerCorrections signal.
+ */
+export async function findCasesWithLawyerCorrections(
+  caseIds: string[],
+): Promise<string[]> {
+  if (caseIds.length === 0) return [];
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("expedientes")
+    .select("case_id")
+    .in("case_id", caseIds)
+    .eq("status", "corrections_needed");
+  if (error) throw new Error(`cases.repository: findCasesWithLawyerCorrections — ${error.message}`);
+  return [...new Set((data ?? []).map((r) => r.case_id))];
+}
+
+/**
+ * Returns the set of caseIds that have at least one ai_generation_run with
+ * status='failed'.
+ * Used by getCaseBoardAlerts → generationFailed signal.
+ *
+ * NOTE: cases repo already queries ai_generation_runs (findCompletedGenerationByFormSlug),
+ * so this remains within the module's established data scope.
+ */
+export async function findCasesWithGenerationFailed(
+  caseIds: string[],
+): Promise<string[]> {
+  if (caseIds.length === 0) return [];
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("ai_generation_runs")
+    .select("case_id")
+    .in("case_id", caseIds)
+    .eq("status", "failed");
+  if (error) throw new Error(`cases.repository: findCasesWithGenerationFailed — ${error.message}`);
+  return [...new Set((data ?? []).map((r) => r.case_id))];
+}
+
+/**
+ * Returns the set of caseIds that have at least one overdue RFE document.
+ *
+ * Overdue = case_documents with:
+ *   - status IN ('rejected', 'uploaded')  — pending re-submission
+ *   - correction_due_at IS NOT NULL AND correction_due_at < now()
+ *
+ * Used by getCaseBoardAlerts → rfeOverdue signal.
+ */
+export async function findCasesWithRfeOverdue(
+  caseIds: string[],
+): Promise<string[]> {
+  if (caseIds.length === 0) return [];
+  const supabase = createServiceClient();
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("case_documents")
+    .select("case_id")
+    .in("case_id", caseIds)
+    .in("status", ["rejected", "uploaded"])
+    .not("correction_due_at", "is", null)
+    .lt("correction_due_at", now);
+  if (error) throw new Error(`cases.repository: findCasesWithRfeOverdue — ${error.message}`);
+  return [...new Set((data ?? []).map((r) => r.case_id))];
+}

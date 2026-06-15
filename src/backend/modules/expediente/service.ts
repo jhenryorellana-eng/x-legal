@@ -27,7 +27,7 @@ import {
 } from "@/backend/platform/pdf";
 import type { ExpedienteItemInput } from "@/backend/platform/pdf";
 import { writeAudit } from "@/backend/modules/audit";
-import { emitExpedienteCompiled } from "./events";
+import { emitExpedienteCompiled, emitExpedienteSentToFinance, emitExpedientePrinted } from "./events";
 import {
   isEditableStatus,
   canonicalClientLabel,
@@ -60,6 +60,7 @@ import {
   listGenerationRunsForMaterial,
   listFormResponsesForMaterial,
   listApprovedDocumentsForMaterial,
+  findCasePlanRequiresLawyerValidation,
   type ExpedienteRow,
   type ExpedienteItemRow,
   type CoverTemplateRow,
@@ -86,6 +87,11 @@ export class ExpedienteError extends Error {
       | "EXPEDIENTE_NOT_COMPILABLE"
       | "EXPEDIENTE_COMPILE_FAILED"
       | "EXPEDIENTE_NOT_COMPILED"
+      | "EXPEDIENTE_NOT_APPROVED"
+      | "EXPEDIENTE_ALREADY_SENT_TO_FINANCE"
+      | "EXPEDIENTE_NOT_IN_PRINT_QUEUE"
+      | "EXPEDIENTE_NOT_PRINTED"
+      | "COMPILE_SOURCE_MISSING"
       | "EXPEDIENTE_ITEM_NOT_FOUND"
       | "EXPEDIENTE_ITEM_REF_INVALID"
       | "COVER_TEMPLATE_NOT_FOUND"
@@ -946,6 +952,181 @@ export async function createCorrectionAttempt(
   // A correction attempt is a fresh DRAFT — not compiled. No `expediente.compiled` event.
 
   return newExpediente;
+}
+
+// ---------------------------------------------------------------------------
+// HANDOFF TO ANDRIUM (printing queue)
+// ---------------------------------------------------------------------------
+
+/**
+ * Sends the current expediente to Andrium's print queue.
+ *
+ * RF-DIA-044 / §3.8 — "sendToFinance" (finance = Andrium's queue).
+ *
+ * Gates:
+ *  - can(actor, 'expedientes', 'edit')
+ *  - Plan with_lawyer: expediente.status must be 'approved'
+ *  - Plan self:        expediente.status must be 'compiled'
+ *  - Already 'sent_to_finance' or later: blocked (EXPEDIENTE_ALREADY_SENT_TO_FINANCE)
+ *
+ * @api-id API-EXP-15
+ */
+export async function sendToFinance(
+  actor: Actor,
+  input: { caseId: string; expedienteId: string },
+): Promise<void> {
+  can(actor, "expedientes", "edit");
+
+  const expediente = await findExpedienteById(input.expedienteId);
+  if (!expediente) throw new ExpedienteError("EXPEDIENTE_NOT_FOUND");
+  await requireCaseAccess(actor, expediente.case_id);
+
+  // Block if already in print flow
+  if (expediente.status === "sent_to_finance" || expediente.status === "printed") {
+    throw new ExpedienteError("EXPEDIENTE_ALREADY_SENT_TO_FINANCE", {
+      status: expediente.status,
+    });
+  }
+
+  // Determine required status based on plan
+  const requiresLawyerValidation = await findCasePlanRequiresLawyerValidation(input.caseId);
+  const requiredStatus = requiresLawyerValidation ? "approved" : "compiled";
+
+  if (expediente.status !== requiredStatus) {
+    throw new ExpedienteError(
+      requiresLawyerValidation ? "EXPEDIENTE_NOT_APPROVED" : "EXPEDIENTE_NOT_COMPILED",
+      { status: expediente.status, required: requiredStatus },
+    );
+  }
+
+  await updateExpediente(input.expedienteId, {
+    status: "sent_to_finance",
+    sent_to_finance_at: new Date().toISOString(),
+    sent_to_finance_by: actor.userId,
+  });
+
+  emitExpedienteSentToFinance({
+    caseId: input.caseId,
+    expedienteId: input.expedienteId,
+    attemptNo: expediente.attempt_no,
+    orgId: actor.orgId,
+  });
+
+  await writeAudit(actor, "expediente.sent_to_finance", "expedientes", input.expedienteId, {
+    after: { status: "sent_to_finance", caseId: input.caseId },
+  });
+}
+
+/**
+ * Marks an expediente as physically printed by Andrium.
+ *
+ * RF-AND-025 / §3.9
+ *
+ * Gates:
+ *  - can(actor, 'printing', 'edit')
+ *  - status must be 'sent_to_finance' (EXPEDIENTE_NOT_IN_PRINT_QUEUE)
+ *  - compiled_pdf_path must exist (COMPILE_SOURCE_MISSING)
+ *
+ * @api-id API-EXP-16
+ */
+export async function markPrinted(
+  actor: Actor,
+  expedienteId: string,
+): Promise<void> {
+  can(actor, "printing", "edit");
+
+  const expediente = await findExpedienteById(expedienteId);
+  if (!expediente) throw new ExpedienteError("EXPEDIENTE_NOT_FOUND");
+  await requireCaseAccess(actor, expediente.case_id);
+
+  if (expediente.status !== "sent_to_finance") {
+    throw new ExpedienteError("EXPEDIENTE_NOT_IN_PRINT_QUEUE", { status: expediente.status });
+  }
+  if (!expediente.compiled_pdf_path) {
+    throw new ExpedienteError("COMPILE_SOURCE_MISSING", { expedienteId });
+  }
+
+  const now = new Date().toISOString();
+  await updateExpediente(expedienteId, {
+    status: "printed",
+    printed_at: now,
+    printed_by: actor.userId,
+  });
+
+  emitExpedientePrinted({
+    expedienteId,
+    caseId: expediente.case_id,
+    attemptNo: expediente.attempt_no,
+    orgId: actor.orgId,
+  });
+
+  await writeAudit(actor, "expediente.printed", "expedientes", expedienteId, {
+    after: { status: "printed", printedBy: actor.userId },
+  });
+}
+
+/**
+ * Records physical shipping with optional tracking reference (no status change).
+ *
+ * RF-AND-026 / §3.9
+ *
+ * @api-id API-EXP-17
+ */
+export async function markShipped(
+  actor: Actor,
+  expedienteId: string,
+  trackingRef?: string,
+): Promise<void> {
+  can(actor, "printing", "edit");
+
+  const expediente = await findExpedienteById(expedienteId);
+  if (!expediente) throw new ExpedienteError("EXPEDIENTE_NOT_FOUND");
+  await requireCaseAccess(actor, expediente.case_id);
+
+  if (expediente.status !== "printed") {
+    throw new ExpedienteError("EXPEDIENTE_NOT_PRINTED", { status: expediente.status });
+  }
+
+  const shippedAt = new Date().toISOString();
+  await updateExpediente(expedienteId, {
+    shipped_at: shippedAt,
+    tracking_ref: trackingRef ?? null,
+  });
+
+  await writeAudit(actor, "expediente.shipped", "expedientes", expedienteId, {
+    after: { shippedAt, trackingRef: trackingRef ?? null },
+  });
+}
+
+/**
+ * Records filing in court / USCIS (no status change).
+ *
+ * RF-AND-026 / §3.9
+ *
+ * @api-id API-EXP-18
+ */
+export async function markFiled(
+  actor: Actor,
+  expedienteId: string,
+): Promise<void> {
+  can(actor, "printing", "edit");
+
+  const expediente = await findExpedienteById(expedienteId);
+  if (!expediente) throw new ExpedienteError("EXPEDIENTE_NOT_FOUND");
+  await requireCaseAccess(actor, expediente.case_id);
+
+  if (expediente.status !== "printed") {
+    throw new ExpedienteError("EXPEDIENTE_NOT_PRINTED", { status: expediente.status });
+  }
+
+  const filedAt = new Date().toISOString();
+  await updateExpediente(expedienteId, {
+    filed_at: filedAt,
+  });
+
+  await writeAudit(actor, "expediente.filed", "expedientes", expedienteId, {
+    after: { filedAt },
+  });
 }
 
 // ---------------------------------------------------------------------------

@@ -71,6 +71,8 @@ export interface ValidacionesDetailVM {
   validations: ValidationRowVM[];
   /** The compiled expediente id (for sendToLawyer gate). Null if none. */
   compiledExpedienteId: string | null;
+  /** True if the latest validation's expediente is already sent_to_finance/printed. */
+  handoffDone: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,6 +87,10 @@ export interface ValidacionesDetailActions {
   createCorrectionAttempt: (input: {
     expedienteId: string;
   }) => Promise<{ ok: boolean; data?: { id: string; attempt_no: number }; error?: { code: string } }>;
+  sendToFinance: (input: {
+    caseId: string;
+    expedienteId: string;
+  }) => Promise<{ ok: boolean; error?: { code: string } }>;
 }
 
 export interface ValidacionesDetailViewProps {
@@ -190,6 +196,8 @@ function errorMessage(code: string): string {
     case "EXPEDIENTE_NOT_FOUND":       return "Expediente no encontrado.";
     case "EXPEDIENTE_NOT_EDITABLE":    return "El expediente ya no es editable.";
     case "EXPEDIENTE_DRAFT_EXISTS":    return "Ya existe un borrador de corrección.";
+    case "EXPEDIENTE_NOT_APPROVED":    return "El abogado todavía no validó este expediente.";
+    case "EXPEDIENTE_ALREADY_SENT_TO_FINANCE": return "Este expediente ya fue enviado a impresión.";
     default:                           return "Algo salió mal. Intenta de nuevo.";
   }
 }
@@ -471,8 +479,9 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
   const [busySend, setBusySend] = React.useState(false);
   const [showCorrectionModal, setShowCorrectionModal] = React.useState(false);
   const [busyCorrection, setBusyCorrection] = React.useState(false);
+  const [busyFinance, setBusyFinance] = React.useState(false);
 
-  const { caseId, validations, compiledExpedienteId } = vm;
+  const { caseId, validations, compiledExpedienteId, handoffDone } = vm;
 
   // The current (latest) validation
   const current = validations[0] ?? null;
@@ -508,6 +517,23 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
       setShowCorrectionModal(false);
       // Navigate to ensamblador
       window.location.href = "/legal/expediente/" + caseId;
+    } else {
+      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED"));
+    }
+  }
+
+  // ---- sendToFinance (handoff a Andrium / impresión) ----
+  async function handleSendToFinance() {
+    if (!current) return;
+    setBusyFinance(true);
+    const r = await actions.sendToFinance({
+      caseId,
+      expedienteId: current.expediente_id,
+    });
+    setBusyFinance(false);
+    if (r.ok) {
+      toast.success("Expediente enviado a impresión (Andrium).");
+      window.location.reload();
     } else {
       toast.error(errorMessage(r.error?.code ?? "UNEXPECTED"));
     }
@@ -803,12 +829,23 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
           )}
 
           <div>
-            <GradientBtn size="md" full={false} disabled title="Disponible en la próxima ola (F5-Ola3)">
-              Enviar a Andrium
-            </GradientBtn>
-            <p style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 6 }}>
-              Próximamente disponible (F5-Ola3)
-            </p>
+            {handoffDone ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <StatusPill kind="aprobado">Enviado a impresión</StatusPill>
+                <span style={{ fontSize: 12.5, color: "var(--ink-2)", fontWeight: 700 }}>
+                  El expediente está en la cola de impresión de Andrium.
+                </span>
+              </div>
+            ) : (
+              <GradientBtn
+                size="md"
+                full={false}
+                disabled={busyFinance}
+                onClick={handleSendToFinance}
+              >
+                {busyFinance ? "Enviando…" : "Enviar a Andrium"}
+              </GradientBtn>
+            )}
           </div>
         </div>
       )}

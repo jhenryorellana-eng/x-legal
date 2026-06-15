@@ -36,6 +36,13 @@ export {
   // Staff reads
   getCaseExtractions,
   getCaseFormResponsesForStaff,
+  // GAP reads — kanban board support (F5-Ola3)
+  listCasesForParalegal,
+  getCaseBoardAlerts,
+  // Event consumers (service-role — no actor session)
+  transitionCaseSystem,
+  onExpedienteSentToFinanceCase,
+  onExpedientePrintedCase,
 } from "./service";
 
 // createCaseFromContract types
@@ -67,6 +74,8 @@ export type {
   I18nValue,
   AdminCaseListItem,
   AdminCasesPage,
+  // GAP-3 — kanban board alert shape
+  CaseBoardAlert,
 } from "./service";
 
 // Error class (used by route handlers / actions for HTTP mapping)

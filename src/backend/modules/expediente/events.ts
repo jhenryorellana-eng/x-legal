@@ -28,12 +28,21 @@ export interface ExpedienteSentToFinancePayload {
   caseId: string;
   expedienteId: string;
   attemptNo: number;
+  orgId: string;
+}
+
+export interface ExpedientePrintedPayload {
+  caseId: string;
+  expedienteId: string;
+  attemptNo: number;
+  orgId: string;
 }
 
 // Union of all events emitted by this module
 export type ExpedienteEvent =
   | DomainEvent<ExpedienteCompiledPayload> & { type: "expediente.compiled" }
-  | DomainEvent<ExpedienteSentToFinancePayload> & { type: "expediente.sent_to_finance" };
+  | DomainEvent<ExpedienteSentToFinancePayload> & { type: "expediente.sent_to_finance" }
+  | DomainEvent<ExpedientePrintedPayload> & { type: "expediente.printed" };
 
 // ---------------------------------------------------------------------------
 // Typed emitter helpers (called from service.ts)
@@ -53,6 +62,14 @@ export function emitExpedienteSentToFinance(payload: ExpedienteSentToFinancePayl
     payload,
     occurredAt: new Date(),
   } satisfies DomainEvent<ExpedienteSentToFinancePayload>);
+}
+
+export function emitExpedientePrinted(payload: ExpedientePrintedPayload): void {
+  appEvents.emit({
+    type: "expediente.printed",
+    payload,
+    occurredAt: new Date(),
+  } satisfies DomainEvent<ExpedientePrintedPayload>);
 }
 
 // ---------------------------------------------------------------------------

@@ -46,6 +46,14 @@ export {
   createCorrectionAttempt,
 } from "./service";
 
+// Handoff to Andrium (printing)
+export {
+  sendToFinance,
+  markPrinted,
+  markShipped,
+  markFiled,
+} from "./service";
+
 // ---------------------------------------------------------------------------
 // Input types
 // ---------------------------------------------------------------------------
@@ -97,11 +105,13 @@ export type {
   ExpedienteEvent,
   ExpedienteCompiledPayload,
   ExpedienteSentToFinancePayload,
+  ExpedientePrintedPayload,
 } from "./events";
 
 export {
   emitExpedienteCompiled,
   emitExpedienteSentToFinance,
+  emitExpedientePrinted,
   registerExpedienteConsumers,
 } from "./events";
 
