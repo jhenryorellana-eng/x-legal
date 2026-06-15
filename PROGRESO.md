@@ -33,15 +33,27 @@ Módulo `ai-engine` (domain 13 funcs puras, service API-AI-01..10, repository, e
 - Gates: tsc 0 · eslint 0/0 · **727 tests** (+27) · build ✓. Commits `d931bab`+`19d4367`+`9dfe5c0`.
 - **0017 aplicada al remoto** ✓ (vía MCP). **Claves IA cargadas + validadas** (ping real: sonnet-4-6 y gemini-2.5-flash responden).
 
-### Ola F4-3 — Form-wizard runtime + cliente ✅ (construido + revisado; falta demo en vivo)
+### Ola F4-3 — Form-wizard runtime + cliente ✅ (construido + revisado + VERIFICADO EN VIVO)
 - **Backend runtime** (`cases`, DOC-41 §3.8–3.10): `getFormForClient` (versión+grupos+preguntas+prellenado resuelto), `saveFormDraft` (congela `automation_version_id`, merge JSONB por clave), `submitFormResponse` (validación server-side requeridas+regex/min/max+**select whitelist**), `approveFormResponse` (gate `filled_by`), `generateFilledPdf` (`resolveBySource`→`fillAcroForm` mupdf→bucket `generated`, gates FORM_PDF_BLOCKED/FORM_VERSION_MISMATCH), `getCaseExtractions`. **PII de `profile` se descifra y resuelve LOCALMENTE, nunca a la IA.**
 - **Form-wizard cliente** (motor compartido `frontend/features/form-wizard/`, SOT-3 DOC-50 §6): data-driven por grupos, **Zod generado**, **autosave** (debounce + cola IndexedDB + backoff), prellenado **"Ya lo tenemos"**, dictado por voz; pantallas `formulario/[formId]`, lista, **Mi Historia**. **El preview del editor admin (F4-2) ahora usa el MISMO motor** (TODO resuelto). Verificado visual (10 screenshots, 0 errores).
 - **Two-stage review** (code-reviewer → NEEDS-REVISION): **2 CRÍTICOS cross-tenant** (approve/generate leían por responseId con service-client sin `requireCaseAccess` → un staff de otra org podía aprobar/generar el PDF con PII de un caso ajeno) + 3 HIGH (select whitelist, validación silenciosa con versión sin preguntas, merge no atómico) + nits — **TODOS corregidos** + tests de regresión cross-tenant. Migración aditiva **0018** (RPC `merge_form_answers` atómica) creada — **pendiente de aplicar** (código funciona vía fallback).
 - Gates: tsc 0 · eslint 0/0 · **799 tests** (+72) · build ✓ · i18n 1182. Commits `b0fe2e5`+`2dccfec`+`50c90b6`.
 
-### Pendiente para cerrar F4 (la "prueba de fuego" DOC-00 §5.2)
-- **E2E + demo en vivo**: Henry configura un ai_letter + publica un formulario → un cliente recorre el wizard prellenado → staff genera el PDF llenado con IA real. Necesita: (a) el **MCP de Playwright** reconectado (se desconectó) para manejar el flujo en vivo, **o** un setup por script; (b) un **formulario publicado + ai_generation_config** (hoy no hay ninguno en la BD). Las claves IA ya están probadas (ping real), así que la generación funcionará.
-- Aplicar migración **0018** (atomicidad del merge de autosave) con autorización de Henry.
+### Ola F4-3 — VERIFICADO EN VIVO (2026-06-14, MCP Playwright) ✅ + IA de propuesta enriquecida
+- **Prueba de fuego IA (generación)** ✅: config `ai_letter` (memorándum-asilo) guardada vía editor → generación real Claude `sonnet-4-6` → memo legal de asilo (INA §208), **$0.0329**, PDF 288KB (mupdf). Commit `632cf99`. Evidencia `docs/_evidence/f4-fire/`.
+- **Editor pdf_automation con IA grounded** ✅ (pedido de Henry): subí el **I-589 oficial real** (835KB) → mupdf detectó **460 campos** → "Generar propuesta con IA" ahora **investiga en vivo (web_search nativo de Claude)** las instrucciones oficiales + procedimiento del servicio y genera **6 grupos / 51 preguntas coherentes ES+EN**, tipos correctos (Fecha/Desplegable/Checkbox/Número/Párrafo), selects con opciones (incl. los 5 fundamentos INA §208 + CAT), mapeo a `profile` (whitelist) con PII local. Publicado v1. Arquitectura **dos pasos** (research → JSON tool-free) para no truncar en formularios grandes. Commit `47496ac`. Evidencia `docs/_evidence/f4-editor/`.
+- **Wizard del cliente recorrido como Carlos** ✅: render data-driven, prellenado **"Ya lo tenemos"** (Ramírez/Carlos/El Salvador/tel desde perfil), selects→radios ES, ayudas, **autosave que persiste en la BD** (verificado), contador "Paso 1 de 6", **0 errores de consola**.
+- **4 bugs de PRODUCCIÓN cazados en vivo** (los unit tests los mockeaban) — todos arreglados + tests de regresión:
+  1. `mergeFormAnswers` desligaba `supabase.rpc` de su cliente → `this` perdido → **TODO autosave fallaba** en prod. Fix `.bind(supabase)`.
+  2. `saveFormDraft` exigía `required` sobre el patch parcial → borrador rechazado. Fix `validateAnswerTypes(..., enforceRequired=false)` para draft.
+  3. `z.string().uuid()` (Zod v4 estricto RFC) rechazaba UUIDs válidos en Postgres (ids demo no-v4) en writes. Fix helper `zUuid` laxo (módulo cases).
+  4. `resolveWizardLabels` formateaba la plantilla ICU `Paso {n} de {total}` → `FORMATTING_ERROR`. Fix: echo de placeholders.
+- Gates: tsc 0 · eslint 0/0 · **806 tests** (+7) · build ✓.
+
+### Pendiente menor para cerrar F4 al 100%
+- **Submit + approve + generateFilledPdf en vivo**: requiere llenar las ~28 requeridas + aprobación staff + render del PDF llenado (mupdf `fillAcroForm`). Cubierto por unit tests; falta el recorrido visual completo.
+- Aplicar migración **0018** (RPC `merge_form_answers` atómica) con autorización de Henry — **opcional**, el autosave ya funciona vía fallback read-then-write (el `.bind` lo desbloqueó).
+- **Datos demo sembrados en prod** (vía editor, autorizado): I-589 v1 publicada en el caso Asilo de Carlos + un `case_form_responses` borrador. Útiles como demo; dejar o limpiar a criterio de Henry.
 
 ---
 
