@@ -2139,7 +2139,29 @@ export async function submitFormResponse(
       });
     }
     const answers = (response.answers ?? {}) as Record<string, unknown>;
-    const errors = validateAnswerTypes(answers, questions);
+    // Questions sourced from profile/document_extraction/generation_output are
+    // filled at render/PDF time via resolveBySource — their value lives in the
+    // source, not in `answers`. Resolve them so a REQUIRED prefilled field (e.g.
+    // the client's name from profile) isn't falsely reported as "missing" on submit.
+    const effective: Record<string, unknown> = { ...answers };
+    for (const q of questions as Array<QuestionValidationRule & { source?: string; source_ref?: unknown }>) {
+      const src = q.source ?? "client_answer";
+      if (src === "client_answer") continue;
+      const cur = effective[q.id];
+      if (cur !== undefined && cur !== null && cur !== "") continue;
+      try {
+        const resolved = await resolveBySource(
+          { id: q.id, source: src, source_ref: q.source_ref },
+          answers,
+          parsed.caseId,
+          partyId,
+        );
+        if (resolved !== undefined && resolved !== null && resolved !== "") effective[q.id] = resolved;
+      } catch {
+        // leave empty — a genuinely missing required value still surfaces below
+      }
+    }
+    const errors = validateAnswerTypes(effective, questions);
     if (errors.length > 0) {
       throw new CaseError("FORM_VALIDATION_FAILED", { errors });
     }

@@ -613,6 +613,37 @@ describe("submitFormResponse", () => {
     );
   });
 
+  it("resolves required PROFILE fields (absent from answers) before validating — regression", async () => {
+    // A required question sourced from 'profile' is filled at render/PDF time, so its
+    // value is NOT in answers. Submit must resolve it (resolveBySource) — else the
+    // client could never submit a form whose name/phone come from their profile.
+    mockFindFormResponse.mockResolvedValue(draftResponse); // answers do not include qEmail
+    mockListQuestionGroups.mockResolvedValue([{ id: "grp1" }]);
+    mockListQuestions.mockResolvedValue([
+      { id: "qEmail", field_type: "text", is_required: true, options: null, validation: null, source: "profile", source_ref: { profile_field: "email" } },
+    ]);
+    mockFindCasePrimaryClient.mockResolvedValue("client-1");
+    mockFindUserContactFields.mockResolvedValue({ email: "carlos@example.com", phone_e164: null });
+    mockFindFormResponseById.mockResolvedValue({ ...submittedResponse });
+
+    const result = await submitFormResponse(clientActor, { caseId: CASE_ID, formDefinitionId: FORM_DEF_ID, partyId: null });
+    expect(result.status).toBe("submitted");
+  });
+
+  it("still fails when a required PROFILE field resolves empty (no false-positive)", async () => {
+    mockFindFormResponse.mockResolvedValue(draftResponse);
+    mockListQuestionGroups.mockResolvedValue([{ id: "grp1" }]);
+    mockListQuestions.mockResolvedValue([
+      { id: "qEmail", field_type: "text", is_required: true, options: null, validation: null, source: "profile", source_ref: { profile_field: "email" } },
+    ]);
+    mockFindCasePrimaryClient.mockResolvedValue("client-1");
+    mockFindUserContactFields.mockResolvedValue({ email: null, phone_e164: null }); // unresolved
+
+    await expect(
+      submitFormResponse(clientActor, { caseId: CASE_ID, formDefinitionId: FORM_DEF_ID, partyId: null }),
+    ).rejects.toThrow("FORM_VALIDATION_FAILED");
+  });
+
   it("throws FORM_NOT_SUBMITTABLE when no draft response exists", async () => {
     mockFindFormResponse.mockResolvedValue(null);
 
