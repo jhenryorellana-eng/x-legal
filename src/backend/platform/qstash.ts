@@ -14,6 +14,7 @@
 import { Client, Receiver } from "@upstash/qstash";
 import { env, providerEnv } from "./env";
 import { logger } from "./logger";
+import { isAiStubEnabled } from "./ai-stub";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -107,6 +108,17 @@ export async function enqueueJob(
  * @throws If signature is missing or invalid
  */
 export async function verifyQStashSignature(req: Request): Promise<string> {
+  // E2E / CI test seam (DOC-81 §4.3.5 "job con firma simulada"): when the AI
+  // stub is active — which `isAiStubEnabled()` makes IMPOSSIBLE in production
+  // (it throws there) — AND the caller opts in with an explicit header, accept
+  // the delivery without a real Upstash JWT. This lets Playwright drive the job
+  // handlers through the real webhook route without reverse-engineering QStash's
+  // signer. Both conditions are required: a genuine QStash delivery in dev (no
+  // header) still goes through full signature verification below.
+  if (isAiStubEnabled() && req.headers.get("x-e2e-qstash-bypass") === "1") {
+    return await req.text();
+  }
+
   const qenv = providerEnv("qstash");
 
   const receiver = new Receiver({

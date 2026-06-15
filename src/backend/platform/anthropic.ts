@@ -22,6 +22,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { providerEnv } from "./env";
+import { isAiStubEnabled, stubAnthropicClient } from "./ai-stub";
 
 // ---------------------------------------------------------------------------
 // Model constants (whitelist for the catalog selector — DOC-74 §1)
@@ -56,6 +57,11 @@ let _client: Anthropic | null = null;
  * Validates the ANTHROPIC_API_KEY on first access (fails loud if not configured).
  */
 export function getAnthropicClient(): Anthropic {
+  // E2E / CI: deterministic fake client (DOC-81 §4.3/§4.6). Inert in prod
+  // (isAiStubEnabled throws if the flag is set in a production build).
+  if (isAiStubEnabled()) {
+    return stubAnthropicClient as unknown as Anthropic;
+  }
   if (!_client) {
     const aenv = providerEnv("anthropic");
     _client = new Anthropic({

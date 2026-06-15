@@ -16,6 +16,7 @@
 
 import { GoogleGenAI } from "@google/genai";
 import { providerEnv } from "./env";
+import { isAiStubEnabled, stubGeminiModels } from "./ai-stub";
 
 // ---------------------------------------------------------------------------
 // Model constants (DOC-74 §3.2)
@@ -58,5 +59,10 @@ export function getGeminiClient(): GoogleGenAI {
  *   });
  */
 export function getGeminiModels() {
+  // E2E / CI: deterministic fake models namespace (DOC-81 §4.3/§4.6). Inert in
+  // prod (isAiStubEnabled throws if the flag is set in a production build).
+  if (isAiStubEnabled()) {
+    return stubGeminiModels as unknown as ReturnType<typeof getGeminiClient>["models"];
+  }
   return getGeminiClient().models;
 }

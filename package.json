@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
+    "dev:e2e": "cross-env AI_E2E_STUB=1 next dev",
     "build": "next build --turbopack",
     "start": "next start",
     "lint": "eslint . --max-warnings=0",
@@ -11,6 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:e2e:update": "playwright test --update-snapshots",
+    "test:rls": "supabase test db",
     "db:types": "supabase gen types typescript --project-id uexxyokexcamyjcknxua --schema public > src/shared/database.types.ts",
     "db:types:local": "supabase gen types typescript --local --schema public > src/shared/database.types.ts",
     "db:migrate": "supabase migration up && npm run db:types:local",
@@ -55,8 +58,10 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.10.1",
     "@eslint/eslintrc": "^3",
     "@playwright/test": "^1.60.0",
+    "cross-env": "^7.0.3",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

@@ -15,6 +15,8 @@ pgTAP tests for Row Level Security policies defined in DOC-31.
 | `07_role_defaults_block.sql` | **8** | Sales (no `expedientes`) sees 0 expedientes + blocked INSERT; finance (no `validations`) sees 0 legal_validations + blocked INSERT; `legal_validations` UPDATE is service_role-only even with the module |
 | `08_finance_leads_write_block.sql` | **9** | Finance (no `leads` module) cannot SELECT, INSERT, or UPDATE leads; view-only leads staff also blocked from INSERT |
 | `09_catalog_module_matrix.sql` | **12** (catalog/datasets), **13** | Catalog/datasets module three-state matrix; admin bypass of catalog+datasets; mid-transaction revocation of `cases` module → next statement returns 0 rows immediately (RF-ADM-045) |
+| `10_signing_token.sql` | **18** | Public `/firma/[token]` signing flow cannot be replicated via `anon` or `authenticated` roles against `contracts`; token lookup does not unlock RLS |
+| `11_client_ai_pipeline_hidden.sql` | **4** | Client who IS a case member sees 0 rows in `ai_generation_runs` and `document_extractions`; cannot INSERT into `ai_generation_runs` (42501) — costs/pipeline hidden from clients |
 
 ## Running locally
 

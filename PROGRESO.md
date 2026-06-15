@@ -3,8 +3,10 @@
 > Archivo de continuidad entre sesiones (PROMPT-CONSTRUCCION-V2 §4). Actualizar al cierre de cada sesión.
 > Biblioteca SoT: `C:\Users\mauri\Documents\Trabajos\USALATINO V2\V2\docs\` · Supabase: **USALATINO V2** `uexxyokexcamyjcknxua`
 
-**Fase actual: F5 — Diana + expediente + Abogados (EN CURSO, por olas) · F0–F4 ✅ COMPLETAS y verificadas en vivo**
+**Fase actual: F4 — cierre del Definition of Done (E2E automatizados + QA visual + presupuesto IA + RLS test 4). F5-Ola1 construida pero PAUSADA hasta OK de F4. F0–F3 ✅**
 Última sesión: 2026-06-15
+
+> **Corrección de rumbo (Henry, 2026-06-15):** me había adelantado a F5 sin cerrar el DoD de fase de F4 (DOC-80 §6 + criterios de salida §F4). Henry: "tienen que estar todas las olas terminadas para continuar con la siguiente fase". F4 tenía sus *features* construidas+verificadas en vivo, pero faltaban 4 entregables de DoD que se cierran en esta sesión (ver "F4 — Cierre de DoD" más abajo). Aclaración de numeración: en DOC-81 §4 los *flujos* E2E se numeran F1–F6 y NO coinciden con las *fases* (el "flujo F4" §4.4 es expediente/Abogados = fase F5).
 
 ## F5 — Diana + expediente + Abogados (por olas; cadencia: ola por ola con OK de Henry)
 
@@ -85,6 +87,20 @@ Módulo `ai-engine` (domain 13 funcs puras, service API-AI-01..10, repository, e
 - **Calidad IA mejorada**: el prompt de propuesta ahora prohíbe checkboxes sí/no obligatorios (usar select Sí/No u opcional).
 
 > **F4 COMPLETA**: motor IA + editor con IA grounded + wizard cliente (fill→autosave→submit) + runtime + **UI staff aprobar/generar PDF** — todo verificado en vivo. **7 bugs de producción** cazados por el E2E en vivo (todos arreglados+tests). **809 tests · tsc 0 · eslint 0.**
+
+### F4 — Cierre de DoD (2026-06-15) — gates verdes
+Cierre de los 4 entregables de DoD que faltaban (DOC-80 §F4 + §6). 100% infra de test, sin cambios de producto.
+- **Seam de test de IA** (`platform/ai-stub.ts`): stub determinista env-gated (`AI_E2E_STUB=1`) para Anthropic (T1 stream/finalMessage, T2 create research/segmentación/schema) y Gemini (T3/T4 generateContent). **Guard anti-prod: LANZA si el flag está en `NODE_ENV=production`** (nunca IA falsa a clientes reales). Cableado en `anthropic.ts`/`gemini.ts`. Fiel a las formas que parsea `ai-engine` (verificado contra el código). **10 tests** (`__tests__/ai-stub.test.ts`).
+- **Seam QStash** (`platform/qstash.ts`): bypass de firma SOLO si `isAiStubEnabled()` (imposible en prod) **y** header `x-e2e-qstash-bypass` — deja a Playwright ejecutar handlers de job por la ruta real sin reverse-engineering del JWT Upstash. Entregas reales de QStash en dev (sin header) siguen verificándose. Helper `e2e/helpers/qstash.ts`.
+- **Test de presupuesto IA (RNF-042)**: `jobs/__tests__/ai-budget-aggregation.test.ts` — **12 tests** (umbrales 0.79→nada, 0.80→`over_80`, 1.0/1.5→`over_100`, monthly-close, idempotencia por `dedupeKey`, payload inválido).
+- **RLS pgTAP "test 4"** (DOC-31 §8.2): `supabase/tests/rls/11_client_ai_pipeline_hidden.sql` — cliente miembro NO ve `ai_generation_runs` ni `document_extractions` (0 filas) + `throws_ok(42501)` al insertar + contraste positivo staff. 5 aserciones. (Ejecución real en CI con `supabase test db`.)
+- **E2E Playwright de superficies F4** (render + datos reales + 0 errores de consola; auth setups Diana/Carlos nuevos): `f4-formulario.carlos` (runtime del wizard I-589), `f4-aprobacion.diana` (aprobación + **Regenerar PDF** real → asserta `filled_pdf_path` vía service_role), `f4-admin-surfaces.admin` (catálogo "Nuevo servicio"/prueba-de-fuego + editor pdf_automation de 460 campos + ai-costs + datasets). **Smoke 8/8 verde** (corridos con `--no-deps --workers=2`). Aserciones de BD vía `e2e/helpers/db.ts` (service_role, solo lectura).
+- **QA visual + axe** (`e2e/visual/f4-*.visual.spec.ts`): captura light+dark de las pantallas F4 + axe-core (`@axe-core/playwright` instalado). **8/8 verde · 12 baselines generadas** (`e2e/visual/*-snapshots/`, light+dark × 6 pantallas). axe en **modo report-only** (gate con `A11Y_GATE=1`): aflora deuda **preexistente y global** de color-contrast del design system (bottom-nav `#94a2b8/#fefeff`≈2.56:1; chip verde `#1bb673/#e7f7ef`≈2.37:1) — NO es de F4; fix de tokens es transversal y con implicación de fidelidad al prototipo → **`<<NEED-A11Y-FIX>>`** (follow-up).
+- **Verificación en vivo (MCP Playwright)**: login cliente (Carlos) y admin (Henry) OK; runtime del formulario cliente, editor de formularios admin (I-589, 460 campos detectados por mupdf), pantalla de aprobación staff, ai-costs, datasets, wizard "Nuevo servicio" — **todo renderiza con datos reales, 0 errores de consola**.
+- **Two-stage review (REGLA #3)**: code-reviewer → **`<<APPROVED>>`** (los dos seams security-críticos son **estructuralmente imposibles de activar en prod**: `isAiStubEnabled()` lanza en `NODE_ENV=production` → propaga a `getAnthropicClient`/`getGeminiModels`/`verifyQStashSignature`; service_role key sin prefijo `NEXT_PUBLIC_` → nunca al bundle). Fixes aplicados: +2 tests de caller-path del guard de prod; edge-case rollover día-31 en `getPrevMonthUtc` (job + test). HIGH (passwords demo hardcoded) = convención existente (maria/vanessa, ya en `seeds/01`).
+- **Gates: tsc 0 · eslint 0 · vitest 906/906** (+24: 12 presupuesto + 12 stub) · **check:i18n OK** (1182) · **E2E smoke 8/8 · visual 8/8 + baselines**.
+- **Hallazgos registrados**: (1) "Mi Historia" (`cliente/historia`) renderiza un **placeholder "Tu historia, muy pronto"** — pantalla cliente del ai_letter aún stub. (2) El I-589 pdf_automation vive en fase `sustentos` (no la actual `reforzar` de Carlos) → la lista de formularios del cliente (phase-scoped) redirige a /historia. (3) Dev server **Turbopack** corrompe su manifest RSC bajo carga sostenida (`/login` 500) → `dev:e2e` cambiado a **Webpack** (estable). (4) Login staff con **rate-limit** persistente (Upstash) limita re-runs E2E seguidos.
+- **Nota de alcance**: el *journey mutante completo* de DOC-81 §4.3 (fresh fill→submit→approve) y §4.6 (create→publish→activate) asume **BD efímera de CI** (DOC-81 §6); contra la BD demo persistente (formularios ya enviados/aprobados) los specs cubren el **render + las acciones no destructivas** (Regenerar PDF). El pipeline de generación IA queda probado de forma determinista por el stub (tests unit) + cobertura de render E2E.
 
 ### Pendiente menor de F4 (opcional)
 - Aplicar migración **0018** (RPC `merge_form_answers` atómica) — opcional, el autosave ya funciona vía fallback (el `.bind` lo desbloqueó).

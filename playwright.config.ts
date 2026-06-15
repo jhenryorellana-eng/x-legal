@@ -1,4 +1,9 @@
 import { defineConfig, devices } from "@playwright/test";
+import { loadEnvConfig } from "@next/env";
+
+// Load .env.local into process.env so E2E helpers (e2e/helpers/db.ts) can reach
+// NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY for BD assertions.
+loadEnvConfig(process.cwd());
 
 /**
  * Playwright config — E2E + visual QA (DOC-81 §4/§5, DOC-21 §5).
@@ -118,9 +123,50 @@ export default defineConfig({
       testMatch: /.*\.maria\.spec\.ts/,
       dependencies: ["maria-setup"],
     },
+
+    // ── Diana (paralegal) — F4 §4.3 staff side ───────────────────
+    {
+      name: "diana-setup",
+      use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } },
+      testMatch: /.*staff[/\\]diana-auth\.setup\.ts/,
+    },
+    {
+      name: "diana",
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 1440, height: 900 },
+        locale: "es-ES",
+        storageState: "e2e/.auth/diana.json",
+      },
+      testMatch: /.*\.diana\.spec\.ts/,
+      dependencies: ["diana-setup"],
+    },
+
+    // ── Carlos (demo client) — F4 §4.3 client side ───────────────
+    {
+      name: "carlos-setup",
+      use: { ...devices["iPhone 14"], browserName: "chromium", viewport: { width: 390, height: 844 } },
+      testMatch: /.*cliente[/\\]carlos-auth\.setup\.ts/,
+    },
+    {
+      name: "carlos",
+      use: {
+        ...devices["iPhone 14"],
+        browserName: "chromium",
+        viewport: { width: 390, height: 844 },
+        locale: "es-ES",
+        storageState: "e2e/.auth/carlos.json",
+      },
+      testMatch: /.*\.carlos\.spec\.ts/,
+      dependencies: ["carlos-setup"],
+    },
   ],
   webServer: {
-    command: "npm run dev",
+    // dev:e2e sets AI_E2E_STUB=1 → deterministic AI + the QStash test seam
+    // (DOC-81 §4.3/§4.6). The stub is inert without the flag and impossible in
+    // production. If a dev server is already running, reuseExistingServer keeps
+    // it — start it with `npm run dev:e2e` for the §4.3/§4.6 specs.
+    command: "npm run dev:e2e",
     // /favicon.ico always returns 200 on the Next.js dev server.
     // reuseExistingServer: true means Playwright will NOT start a new process
     // if this URL already responds — requires a 2xx status to be considered "ready".

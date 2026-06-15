@@ -167,6 +167,10 @@ export async function handleAiBudgetAggregation(rawPayload: unknown): Promise<vo
 
 function getPrevMonthUtc(now: Date): string {
   const d = new Date(now);
+  // Pin to day 1 BEFORE shifting the month, else on the 29th-31st the month
+  // subtraction can roll over (e.g. Mar 31 → "Feb 31" → Mar 3) and yield the
+  // wrong previous-month string.
+  d.setUTCDate(1);
   d.setUTCMonth(d.getUTCMonth() - 1);
   return d.toISOString().slice(0, 7);
 }
