@@ -1,0 +1,959 @@
+/**
+ * Expediente module — service layer (use cases).
+ *
+ * Authorization: can() is ALWAYS the first line for staff mutations.
+ * requireCaseAccess() is used for case-scoped reads.
+ * Mutations: writeAudit on every staff mutation.
+ * Events: appEvents via emitExpedienteCompiled() etc.
+ *
+ * @module expediente/service
+ */
+
+import { z } from "zod";
+import crypto from "crypto";
+
+import { can, requireCaseAccess } from "@/backend/platform/authz";
+import type { Actor } from "@/backend/platform/authz";
+import { logger } from "@/backend/platform/logger";
+import {
+  uploadBytesToStorage,
+  createSignedUploadUrl,
+  createSignedDownloadUrl,
+  validateUploadedObject,
+} from "@/backend/platform/storage";
+import {
+  renderCoverPdf,
+  compileExpedientePdf,
+} from "@/backend/platform/pdf";
+import type { ExpedienteItemInput } from "@/backend/platform/pdf";
+import { writeAudit } from "@/backend/modules/audit";
+import { emitExpedienteCompiled } from "./events";
+import {
+  isEditableStatus,
+  canonicalClientLabel,
+  validateItemRef,
+  type ExpedienteItemType,
+} from "./domain";
+import {
+  listActiveCoverTemplates,
+  findCoverTemplateById,
+  insertCoverRender,
+  findExpedienteById,
+  listExpedientesForCase,
+  maxAttemptNoForCase,
+  findDraftExpedienteForCase,
+  insertExpediente,
+  updateExpediente,
+  listItemsForExpediente,
+  maxItemPositionForExpediente,
+  findItemById,
+  insertItem,
+  deleteItem,
+  updateItemPosition,
+  updateItemPageCount,
+  updateItemMeta,
+  verifyCoverRenderExists,
+  findGenerationRunById,
+  findFormResponseById,
+  findCaseDocumentById,
+  listCoverRendersForMaterial,
+  listGenerationRunsForMaterial,
+  listFormResponsesForMaterial,
+  listApprovedDocumentsForMaterial,
+  type ExpedienteRow,
+  type ExpedienteItemRow,
+  type CoverTemplateRow,
+  type CoverRenderRow,
+} from "./repository";
+
+// ---------------------------------------------------------------------------
+// Lenient UUID schema — same pattern as cases/service.ts
+// ---------------------------------------------------------------------------
+const UUID_RE =
+  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+const zUuid = z.string().regex(UUID_RE, "uuid");
+
+// ---------------------------------------------------------------------------
+// Error class
+// ---------------------------------------------------------------------------
+
+export class ExpedienteError extends Error {
+  constructor(
+    public readonly code:
+      | "EXPEDIENTE_NOT_FOUND"
+      | "EXPEDIENTE_DRAFT_EXISTS"
+      | "EXPEDIENTE_NOT_EDITABLE"
+      | "EXPEDIENTE_NOT_COMPILABLE"
+      | "EXPEDIENTE_COMPILE_FAILED"
+      | "EXPEDIENTE_NOT_COMPILED"
+      | "EXPEDIENTE_ITEM_NOT_FOUND"
+      | "EXPEDIENTE_ITEM_REF_INVALID"
+      | "COVER_TEMPLATE_NOT_FOUND"
+      | "COVER_RENDER_NOT_FOUND"
+      | "EXTERNAL_FILE_UPLOAD_INVALID",
+    public readonly details?: Record<string, unknown>,
+  ) {
+    super(code);
+    this.name = "ExpedienteError";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// COVERS
+// ---------------------------------------------------------------------------
+
+/**
+ * Lists active cover templates for the actor's org.
+ *
+ * @api-id API-EXP-01
+ */
+export async function listCoverTemplates(
+  actor: Actor,
+): Promise<CoverTemplateRow[]> {
+  can(actor, "expedientes", "view");
+  return listActiveCoverTemplates(actor.orgId);
+}
+
+const GenerateCoverSchema = z.object({
+  caseId: zUuid,
+  templateId: zUuid,
+  data: z.record(z.string(), z.unknown()),
+});
+
+export type GenerateCoverInput = z.infer<typeof GenerateCoverSchema>;
+
+/**
+ * Generates a cover page PDF for a case, stores it, and records the render.
+ *
+ * The clientLabel is derived as "{initial}. {lastName}" — no full PII in the PDF.
+ *
+ * @api-id API-EXP-02
+ */
+export async function generateCover(
+  actor: Actor,
+  input: GenerateCoverInput,
+): Promise<CoverRenderRow> {
+  can(actor, "expedientes", "edit");
+  const parsed = GenerateCoverSchema.parse(input);
+  await requireCaseAccess(actor, parsed.caseId);
+
+  // Load template (org ownership implied by actor.orgId in listActiveCoverTemplates,
+  // but we verify the template exists and belongs to this org)
+  const template = await findCoverTemplateById(parsed.templateId);
+  if (!template || template.org_id !== actor.orgId) {
+    throw new ExpedienteError("COVER_TEMPLATE_NOT_FOUND");
+  }
+
+  // Load case workspace to derive caseNumber, serviceLabel, clientLabel
+  const { getCaseWorkspace } = await import("@/backend/modules/cases") as {
+    getCaseWorkspace: (actor: Actor, caseId: string) => Promise<{
+      caseNumber: string;
+      service: { labelI18n: { es: string; en: string } } | null;
+      parties: Array<{ role: string; name: string | null }>;
+    }>;
+  };
+  const workspace = await getCaseWorkspace(actor, parsed.caseId);
+
+  // Build canonical client label from the primary applicant party name
+  // Fall back to initials from data if no party name is resolved
+  const primaryParty = workspace.parties.find(
+    (p) => p.role === "primary_applicant",
+  );
+  let clientLabel = "—";
+  if (primaryParty?.name) {
+    const parts = primaryParty.name.trim().split(/\s+/);
+    if (parts.length >= 2) {
+      clientLabel = canonicalClientLabel(parts[0], parts.slice(1).join(" "));
+    } else {
+      clientLabel = parts[0] ?? "—";
+    }
+  }
+
+  const serviceLabel =
+    workspace.service?.labelI18n.es ??
+    workspace.service?.labelI18n.en ??
+    "";
+
+  const coverData = {
+    title: (template.template as Record<string, unknown>).title_i18n
+      ? ((template.template as { title_i18n?: { es?: string } }).title_i18n?.es ?? "EXPEDIENTE")
+      : "EXPEDIENTE",
+    caseNumber: workspace.caseNumber,
+    clientLabel,
+    serviceLabel,
+    style: (template.template as Record<string, unknown>).style as
+      | "ulp-classic"
+      | "ulp-divider"
+      | undefined,
+  };
+
+  const bytes = await renderCoverPdf(coverData);
+
+  const pdfPath = `case/${parsed.caseId}/covers/${crypto.randomUUID()}.pdf`;
+  await uploadBytesToStorage("generated", pdfPath, bytes, "application/pdf");
+
+  const row = await insertCoverRender({
+    case_id: parsed.caseId,
+    template_id: parsed.templateId,
+    data: parsed.data as import("@/shared/database.types").Json,
+    pdf_path: pdfPath,
+    created_by: actor.userId,
+  });
+
+  await writeAudit(actor, "expediente.cover_generated", "cover_renders", row.id, {
+    after: { caseId: parsed.caseId, templateId: parsed.templateId },
+  });
+
+  return row;
+}
+
+// ---------------------------------------------------------------------------
+// ENSAMBLADOR — expediente reads
+// ---------------------------------------------------------------------------
+
+/**
+ * Lists all expediente attempts for a case (DESC attempt_no).
+ *
+ * @api-id API-EXP-03
+ */
+export async function getCaseExpedientes(
+  actor: Actor,
+  caseId: string,
+): Promise<ExpedienteRow[]> {
+  can(actor, "expedientes", "view");
+  await requireCaseAccess(actor, caseId);
+  return listExpedientesForCase(caseId);
+}
+
+export interface ExpedienteWithItems {
+  expediente: ExpedienteRow;
+  items: ExpedienteItemRow[];
+}
+
+/**
+ * Returns an expediente with its ordered items.
+ *
+ * @api-id API-EXP-04
+ */
+export async function getExpediente(
+  actor: Actor,
+  expedienteId: string,
+): Promise<ExpedienteWithItems> {
+  can(actor, "expedientes", "view");
+  const expediente = await findExpedienteById(expedienteId);
+  if (!expediente) throw new ExpedienteError("EXPEDIENTE_NOT_FOUND");
+  await requireCaseAccess(actor, expediente.case_id);
+  const items = await listItemsForExpediente(expedienteId);
+  return { expediente, items };
+}
+
+const CreateExpedienteSchema = z.object({
+  caseId: zUuid,
+});
+
+export type CreateExpedienteInput = z.infer<typeof CreateExpedienteSchema>;
+
+/**
+ * Creates a new draft expediente for a case.
+ *
+ * - attempt_no = max(existing) + 1 (or 1 if none)
+ * - Throws EXPEDIENTE_DRAFT_EXISTS if a draft already exists (one draft per case)
+ *
+ * @api-id API-EXP-05
+ */
+export async function createExpediente(
+  actor: Actor,
+  input: CreateExpedienteInput,
+): Promise<ExpedienteRow> {
+  can(actor, "expedientes", "edit");
+  const parsed = CreateExpedienteSchema.parse(input);
+  await requireCaseAccess(actor, parsed.caseId);
+
+  // One draft per case guard (enforced by DB partial unique index too)
+  const existingDraft = await findDraftExpedienteForCase(parsed.caseId);
+  if (existingDraft) {
+    throw new ExpedienteError("EXPEDIENTE_DRAFT_EXISTS", {
+      existingId: existingDraft.id,
+    });
+  }
+
+  const maxAttempt = await maxAttemptNoForCase(parsed.caseId);
+  const attemptNo = maxAttempt + 1;
+
+  const row = await insertExpediente({
+    case_id: parsed.caseId,
+    attempt_no: attemptNo,
+    status: "draft",
+    built_by: actor.userId,
+  });
+
+  await writeAudit(actor, "expediente.created", "expedientes", row.id, {
+    after: { caseId: parsed.caseId, attemptNo },
+  });
+
+  // No event on creation — `expediente.compiled` is emitted ONLY by compileExpediente.
+
+  return row;
+}
+
+export interface ExpedienteMaterial {
+  covers: Array<{ refId: string; title: string; createdAt: string }>;
+  generations: Array<{ refId: string; title: string; createdAt: string }>;
+  forms: Array<{ refId: string; title: string; createdAt: string }>;
+  documents: Array<{ refId: string; title: string; createdAt: string }>;
+}
+
+/**
+ * Returns the library of addable items for a case, grouped by type.
+ *
+ * @api-id API-EXP-06
+ */
+export async function getExpedienteMaterial(
+  actor: Actor,
+  caseId: string,
+): Promise<ExpedienteMaterial> {
+  can(actor, "expedientes", "view");
+  await requireCaseAccess(actor, caseId);
+
+  const [covers, generations, forms, documents] = await Promise.all([
+    listCoverRendersForMaterial(caseId),
+    listGenerationRunsForMaterial(caseId),
+    listFormResponsesForMaterial(caseId),
+    listApprovedDocumentsForMaterial(caseId),
+  ]);
+
+  return {
+    covers: covers.map((c) => ({ refId: c.refId, title: c.title, createdAt: c.createdAt })),
+    generations: generations.map((g) => ({ refId: g.refId, title: g.title, createdAt: g.createdAt })),
+    forms: forms.map((f) => ({ refId: f.refId, title: f.title, createdAt: f.createdAt })),
+    documents: documents.map((d) => ({ refId: d.refId, title: d.title, createdAt: d.createdAt })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// ENSAMBLADOR — item mutations
+// ---------------------------------------------------------------------------
+
+const AddItemSchema = z.object({
+  expedienteId: zUuid,
+  itemType: z.enum(["cover", "ai_generation", "automated_form", "client_document", "external_file"]),
+  refId: zUuid.nullable().optional(),
+  externalFilePath: z.string().min(1).nullable().optional(),
+  title: z.string().min(1),
+  includeInToc: z.boolean().optional(),
+});
+
+export type AddItemInput = z.infer<typeof AddItemSchema>;
+
+/**
+ * Adds an item to an expediente.
+ *
+ * Validates the logical FK (ref_id → source table) per itemType.
+ * Rejects if expediente is not in an editable status (draft or corrections_needed).
+ *
+ * @api-id API-EXP-07
+ */
+export async function addItem(
+  actor: Actor,
+  input: AddItemInput,
+): Promise<ExpedienteItemRow> {
+  can(actor, "expedientes", "edit");
+  const parsed = AddItemSchema.parse(input);
+
+  const expediente = await findExpedienteById(parsed.expedienteId);
+  if (!expediente) throw new ExpedienteError("EXPEDIENTE_NOT_FOUND");
+  await requireCaseAccess(actor, expediente.case_id);
+
+  if (!isEditableStatus(expediente.status as import("./domain").ExpedienteStatus)) {
+    throw new ExpedienteError("EXPEDIENTE_NOT_EDITABLE", { status: expediente.status });
+  }
+
+  // Pure shape validation
+  const shapeCheck = validateItemRef(
+    parsed.itemType as ExpedienteItemType,
+    parsed.refId ?? null,
+    parsed.externalFilePath ?? null,
+  );
+  if (!shapeCheck.ok) {
+    throw new ExpedienteError("EXPEDIENTE_ITEM_REF_INVALID", { reason: shapeCheck.reason });
+  }
+
+  // Logical FK validation (verify the referenced row exists)
+  await validateLogicalFk(parsed.itemType as ExpedienteItemType, parsed.refId ?? null);
+
+  const maxPos = await maxItemPositionForExpediente(parsed.expedienteId);
+  const position = maxPos + 1;
+
+  const row = await insertItem({
+    expediente_id: parsed.expedienteId,
+    item_type: parsed.itemType,
+    ref_id: parsed.refId ?? null,
+    external_file_path: parsed.externalFilePath ?? null,
+    title: parsed.title,
+    position,
+    include_in_toc: parsed.includeInToc ?? true,
+  });
+
+  await writeAudit(actor, "expediente.item_added", "expediente_items", row.id, {
+    after: { expedienteId: parsed.expedienteId, itemType: parsed.itemType, title: parsed.title },
+  });
+
+  return row;
+}
+
+/**
+ * Validates the logical FK by checking the referenced source row exists.
+ * Throws ExpedienteError("EXPEDIENTE_ITEM_REF_INVALID") if not found.
+ */
+async function validateLogicalFk(
+  itemType: ExpedienteItemType,
+  refId: string | null,
+): Promise<void> {
+  if (itemType === "external_file") return; // no refId for external files
+
+  if (!refId) {
+    throw new ExpedienteError("EXPEDIENTE_ITEM_REF_INVALID", {
+      reason: `${itemType} requires a refId`,
+    });
+  }
+
+  switch (itemType) {
+    case "cover": {
+      const exists = await verifyCoverRenderExists(refId);
+      if (!exists) throw new ExpedienteError("EXPEDIENTE_ITEM_REF_INVALID", { itemType, refId });
+      break;
+    }
+    case "ai_generation": {
+      const run = await findGenerationRunById(refId);
+      if (!run) throw new ExpedienteError("EXPEDIENTE_ITEM_REF_INVALID", { itemType, refId });
+      break;
+    }
+    case "automated_form": {
+      const form = await findFormResponseById(refId);
+      if (!form) throw new ExpedienteError("EXPEDIENTE_ITEM_REF_INVALID", { itemType, refId });
+      break;
+    }
+    case "client_document": {
+      const doc = await findCaseDocumentById(refId);
+      if (!doc) throw new ExpedienteError("EXPEDIENTE_ITEM_REF_INVALID", { itemType, refId });
+      break;
+    }
+  }
+}
+
+/**
+ * Removes an item from an expediente.
+ * Renumbers remaining items to keep positions contiguous.
+ *
+ * @api-id API-EXP-08
+ */
+export async function removeItem(
+  actor: Actor,
+  itemId: string,
+): Promise<void> {
+  can(actor, "expedientes", "edit");
+  const parsed = z.object({ itemId: zUuid }).parse({ itemId });
+
+  const item = await findItemById(parsed.itemId);
+  if (!item) throw new ExpedienteError("EXPEDIENTE_ITEM_NOT_FOUND");
+
+  const expediente = await findExpedienteById(item.expediente_id);
+  if (!expediente) throw new ExpedienteError("EXPEDIENTE_NOT_FOUND");
+  await requireCaseAccess(actor, expediente.case_id);
+
+  if (!isEditableStatus(expediente.status as import("./domain").ExpedienteStatus)) {
+    throw new ExpedienteError("EXPEDIENTE_NOT_EDITABLE", { status: expediente.status });
+  }
+
+  await deleteItem(parsed.itemId);
+
+  // Renumber remaining items to keep positions contiguous
+  const remaining = await listItemsForExpediente(item.expediente_id);
+  for (let i = 0; i < remaining.length; i++) {
+    if (remaining[i].position !== i + 1) {
+      await updateItemPosition(remaining[i].id, i + 1);
+    }
+  }
+
+  await writeAudit(actor, "expediente.item_removed", "expediente_items", parsed.itemId, {
+    before: { expedienteId: item.expediente_id, title: item.title },
+  });
+}
+
+const ReorderItemsSchema = z.object({
+  expedienteId: zUuid,
+  orderedItemIds: z.array(zUuid).min(1),
+});
+
+export type ReorderItemsInput = z.infer<typeof ReorderItemsSchema>;
+
+/**
+ * Reorders items by setting positions from the provided ordered array.
+ *
+ * Uses the deferrable unique constraint (expediente_id, position) to allow
+ * position swaps within the same transaction-ish sequence.
+ *
+ * @api-id API-EXP-09
+ */
+export async function reorderItems(
+  actor: Actor,
+  input: ReorderItemsInput,
+): Promise<void> {
+  can(actor, "expedientes", "edit");
+  const parsed = ReorderItemsSchema.parse(input);
+
+  const expediente = await findExpedienteById(parsed.expedienteId);
+  if (!expediente) throw new ExpedienteError("EXPEDIENTE_NOT_FOUND");
+  await requireCaseAccess(actor, expediente.case_id);
+
+  if (!isEditableStatus(expediente.status as import("./domain").ExpedienteStatus)) {
+    throw new ExpedienteError("EXPEDIENTE_NOT_EDITABLE", { status: expediente.status });
+  }
+
+  // Update each item's position sequentially (the deferrable unique constraint
+  // is DEFERRED INITIALLY DEFERRED so intermediate violations are OK within a TX,
+  // but the JS client doesn't batch these into a true single TX; we use an
+  // intermediate negative position trick to avoid conflicts).
+  //
+  // Step 1: Set all positions to large negatives (no constraint violations because
+  //         they're all unique negative values)
+  for (let i = 0; i < parsed.orderedItemIds.length; i++) {
+    await updateItemPosition(parsed.orderedItemIds[i], -(i + 1) * 1000);
+  }
+  // Step 2: Set final positions
+  for (let i = 0; i < parsed.orderedItemIds.length; i++) {
+    await updateItemPosition(parsed.orderedItemIds[i], i + 1);
+  }
+
+  await writeAudit(actor, "expediente.items_reordered", "expedientes", parsed.expedienteId, {
+    after: { orderedItemIds: parsed.orderedItemIds },
+  });
+}
+
+const UpdateItemSchema = z.object({
+  itemId: zUuid,
+  title: z.string().min(1).optional(),
+  includeInToc: z.boolean().optional(),
+});
+
+export type UpdateItemInput = z.infer<typeof UpdateItemSchema>;
+
+/**
+ * Updates an item's title or includeInToc flag.
+ *
+ * @api-id API-EXP-10
+ */
+export async function updateItem(
+  actor: Actor,
+  input: UpdateItemInput,
+): Promise<void> {
+  can(actor, "expedientes", "edit");
+  const parsed = UpdateItemSchema.parse(input);
+
+  const item = await findItemById(parsed.itemId);
+  if (!item) throw new ExpedienteError("EXPEDIENTE_ITEM_NOT_FOUND");
+
+  const expediente = await findExpedienteById(item.expediente_id);
+  if (!expediente) throw new ExpedienteError("EXPEDIENTE_NOT_FOUND");
+  await requireCaseAccess(actor, expediente.case_id);
+
+  if (!isEditableStatus(expediente.status as import("./domain").ExpedienteStatus)) {
+    throw new ExpedienteError("EXPEDIENTE_NOT_EDITABLE", { status: expediente.status });
+  }
+
+  const patch: Record<string, unknown> = {};
+  if (parsed.title !== undefined) patch.title = parsed.title;
+  if (parsed.includeInToc !== undefined) patch.include_in_toc = parsed.includeInToc;
+
+  if (Object.keys(patch).length > 0) {
+    await updateItemMeta(parsed.itemId, patch);
+  }
+
+  await writeAudit(actor, "expediente.item_updated", "expediente_items", parsed.itemId, {
+    after: patch,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// External file upload (2-step: URL → confirm)
+// ---------------------------------------------------------------------------
+
+const CreateExternalFileUploadUrlSchema = z.object({
+  expedienteId: zUuid,
+  filename: z.string().min(1),
+});
+
+export type CreateExternalFileUploadUrlInput = z.infer<
+  typeof CreateExternalFileUploadUrlSchema
+>;
+
+/**
+ * Step 1: creates a signed upload URL for an external file attached to an expediente.
+ *
+ * @api-id API-EXP-11a
+ */
+export async function createExternalFileUploadUrl(
+  actor: Actor,
+  input: CreateExternalFileUploadUrlInput,
+): Promise<{ signedUrl: string; path: string }> {
+  can(actor, "expedientes", "edit");
+  const parsed = CreateExternalFileUploadUrlSchema.parse(input);
+
+  const expediente = await findExpedienteById(parsed.expedienteId);
+  if (!expediente) throw new ExpedienteError("EXPEDIENTE_NOT_FOUND");
+  await requireCaseAccess(actor, expediente.case_id);
+
+  if (!isEditableStatus(expediente.status as import("./domain").ExpedienteStatus)) {
+    throw new ExpedienteError("EXPEDIENTE_NOT_EDITABLE", { status: expediente.status });
+  }
+
+  const safeFilename = parsed.filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const path = `external/${expediente.case_id}/${crypto.randomUUID()}-${safeFilename}`;
+  return createSignedUploadUrl("expedientes", path);
+}
+
+const ConfirmExternalFileSchema = z.object({
+  expedienteId: zUuid,
+  path: z.string().min(1),
+  title: z.string().min(1),
+});
+
+export type ConfirmExternalFileInput = z.infer<typeof ConfirmExternalFileSchema>;
+
+/**
+ * Step 2: validates the uploaded external file and adds it as an expediente item.
+ *
+ * @api-id API-EXP-11b
+ */
+export async function confirmExternalFile(
+  actor: Actor,
+  input: ConfirmExternalFileInput,
+): Promise<ExpedienteItemRow> {
+  can(actor, "expedientes", "edit");
+  const parsed = ConfirmExternalFileSchema.parse(input);
+
+  const expediente = await findExpedienteById(parsed.expedienteId);
+  if (!expediente) throw new ExpedienteError("EXPEDIENTE_NOT_FOUND");
+  await requireCaseAccess(actor, expediente.case_id);
+
+  if (!isEditableStatus(expediente.status as import("./domain").ExpedienteStatus)) {
+    throw new ExpedienteError("EXPEDIENTE_NOT_EDITABLE", { status: expediente.status });
+  }
+
+  // Path-prefix guard (CRITICAL): the path must live under this case's external/
+  // prefix — otherwise a caller could attach another case's object (e.g. a compiled
+  // expediente at `case/{otherCaseId}/…`) from the same bucket and leak it on compile.
+  const expectedPrefix = `external/${expediente.case_id}/`;
+  if (!parsed.path.startsWith(expectedPrefix)) {
+    throw new ExpedienteError("EXTERNAL_FILE_UPLOAD_INVALID", { reason: "path_prefix" });
+  }
+
+  // Validate the uploaded object exists and is a valid PDF
+  const validated = await validateUploadedObject("expedientes", parsed.path, "expedientes");
+  if (!validated.ok) {
+    throw new ExpedienteError("EXTERNAL_FILE_UPLOAD_INVALID", {
+      reason: validated.reason,
+    });
+  }
+
+  return addItem(actor, {
+    expedienteId: parsed.expedienteId,
+    itemType: "external_file",
+    externalFilePath: parsed.path,
+    title: parsed.title,
+    includeInToc: true,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// COMPILATION
+// ---------------------------------------------------------------------------
+
+/**
+ * Compiles all items of an expediente into a single PDF.
+ *
+ * Steps:
+ * 1. Load expediente (must be draft or corrections_needed)
+ * 2. Set status = 'compiling'
+ * 3. Load ordered items, resolve each item's bytes from storage
+ * 4. Call compileExpedientePdf(items)
+ * 5. Upload compiled PDF to 'expedientes' bucket
+ * 6. Update expediente (status='compiled', compiled_pdf_path, page_count)
+ * 7. Update each item's page_count from the TOC
+ * 8. Emit expediente.compiled event
+ * 9. On ANY error: set status='compile_failed', rethrow as EXPEDIENTE_COMPILE_FAILED
+ *
+ * Runs SYNCHRONOUSLY (no QStash in dev) — a job wrapper can call this later.
+ *
+ * @api-id API-EXP-12
+ */
+export async function compileExpediente(
+  actor: Actor,
+  expedienteId: string,
+): Promise<{ compiledPdfPath: string; pageCount: number }> {
+  can(actor, "expedientes", "edit");
+
+  const expediente = await findExpedienteById(expedienteId);
+  if (!expediente) throw new ExpedienteError("EXPEDIENTE_NOT_FOUND");
+  await requireCaseAccess(actor, expediente.case_id);
+
+  const editableForCompile =
+    expediente.status === "draft" || expediente.status === "corrections_needed";
+  if (!editableForCompile) {
+    throw new ExpedienteError("EXPEDIENTE_NOT_COMPILABLE", { status: expediente.status });
+  }
+
+  // Set status = compiling immediately so concurrent attempts are visible
+  await updateExpediente(expedienteId, { status: "compiling" });
+
+  try {
+    const items = await listItemsForExpediente(expedienteId);
+
+    // Resolve each item's bytes from storage
+    const resolvedItems: Array<ExpedienteItemInput & { itemId: string }> = [];
+    for (const item of items) {
+      const { bytes, mimeType } = await resolveItemBytes(item);
+      resolvedItems.push({
+        itemId: item.id,
+        bytes,
+        mimeType,
+        title: item.title,
+        includeInToc: item.include_in_toc,
+      });
+    }
+
+    const result = await compileExpedientePdf(
+      resolvedItems.map((i) => ({
+        bytes: i.bytes,
+        mimeType: i.mimeType,
+        title: i.title,
+        includeInToc: i.includeInToc,
+      })),
+    );
+
+    const compiledPdfPath = `case/${expediente.case_id}/${expedienteId}-a${expediente.attempt_no}.pdf`;
+    await uploadBytesToStorage(
+      "expedientes",
+      compiledPdfPath,
+      result.pdf,
+      "application/pdf",
+    );
+
+    await updateExpediente(expedienteId, {
+      status: "compiled",
+      compiled_pdf_path: compiledPdfPath,
+      page_count: result.pageCount,
+    });
+
+    // Persist per-item page counts from TOC
+    for (const tocEntry of result.toc) {
+      const matched = resolvedItems.find((ri) => ri.title === tocEntry.title);
+      if (matched) {
+        await updateItemPageCount(matched.itemId, tocEntry.pageCount).catch((err) => {
+          logger.warn(
+            { err, itemId: matched.itemId },
+            "expediente.compile: failed to update item page_count — non-fatal",
+          );
+        });
+      }
+    }
+
+    await writeAudit(actor, "expediente.compiled", "expedientes", expedienteId, {
+      after: { compiledPdfPath, pageCount: result.pageCount },
+    });
+
+    emitExpedienteCompiled({
+      caseId: expediente.case_id,
+      expedienteId,
+      attemptNo: expediente.attempt_no,
+    });
+
+    return { compiledPdfPath, pageCount: result.pageCount };
+  } catch (err) {
+    // On any error: mark as compile_failed, then rethrow
+    await updateExpediente(expedienteId, { status: "compile_failed" }).catch((updateErr) => {
+      logger.error(
+        { updateErr, expedienteId },
+        "expediente.compile: also failed to set compile_failed status",
+      );
+    });
+
+    const isAlreadyDomainError = err instanceof ExpedienteError;
+    if (!isAlreadyDomainError) {
+      logger.error({ err, expedienteId }, "expediente.compile: compilation failed");
+    }
+
+    throw new ExpedienteError("EXPEDIENTE_COMPILE_FAILED", {
+      originalError: (err as Error).message,
+    });
+  }
+}
+
+/**
+ * Internal helper: downloads item bytes from the appropriate storage bucket.
+ */
+async function resolveItemBytes(
+  item: ExpedienteItemRow,
+): Promise<{ bytes: Uint8Array; mimeType: string }> {
+  // Dynamic import to avoid pulling Supabase storage client at module load time
+  const { createServiceClient } = await import("@/backend/platform/supabase");
+  const storage = createServiceClient().storage;
+
+  let bucket: string;
+  let path: string;
+  const mimeType = "application/pdf"; // all source items produce PDF
+
+  switch (item.item_type) {
+    case "cover": {
+      // cover_renders → 'generated' bucket, pdf_path stored in cover_renders
+      const render = await import("./repository").then((r) =>
+        r.findCoverRenderById(item.ref_id!),
+      );
+      if (!render) throw new Error(`cover render not found: ${item.ref_id}`);
+      bucket = "generated";
+      path = render.pdf_path;
+      break;
+    }
+    case "ai_generation": {
+      // ai_generation_runs → 'generated' bucket, output_path
+      const run = await findGenerationRunById(item.ref_id!);
+      if (!run || !run.output_path)
+        throw new Error(`generation run not found or has no output: ${item.ref_id}`);
+      bucket = "generated";
+      path = run.output_path;
+      break;
+    }
+    case "automated_form": {
+      // case_form_responses → 'generated' bucket, filled_pdf_path
+      const form = await findFormResponseById(item.ref_id!);
+      if (!form || !form.filled_pdf_path)
+        throw new Error(`form response not found or has no PDF: ${item.ref_id}`);
+      bucket = "generated";
+      path = form.filled_pdf_path;
+      break;
+    }
+    case "client_document": {
+      // case_documents → 'case-documents' bucket, storage_path
+      const doc = await findCaseDocumentById(item.ref_id!);
+      if (!doc) throw new Error(`case document not found: ${item.ref_id}`);
+      bucket = "case-documents";
+      path = doc.storage_path;
+      break;
+    }
+    case "external_file": {
+      // External files → 'expedientes' bucket, external_file_path column
+      if (!item.external_file_path)
+        throw new Error(`external_file item has no external_file_path: ${item.id}`);
+      bucket = "expedientes";
+      path = item.external_file_path;
+      break;
+    }
+    default:
+      throw new Error(`unknown item_type: ${item.item_type}`);
+  }
+
+  const { data, error } = await storage.from(bucket).download(path);
+  if (error || !data) {
+    throw new Error(`failed to download ${bucket}/${path}: ${error?.message}`);
+  }
+
+  const arrayBuffer = await data.arrayBuffer();
+  return { bytes: new Uint8Array(arrayBuffer), mimeType };
+}
+
+/**
+ * Returns a signed download URL for the compiled expediente PDF.
+ *
+ * @api-id API-EXP-13
+ */
+export async function getCompiledPdfUrl(
+  actor: Actor,
+  expedienteId: string,
+): Promise<string> {
+  can(actor, "expedientes", "view");
+  const expediente = await findExpedienteById(expedienteId);
+  if (!expediente) throw new ExpedienteError("EXPEDIENTE_NOT_FOUND");
+  await requireCaseAccess(actor, expediente.case_id);
+
+  if (!expediente.compiled_pdf_path) {
+    throw new ExpedienteError("EXPEDIENTE_NOT_COMPILED", { status: expediente.status });
+  }
+
+  return createSignedDownloadUrl("expedientes", expediente.compiled_pdf_path);
+}
+
+// ---------------------------------------------------------------------------
+// CORRECTIONS
+// ---------------------------------------------------------------------------
+
+/**
+ * Creates a new expediente attempt as a correction cycle.
+ *
+ * - Source must be status='corrections_needed'
+ * - New attempt: attempt_no+1, status='draft', built_by=actor.userId
+ * - Clones all items from the source (immutable — prior attempt stays)
+ *
+ * @api-id API-EXP-14
+ */
+export async function createCorrectionAttempt(
+  actor: Actor,
+  expedienteId: string,
+): Promise<ExpedienteRow> {
+  can(actor, "expedientes", "edit");
+
+  const source = await findExpedienteById(expedienteId);
+  if (!source) throw new ExpedienteError("EXPEDIENTE_NOT_FOUND");
+  await requireCaseAccess(actor, source.case_id);
+
+  if (source.status !== "corrections_needed") {
+    throw new ExpedienteError("EXPEDIENTE_NOT_EDITABLE", {
+      status: source.status,
+      reason: "Source must be corrections_needed to create a correction attempt",
+    });
+  }
+
+  const newAttemptNo = source.attempt_no + 1;
+
+  const newExpediente = await insertExpediente({
+    case_id: source.case_id,
+    attempt_no: newAttemptNo,
+    status: "draft",
+    built_by: actor.userId,
+  });
+
+  // Clone all items from the source attempt (deep copy — same ref_id/path)
+  const sourceItems = await listItemsForExpediente(expedienteId);
+  for (const item of sourceItems) {
+    await insertItem({
+      expediente_id: newExpediente.id,
+      item_type: item.item_type,
+      ref_id: item.ref_id,
+      external_file_path: item.external_file_path,
+      title: item.title,
+      position: item.position,
+      include_in_toc: item.include_in_toc,
+    });
+  }
+
+  await writeAudit(actor, "expediente.correction_attempt_created", "expedientes", newExpediente.id, {
+    after: {
+      sourceExpedienteId: expedienteId,
+      newAttemptNo,
+      clonedItemCount: sourceItems.length,
+    },
+  });
+
+  // A correction attempt is a fresh DRAFT — not compiled. No `expediente.compiled` event.
+
+  return newExpediente;
+}
+
+// ---------------------------------------------------------------------------
+// Re-export repository types needed by index.ts
+// ---------------------------------------------------------------------------
+export type {
+  ExpedienteRow,
+  ExpedienteItemRow,
+  CoverTemplateRow,
+  CoverRenderRow,
+} from "./repository";
