@@ -56,10 +56,18 @@ Módulo `ai-engine` (domain 13 funcs puras, service API-AI-01..10, repository, e
 - **5º bug de prod (submit)**: `submitFormResponse` validaba requeridas contra el `answers` crudo, pero las preguntas `profile`/`extraction`/`generation` se resuelven al render/PDF (su valor NO está en `answers`) → un formulario con nombre/teléfono desde el perfil **nunca podía enviarse**. Fix: resolver fuentes no-cliente antes de validar requeridas (+2 tests). **808 tests verdes.**
 - **Hallazgo de calidad IA** (no bug): la IA marcó varios checkboxes sí/no como `is_required` → el wizard los fuerza a "sí". El admin debería volverlos opcionales o `select` (Sí/No). Mejora de prompt para la próxima iteración.
 
-### Pendiente menor de F4
-- **UI staff de aprobación/generación**: las server actions `approveFormResponse`/`generateFilledPdf` existen pero **ninguna página las consume todavía** (es de una ola posterior — pantalla de gestión de formularios del staff). El backend está unit-tested + el llenado mupdf spike-proven; el PDF llenado se generó por script.
-- Aplicar migración **0018** (RPC `merge_form_answers` atómica) — **opcional**, el autosave ya funciona vía fallback (el `.bind` lo desbloqueó).
-- **Datos demo en prod** (vía editor, autorizado): I-589 v1 publicada + respuesta enviada de Carlos. Útiles como demo.
+### UI staff de aprobación/generación — CONSTRUIDA y verificada en vivo (2026-06-14) ✅
+- **Pantalla `/admin/casos/[caseId]/formularios`** (RF-ADM-010 / DOC-53 §3.4.3): lista las respuestas del caso con su estado y permite **Aprobar** (submitted→approved) y **Generar PDF**. Read nuevo `getCaseFormResponsesForStaff` (responseId+status+label+party+filledBy+pdf) + componente `CaseFormsManager`. Enlace "Formularios →" en el detalle del caso. Commits `3e494df`+`6c5ed7d`.
+- **Verificado en vivo como Henry**: Aprobar → `approved`; Generar PDF → el **`generateFilledPdf` REAL** produjo un **I-589 llenado válido (1.85MB, 12 págs, todos los datos incl. la dirección que el cliente sobreescribió)** en el bucket `generated`, URL firmada abierta, UI → Regenerar/Ver PDF.
+- **Bugs #6 y #7 cazados al generar el PDF real**: (#6) `generateFilledPdf` ignoraba el override del cliente sobre un prefill `profile` vacío → ahora prefiere `answers`; (#7) **`uploadBytesToStorage` usaba `bytes.buffer`** (todo el backing store wasm) → **corrompía TODO archivo generado** (el 1er PDF salió 27.6MB ilegible) → copia exacta de la vista. +2 tests.
+- **Calidad IA mejorada**: el prompt de propuesta ahora prohíbe checkboxes sí/no obligatorios (usar select Sí/No u opcional).
+
+> **F4 COMPLETA**: motor IA + editor con IA grounded + wizard cliente (fill→autosave→submit) + runtime + **UI staff aprobar/generar PDF** — todo verificado en vivo. **7 bugs de producción** cazados por el E2E en vivo (todos arreglados+tests). **809 tests · tsc 0 · eslint 0.**
+
+### Pendiente menor de F4 (opcional)
+- Aplicar migración **0018** (RPC `merge_form_answers` atómica) — opcional, el autosave ya funciona vía fallback (el `.bind` lo desbloqueó).
+- Wiring de la pantalla como **tab "Formularios"** dentro de `shared-case` (hoy es página dedicada + enlace) — pulido menor.
+- **Datos demo en prod** (vía editor, autorizado): I-589 v1 publicada + respuesta de Carlos aprobada + PDF generado. Útiles como demo.
 
 ---
 
