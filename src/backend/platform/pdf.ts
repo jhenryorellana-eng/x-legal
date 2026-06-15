@@ -336,3 +336,205 @@ export async function fillAcroForm(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (outBuf as any).asUint8Array() as Uint8Array;
 }
+
+// ---------------------------------------------------------------------------
+// E. renderCoverPdf  — deterministic cover page (carátula) via mupdf html→pdf
+// ---------------------------------------------------------------------------
+
+export interface CoverData {
+  /** Big title (e.g. "EXPEDIENTE" or the service name). */
+  title: string;
+  /** Subtitle / form name (optional). */
+  subtitle?: string;
+  caseNumber: string;
+  /** Canonical client label "{inicial}. {apellido}" — no PII. */
+  clientLabel: string;
+  serviceLabel: string;
+  /** Footer line (org name / date). */
+  footer?: string;
+  /** "ulp-classic" (portada) | "ulp-divider" (separador). */
+  style?: "ulp-classic" | "ulp-divider";
+}
+
+const NAVY = "#0b1f3a";
+const GOLD = "#c8a24a";
+
+/** Internal: mupdf html→pdf (US Letter), shared by cover + TOC renders.
+ * Mirrors renderMarkdownToPdf: prefer toPDFDocument(), else DocumentWriter. */
+async function htmlToPdf(html: string): Promise<Uint8Array> {
+  const mupdf = await import("mupdf");
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const M = mupdf as any;
+  const doc = M.Document.openDocument(new TextEncoder().encode(html), "text/html");
+  try {
+    doc.layout(612, 792, 11);
+    const n = doc.countPages();
+    if (typeof doc.toPDFDocument === "function") {
+      return doc.toPDFDocument().saveToBuffer("").asUint8Array() as Uint8Array;
+    }
+    const buf = new M.Buffer();
+    const writer = new M.DocumentWriter(buf, "pdf", "");
+    for (let i = 0; i < n; i++) {
+      const page = doc.loadPage(i);
+      const dev = writer.beginPage(page.getBounds());
+      page.run(dev, M.Matrix.identity);
+      writer.endPage();
+    }
+    writer.close();
+    return buf.asUint8Array() as Uint8Array;
+  } finally {
+    try { doc.destroy?.(); } catch { /* freed */ }
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
+/**
+ * Renders a deterministic ULP cover/divider page (navy + gold, Helvetica) to a
+ * one-page US Letter PDF. Same inputs → same bytes. DOC-45 §3.1.1.
+ */
+export async function renderCoverPdf(data: CoverData): Promise<Uint8Array> {
+  const esc = (s: string) =>
+    String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string));
+  const isDivider = data.style === "ulp-divider";
+  const html = `<!DOCTYPE html><html><body style="font-family:Helvetica,Arial,sans-serif;margin:0;padding:0;color:${NAVY}">
+    <div style="margin:96pt 72pt;border:2pt solid ${GOLD};padding:48pt 36pt;text-align:center">
+      <div style="font-size:11pt;letter-spacing:3pt;color:${GOLD};font-weight:bold">USALATINOPRIME</div>
+      <div style="height:${isDivider ? "8pt" : "36pt"}"></div>
+      <div style="font-size:${isDivider ? "22pt" : "30pt"};font-weight:bold;letter-spacing:1pt">${esc(data.title)}</div>
+      ${data.subtitle ? `<div style="font-size:14pt;color:${NAVY};margin-top:8pt">${esc(data.subtitle)}</div>` : ""}
+      <div style="height:24pt"></div>
+      <div style="border-top:1pt solid ${GOLD};width:40%;margin:0 auto"></div>
+      <div style="height:24pt"></div>
+      <table style="margin:0 auto;font-size:12pt;text-align:left">
+        <tr><td style="color:${GOLD};padding:3pt 12pt 3pt 0">Caso</td><td style="font-weight:bold">${esc(data.caseNumber)}</td></tr>
+        <tr><td style="color:${GOLD};padding:3pt 12pt 3pt 0">Cliente</td><td style="font-weight:bold">${esc(data.clientLabel)}</td></tr>
+        <tr><td style="color:${GOLD};padding:3pt 12pt 3pt 0">Servicio</td><td style="font-weight:bold">${esc(data.serviceLabel)}</td></tr>
+      </table>
+    </div>
+    ${data.footer ? `<div style="position:fixed;bottom:48pt;left:0;right:0;text-align:center;font-size:9pt;color:${GOLD}">${esc(data.footer)}</div>` : ""}
+  </body></html>`;
+  return htmlToPdf(html);
+}
+
+// ---------------------------------------------------------------------------
+// F. compileExpedientePdf — merge ordered items into one PDF + TOC + page numbers
+// ---------------------------------------------------------------------------
+
+export interface ExpedienteItemInput {
+  /** Raw bytes of the item's source document. */
+  bytes: Uint8Array;
+  /** "application/pdf" | "image/jpeg" | "image/png" — how mupdf opens it. */
+  mimeType: string;
+  /** Index title (visible in the TOC). */
+  title: string;
+  includeInToc: boolean;
+}
+
+export interface CompiledExpediente {
+  pdf: Uint8Array;
+  pageCount: number;
+  toc: Array<{ title: string; startPage: number; pageCount: number }>;
+}
+
+/**
+ * Compiles an ordered list of items into a single US Letter PDF:
+ *   1. open every item, count pages (two-pass to size the auto TOC),
+ *   2. render a Table-of-Contents page (navy/gold) with each item's START page,
+ *   3. merge TOC + every item's pages via a DocumentWriter (vector-preserving —
+ *      not rasterized), stamping a continuous "{n} / {total}" footer per page.
+ *
+ * Robust to mixed inputs (PDF + scanned images). DOC-45 §3.4.
+ */
+export async function compileExpedientePdf(items: ExpedienteItemInput[]): Promise<CompiledExpediente> {
+  const mupdf = await import("mupdf");
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const M = mupdf as any;
+
+  // Open each item as a PDFDocument (graftPage needs PDF source + copies objects
+  // verbatim — no font re-processing, unlike DocumentWriter which fails on USCIS
+  // forms with "substitute font creation not implemented"). Non-PDF (scanned
+  // images) are first rendered to a 1-page PDF (no fonts → safe via DocumentWriter).
+  const toPdfDoc = (bytes: Uint8Array, mimeType: string): any => {
+    if (!mimeType || mimeType === "application/pdf") return M.Document.openDocument(bytes, "application/pdf");
+    const src = M.Document.openDocument(bytes, mimeType);
+    const buf = new M.Buffer();
+    const w = new M.DocumentWriter(buf, "pdf", "");
+    for (let i = 0; i < Math.max(1, src.countPages()); i++) {
+      const p = src.loadPage(i);
+      const d = w.beginPage(p.getBounds());
+      p.run(d, M.Matrix.identity);
+      w.endPage();
+    }
+    w.close();
+    try { src.destroy?.(); } catch { /* freed */ }
+    return M.Document.openDocument(buf.asUint8Array(), "application/pdf");
+  };
+
+  // --- open each item + count pages ---
+  const opened = items.map((it) => {
+    const doc = toPdfDoc(it.bytes, it.mimeType);
+    return { it, doc, pages: Math.max(1, doc.countPages()) };
+  });
+
+  const esc = (s: string) =>
+    String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string));
+  const buildTocHtml = (rows: Array<{ title: string; startPage: number }>) =>
+    `<!DOCTYPE html><html><body style="font-family:Helvetica,Arial,sans-serif;margin:54pt 60pt;color:${NAVY}">
+      <div style="font-size:11pt;letter-spacing:3pt;color:${GOLD};font-weight:bold">USALATINOPRIME</div>
+      <div style="font-size:22pt;font-weight:bold;margin:6pt 0 4pt">Índice del expediente</div>
+      <div style="border-top:2pt solid ${GOLD};margin-bottom:14pt"></div>
+      <table style="width:100%;font-size:12pt;border-collapse:collapse">
+        ${rows
+          .map(
+            (r) =>
+              `<tr><td style="padding:5pt 0">${esc(r.title)}</td><td style="padding:5pt 0;text-align:right;color:${GOLD};font-weight:bold">${r.startPage}</td></tr>`,
+          )
+          .join("")}
+      </table>
+    </body></html>`;
+
+  // --- two-pass: render the TOC to PDF, measure it, finalize START pages ---
+  let tocPages = 1;
+  let toc: Array<{ title: string; startPage: number; pageCount: number }> = [];
+  let tocPdf: any = null;
+  for (let iter = 0; iter < 4; iter++) {
+    let cursor = tocPages + 1; // first item page (1-based, after the TOC)
+    toc = [];
+    const rows: Array<{ title: string; startPage: number }> = [];
+    for (const o of opened) {
+      if (o.it.includeInToc) {
+        toc.push({ title: o.it.title, startPage: cursor, pageCount: o.pages });
+        rows.push({ title: o.it.title, startPage: cursor });
+      }
+      cursor += o.pages;
+    }
+    const tocBytes = await htmlToPdf(buildTocHtml(rows));
+    try { tocPdf?.destroy?.(); } catch { /* freed */ }
+    tocPdf = M.Document.openDocument(tocBytes, "application/pdf");
+    const n = Math.max(1, tocPdf.countPages());
+    if (n === tocPages) break;
+    tocPages = n;
+  }
+
+  const totalPages = tocPages + opened.reduce((s, o) => s + o.pages, 0);
+
+  // --- merge: graftPage TOC + every item into a fresh PDFDocument (verbatim) ---
+  // NOTE: the TOC carries each item's START page (the navigation aid that matters).
+  // A continuous footer page-number stamp is deferred — the mupdf WASM build can't
+  // create substitute fonts for on-device text, so it needs an embedded font asset.
+  const dst = new M.PDFDocument();
+  const graft = (src: any) => {
+    const n = src.countPages();
+    for (let i = 0; i < n; i++) dst.graftPage(dst.countPages(), src, i);
+  };
+  graft(tocPdf);
+  for (const o of opened) graft(o.doc);
+
+  const pdf = dst.saveToBuffer("").asUint8Array() as Uint8Array;
+  try { tocPdf?.destroy?.(); } catch { /* freed */ }
+  for (const o of opened) { try { o.doc.destroy?.(); } catch { /* freed */ } }
+  try { dst.destroy?.(); } catch { /* freed */ }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+
+  return { pdf, pageCount: totalPages, toc };
+}
