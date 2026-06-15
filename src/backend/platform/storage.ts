@@ -272,7 +272,13 @@ export async function uploadBytesToStorage(
   contentType: string,
 ): Promise<string> {
   const storage = createServiceClient().storage;
-  const blob = new Blob([bytes.buffer as ArrayBuffer], { type: contentType });
+  // Copy ONLY the view's bytes into a fresh ArrayBuffer. `bytes.buffer` is the
+  // entire backing store, which for mupdf/wasm outputs is a large (possibly
+  // SharedArrayBuffer) pool whose PDF view is only a slice — uploading `.buffer`
+  // shipped megabytes of garbage + corrupted every generated file.
+  const exact = new Uint8Array(bytes.byteLength);
+  exact.set(bytes);
+  const blob = new Blob([exact], { type: contentType });
   const { error } = await storage
     .from(bucket)
     .upload(path, blob, { contentType, upsert: true });

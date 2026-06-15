@@ -909,6 +909,23 @@ describe("generateFilledPdf", () => {
       generateFilledPdf(staffActor, { responseId: RESPONSE_ID }),
     ).rejects.toThrow("FORM_PDF_REQUIRED_MISSING");
   });
+
+  it("uses the client's override for an editable empty-profile field (regression #6)", async () => {
+    // The question is source='profile' but the client's profile is empty, so the
+    // client typed a value (it lives in answers). The fill must use the override —
+    // without it, resolveBySource(profile) returns empty and required-missing throws.
+    mockFindFormResponseById.mockResolvedValue({ ...approvedResponse, answers: { qAddr: "1234 Main St" } });
+    mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
+    mockListQuestionGroups.mockResolvedValue([{ id: "grp1" }]);
+    mockListQuestions.mockResolvedValue([
+      { id: "qAddr", source: "profile", source_ref: { profile_field: "address.line1" }, pdf_field_name: "AddrField", is_required: true },
+    ]);
+    mockFindCasePrimaryClient.mockResolvedValue("client-1");
+    mockFindClientProfileForForm.mockResolvedValue({ address: {} }); // profile resolves empty
+
+    const url = await generateFilledPdf(staffActor, { responseId: RESPONSE_ID });
+    expect(url).toBeDefined();
+  });
 });
 
 // ---------------------------------------------------------------------------

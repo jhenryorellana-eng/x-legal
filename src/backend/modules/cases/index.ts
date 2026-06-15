@@ -35,6 +35,7 @@ export {
   resolveBySource,
   // Staff reads
   getCaseExtractions,
+  getCaseFormResponsesForStaff,
 } from "./service";
 
 // createCaseFromContract types
@@ -51,6 +52,7 @@ export type {
   FormGroupDto,
   FormQuestionDto,
   ClientFormListItem,
+  StaffFormResponseItem,
   DocumentExtractionSummary,
 } from "./service";
 

@@ -64,6 +64,7 @@ import {
   findPlanKind,
   findFormResponse,
   findFormResponseById,
+  listFormResponsesForCase,
   insertFormResponse,
   mergeFormAnswers,
   updateFormResponse,
@@ -2004,6 +2005,74 @@ export async function getClientFormsForCase(
 }
 
 // ---------------------------------------------------------------------------
+// Staff form-response review list (RF-ADM-010 / DOC-53 §3.4.3)
+// ---------------------------------------------------------------------------
+
+export interface StaffFormResponseItem {
+  responseId: string;
+  formDefinitionId: string;
+  labelI18n: I18nValue;
+  /** 'pdf_automation' | 'ai_letter'. */
+  kind: string;
+  /** 'client' | 'staff' | 'both' — client-filled forms need approval before PDF. */
+  filledBy: string;
+  /** 'draft' | 'submitted' | 'approved'. */
+  status: string;
+  partyId: string | null;
+  partyName: string | null;
+  /** Storage path of the generated filled PDF (null until generated). */
+  filledPdfPath: string | null;
+  submittedAt: string | null;
+}
+
+/**
+ * Lists every form RESPONSE of a case for staff review (RF-ADM-010). Unlike
+ * getClientFormsForCase (which lists the client-facing form catalog of the
+ * current phase), this returns the actual response rows — with their id, status
+ * and generated-PDF path — so staff can approve and generate the filled PDF.
+ *
+ * Trivial read; requireCaseAccess + RLS are the authority.
+ *
+ * @api-id (read — consumed by the staff Formularios screen)
+ */
+export async function getCaseFormResponsesForStaff(
+  actor: Actor,
+  caseId: string,
+): Promise<StaffFormResponseItem[]> {
+  await requireCaseAccess(actor, caseId);
+
+  const [rows, parties] = await Promise.all([
+    listFormResponsesForCase(caseId),
+    getCaseParties(caseId),
+  ]);
+
+  const partyNameById = new Map<string, string | null>();
+  for (const p of parties) partyNameById.set(p.id, await resolvePartyName(p));
+
+  const items = await Promise.all(
+    rows.map(async (r) => {
+      const formDef = await findFormDefinitionById(r.form_definition_id);
+      return {
+        responseId: r.id,
+        formDefinitionId: r.form_definition_id,
+        labelI18n: asI18n(formDef?.label_i18n) ?? { en: "", es: "" },
+        kind: formDef?.kind ?? "",
+        filledBy: formDef?.filled_by ?? "staff",
+        status: r.status,
+        partyId: r.party_id,
+        partyName: r.party_id ? (partyNameById.get(r.party_id) ?? null) : null,
+        filledPdfPath: r.filled_pdf_path,
+        submittedAt: r.submitted_at,
+      } satisfies StaffFormResponseItem;
+    }),
+  );
+
+  // Most relevant first: submitted (await review) → approved → draft.
+  const rank: Record<string, number> = { submitted: 0, approved: 1, draft: 2 };
+  return items.sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9));
+}
+
+// ---------------------------------------------------------------------------
 // API-CASE-16: saveFormDraft
 // ---------------------------------------------------------------------------
 
@@ -2341,12 +2410,19 @@ export async function generateFilledPdf(
   for (const q of questions) {
     if (!q.pdf_field_name) continue; // intermediate data — no AcroField mapping
 
-    const resolved = await resolveBySource(
-      { id: q.id, source: q.source, source_ref: q.source_ref },
-      answers,
-      caseId,
-      partyId,
-    );
+    // Prefer an explicit client answer: an editable prefill (e.g. a profile field
+    // the client had to fill because their profile was empty) is overridden by what
+    // the client actually typed — resolveBySource(profile) would otherwise discard it.
+    const own = answers[q.id];
+    const resolved =
+      own !== undefined && own !== null && own !== ""
+        ? own
+        : await resolveBySource(
+            { id: q.id, source: q.source, source_ref: q.source_ref },
+            answers,
+            caseId,
+            partyId,
+          );
 
     const isEmpty = resolved === null || resolved === undefined || resolved === "";
     if (isEmpty && q.is_required) {
