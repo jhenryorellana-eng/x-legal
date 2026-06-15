@@ -80,8 +80,10 @@ const providerSchemas = {
     GEMINI_API_KEY: z.string().min(1),
   }),
   abogados: z.object({
+    ABOGADOS_API_URL: z.string().url(),
     ABOGADOS_API_KEY: z.string().min(1),
     ABOGADOS_WEBHOOK_SECRET: z.string().min(1),
+    ABOGADOS_CALLBACK_URL: z.string().url(),
   }),
   webpush: z.object({
     NEXT_PUBLIC_VAPID_PUBLIC_KEY: z.string().min(1),

@@ -19,6 +19,7 @@ import {
   onDownpaymentConfirmedKanban,
 } from "@/backend/modules/kanban";
 import { registerAiEngineConsumers } from "@/backend/modules/ai-engine";
+import { registerIntegrationsConsumers } from "@/backend/modules/integrations";
 // scheduling: no in-process event consumers in V2.0 (DOC-43 §5 — scheduling does
 // NOT consume events from other modules; the reminder job uses polling, not events)
 
@@ -138,5 +139,11 @@ export function registerConsumers(): void {
   // -------------------------------------------------------------------------
   registerAiEngineConsumers();
 
-  logger.info({}, "consumers: F2+F3+F4 event consumers registered (kanban + ai-engine)");
+  // -------------------------------------------------------------------------
+  // integrations consumers (F5 — validation.sent / validation.verdict_received;
+  // notifications wired in F7, hook registered now)
+  // -------------------------------------------------------------------------
+  registerIntegrationsConsumers();
+
+  logger.info({}, "consumers: F2+F3+F4+F5 event consumers registered (kanban + ai-engine + integrations)");
 }

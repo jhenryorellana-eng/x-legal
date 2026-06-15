@@ -37,6 +37,7 @@ import { handleExtractDocument } from "@/backend/jobs/extract-document";
 import { handleTranslateDocument } from "@/backend/jobs/translate-document";
 import { handleAiBudgetAggregation } from "@/backend/jobs/ai-budget-aggregation";
 import { handleJobFailed } from "@/backend/jobs/job-failed";
+import { handleRetryAbogadosPolling } from "@/backend/jobs/retry-abogados-polling";
 
 // ---------------------------------------------------------------------------
 // Job registry — jobKey → handler
@@ -59,6 +60,8 @@ const JOB_REGISTRY: Record<string, JobHandler> = {
   "translate-document": handleTranslateDocument,
   "ai-budget-aggregation": handleAiBudgetAggregation,
   "job-failed": handleJobFailed,
+  // F6 integrations (DOC-70, DOC-26 §2.8)
+  "retry-abogados-polling": handleRetryAbogadosPolling,
 };
 
 // Export for tests that need to verify registry contents
