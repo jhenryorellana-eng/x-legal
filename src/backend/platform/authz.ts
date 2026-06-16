@@ -290,10 +290,13 @@ export async function requireActor(): Promise<Actor> {
 /**
  * Authorizes access to a specific case.
  *
- * - Staff: delegates to can(actor, 'cases', 'view')
- * - Client: verifies case_members membership via a DB query
+ * - Staff: delegates to can(actor, 'cases', 'view') PLUS validates that the
+ *   case belongs to the actor's org (cross-org IDOR guard — CRITICAL-1).
+ *   If cases.org_id !== actor.orgId → throws cross_org_access_denied.
+ * - Client: verifies case_members membership via a DB query (unchanged).
  *
  * @throws AuthzError('forbidden_case') if client is not a case member
+ * @throws AuthzError('cross_org_access_denied') if staff accesses another org's case
  */
 export async function requireCaseAccess(
   actor: Actor,
@@ -301,6 +304,28 @@ export async function requireCaseAccess(
 ): Promise<void> {
   if (actor.kind === "staff") {
     can(actor, "cases", "view");
+
+    // CRITICAL-1: verify case belongs to actor's org (defense in depth against IDOR).
+    // Uses service_role client (bypasses RLS) so we get a definitive answer even
+    // for tables that deny authenticated reads. Never trusts actor.orgId from the
+    // JWT alone — the DB is authoritative.
+    const { createServiceClient } = await import("./supabase");
+    const supabase = createServiceClient();
+    const { data: caseRow } = await supabase
+      .from("cases")
+      .select("org_id")
+      .eq("id", caseId)
+      .maybeSingle();
+
+    // If case doesn't exist, it's effectively inaccessible — treat as forbidden_case
+    if (!caseRow) {
+      throw new AuthzError("forbidden_case");
+    }
+
+    if (caseRow.org_id !== actor.orgId) {
+      throw new AuthzError("cross_org_access_denied");
+    }
+
     return;
   }
 

@@ -470,6 +470,158 @@ export async function findCasePlanRequiresLawyerValidation(
   return planRow.requires_lawyer_validation ?? false;
 }
 
+// ---------------------------------------------------------------------------
+// Print queue — Andrium panel (API-EXP-18, RF-AND-023)
+// ---------------------------------------------------------------------------
+
+export interface PrintQueueItemRepo {
+  expedienteId: string;
+  caseId: string;
+  caseNumber: string;
+  clientName: string;
+  serviceLabel: { es: string; en: string } | null;
+  attemptNo: number;
+  pageCount: number | null;
+  status: string;
+  sentToFinanceAt: string | null;
+  sentByName: string | null;
+  withLawyer: boolean;
+  shippedAt: string | null;
+  filedAt: string | null;
+  trackingRef: string | null;
+  hasPdf: boolean;
+}
+
+/**
+ * Returns expedientes in the Andrium print queue for an org.
+ * Status filter: sent_to_finance | printed (both if not provided).
+ * Ordered by sent_to_finance_at ASC (FIFO queue).
+ *
+ * RF-AND-023 / DOC-45 §3.9 / API-EXP-18.
+ * Uses service_role — caller (listPrintQueue) already ran can('printing','view').
+ */
+export async function listPrintQueue(
+  orgId: string,
+  statusFilter?: string,
+): Promise<PrintQueueItemRepo[]> {
+  const supabase = createServiceClient();
+
+  // Build the select: expedientes → cases → case_members→users→client_profiles,
+  // services, service_plans, staff_profiles (for sentBy). The client name path
+  // mirrors the working billing repo join (cases.primary_client_id has no FK to
+  // client_profiles, so we resolve via case_members → users → client_profiles).
+  const selectStr = `
+    id, attempt_no, page_count, status, compiled_pdf_path,
+    sent_to_finance_at, shipped_at, filed_at, tracking_ref,
+    cases!inner(
+      id, case_number, org_id,
+      case_members(
+        user_id,
+        users!inner(kind, is_active, client_profiles(first_name, last_name))
+      ),
+      services(label_i18n),
+      service_plans(requires_lawyer_validation)
+    ),
+    sent_by:staff_profiles!expedientes_sent_to_finance_by_fkey(display_name)
+  `;
+
+  // LOW note: `.eq("cases.org_id", orgId)` with a LEFT JOIN is unreliable in
+  // PostgREST — cases!inner above makes it an INNER JOIN so the filter is
+  // effective at the DB level. The JS `.filter()` in the mapping below is the
+  // authoritative defense-in-depth guarantee — do not remove it.
+  let query = supabase
+    .from("expedientes")
+    .select(selectStr)
+    .eq("cases.org_id", orgId)
+    .order("sent_to_finance_at", { ascending: true });
+
+  if (statusFilter) {
+    query = query.eq("status", statusFilter);
+  } else {
+    query = query.in("status", ["sent_to_finance", "printed"]);
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(`expediente.repository: listPrintQueue — ${error.message}`);
+
+  type RawRow = {
+    id: string;
+    attempt_no: number;
+    page_count: number | null;
+    status: string;
+    compiled_pdf_path: string | null;
+    sent_to_finance_at: string | null;
+    shipped_at: string | null;
+    filed_at: string | null;
+    tracking_ref: string | null;
+    cases: {
+      id: string;
+      case_number: string;
+      org_id: string;
+      case_members: Array<{
+        user_id: string;
+        users: {
+          kind: string;
+          is_active: boolean;
+          client_profiles:
+            | { first_name: string; last_name: string }
+            | Array<{ first_name: string; last_name: string }>
+            | null;
+        };
+      }>;
+      services: { label_i18n: unknown } | null;
+      service_plans: { requires_lawyer_validation: boolean } | null;
+    };
+    sent_by: { display_name: string } | null;
+  };
+
+  const rows = (data ?? []) as unknown as RawRow[];
+
+  return rows
+    .filter((r) => r.cases.org_id === orgId)
+    .map((r): PrintQueueItemRepo => {
+      // Client name via case_members → users → client_profiles (primary client).
+      // PostgREST may return the to-one embed as an object OR a single-item array.
+      const clientMember = (r.cases.case_members ?? []).filter(
+        (m) => m.users.is_active && m.users.kind === "client",
+      )[0];
+      const cpRaw = clientMember?.users?.client_profiles;
+      const cp = Array.isArray(cpRaw) ? cpRaw[0] : cpRaw;
+      const clientName = cp
+        ? `${cp.first_name} ${cp.last_name}`.trim()
+        : clientMember?.user_id ?? "—";
+
+      // Service label — stored as { es, en } JSON
+      let serviceLabel: { es: string; en: string } | null = null;
+      if (r.cases.services?.label_i18n) {
+        const raw = r.cases.services.label_i18n as Record<string, string>;
+        if (typeof raw.es === "string" && typeof raw.en === "string") {
+          serviceLabel = { es: raw.es, en: raw.en };
+        }
+      }
+
+      const withLawyer = r.cases.service_plans?.requires_lawyer_validation ?? false;
+
+      return {
+        expedienteId: r.id,
+        caseId: r.cases.id,
+        caseNumber: r.cases.case_number,
+        clientName,
+        serviceLabel,
+        attemptNo: r.attempt_no,
+        pageCount: r.page_count,
+        status: r.status,
+        sentToFinanceAt: r.sent_to_finance_at,
+        sentByName: r.sent_by?.display_name ?? null,
+        withLawyer,
+        shippedAt: r.shipped_at,
+        filedAt: r.filed_at,
+        trackingRef: r.tracking_ref,
+        hasPdf: r.compiled_pdf_path !== null,
+      };
+    });
+}
+
 /** Loads approved case_documents for a case. */
 export async function listApprovedDocumentsForMaterial(
   caseId: string,

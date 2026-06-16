@@ -81,6 +81,7 @@ export interface InstallmentOverdueEvent {
     amountCents: number;
     dueDate: string;
     daysLate: number;
+    orgId: string;
   };
   occurredAt: Date;
 }

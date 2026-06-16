@@ -5,9 +5,11 @@
  * F6-Ola1: createCheckoutSessionForInstallment, handleStripeEvent,
  *   submitZelleProof, confirmZellePayment, rejectZelleProof,
  *   getAccountStatement, getInstallmentPaymentStatus, onContractSigned
+ * F6-Ola2: waiveInstallment, rescheduleInstallment, markOverdues,
+ *   listReminderTargets, recordReminderSent, getCollectionMetrics,
+ *   listDueCalendar, listOverdueForCollections
  *
- * Server actions (API-BIL-01, API-BIL-06, API-BIL-07, API-BIL-08, API-BIL-13):
- *   See ./actions.ts — exported separately so Next.js can tree-shake them.
+ * Server actions (API-BIL-01, API-BIL-06..12): See ./actions.ts
  */
 
 // Use cases
@@ -25,6 +27,15 @@ export {
   getInstallmentPaymentStatus,
   getZelleProofUploadUrl,
   onContractSigned,
+  // F6-Ola2
+  waiveInstallment,
+  rescheduleInstallment,
+  markOverdues,
+  listReminderTargets,
+  recordReminderSent,
+  getCollectionMetrics,
+  listDueCalendar,
+  listOverdueForCollections,
 } from "./service";
 
 // Error class
@@ -38,6 +49,15 @@ export type {
   RejectZelleProofInput,
   GetZelleProofUploadUrlInput,
   AccountStatementDto,
+  // F6-Ola2
+  WaiveInstallmentInput,
+  RescheduleInstallmentInput,
+  MarkOverduesResult,
+  ReminderTarget,
+  CollectionMetricsDto,
+  DueCalendarItemDto,
+  DueCalendarInput,
+  OverdueItemDto,
 } from "./service";
 
 // Domain (pure functions — safe to import widely)

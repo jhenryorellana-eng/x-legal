@@ -23,6 +23,8 @@
  *   translate-document        — T4 translation via Gemini (DOC-26 §2.3, F4)
  *   ai-budget-aggregation     — AI spend threshold/close cron (DOC-26 §2.9, F4)
  *   job-failed                — QStash failure callback (DOC-26 §5.2, F4)
+ *   retry-abogados-polling    — Abogados.com polling retry (DOC-70, DOC-26 §2.8, F6)
+ *   installment-reminders     — overdue mark + due-3d/due-day client reminders (DOC-44 §3.9, F6-Ola2)
  */
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -38,6 +40,7 @@ import { handleTranslateDocument } from "@/backend/jobs/translate-document";
 import { handleAiBudgetAggregation } from "@/backend/jobs/ai-budget-aggregation";
 import { handleJobFailed } from "@/backend/jobs/job-failed";
 import { handleRetryAbogadosPolling } from "@/backend/jobs/retry-abogados-polling";
+import { handleInstallmentReminders } from "@/backend/jobs/installment-reminders";
 
 // ---------------------------------------------------------------------------
 // Job registry — jobKey → handler
@@ -62,6 +65,8 @@ const JOB_REGISTRY: Record<string, JobHandler> = {
   "job-failed": handleJobFailed,
   // F6 integrations (DOC-70, DOC-26 §2.8)
   "retry-abogados-polling": handleRetryAbogadosPolling,
+  // F6-Ola2 billing cron (DOC-44 §3.9)
+  "installment-reminders": handleInstallmentReminders,
 };
 
 // Export for tests that need to verify registry contents

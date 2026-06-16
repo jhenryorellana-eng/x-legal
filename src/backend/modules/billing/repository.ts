@@ -527,6 +527,495 @@ export async function upsertStripeCustomer(
   }
 }
 
+// ---------------------------------------------------------------------------
+// F6-Ola2: Collection queries (markOverdues, reminders, calendar, metrics)
+// ---------------------------------------------------------------------------
+
+/** Minimal row for overdue universe processing (cron). */
+export interface OverdueUniverseRow {
+  id: string;
+  caseId: string;
+  orgId: string;
+  number: number;
+  amountCents: number;
+  dueDate: string;
+}
+
+/**
+ * Lists pending installments with due_date < today, excluding cancelled cases.
+ * Used by markOverdues cron. Index: (status, due_date).
+ */
+export async function listOverdueUniverse(today: string): Promise<OverdueUniverseRow[]> {
+  const supabase = createServiceClient();
+
+  // installments → payment_plans → contracts → cases (join for org_id + status filter)
+  const { data, error } = await supabase
+    .from("installments")
+    .select(`
+      id, number, amount_cents, due_date,
+      payment_plans!inner(
+        contracts!inner(
+          case_id,
+          cases!inner(status, org_id)
+        )
+      )
+    `)
+    .eq("status", "pending")
+    .lt("due_date", today);
+
+  if (error) throw new Error(`billing.repository: listOverdueUniverse — ${error.message}`);
+
+  const rows = (data ?? []) as unknown as Array<{
+    id: string;
+    number: number;
+    amount_cents: number;
+    due_date: string;
+    payment_plans: {
+      contracts: {
+        case_id: string;
+        cases: { status: string; org_id: string };
+      };
+    };
+  }>;
+
+  return rows
+    .filter((r) => r.payment_plans.contracts.cases.status !== "cancelled")
+    .map((r) => ({
+      id: r.id,
+      number: r.number,
+      amountCents: r.amount_cents,
+      dueDate: r.due_date,
+      caseId: r.payment_plans.contracts.case_id,
+      orgId: r.payment_plans.contracts.cases.org_id,
+    }));
+}
+
+/** Minimal row for reminder dispatching. */
+export interface ReminderTargetRow {
+  installmentId: string;
+  caseId: string;
+  clientUserId: string | null;
+  dueDate: string;
+  number: number;
+}
+
+/**
+ * Returns pending installments with due_date in {today, today+3} that haven't
+ * been reminded recently (last_reminder_at IS NULL or < today-1).
+ */
+export async function listReminderTargets(today: string): Promise<ReminderTargetRow[]> {
+  const supabase = createServiceClient();
+
+  // Build date range: today and today+3
+  const todayDate = new Date(today);
+  const plus3 = new Date(todayDate);
+  plus3.setDate(plus3.getDate() + 3);
+  const plus3Str = plus3.toISOString().split("T")[0];
+
+  const { data, error } = await supabase
+    .from("installments")
+    .select(`
+      id, due_date, number, last_reminder_at,
+      payment_plans!inner(
+        contracts!inner(
+          case_id,
+          cases!inner(status)
+        )
+      )
+    `)
+    .eq("status", "pending")
+    .in("due_date", [today, plus3Str])
+    .or("last_reminder_at.is.null,last_reminder_at.lt." + today);
+
+  if (error) throw new Error(`billing.repository: listReminderTargets — ${error.message}`);
+
+  const rows = (data ?? []) as unknown as Array<{
+    id: string;
+    due_date: string;
+    number: number;
+    last_reminder_at: string | null;
+    payment_plans: {
+      contracts: {
+        case_id: string;
+        cases: { status: string };
+      };
+    };
+  }>;
+
+  // Exclude cancelled cases
+  const validRows = rows.filter(
+    (r) => r.payment_plans.contracts.cases.status !== "cancelled",
+  );
+
+  // Fetch client user IDs via case_members
+  const caseIds = [...new Set(validRows.map((r) => r.payment_plans.contracts.case_id))];
+  const clientMap = new Map<string, string | null>();
+
+  if (caseIds.length > 0) {
+    const { data: members } = await supabase
+      .from("case_members")
+      // LOW fix: deterministic client selection — first joined by created_at ASC
+      .select("case_id, user_id, users!inner(kind, is_active)")
+      .in("case_id", caseIds)
+      .order("created_at", { ascending: true });
+
+    const memberRows = (members ?? []) as unknown as Array<{
+      case_id: string;
+      user_id: string;
+      users: { kind: string; is_active: boolean };
+    }>;
+
+    for (const m of memberRows) {
+      if (m.users.kind === "client" && m.users.is_active && !clientMap.has(m.case_id)) {
+        clientMap.set(m.case_id, m.user_id);
+      }
+    }
+  }
+
+  return validRows.map((r) => ({
+    installmentId: r.id,
+    caseId: r.payment_plans.contracts.case_id,
+    clientUserId: clientMap.get(r.payment_plans.contracts.case_id) ?? null,
+    dueDate: r.due_date,
+    number: r.number,
+  }));
+}
+
+/** Shape returned by listDueCalendar. */
+export interface DueCalendarItemRepo {
+  installmentId: string;
+  caseId: string;
+  caseNumber: string;
+  clientName: string;
+  number: number;
+  installmentCount: number;
+  amountCents: number;
+  status: string;
+  isDownpayment: boolean;
+  dueDate: string;
+}
+
+/**
+ * Lists installments in a due-date range with case/client info.
+ * RF-AND-014 / DOC-44 §4.
+ */
+export async function listDueCalendar(
+  orgId: string,
+  input: { from: string; to: string; status?: string; serviceId?: string },
+): Promise<DueCalendarItemRepo[]> {
+  const supabase = createServiceClient();
+
+  // BLOCKER-1 fix: push org filter into the DB query via !inner join.
+  // The JS .filter() below is defense-in-depth — the query already scopes to the org.
+  let query = supabase
+    .from("installments")
+    .select(`
+      id, number, amount_cents, due_date, status, is_downpayment,
+      payment_plans!inner(
+        installment_count,
+        contracts!inner(
+          case_id,
+          cases!inner(
+            id, case_number, org_id, status,
+            case_members(
+              user_id,
+              users!inner(kind, is_active, client_profiles(first_name, last_name))
+            )
+          )
+        )
+      )
+    `)
+    .eq("payment_plans.contracts.cases.org_id", orgId)
+    .gte("due_date", input.from)
+    .lte("due_date", input.to)
+    .order("due_date", { ascending: true });
+
+  if (input.status) {
+    query = query.eq("status", input.status);
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(`billing.repository: listDueCalendar — ${error.message}`);
+
+  const rows = (data ?? []) as unknown as Array<{
+    id: string;
+    number: number;
+    amount_cents: number;
+    due_date: string;
+    status: string;
+    is_downpayment: boolean;
+    payment_plans: {
+      installment_count: number;
+      contracts: {
+        case_id: string;
+        cases: {
+          id: string;
+          case_number: string;
+          org_id: string;
+          case_members: Array<{
+            user_id: string;
+            users: {
+              kind: string;
+              is_active: boolean;
+              client_profiles:
+                | { first_name: string; last_name: string }
+                | Array<{ first_name: string; last_name: string }>
+                | null;
+            };
+          }>;
+        };
+      };
+    };
+  }>;
+
+  // JS filter as defense-in-depth (DB .eq filter above is authoritative)
+  const orgFiltered = rows.filter((r) => r.payment_plans.contracts.cases.org_id === orgId);
+
+  // TODO(Ola-3): serviceId filter requires a service join in the select above.
+  // For now, serviceId is accepted but not applied — caller should note this.
+  // Do NOT implement as `.filter(() => !input.serviceId || true)` (always-true no-op).
+  if (input.serviceId) {
+    logger.warn({ serviceId: input.serviceId }, "billing.repository: listDueCalendar — serviceId filter not yet implemented (TODO Ola-3)");
+  }
+
+  return orgFiltered
+    .map((r) => {
+      const kase = r.payment_plans.contracts.cases;
+      // Resolve client display name
+      const clientMember = (kase.case_members ?? [])
+        .filter((m) => m.users.is_active && m.users.kind === "client")[0];
+      const cpRaw = clientMember?.users?.client_profiles;
+      const cp = Array.isArray(cpRaw) ? cpRaw[0] : cpRaw;
+      const clientName = cp
+        ? `${cp.first_name} ${cp.last_name}`.trim()
+        : clientMember?.user_id ?? "—";
+
+      return {
+        installmentId: r.id,
+        caseId: r.payment_plans.contracts.case_id,
+        caseNumber: kase.case_number,
+        clientName,
+        number: r.number,
+        installmentCount: r.payment_plans.installment_count,
+        amountCents: r.amount_cents,
+        status: r.status,
+        isDownpayment: r.is_downpayment,
+        dueDate: r.due_date,
+      };
+    });
+}
+
+/** Shape returned by listOverdueForCollections. */
+export interface OverdueItemRepo {
+  installmentId: string;
+  caseId: string;
+  caseNumber: string;
+  clientName: string;
+  number: number;
+  amountCents: number;
+  dueDate: string;
+  daysLateVal: number;
+}
+
+/**
+ * Lists all overdue installments for an org ordered by due_date ASC.
+ * RF-AND-020 / DOC-44 §4.
+ */
+export async function listOverdueForCollections(
+  orgId: string,
+): Promise<OverdueItemRepo[]> {
+  const supabase = createServiceClient();
+
+  const today = new Date().toISOString().split("T")[0];
+
+  const { data, error } = await supabase
+    .from("installments")
+    .select(`
+      id, number, amount_cents, due_date,
+      payment_plans!inner(
+        contracts!inner(
+          case_id,
+          cases!inner(
+            id, case_number, org_id,
+            case_members(
+              user_id,
+              users!inner(kind, is_active, client_profiles(first_name, last_name))
+            )
+          )
+        )
+      )
+    `)
+    .eq("status", "overdue")
+    .order("due_date", { ascending: true });
+
+  if (error) throw new Error(`billing.repository: listOverdueForCollections — ${error.message}`);
+
+  const rows = (data ?? []) as unknown as Array<{
+    id: string;
+    number: number;
+    amount_cents: number;
+    due_date: string;
+    payment_plans: {
+      contracts: {
+        case_id: string;
+        cases: {
+          id: string;
+          case_number: string;
+          org_id: string;
+          case_members: Array<{
+            user_id: string;
+            users: {
+              kind: string;
+              is_active: boolean;
+              client_profiles:
+                | { first_name: string; last_name: string }
+                | Array<{ first_name: string; last_name: string }>
+                | null;
+            };
+          }>;
+        };
+      };
+    };
+  }>;
+
+  return rows
+    .filter((r) => r.payment_plans.contracts.cases.org_id === orgId)
+    .map((r) => {
+      const kase = r.payment_plans.contracts.cases;
+      const clientMember = (kase.case_members ?? [])
+        .filter((m) => m.users.is_active && m.users.kind === "client")[0];
+      const cpRaw = clientMember?.users?.client_profiles;
+      const cp = Array.isArray(cpRaw) ? cpRaw[0] : cpRaw;
+      const clientName = cp
+        ? `${cp.first_name} ${cp.last_name}`.trim()
+        : clientMember?.user_id ?? "—";
+
+      const dueDateObj = new Date(r.due_date);
+      const todayObj = new Date(today);
+      const diffMs = todayObj.getTime() - dueDateObj.getTime();
+      const daysLateVal = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+
+      return {
+        installmentId: r.id,
+        caseId: r.payment_plans.contracts.case_id,
+        caseNumber: kase.case_number,
+        clientName,
+        number: r.number,
+        amountCents: r.amount_cents,
+        dueDate: r.due_date,
+        daysLateVal,
+      };
+    });
+}
+
+/** Aggregated collection metrics for the Andrium dashboard (DOC-44 §3.12). */
+export interface CollectionMetricsRepo {
+  collectedMonthCents: number;
+  onTimePct: number;
+  overdue: { cuotas: number; montoCents: number; casos: number };
+}
+
+/**
+ * Computes collection metrics for an org.
+ * RF-AND-044 / DOC-44 §3.12.
+ */
+export async function collectionMetrics(
+  orgId: string,
+  today: string,  // YYYY-MM-DD
+  month: string,  // YYYY-MM
+): Promise<CollectionMetricsRepo> {
+  const supabase = createServiceClient();
+
+  // 1. Collected this month = Σ ledger_entries income in month
+  const monthStart = `${month}-01`;
+  const monthEndDate = new Date(parseInt(month.split("-")[0]), parseInt(month.split("-")[1]), 0);
+  const monthEnd = monthEndDate.toISOString().split("T")[0];
+
+  const { data: ledgerData } = await supabase
+    .from("ledger_entries")
+    .select("amount_cents")
+    .eq("org_id", orgId)
+    .eq("kind", "income")
+    .gte("entry_date", monthStart)
+    .lte("entry_date", monthEnd);
+
+  const collectedMonthCents = (ledgerData ?? []).reduce(
+    (sum, r) => sum + (r.amount_cents as number),
+    0,
+  );
+
+  // 2. On-time %: installments with due_date <= today and status != 'waived'
+  // BLOCKER-1 fix: push org filter into the DB query via !inner join path.
+  // The JS .filter() below is a safety net; the query already scopes to the org.
+  const { data: exigiblesData } = await supabase
+    .from("installments")
+    .select(`
+      id, status,
+      payment_plans!inner(
+        contracts!inner(
+          cases!inner(org_id)
+        )
+      )
+    `)
+    .eq("payment_plans.contracts.cases.org_id", orgId)
+    .lte("due_date", today)
+    .neq("status", "waived");
+
+  const exigiblesRaw = (exigiblesData ?? []) as unknown as Array<{
+    id: string;
+    status: string;
+    payment_plans: { contracts: { cases: { org_id: string } } };
+  }>;
+
+  // JS filter as defense-in-depth (PostgREST !inner join filter is authoritative above)
+  const exigibles = exigiblesRaw.filter(
+    (r) => r.payment_plans.contracts.cases.org_id === orgId,
+  );
+  const alDia = exigibles.filter((r) => r.status === "paid");
+  const onTimePct = exigibles.length === 0
+    ? 100
+    : Math.round((alDia.length / exigibles.length) * 100);
+
+  // 3. Overdue: count, sum, distinct cases
+  // BLOCKER-1 fix: push org filter into the DB query.
+  const { data: overdueData } = await supabase
+    .from("installments")
+    .select(`
+      id, amount_cents,
+      payment_plans!inner(
+        contracts!inner(
+          case_id,
+          cases!inner(org_id)
+        )
+      )
+    `)
+    .eq("payment_plans.contracts.cases.org_id", orgId)
+    .eq("status", "overdue");
+
+  const overdueRaw = (overdueData ?? []) as unknown as Array<{
+    id: string;
+    amount_cents: number;
+    payment_plans: { contracts: { case_id: string; cases: { org_id: string } } };
+  }>;
+
+  // JS filter as defense-in-depth
+  const overdueFiltered = overdueRaw.filter(
+    (r) => r.payment_plans.contracts.cases.org_id === orgId,
+  );
+
+  const overdueCuotas = overdueFiltered.length;
+  const overdueMonto = overdueFiltered.reduce((s, r) => s + r.amount_cents, 0);
+  const overdueCasos = new Set(
+    overdueFiltered.map((r) => r.payment_plans.contracts.case_id),
+  ).size;
+
+  return {
+    collectedMonthCents,
+    onTimePct,
+    overdue: { cuotas: overdueCuotas, montoCents: overdueMonto, casos: overdueCasos },
+  };
+}
+
 export interface InsertLedgerInput {
   paymentId: string;
   kind: "income" | "expense";

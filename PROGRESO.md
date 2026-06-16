@@ -3,8 +3,22 @@
 > Archivo de continuidad entre sesiones (PROMPT-CONSTRUCCION-V2 §4). Actualizar al cierre de cada sesión.
 > Biblioteca SoT: `C:\Users\mauri\Documents\Trabajos\USALATINO V2\V2\docs\` · Supabase: **USALATINO V2** `uexxyokexcamyjcknxua`
 
-**Fase actual: F6 — Billing + Andrium (por olas). F6-Ola1 ✅ (motor billing Stripe+Zelle+ledger + pantalla Pagos cliente, COBRO REAL VERIFICADO EN VIVO). Siguiente: F6-Ola2 (panel Andrium /finanzas: kanban cobranza + cola impresión + gestión pagos). F0–F5 ✅.**
+**Fase actual: F6 — Billing + Andrium (por olas). F6-Ola1 ✅ · F6-Ola2 ✅ (panel Andrium /finanzas: kanban cobranza + cola impresión + gestión pagos, VERIFICADO EN VIVO; IDOR cross-org cerrado). Siguiente: F6-Ola3 (contabilidad + campañas + emails react-email + re-demo F1). F0–F5 ✅.**
 Última sesión: 2026-06-15
+
+### Ola F6-2 — Panel Andrium /finanzas (kanban cobranza + cola impresión + pagos/cuotas) ✅ (construido + revisado APPROVED×2 + VERIFICADO EN VIVO)
+SoT: DOC-55 §1-3 + DOC-13 (RF-AND-001..027/044) + DOC-44 §3.7-3.12 + DOC-47 §3.8 + prompts andrium/01-03. **Cero migraciones.**
+- **Backend cobranza** (billing/kanban/expediente, +~70 tests): `waiveInstallment`/`rescheduleInstallment`, `markOverdues`+`listReminderTargets`/`recordReminderSent`, `getCollectionMetrics`/`listDueCalendar`/`listOverdueForCollections`, job cron **`installment-reminders`** (registrado en JOB_REGISTRY); kanban `onInstallmentOverdue` (tarjeta Vencidas) + `onExpedientePrinted` (mueve a Hecho); expediente `listPrintQueue` + actions markPrinted/Shipped/Filed (API-EXP-18/19/20/21). Consumers cableados (service-role).
+- **3 pantallas Andrium**: `/finanzas` kanban de cobranza (molde kanban Diana, board collections, KPI strip) · `/finanzas/pagos` (gate cuotas iniciales + tabs Calendario/Morosidad + estado de cuenta por caso con vías de cobro Stripe/Zelle/condonar/reprogramar) · `/finanzas/impresion` (cola, ciclo Impreso→Enviado→Radicado, visor PDF). i18n `staff.finanzas.*` (3 namespaces, paridad es/en).
+- **🐛 3 bugs cazados por el smoke en vivo**: join inválido `cases→client_profiles` (500 en impresión → vía `case_members→users→client_profiles`); `t.raw` faltante (FORMATTING_ERROR); `client_profiles` objeto-vs-array (nombre mostraba UUID → "Carlos Ramírez"). Arreglados.
+- **VERIFICADO EN VIVO** (Andrium, Playwright + Supabase MCP): 3 pantallas renderizan con datos reales (KPIs $500 recaudado/75% al día/$500 morosidad; calendario de vencimientos completo; estado de cuenta con invariante pagado+pendiente+vencido+condonado=total). **`markPrinted` → expediente `printed` + caso `delivered` + tarjeta kanban → "Hecho"** (cadena F5→F6). **Condonar cuota → `waived`** + motivo. **0 errores de consola.**
+- **Two-stage review** → NEEDS-REVISION/**BLOCK-DEPLOY** → **APPROVED×2**: code-reviewer (2 BLOCKERs: `collectionMetrics` sin filtro org; `broadcastCardMoved` con card_id/columna/posición errados) + **security-auditor (CRITICAL cross-org IDOR)**. **Fix keystone**: `requireCaseAccess` ahora valida `org_id` para staff (cierra el gap en TODO el proyecto, no solo Ola-2 — era preexistente F2/F5) + helpers `requireInstallmentOrg`/`requirePaymentOrg` en las 5 mutations de billing. + fail-closed waive, requireSystemActor en cron, cota de reschedule. +15 tests negativos cross-org. **BLOCK-DEPLOY levantado.**
+- Gates: **tsc 0 · eslint 0 · vitest 1173/1173** (+~88) · **i18n 1520** (paridad es/en) · **build 0**.
+
+### Pendiente menor / follow-up de F6-2
+- `listOverdueForCollections` filtra org solo en JS (correcto, no fuga; alinear a filtro DB como los otros en Ola-3). Constante `SYSTEM_USER_ID` hardcodeada en requireSystemActor (cosmético). Nombre del cliente: ya resuelto. Recordatorio manual / export CSV / conciliación global siguen diferidos (DOC-80).
+
+---
 
 ## F6 — Billing + Andrium (por olas; cadencia: ola por ola con OK de Henry)
 

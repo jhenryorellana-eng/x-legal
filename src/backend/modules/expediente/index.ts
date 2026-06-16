@@ -46,6 +46,15 @@ export {
   createCorrectionAttempt,
 } from "./service";
 
+// Print queue (Andrium — RF-AND-023)
+export {
+  listPrintQueue,
+} from "./service";
+
+export type {
+  PrintQueueItemDto,
+} from "./service";
+
 // Handoff to Andrium (printing)
 export {
   sendToFinance,

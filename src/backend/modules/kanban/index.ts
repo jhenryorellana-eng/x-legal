@@ -50,6 +50,9 @@ export {
   onContractSigned,
   onDownpaymentConfirmedKanban,
   onExpedienteSentToFinance,
+  // F6-Ola2
+  onInstallmentOverdue,
+  onExpedientePrinted,
 } from "./service";
 
 // GAP-2 — board backfill for paralegal kanban page (F5-Ola3)

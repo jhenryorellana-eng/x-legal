@@ -1877,6 +1877,185 @@ export async function onExpedienteSentToFinance(payload: {
 }
 
 // ---------------------------------------------------------------------------
+// F6-Ola2: onInstallmentOverdue — create/move card to "Vencidas"
+// ---------------------------------------------------------------------------
+
+/**
+ * Handles installment.overdue → create or move card to "Vencidas" on
+ * Andrium's collections board.
+ *
+ * Idempotent: if card already exists on ANY column of the board, MOVE it to
+ * "Vencidas" (if not already there). If it does not exist, create it.
+ * DB unique (ref_type, ref_id, column_id) is the last line of defence.
+ *
+ * DOC-47 §3.8, RF-TRX-009.3.
+ */
+export async function onInstallmentOverdue(payload: {
+  caseId: string;
+  orgId: string;
+  installmentId: string;
+  number: number;
+  amountCents: number;
+  dueDate: string;
+  daysLate: number;
+}): Promise<void> {
+  try {
+    const { caseId, orgId } = payload;
+
+    const financeStaff = await repo.findFinanceStaff(orgId);
+    if (financeStaff.length === 0) {
+      logger.warn({ orgId }, "kanban: onInstallmentOverdue — no finance staff found");
+      return;
+    }
+
+    for (const staff of financeStaff) {
+      let board = await repo.findBoard(staff.userId, "collections");
+      if (!board) {
+        board = await repo.createBoardWithSeed(
+          staff.userId,
+          orgId,
+          "collections",
+          seedColumnsFor("collections"),
+        );
+      }
+
+      // Self-heal column-less board
+      let columns = await repo.listColumns(board.id);
+      if (columns.length === 0) {
+        await repo.seedBoardColumns(board.id, seedColumnsFor("collections"));
+        columns = await repo.listColumns(board.id);
+      }
+
+      const vencidasCol = columns.find((c) => c.label === "Vencidas");
+      if (!vencidasCol) {
+        logger.warn({ boardId: board.id }, "kanban: onInstallmentOverdue — 'Vencidas' column not found");
+        continue;
+      }
+
+      const existing = await repo.findCardByRef(board.id, "case", caseId);
+      if (existing) {
+        // Card already on this board — move to "Vencidas" if not already there
+        if (existing.column_id !== vencidasCol.id) {
+          const maxPos = await repo.maxCardPosition(vencidasCol.id);
+          await repo.updateCard(existing.id, {
+            column_id: vencidasCol.id,
+            position: maxPos + 1,
+          });
+          logger.info({ caseId, staffId: staff.userId }, "kanban: onInstallmentOverdue card moved to Vencidas");
+
+          // BLOCKER-2 fix: broadcast with real card id, correct from/to columns and position
+          await broadcastCardMoved(board.id, {
+            card_id: existing.id,            // real card row id (not caseId)
+            from_column_id: existing.column_id, // where it was BEFORE the move
+            to_column_id: vencidasCol.id,
+            position: maxPos + 1,
+            actor_user_id: systemActor().userId,
+          });
+        }
+        // If already on Vencidas, no broadcast needed (no-op move)
+      } else {
+        // No card yet — create it in "Vencidas"
+        const maxPos = await repo.maxCardPosition(vencidasCol.id);
+        const newCard = await repo.insertCard({
+          column_id: vencidasCol.id,
+          ref_type: "case",
+          ref_id: caseId,
+          position: maxPos + 1,
+        });
+        logger.info({ caseId, staffId: staff.userId }, "kanban: onInstallmentOverdue card created in Vencidas");
+
+        // BLOCKER-2 fix: broadcast with real card id from insertCard return value
+        await broadcastCardMoved(board.id, {
+          card_id: newCard.id,             // real card row id from insertCard
+          from_column_id: vencidasCol.id,  // creation: from == to
+          to_column_id: vencidasCol.id,
+          position: maxPos + 1,
+          actor_user_id: systemActor().userId,
+        });
+      }
+    }
+  } catch (err) {
+    logger.error({ err, payload }, "kanban: onInstallmentOverdue failed");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// F6-Ola2: onExpedientePrinted — move card to "Hecho" (RF-AND-025)
+// ---------------------------------------------------------------------------
+
+/**
+ * Handles expediente.printed → move case card to "Hecho" on Andrium's board.
+ *
+ * If no card exists → no-op (RF-TRX-009 rule: "printed" is maintenance only,
+ * NOT a creation event). Board/column self-healing still applies.
+ *
+ * DOC-47 §3.8, RF-AND-006 CA.
+ */
+export async function onExpedientePrinted(payload: {
+  caseId: string;
+  orgId: string;
+  expedienteId: string;
+  attemptNo: number;
+  printedAt: string;
+  printedById: string;
+}): Promise<void> {
+  try {
+    const { caseId, orgId } = payload;
+
+    const financeStaff = await repo.findFinanceStaff(orgId);
+    if (financeStaff.length === 0) {
+      logger.warn({ orgId }, "kanban: onExpedientePrinted — no finance staff found");
+      return;
+    }
+
+    for (const staff of financeStaff) {
+      const board = await repo.findBoard(staff.userId, "collections");
+      if (!board) continue; // No board → no-op (board must pre-exist from sent_to_finance)
+
+      // Self-heal column-less board
+      let columns = await repo.listColumns(board.id);
+      if (columns.length === 0) {
+        await repo.seedBoardColumns(board.id, seedColumnsFor("collections"));
+        columns = await repo.listColumns(board.id);
+      }
+
+      const hechoCol = columns.find((c) => c.label === "Hecho");
+      if (!hechoCol) {
+        logger.warn({ boardId: board.id }, "kanban: onExpedientePrinted — 'Hecho' column not found");
+        continue;
+      }
+
+      const existing = await repo.findCardByRef(board.id, "case", caseId);
+      if (!existing) {
+        // RF-TRX-009 CA3: "printed" does NOT create cards
+        logger.info({ caseId, staffId: staff.userId }, "kanban: onExpedientePrinted — no card to move (no-op)");
+        continue;
+      }
+
+      if (existing.column_id === hechoCol.id) continue; // Already in "Hecho"
+
+      const maxPos = await repo.maxCardPosition(hechoCol.id);
+      await repo.updateCard(existing.id, {
+        column_id: hechoCol.id,
+        position: maxPos + 1,
+      });
+
+      await broadcastCardMoved(board.id, {
+        card_id: existing.id,
+        from_column_id: existing.column_id,
+        to_column_id: hechoCol.id,
+        position: maxPos + 1,
+        actor_user_id: systemActor().userId,
+      });
+
+      logger.info({ caseId, staffId: staff.userId }, "kanban: onExpedientePrinted card moved to Hecho");
+    }
+  } catch (err) {
+    logger.error({ err, payload }, "kanban: onExpedientePrinted failed");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // GAP-2 — backfillCasesBoard (F5-Ola3 kanban board support)
 // ---------------------------------------------------------------------------
 

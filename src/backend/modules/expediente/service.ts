@@ -61,6 +61,7 @@ import {
   listFormResponsesForMaterial,
   listApprovedDocumentsForMaterial,
   findCasePlanRequiresLawyerValidation,
+  listPrintQueue as repoPrintQueue,
   type ExpedienteRow,
   type ExpedienteItemRow,
   type CoverTemplateRow,
@@ -865,6 +866,42 @@ async function resolveItemBytes(
 
   const arrayBuffer = await data.arrayBuffer();
   return { bytes: new Uint8Array(arrayBuffer), mimeType };
+}
+
+// ---------------------------------------------------------------------------
+// listPrintQueue — Andrium's print queue (API-EXP-18, RF-AND-023)
+// ---------------------------------------------------------------------------
+
+export interface PrintQueueItemDto {
+  expedienteId: string;
+  caseId: string;
+  caseNumber: string;
+  clientName: string;
+  serviceLabel: { es: string; en: string } | null;
+  attemptNo: number;
+  pageCount: number | null;
+  status: string;
+  sentToFinanceAt: string | null;
+  sentByName: string | null;
+  withLawyer: boolean;
+  shippedAt: string | null;
+  filedAt: string | null;
+  trackingRef: string | null;
+  hasPdf: boolean;
+}
+
+/**
+ * Returns the print queue for Andrium — expedientes with status in
+ * {sent_to_finance, printed} ordered by sent_to_finance_at ASC.
+ *
+ * RF-AND-023/024 / DOC-45 §3.9 / API-EXP-18.
+ */
+export async function listPrintQueue(
+  actor: Actor,
+  input?: { status?: string },
+): Promise<PrintQueueItemDto[]> {
+  can(actor, "printing", "view");
+  return repoPrintQueue(actor.orgId, input?.status);
 }
 
 /**

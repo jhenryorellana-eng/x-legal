@@ -18,6 +18,8 @@ import {
   onContractSigned as onContractSignedKanban,
   onDownpaymentConfirmedKanban,
   onExpedienteSentToFinance,
+  onInstallmentOverdue,
+  onExpedientePrinted as onExpedientePrintedKanban,
 } from "@/backend/modules/kanban";
 import { onContractSigned as onContractSignedBilling } from "@/backend/modules/billing";
 import { registerAiEngineConsumers } from "@/backend/modules/ai-engine";
@@ -183,6 +185,7 @@ export function registerConsumers(): void {
 
   // -------------------------------------------------------------------------
   // expediente.printed → cases (ready_for_delivery → delivered)
+  //                    → kanban (move card to "Hecho") [F6-Ola2]
   // -------------------------------------------------------------------------
   appEvents.on("expediente.printed", async (event) => {
     const payload = event.payload as { caseId: string };
@@ -190,5 +193,57 @@ export function registerConsumers(): void {
     await onExpedientePrintedCase({ caseId: payload.caseId });
   });
 
-  logger.info({}, "consumers: F2+F3+F4+F5+F5-Ola3+F6-Ola1 event consumers registered (kanban + ai-engine + integrations + andrium + billing-reanchor)");
+  appEvents.on("expediente.printed", async (event) => {
+    const payload = event.payload as {
+      caseId: string;
+      orgId: string;
+      expedienteId: string;
+      attemptNo: number;
+      printedAt: string;
+      printedById: string;
+    };
+    if (!payload.orgId) return;
+    logger.info({ caseId: payload.caseId }, "kanban: consuming expediente.printed → Hecho");
+    await onExpedientePrintedKanban(payload);
+  });
+
+  // -------------------------------------------------------------------------
+  // installment.overdue → kanban (create/move card to "Vencidas") [F6-Ola2]
+  //                     → notifications (client reminder)
+  // -------------------------------------------------------------------------
+  appEvents.on("installment.overdue", async (event) => {
+    const payload = event.payload as {
+      caseId: string;
+      orgId: string;
+      installmentId: string;
+      number: number;
+      amountCents: number;
+      dueDate: string;
+      daysLate: number;
+    };
+    if (!payload.orgId) return;
+    logger.info({ caseId: payload.caseId }, "kanban: consuming installment.overdue → Vencidas");
+    await onInstallmentOverdue(payload);
+  });
+
+  appEvents.on("installment.overdue", async (event) => {
+    await notifyFromEvent(event);
+  });
+
+  // payment.proof_submitted → notifications (Andrium)
+  appEvents.on("payment.proof_submitted", async (event) => {
+    await notifyFromEvent(event);
+  });
+
+  // payment.refunded → notifications (Andrium)
+  appEvents.on("payment.refunded", async (event) => {
+    await notifyFromEvent(event);
+  });
+
+  // installment.paid → notifications (client receipt)
+  appEvents.on("installment.paid", async (event) => {
+    await notifyFromEvent(event);
+  });
+
+  logger.info({}, "consumers: F2+F3+F4+F5+F5-Ola3+F6-Ola1+F6-Ola2 event consumers registered (kanban + ai-engine + integrations + andrium + billing-reanchor + overdue + printed)");
 }

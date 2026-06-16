@@ -26,6 +26,8 @@ import {
   buildInstallments,
   reanchorDueDates,
   isOverdue,
+  daysLate,
+  canTransitionInstallment,
   PAYABLE_STATUSES,
 } from "./domain";
 import {
@@ -48,6 +50,11 @@ import {
   findStripeCustomer,
   upsertStripeCustomer,
   insertLedgerIfAbsent,
+  listOverdueUniverse,
+  listReminderTargets as repoListReminderTargets,
+  listDueCalendar as repoListDueCalendar,
+  listOverdueForCollections as repoListOverdueForCollections,
+  collectionMetrics as repoCollectionMetrics,
   type PaymentPlanRow,
   type InstallmentRow,
   type PaymentRow,
@@ -478,6 +485,9 @@ export async function registerZellePayment(
   can(actor, "cases", "edit");
   const parsed = RegisterZelleSchema.parse(input);
 
+  // CRITICAL-1 (complementary): cross-org guard for mutations that bypass requireCaseAccess
+  await requireInstallmentOrg(actor, parsed.installmentId);
+
   const installment = await findInstallmentById(parsed.installmentId);
   if (!installment) throw new BillingError("INSTALLMENT_NOT_FOUND");
   if (installment.status === "paid") throw new BillingError("INSTALLMENT_ALREADY_PAID");
@@ -891,6 +901,9 @@ export async function confirmZellePayment(
 ): Promise<void> {
   can(actor, "billing", "edit");
 
+  // CRITICAL-1 (complementary): cross-org guard before any data access
+  await requirePaymentOrg(actor, paymentId);
+
   const p = await findPaymentById(paymentId);
 
   if (!p || p.method !== "zelle" || p.status !== "pending") {
@@ -932,6 +945,9 @@ export async function rejectZelleProof(
   can(actor, "billing", "edit");
   // Zod schema enforces reason.min(1) — no need for a manual guard (nit removed)
   const parsed = RejectZelleSchema.parse(input);
+
+  // CRITICAL-1 (complementary): cross-org guard before any data access
+  await requirePaymentOrg(actor, parsed.paymentId);
 
   const p = await findPaymentById(parsed.paymentId);
 
@@ -1136,8 +1152,413 @@ export async function onContractSigned(payload: {
 }
 
 // ---------------------------------------------------------------------------
+// waiveInstallment — condonation by finance/admin (RF-AND-019, DOC-44 §3.7)
+// ---------------------------------------------------------------------------
+
+const WaiveInstallmentSchema = z.object({
+  installmentId: z.string().uuid(),
+  reason: z.string().min(1),
+});
+
+export type WaiveInstallmentInput = z.infer<typeof WaiveInstallmentSchema>;
+
+/**
+ * Waives an installment (marks it forgiven with mandatory reason).
+ *
+ * Gates:
+ *  - can(actor, 'billing', 'edit')
+ *  - status must be pending|overdue (INSTALLMENT_NOT_WAIVABLE)
+ *  - reason required (WAIVE_REASON_REQUIRED)
+ *  - downpayment of payment_pending case requires admin (WAIVE_REQUIRES_ADMIN)
+ *
+ * No domain event emitted (RF-AND-019).
+ */
+export async function waiveInstallment(
+  actor: Actor,
+  input: WaiveInstallmentInput,
+): Promise<void> {
+  can(actor, "billing", "edit");
+  const parsed = WaiveInstallmentSchema.parse(input);
+
+  // CRITICAL-1 (complementary): cross-org guard before any data access
+  await requireInstallmentOrg(actor, parsed.installmentId);
+
+  const installment = await findInstallmentById(parsed.installmentId);
+  if (!installment) throw new BillingError("INSTALLMENT_NOT_FOUND");
+
+  // W2 — reason is mandatory (Zod ensures min length = 1, but explicit guard for code clarity)
+  if (!parsed.reason.trim()) throw new BillingError("WAIVE_REASON_REQUIRED");
+
+  // Derive transition actor from role
+  const transitionActor: import("./domain").InstallmentTransitionActor =
+    actor.role === "admin" ? "admin" : "finance";
+
+  if (
+    !canTransitionInstallment(
+      installment.status as import("./domain").InstallmentStatus,
+      "waived",
+      transitionActor,
+    )
+  ) {
+    throw new BillingError("INSTALLMENT_NOT_WAIVABLE");
+  }
+
+  // W3 — downpayment of payment_pending case requires admin (MED-2: fail-closed)
+  // If caseId is null (broken chain), deny non-admin as a conservative fail-safe.
+  if (installment.is_downpayment && actor.role !== "admin") {
+    const caseId = await findInstallmentCaseId(parsed.installmentId);
+    if (!caseId) {
+      // Broken chain: cannot verify case status → fail-closed for non-admin (MED-2)
+      throw new BillingError("WAIVE_REQUIRES_ADMIN");
+    }
+    const caseStatus = await findCaseStatus(caseId);
+    if (caseStatus === "payment_pending") {
+      throw new BillingError("WAIVE_REQUIRES_ADMIN");
+    }
+  }
+
+  await updateInstallment(installment.id, {
+    status: "waived",
+    waived_by: actor.userId,
+    waived_reason: parsed.reason,
+  });
+
+  await writeAudit(actor, "billing.installment.waived", "installments", installment.id, {
+    before: { status: installment.status },
+    after: { status: "waived", waivedBy: actor.userId, reason: parsed.reason },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// rescheduleInstallment — reprogramar vencimiento (RF-AND-022, DOC-44 §3.10)
+// ---------------------------------------------------------------------------
+
+const RescheduleInstallmentSchema = z.object({
+  installmentId: z.string().uuid(),
+  newDueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Must be YYYY-MM-DD"),
+});
+
+export type RescheduleInstallmentInput = z.infer<typeof RescheduleInstallmentSchema>;
+
+/**
+ * Reschedules an installment's due date.
+ *
+ * Gates:
+ *  - can(actor, 'billing', 'edit')
+ *  - status must be pending|overdue (INSTALLMENT_NOT_RESCHEDULABLE)
+ *  - newDueDate must be in the future (DUE_DATE_INVALID)
+ *  - if was overdue and new date is future → reverts to pending
+ */
+export async function rescheduleInstallment(
+  actor: Actor,
+  input: RescheduleInstallmentInput,
+): Promise<void> {
+  can(actor, "billing", "edit");
+  const parsed = RescheduleInstallmentSchema.parse(input);
+
+  // CRITICAL-1 (complementary): cross-org guard before any data access
+  await requireInstallmentOrg(actor, parsed.installmentId);
+
+  const installment = await findInstallmentById(parsed.installmentId);
+  if (!installment) throw new BillingError("INSTALLMENT_NOT_FOUND");
+
+  if (installment.status !== "pending" && installment.status !== "overdue") {
+    throw new BillingError("INSTALLMENT_NOT_RESCHEDULABLE");
+  }
+
+  const today = todayIso();
+  if (parsed.newDueDate <= today) {
+    throw new BillingError("DUE_DATE_INVALID");
+  }
+
+  // LOW: upper bound — reject dates more than 2 years in the future (unreasonable reschedule)
+  const maxDate = new Date();
+  maxDate.setFullYear(maxDate.getFullYear() + 2);
+  const maxDateIso = maxDate.toISOString().split("T")[0];
+  if (parsed.newDueDate > maxDateIso) {
+    throw new BillingError("DUE_DATE_INVALID");
+  }
+
+  const patch: Record<string, unknown> = { due_date: parsed.newDueDate };
+
+  // If overdue and new date is in the future → revert to pending
+  if (installment.status === "overdue") {
+    patch.status = "pending";
+  }
+
+  await updateInstallment(installment.id, patch as Parameters<typeof updateInstallment>[1]);
+
+  await writeAudit(actor, "billing.installment.rescheduled", "installments", installment.id, {
+    before: { dueDate: installment.due_date, status: installment.status },
+    after: { dueDate: parsed.newDueDate, status: patch.status ?? installment.status },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// markOverdues — cron: pending → overdue (DOC-44 §3.9)
+// ---------------------------------------------------------------------------
+
+export interface MarkOverduesResult {
+  marked: number;
+}
+
+/**
+ * Marks all pending installments with due_date < today as overdue.
+ * Emits installment.overdue for each.
+ *
+ * Called ONLY by the installment-reminders cron job (systemActor).
+ * Idempotent: the WHERE status='pending' filter prevents double-marking.
+ */
+export async function markOverdues(
+  _systemActor: Actor,
+  today: string, // YYYY-MM-DD
+): Promise<MarkOverduesResult> {
+  // MED-1: defense-in-depth — this endpoint is cron-only (systemActor)
+  requireSystemActor(_systemActor);
+
+  const due = await listOverdueUniverse(today);
+
+  for (const inst of due) {
+    await updateInstallment(inst.id, { status: "overdue" });
+    appEvents.emit({
+      type: "installment.overdue",
+      payload: {
+        caseId: inst.caseId,
+        installmentId: inst.id,
+        number: inst.number,
+        amountCents: inst.amountCents,
+        dueDate: inst.dueDate,
+        daysLate: daysLate({ due_date: inst.dueDate }, today),
+        orgId: inst.orgId,
+      },
+      occurredAt: new Date(),
+    });
+  }
+
+  return { marked: due.length };
+}
+
+// ---------------------------------------------------------------------------
+// listReminderTargets — targets for due-3d and due-day reminders
+// ---------------------------------------------------------------------------
+
+export interface ReminderTarget {
+  installmentId: string;
+  caseId: string;
+  clientUserId: string | null;
+  dueDate: string;
+  number: number;
+}
+
+export async function listReminderTargets(today: string, actor?: Actor): Promise<ReminderTarget[]> {
+  // MED-1: defense-in-depth — this is a cron-only function.
+  // The actor parameter is optional for backward compat but asserted when provided.
+  if (actor) requireSystemActor(actor);
+  return repoListReminderTargets(today);
+}
+
+// ---------------------------------------------------------------------------
+// recordReminderSent — mark installment as reminded
+// ---------------------------------------------------------------------------
+
+export async function recordReminderSent(
+  _systemActor: Actor,
+  installmentId: string,
+): Promise<void> {
+  // MED-1: defense-in-depth — this endpoint is cron-only (systemActor)
+  requireSystemActor(_systemActor);
+  await updateInstallment(installmentId, { last_reminder_at: nowIso() });
+}
+
+// ---------------------------------------------------------------------------
+// getCollectionMetrics — cobranza dashboard (RF-AND-044, DOC-44 §3.12)
+// ---------------------------------------------------------------------------
+
+export interface CollectionMetricsDto {
+  collectedMonthCents: number;
+  onTimePct: number;
+  overdue: { cuotas: number; montoCents: number; casos: number };
+}
+
+/**
+ * Returns collection metrics for Andrium's dashboard.
+ *
+ * Formulas (DOC-44 §3.12):
+ *   collectedMonthCents = Σ ledger_entries.amount_cents (kind=income, entry_date in month)
+ *   onTimePct = al_dia / exigibles * 100
+ *     exigibles = installments with due_date <= today AND status != 'waived'
+ *     al_dia    = exigibles with status = 'paid'
+ *     if exigibles = 0 → 100%
+ *   overdue = count/sum/distinct-cases with status='overdue'
+ *
+ * @api-id API-BIL-17
+ */
+export async function getCollectionMetrics(
+  actor: Actor,
+  today: string, // YYYY-MM-DD
+  month: string, // YYYY-MM (first day = month start, last day = month end)
+): Promise<CollectionMetricsDto> {
+  can(actor, "billing", "view");
+  return repoCollectionMetrics(actor.orgId, today, month);
+}
+
+// ---------------------------------------------------------------------------
+// listDueCalendar — vencimientos de Andrium (RF-AND-014, DOC-44 §4)
+// ---------------------------------------------------------------------------
+
+export interface DueCalendarItemDto {
+  installmentId: string;
+  caseId: string;
+  caseNumber: string;
+  clientName: string;
+  number: number;
+  installmentCount: number;
+  amountCents: number;
+  status: string;
+  isDownpayment: boolean;
+  dueDate: string; // YYYY-MM-DD
+}
+
+export interface DueCalendarInput {
+  from: string; // YYYY-MM-DD
+  to: string;   // YYYY-MM-DD
+  status?: string;
+  serviceId?: string;
+}
+
+/**
+ * Lists installments in a due-date range with case/client info.
+ *
+ * @api-id API-BIL-14
+ */
+export async function listDueCalendar(
+  actor: Actor,
+  input: DueCalendarInput,
+): Promise<DueCalendarItemDto[]> {
+  can(actor, "billing", "view");
+  return repoListDueCalendar(actor.orgId, input);
+}
+
+// ---------------------------------------------------------------------------
+// listOverdueForCollections — morosidad (RF-AND-020)
+// ---------------------------------------------------------------------------
+
+export interface OverdueItemDto {
+  installmentId: string;
+  caseId: string;
+  caseNumber: string;
+  clientName: string;
+  number: number;
+  amountCents: number;
+  dueDate: string; // YYYY-MM-DD
+  daysLate: number;
+}
+
+/**
+ * Lists overdue installments ordered by due_date ASC with case/client info.
+ *
+ * @api-id Used by Andrium morosidad view
+ */
+export async function listOverdueForCollections(
+  actor: Actor,
+): Promise<OverdueItemDto[]> {
+  can(actor, "billing", "view");
+  const rows = await repoListOverdueForCollections(actor.orgId);
+  return rows.map((r) => ({
+    installmentId: r.installmentId,
+    caseId: r.caseId,
+    caseNumber: r.caseNumber,
+    clientName: r.clientName,
+    number: r.number,
+    amountCents: r.amountCents,
+    dueDate: r.dueDate,
+    daysLate: r.daysLateVal,
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Internal security helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Asserts that the actor is the system actor (userId === systemActor().userId).
+ * Used as defense-in-depth on cron-only endpoints (MED-1).
+ *
+ * @throws AuthzError('wrong_kind') if actor is a client
+ * @throws AuthzError('forbidden_module') if actor is not the system actor
+ */
+function requireSystemActor(actor: Actor): void {
+  // systemActor() has userId=00000000-0000-0000-0000-000000000000 and role=admin
+  // Import inline to avoid circular dep at module level (authz ← supabase)
+  const SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000000";
+  if (actor.kind !== "staff") {
+    throw new AuthzError("wrong_kind");
+  }
+  if (actor.userId !== SYSTEM_USER_ID) {
+    // Non-system callers should use can() gates, not cron endpoints
+    throw new AuthzError("forbidden_module");
+  }
+}
+
+/**
+ * Resolves the org_id for the case that owns the given installment,
+ * then asserts the actor belongs to that org (cross-org IDOR guard).
+ *
+ * Used for billing mutations that do NOT go through requireCaseAccess:
+ * waiveInstallment, rescheduleInstallment, confirmZellePayment,
+ * rejectZelleProof, registerZellePayment.
+ *
+ * @throws AuthzError('cross_org_access_denied') on org mismatch
+ * @throws BillingError('INSTALLMENT_NOT_FOUND') if case chain is broken
+ */
+async function requireInstallmentOrg(
+  actor: Actor,
+  installmentId: string,
+): Promise<void> {
+  const caseId = await findInstallmentCaseId(installmentId);
+  if (!caseId) throw new BillingError("INSTALLMENT_NOT_FOUND");
+  const orgId = await findOrgIdForCase(caseId);
+  if (!orgId || orgId !== actor.orgId) {
+    throw new AuthzError("cross_org_access_denied");
+  }
+}
+
+/**
+ * Resolves the org_id for the case that owns the given payment,
+ * then asserts the actor belongs to that org (cross-org IDOR guard).
+ *
+ * Used for rejectZelleProof and confirmZellePayment which receive a paymentId.
+ *
+ * @throws AuthzError('cross_org_access_denied') on org mismatch
+ * @throws BillingError('PAYMENT_NOT_PENDING') if payment/chain is not found
+ */
+async function requirePaymentOrg(
+  actor: Actor,
+  paymentId: string,
+): Promise<void> {
+  const p = await findPaymentById(paymentId);
+  if (!p) throw new BillingError("PAYMENT_NOT_PENDING");
+  const caseId = await findInstallmentCaseId(p.installment_id);
+  if (!caseId) throw new BillingError("PAYMENT_NOT_PENDING");
+  const orgId = await findOrgIdForCase(caseId);
+  if (!orgId || orgId !== actor.orgId) {
+    throw new AuthzError("cross_org_access_denied");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Internal helpers for lookups across module boundaries
 // ---------------------------------------------------------------------------
+
+async function findCaseStatus(caseId: string): Promise<string | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("cases")
+    .select("status")
+    .eq("id", caseId)
+    .maybeSingle();
+  return data?.status ?? null;
+}
 
 async function findOrgIdForCase(caseId: string | null): Promise<string | null> {
   if (!caseId) return null;
