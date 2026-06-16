@@ -15,10 +15,11 @@ import { onDownpaymentConfirmed, onExpedienteSentToFinanceCase, onExpedientePrin
 import { notifyFromEvent } from "@/backend/modules/notifications";
 import {
   onCaseAssigned,
-  onContractSigned,
+  onContractSigned as onContractSignedKanban,
   onDownpaymentConfirmedKanban,
   onExpedienteSentToFinance,
 } from "@/backend/modules/kanban";
+import { onContractSigned as onContractSignedBilling } from "@/backend/modules/billing";
 import { registerAiEngineConsumers } from "@/backend/modules/ai-engine";
 import { registerIntegrationsConsumers } from "@/backend/modules/integrations";
 // scheduling: no in-process event consumers in V2.0 (DOC-43 §5 — scheduling does
@@ -119,7 +120,25 @@ export function registerConsumers(): void {
     const payload = event.payload as { caseId: string; orgId: string };
     if (!payload.caseId || !payload.orgId) return;
     logger.info({ caseId: payload.caseId }, "kanban: consuming contract.signed");
-    await onContractSigned(payload);
+    await onContractSignedKanban(payload);
+  });
+
+  // contract.signed → billing: re-anchor installment due dates (DOC-44 §5.2)
+  appEvents.on("contract.signed", async (event) => {
+    const payload = event.payload as {
+      caseId: string;
+      contractId: string;
+      orgId: string;
+      signedAt?: string;
+    };
+    if (!payload.contractId) return;
+    logger.info({ caseId: payload.caseId, contractId: payload.contractId }, "billing: consuming contract.signed → reanchor");
+    await onContractSignedBilling({
+      contractId: payload.contractId,
+      caseId: payload.caseId,
+      signedAt: payload.signedAt ?? new Date().toISOString(),
+      orgId: payload.orgId,
+    });
   });
 
   // downpayment.confirmed → remove card from "Por cobrar inicial" if still there
@@ -171,5 +190,5 @@ export function registerConsumers(): void {
     await onExpedientePrintedCase({ caseId: payload.caseId });
   });
 
-  logger.info({}, "consumers: F2+F3+F4+F5+F5-Ola3 event consumers registered (kanban + ai-engine + integrations + andrium)");
+  logger.info({}, "consumers: F2+F3+F4+F5+F5-Ola3+F6-Ola1 event consumers registered (kanban + ai-engine + integrations + andrium + billing-reanchor)");
 }

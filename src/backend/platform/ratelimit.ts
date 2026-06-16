@@ -203,6 +203,20 @@ function expressInterestIp(): Ratelimit {
   return (_expressInterestIp ??= makeLimiter(redis(), 60, "1 m", "rl:express-interest:ip"));
 }
 
+// billing:checkout — 5/min per userId (DOC-71 §7, HIGH-3)
+// Limits concurrent checkout session creation. Fail mode: open (authenticated endpoint).
+let _billingCheckout: Ratelimit | undefined;
+function billingCheckout(): Ratelimit {
+  return (_billingCheckout ??= makeLimiter(redis(), 5, "1 m", "rl:billing:checkout"));
+}
+
+// billing:uploadUrl — 10/min per userId (DOC-71 §7, HIGH-3)
+// Limits signed upload URL generation for Zelle proofs. Fail mode: open (authenticated).
+let _billingUploadUrl: Ratelimit | undefined;
+function billingUploadUrl(): Ratelimit {
+  return (_billingUploadUrl ??= makeLimiter(redis(), 10, "1 m", "rl:billing:uploadUrl"));
+}
+
 // ---------------------------------------------------------------------------
 // Public rate-limit helpers
 // ---------------------------------------------------------------------------
@@ -356,5 +370,43 @@ export async function limitExpressInterestIp(ip: string): Promise<RateLimitResul
   } catch (err) {
     logger.error({ err }, "Rate limiter error (express-interest:ip) — denying (closed fail mode)");
     return { allowed: false, reset: Date.now() + 60_000 };
+  }
+}
+
+/**
+ * Checks billing checkout tier (5/min per userId, DOC-71 §7 HIGH-3).
+ *
+ * Limits concurrent Stripe Checkout session creation per user. Applied at the
+ * server action (createInstallmentCheckoutAction) BEFORE calling the service.
+ *
+ * Fail mode: open (authenticated endpoint — deny on error only for security-critical
+ * unauthenticated surfaces). If Upstash is unavailable, allow the checkout to proceed.
+ */
+export async function limitBillingCheckout(userId: string): Promise<RateLimitResult> {
+  try {
+    const r = await billingCheckout().limit(userId);
+    return { allowed: r.success, reset: r.reset };
+  } catch (err) {
+    logger.warn({ err }, "Rate limiter error (billing:checkout) — allowing (open fail mode)");
+    return { allowed: true, reset: 0 };
+  }
+}
+
+/**
+ * Checks billing upload-url tier (10/min per userId, DOC-71 §7 HIGH-3).
+ *
+ * Limits signed upload URL generation for Zelle proofs. Applied at the route
+ * handler (POST /api/v1/installments/[id]/zelle-proof/upload-url) before calling
+ * the service.
+ *
+ * Fail mode: open (authenticated endpoint — same rationale as limitBillingCheckout).
+ */
+export async function limitBillingUploadUrl(userId: string): Promise<RateLimitResult> {
+  try {
+    const r = await billingUploadUrl().limit(userId);
+    return { allowed: r.success, reset: r.reset };
+  } catch (err) {
+    logger.warn({ err }, "Rate limiter error (billing:uploadUrl) — allowing (open fail mode)");
+    return { allowed: true, reset: 0 };
   }
 }

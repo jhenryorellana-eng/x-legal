@@ -3,8 +3,28 @@
 > Archivo de continuidad entre sesiones (PROMPT-CONSTRUCCION-V2 §4). Actualizar al cierre de cada sesión.
 > Biblioteca SoT: `C:\Users\mauri\Documents\Trabajos\USALATINO V2\V2\docs\` · Supabase: **USALATINO V2** `uexxyokexcamyjcknxua`
 
-**Fase actual: F5 — Diana + expediente + Abogados (por olas). F5-Ola1 ✅ · F5-Ola2 ✅ · F5-Ola3 ✅ (handoff Andrium + kanban Diana, VERIFICADO EN VIVO). 🏁 F5 CERRADA. Siguiente: F6 (Billing + Panel Andrium /finanzas). F0–F4 ✅.**
+**Fase actual: F6 — Billing + Andrium (por olas). F6-Ola1 ✅ (motor billing Stripe+Zelle+ledger + pantalla Pagos cliente, COBRO REAL VERIFICADO EN VIVO). Siguiente: F6-Ola2 (panel Andrium /finanzas: kanban cobranza + cola impresión + gestión pagos). F0–F5 ✅.**
 Última sesión: 2026-06-15
+
+## F6 — Billing + Andrium (por olas; cadencia: ola por ola con OK de Henry)
+
+> Plan: `~/.claude/plans/analiza-mi-proyecto-y-twinkly-reddy.md`. Decisión Henry: Ola-1 = motor billing + Pagos cliente (la demo de DOC-80 §F6 centra el "cobro desde el celular"). Stripe **test real** (claves `sk_test`/`whsec` SOLO en `.env.local`, gitignored). **Cero migraciones de esquema** salvo 1 correctiva autorizada (índice anti doble-cobro). Olas: **Ola-1** motor+Pagos cliente · **Ola-2** panel Andrium (kanban cobranza, cola impresión, pagos/cuotas, morosidad, cron) · **Ola-3** contabilidad + campañas + emails react-email + re-demo F1.
+
+### Ola F6-1 — Motor billing (Stripe + Zelle + ledger) + Pantalla Pagos del cliente ✅ (construido + revisado APPROVED×2 + COBRO REAL VERIFICADO EN VIVO)
+SoT: DOC-44 (billing) + DOC-71 (Stripe) + DOC-51 §8/PROMPT-CLI-08 (Pagos cliente) + DOC-48 §3.5 (API-BIL-*). **Cero migraciones de esquema** (verificado por MCP: `installments`/`payments`/`ledger_entries`/`stripe_customers`/`payment_plans` completas; `ledger_entries` ya tenía índice único parcial `(payment_id,kind)`).
+- **Backend `billing`** (extiende el slice F2; +97 tests): domain (`reanchorDueDates` regla "mensuales desde la firma", `isOverdue`/`daysLate`, máquina de estados con actor); service (`createCheckoutSessionForInstallment` [monto SIEMPRE de la BD], `handleStripeEvent`, `applyPaymentSuccess`+asiento ledger, `applyPaymentFailure`, `applyRefund`, `submitZelleProof`/`confirmZellePayment`/`rejectZelleProof`, `getAccountStatement`, `onContractSigned` reanclaje service-role); **webhook `/api/webhooks/stripe`** (firma raw-body `constructEvent`, idempotencia canónica `claimWebhookEvent`); actions API-BIL-01/03/04/05/06/07/08/13 + rutas Zelle/payment-status. Eventos `payment.proof_submitted`/`payment.refunded`.
+- **Pantalla `/pagos` cliente** (PROMPT-CLI-08): tarjeta resumen navy (próxima cuota + monto + ProgressBar) + plan de cuotas con StatusPills + métodos Zelle (subir comprobante) / Tarjeta (Stripe Checkout). i18n `cliente.pagos.*`.
+- **Two-stage review** → NEEDS-REVISION → **APPROVED×2**: code-reviewer (2 BLOCKERs: orden crash-safe del ledger en `applyPaymentSuccess`; doble-cobro TOCTOU → **migración 0019** índice único parcial `payments(installment_id) WHERE pending+stripe`, autorizada y aplicada) + security-auditor (3 HIGH: webhook reintento con `claimWebhookEvent`; IDOR fail-closed si case_id null; rate limits `billingCheckout`/`billingUploadUrl`; MED: orgId del ledger desde BD no metadata). **0 CRITICAL, sin BLOCK-DEPLOY.**
+- **🐛 Bug i18n cazado por el smoke en vivo**: `dueDate`/`progressLabel`/`installmentRow` con FORMATTING_ERROR (templates con placeholders resueltos con `t()` en vez de `t.raw()`) — mismo patrón que /legal. Arreglado.
+- **COBRO REAL VERIFICADO EN VIVO** (María, Playwright + Stripe CLI `stripe listen` + Supabase MCP): `/pagos` → "Pagar con tarjeta" → **Stripe Checkout real** ("Cuota 2 de 10 — ULP-2026-0001", $500 de la BD) → `4242…` → **webhook real [200]** → cuota 2 `paid`+`paid_at`, pago `succeeded`+`stripe_payment_intent_id`, **asiento `ledger_entries` income/'cuota' $500**, barra del cliente a **"2 de 11"** + próxima cuota = la 3. **Idempotencia**: 5 eventos Stripe → 1 pago, 1 asiento, 5 procesados, 0 firmas inválidas. **0 errores de consola.**
+- Gates: **tsc 0 · eslint 0 · vitest 1112/1112** (+~95) · **i18n 1329** (paridad es/en) · **build 0**.
+
+### Pendiente menor / follow-up de F6-1
+- Si la API de Stripe hace timeout a mitad del checkout, el row de payment queda huérfano (bloqueo temporal, no doble cobro) → job de limpieza en Ola-2 (TODO en el código).
+- Destino Zelle: hoy vía env `NEXT_PUBLIC_ZELLE_DESTINATION` (puente); config en admin settings más adelante.
+- Diferido (fiel a DOC-80, "tras propuesta SoT"): recordatorio manual de pago, export CSV ledger, conciliación global → Ola-2/3.
+
+---
 
 > **F4 DoD CERRADA y commiteada** (`8ebb64c`): E2E automatizados (§4.3/§4.6) + QA visual + axe + test presupuesto (RNF-042) + RLS test 4 + seam de IA env-gated. Aclaración de numeración: en DOC-81 §4 los *flujos* E2E se numeran F1–F6 y NO coinciden con las *fases* (el "flujo F4" §4.4 es expediente/Abogados = fase F5).
 
