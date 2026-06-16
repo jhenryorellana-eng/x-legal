@@ -4,9 +4,12 @@
  * Single point of contact with the Resend API. No module calls Resend
  * directly; all email sending flows through this client.
  *
- * Canonical senders (DOC-73 §1.3):
- * - Transactional: `UsaLatinoPrime <notificaciones@mail.usalatinoprime.com>`
- * - Campaigns: `UsaLatinoPrime <novedades@mail.usalatinoprime.com>`
+ * Senders (DOC-73 §1.3 canonically uses the `mail.` subdomain; we send from the
+ * ROOT domain `usalatinoprime.com` because that is the domain verified in Resend
+ * — decisión Henry 2026-06-16. Switch back to `mail.usalatinoprime.com` once that
+ * subdomain is verified for reputation isolation).
+ * - Transactional: `UsaLatinoPrime <notificaciones@usalatinoprime.com>`
+ * - Campaigns: `UsaLatinoPrime <novedades@usalatinoprime.com>`
  *
  * Usage pattern (DOC-73 §1.5):
  * - notifications/service.ts → sendTransactional()
@@ -25,10 +28,10 @@ import { logger } from "./logger";
 // ---------------------------------------------------------------------------
 
 export const FROM_TRANSACTIONAL =
-  "UsaLatinoPrime <notificaciones@mail.usalatinoprime.com>";
+  "UsaLatinoPrime <notificaciones@usalatinoprime.com>";
 
 export const FROM_CAMPAIGNS =
-  "UsaLatinoPrime <novedades@mail.usalatinoprime.com>";
+  "UsaLatinoPrime <novedades@usalatinoprime.com>";
 
 // ---------------------------------------------------------------------------
 // Client factory (lazy)

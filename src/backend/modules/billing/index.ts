@@ -36,6 +36,12 @@ export {
   getCollectionMetrics,
   listDueCalendar,
   listOverdueForCollections,
+  // F6-Ola3 (contabilidad + recordatorio manual)
+  recordLedgerEntry,
+  updateLedgerEntry,
+  getMonthlySummary,
+  listLedger,
+  sendInstallmentReminder,
 } from "./service";
 
 // Error class
@@ -58,6 +64,12 @@ export type {
   DueCalendarItemDto,
   DueCalendarInput,
   OverdueItemDto,
+  // F6-Ola3
+  RecordLedgerEntryInput,
+  UpdateLedgerEntryInput,
+  ListLedgerInput,
+  LedgerEntryDto,
+  MonthlySummaryDto,
 } from "./service";
 
 // Domain (pure functions — safe to import widely)

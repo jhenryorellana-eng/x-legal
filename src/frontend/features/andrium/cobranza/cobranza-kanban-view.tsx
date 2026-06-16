@@ -86,6 +86,8 @@ export interface CollectionCardVM {
   ageLabel: string;
   /** timeTier computed server-side */
   ageTier: "time-ok" | "time-warn" | "time-hot";
+  /** F6-Ola3 (P-55-1): installment to remind about, if any (else the button is hidden). */
+  reminderInstallmentId?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -163,6 +165,10 @@ export interface CobranzaKanbanStrings {
   // Error / loading
   loadError: string;
   retry: string;
+  // F6-Ola3 (P-55-1) reminder feedback — optional (Spanish fallback in the view)
+  remindOk?: string;
+  remindError?: string;
+  remindTooSoon?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -202,6 +208,11 @@ export interface CobranzaKanbanActions {
     columnId: string;
     migrateToColumnId?: string;
   }) => Promise<{ ok: boolean; error?: { code: string } }>;
+
+  /** F6-Ola3 (P-55-1) — send a manual reminder for an installment. */
+  remindInstallment?: (
+    installmentId: string,
+  ) => Promise<{ ok: boolean; error?: { code: string } }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -259,6 +270,22 @@ export function CobranzaKanbanView({
   actions,
 }: CobranzaKanbanViewProps) {
   const toast = useToast();
+
+  // F6-Ola3 (P-55-1): manual reminder dispatch from a collection card.
+  const [remindingId, setRemindingId] = React.useState<string | null>(null);
+  async function handleRemind(card: CollectionCardVM) {
+    if (!card.reminderInstallmentId || !actions.remindInstallment) return;
+    setRemindingId(card.id);
+    const res = await actions.remindInstallment(card.reminderInstallmentId);
+    setRemindingId(null);
+    if (res.ok) {
+      toast.success(strings.remindOk ?? "Recordatorio enviado");
+    } else if (res.error?.code === "REMINDER_TOO_SOON") {
+      toast.error(strings.remindTooSoon ?? "Ya enviaste un recordatorio hace poco");
+    } else {
+      toast.error(strings.remindError ?? "No se pudo enviar el recordatorio");
+    }
+  }
 
   // Board state
   const [columns, setColumns] = React.useState<CollectionColumnVM[]>(initialColumns);
@@ -710,6 +737,8 @@ export function CobranzaKanbanView({
                     }}
                     onNoteChange={setNoteValue}
                     onNoteBlur={() => saveNote(card.id)}
+                    onRemind={() => handleRemind(card)}
+                    reminding={remindingId === card.id}
                   />
                 ))}
               </div>
@@ -858,6 +887,8 @@ function CollectionCard({
   onStartEditNote,
   onNoteChange,
   onNoteBlur,
+  onRemind,
+  reminding,
 }: {
   card: CollectionCardVM;
   colColor: string;
@@ -870,6 +901,8 @@ function CollectionCard({
   onStartEditNote: () => void;
   onNoteChange: (v: string) => void;
   onNoteBlur: () => void;
+  onRemind: () => void;
+  reminding: boolean;
 }) {
   const isEditingNote = editingNoteId === card.id;
 
@@ -1006,16 +1039,22 @@ function CollectionCard({
         >
           {strings.actionCollect}
         </Link>
-        <button
-          type="button"
-          className="vbtn vbtn-ghost vbtn-xs"
-          style={{ fontSize: 11, padding: "3px 8px" }}
-          title={strings.actionRemind}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <MSym name="send" size={12} />
-          {strings.actionRemind}
-        </button>
+        {card.reminderInstallmentId && (
+          <button
+            type="button"
+            className="vbtn vbtn-ghost vbtn-xs"
+            style={{ fontSize: 11, padding: "3px 8px", opacity: reminding ? 0.5 : 1 }}
+            title={strings.actionRemind}
+            disabled={reminding}
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemind();
+            }}
+          >
+            <MSym name="send" size={12} />
+            {strings.actionRemind}
+          </button>
+        )}
         <Link
           href={`/finanzas/pagos/caso/${card.caseId}`}
           className="vbtn vbtn-ghost vbtn-xs"

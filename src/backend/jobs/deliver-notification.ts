@@ -17,8 +17,8 @@
 import { z } from "zod";
 import { logger } from "@/backend/platform/logger";
 import { sendTransactional } from "@/backend/platform/resend";
+import { renderTransactionalEmail } from "@/backend/platform/emails";
 import { findNotificationById } from "@/backend/modules/notifications";
-import { escapeHtml } from "@/shared/html";
 
 // ---------------------------------------------------------------------------
 // Payload schema
@@ -47,99 +47,17 @@ export type DeliverNotificationPayload = z.infer<
 >;
 
 // ---------------------------------------------------------------------------
-// Subject and body templates
+// i18n picker
 // ---------------------------------------------------------------------------
 
-function buildEmailSubject(
-  templateKey: string,
+/** Picks a localized string from an i18n jsonb map, falling back es → key. */
+function pickI18n(
+  map: unknown,
   locale: string,
+  fallback: string,
 ): string {
-  const subjects: Record<string, { en: string; es: string }> = {
-    "contract-signed-finance": {
-      en: "New contract signed — collect down payment",
-      es: "Nuevo contrato firmado — cobrar cuota inicial",
-    },
-    "document-approved": {
-      en: "Your document was approved",
-      es: "Tu documento fue aprobado",
-    },
-    "document-rejected": {
-      en: "Your document needs a correction",
-      es: "Tu documento necesita una corrección",
-    },
-    "downpayment-confirmed-sales": {
-      en: "Down payment received — case is active",
-      es: "Pago inicial recibido — caso activo",
-    },
-    "downpayment-confirmed": {
-      en: "Welcome — your case is now active",
-      es: "Bienvenido — tu caso está activo",
-    },
-    // F3 appointment templates (DOC-73 §2)
-    "appointment-booked": {
-      en: "Your appointment is confirmed",
-      es: "Tu cita quedó agendada",
-    },
-    "appointment-cancelled": {
-      en: "Your appointment was cancelled",
-      es: "Tu cita fue cancelada",
-    },
-    "appointment-rescheduled": {
-      en: "Your appointment has been rescheduled",
-      es: "Tu cita cambió de fecha",
-    },
-    "appointment-24h": {
-      en: "Your appointment is tomorrow",
-      es: "Tu cita es mañana",
-    },
-    "appointment-1h": {
-      en: "Your appointment starts in 1 hour",
-      es: "Tu cita comienza en 1 hora",
-    },
-  };
-
-  const entry = subjects[templateKey];
-  if (!entry) return templateKey;
-
-  return locale === "en" ? entry.en : entry.es;
-}
-
-function buildEmailHtml(
-  templateKey: string,
-  notification: { title_i18n: unknown; body_i18n: unknown; action_url: string | null },
-  locale: string,
-): string {
-  // Simple text-based HTML — react-email templates are a future enhancement.
-  // These provide functional email content while keeping F2 scope minimal.
-  const title =
-    (notification.title_i18n as Record<string, string> | null)?.[locale] ??
-    (notification.title_i18n as Record<string, string> | null)?.["es"] ??
-    templateKey;
-  const body =
-    (notification.body_i18n as Record<string, string> | null)?.[locale] ??
-    (notification.body_i18n as Record<string, string> | null)?.["es"] ??
-    "";
-
-  const ctaText = locale === "en" ? "View details" : "Ver detalles";
-
-  // M-2 FIX: escape title/body before interpolating into HTML.
-  // Title/body are system-generated today but a rejection reason could carry
-  // user-supplied content in future; defence-in-depth is cheap here.
-  const safeTitle = escapeHtml(title);
-  const safeBody = escapeHtml(body);
-
-  return `<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><title>${safeTitle}</title></head>
-<body style="font-family: 'Plus Jakarta Sans', sans-serif; color: #1a1a2e; background: #f8f9fa; padding: 24px;">
-  <div style="max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; padding: 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-    <div style="background: #003366; width: 40px; height: 40px; border-radius: 8px; margin-bottom: 24px;"></div>
-    <h1 style="font-size: 22px; font-weight: 700; margin: 0 0 12px;">${safeTitle}</h1>
-    ${safeBody ? `<p style="color: #4b5563; font-size: 15px; line-height: 1.6; margin: 0 0 24px;">${safeBody}</p>` : ""}
-    ${notification.action_url ? `<a href="https://app.usalatinoprime.com${notification.action_url}" style="display: inline-block; background: #003366; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">${ctaText}</a>` : ""}
-  </div>
-</body>
-</html>`;
+  const record = map as Record<string, string> | null;
+  return record?.[locale] ?? record?.["es"] ?? fallback;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,14 +96,22 @@ export async function handleDeliverNotification(
   }
 
   if (payload.channel === "email") {
-    const subject = buildEmailSubject(payload.templateKey, payload.locale);
-    const html = buildEmailHtml(payload.templateKey, notification, payload.locale);
+    const title = pickI18n(notification.title_i18n, payload.locale, payload.templateKey);
+    const body = pickI18n(notification.body_i18n, payload.locale, "");
+    const { subject, html, text } = await renderTransactionalEmail({
+      templateKey: payload.templateKey,
+      locale: payload.locale,
+      title,
+      body: body || undefined,
+      actionPath: notification.action_url,
+    });
 
     try {
       await sendTransactional({
         to: payload.recipientEmail,
         subject,
         html,
+        text,
         idempotencyKey: `notification:${notification.id}:email:${payload.templateKey}`,
       });
 

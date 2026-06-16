@@ -26,6 +26,7 @@ import {
   deleteColumn,
   KanbanError,
 } from "@/backend/modules/kanban";
+import { sendInstallmentReminder, BillingError } from "@/backend/modules/billing";
 
 type Ok<T = object> = { ok: true } & T;
 type Err = { ok: false; error: { code: string } };
@@ -33,6 +34,7 @@ type Err = { ok: false; error: { code: string } };
 function mapErr(err: unknown): Err {
   if (err instanceof AuthzError) return { ok: false, error: { code: err.reason } };
   if (err instanceof KanbanError) return { ok: false, error: { code: err.code } };
+  if (err instanceof BillingError) return { ok: false, error: { code: err.code } };
   console.error("[finanzas action] unexpected:", (err as Error)?.message ?? String(err));
   return { ok: false, error: { code: "internal" } };
 }
@@ -154,6 +156,22 @@ export async function deleteKanbanColumnAction(input: {
       columnId: input.columnId,
       migrateToColumnId: input.migrateToColumnId,
     });
+    return { ok: true };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// API-BIL-18 — manual installment reminder (P-55-1 / RF-AND-016)
+// ---------------------------------------------------------------------------
+
+export async function remindInstallmentAction(
+  installmentId: string,
+): Promise<{ ok: boolean; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    await sendInstallmentReminder(actor, installmentId);
     return { ok: true };
   } catch (err) {
     return mapErr(err);

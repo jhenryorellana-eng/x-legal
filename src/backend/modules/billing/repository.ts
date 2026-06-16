@@ -1076,3 +1076,263 @@ export async function insertLedgerIfAbsent(
     throw new Error(`billing.repository: insertLedgerIfAbsent failed — ${error.message}`);
   }
 }
+
+// ---------------------------------------------------------------------------
+// F6-Ola3: Contabilidad — manual ledger entries, libro, monthly summary
+// ---------------------------------------------------------------------------
+
+export interface ManualLedgerInput {
+  orgId: string;
+  kind: "income" | "expense";
+  category: string;
+  amountCents: number;
+  entryDate: string; // YYYY-MM-DD
+  description: string | null;
+  caseId: string | null;
+  recordedBy: string;
+}
+
+/** Inserts a manual ledger entry (payment_id = null, recorded_by = staff). */
+export async function insertLedgerEntry(
+  input: ManualLedgerInput,
+): Promise<LedgerEntryRow> {
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("ledger_entries")
+    .insert({
+      org_id: input.orgId,
+      kind: input.kind,
+      category: input.category,
+      amount_cents: input.amountCents,
+      entry_date: input.entryDate,
+      description: input.description,
+      case_id: input.caseId,
+      recorded_by: input.recordedBy,
+      payment_id: null,
+    })
+    .select()
+    .single();
+
+  if (error || !data) {
+    throw new Error(`billing.repository: insertLedgerEntry failed — ${error?.message}`);
+  }
+  return data;
+}
+
+export async function findLedgerEntryById(
+  entryId: string,
+): Promise<LedgerEntryRow | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("ledger_entries")
+    .select("*")
+    .eq("id", entryId)
+    .maybeSingle();
+  return data ?? null;
+}
+
+/** Updates a manual ledger entry. Caller enforces the editable (manual) guard. */
+export async function updateLedgerEntryRow(
+  entryId: string,
+  patch: TablesUpdate<"ledger_entries">,
+): Promise<LedgerEntryRow> {
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("ledger_entries")
+    .update(patch)
+    .eq("id", entryId)
+    .select()
+    .single();
+
+  if (error || !data) {
+    throw new Error(`billing.repository: updateLedgerEntryRow failed — ${error?.message}`);
+  }
+  return data;
+}
+
+export interface LedgerListFilters {
+  from?: string;
+  to?: string;
+  kind?: "income" | "expense";
+  category?: string;
+  caseId?: string;
+  cursor?: string; // opaque: `${entry_date}|${id}`
+  limit?: number;
+}
+
+export interface LedgerItemRepo {
+  id: string;
+  entryDate: string;
+  kind: "income" | "expense";
+  category: string;
+  amountCents: number;
+  description: string | null;
+  caseId: string | null;
+  caseNumber: string | null;
+  isAutomatic: boolean; // payment_id != null → auto, candado
+  recordedBy: string | null;
+  createdAt: string;
+}
+
+function encodeLedgerCursor(entryDate: string, id: string): string {
+  return Buffer.from(`${entryDate}|${id}`, "utf8").toString("base64");
+}
+
+function decodeLedgerCursor(cursor: string): { entryDate: string; id: string } | null {
+  try {
+    const [entryDate, id] = Buffer.from(cursor, "base64").toString("utf8").split("|");
+    if (!entryDate || !id) return null;
+    return { entryDate, id };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Lists ledger entries for an org with keyset pagination.
+ * Ordered by (entry_date DESC, id DESC). org_id on the row is authoritative.
+ * RF-AND-028 / API-BIL-15.
+ */
+export async function listLedger(
+  orgId: string,
+  filters: LedgerListFilters,
+): Promise<{ items: LedgerItemRepo[]; nextCursor: string | null }> {
+  const supabase = createServiceClient();
+  const limit = Math.min(Math.max(filters.limit ?? 50, 1), 500);
+
+  let query = supabase
+    .from("ledger_entries")
+    .select(`
+      id, entry_date, kind, category, amount_cents, description,
+      case_id, payment_id, recorded_by, created_at,
+      cases(case_number)
+    `)
+    .eq("org_id", orgId);
+
+  if (filters.from) query = query.gte("entry_date", filters.from);
+  if (filters.to) query = query.lte("entry_date", filters.to);
+  if (filters.kind) query = query.eq("kind", filters.kind);
+  if (filters.category) query = query.eq("category", filters.category);
+  if (filters.caseId) query = query.eq("case_id", filters.caseId);
+
+  if (filters.cursor) {
+    const c = decodeLedgerCursor(filters.cursor);
+    if (c) {
+      // (entry_date, id) < (cursor.entryDate, cursor.id) in DESC order
+      query = query.or(
+        `entry_date.lt.${c.entryDate},and(entry_date.eq.${c.entryDate},id.lt.${c.id})`,
+      );
+    }
+  }
+
+  query = query
+    .order("entry_date", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(limit + 1);
+
+  const { data, error } = await query;
+  if (error) throw new Error(`billing.repository: listLedger — ${error.message}`);
+
+  const rows = (data ?? []) as unknown as Array<{
+    id: string;
+    entry_date: string;
+    kind: "income" | "expense";
+    category: string;
+    amount_cents: number;
+    description: string | null;
+    case_id: string | null;
+    payment_id: string | null;
+    recorded_by: string | null;
+    created_at: string;
+    cases: { case_number: string } | Array<{ case_number: string }> | null;
+  }>;
+
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+
+  const items: LedgerItemRepo[] = page.map((r) => {
+    const caseRaw = r.cases;
+    const kase = Array.isArray(caseRaw) ? caseRaw[0] : caseRaw;
+    return {
+      id: r.id,
+      entryDate: r.entry_date,
+      kind: r.kind,
+      category: r.category,
+      amountCents: r.amount_cents,
+      description: r.description,
+      caseId: r.case_id,
+      caseNumber: kase?.case_number ?? null,
+      isAutomatic: r.payment_id !== null,
+      recordedBy: r.recorded_by,
+      createdAt: r.created_at,
+    };
+  });
+
+  const last = page[page.length - 1];
+  const nextCursor = hasMore && last ? encodeLedgerCursor(last.entry_date, last.id) : null;
+
+  return { items, nextCursor };
+}
+
+export interface MonthlyLedgerSummaryRepo {
+  incomeCents: number;
+  expenseCents: number;
+  byCategory: Array<{ kind: "income" | "expense"; category: string; totalCents: number }>;
+}
+
+/**
+ * Aggregates ledger income/expense + per-category totals for a date range.
+ * Pure aggregation of the libro (RF-AND-032). org_id is authoritative.
+ */
+export async function monthlyLedgerSummary(
+  orgId: string,
+  range: { start: string; end: string },
+): Promise<MonthlyLedgerSummaryRepo> {
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("ledger_entries")
+    .select("kind, category, amount_cents")
+    .eq("org_id", orgId)
+    .gte("entry_date", range.start)
+    .lte("entry_date", range.end);
+
+  if (error) throw new Error(`billing.repository: monthlyLedgerSummary — ${error.message}`);
+
+  let incomeCents = 0;
+  let expenseCents = 0;
+  const catMap = new Map<string, { kind: "income" | "expense"; category: string; totalCents: number }>();
+
+  for (const r of (data ?? []) as Array<{ kind: "income" | "expense"; category: string; amount_cents: number }>) {
+    if (r.kind === "income") incomeCents += r.amount_cents;
+    else expenseCents += r.amount_cents;
+
+    const key = `${r.kind}:${r.category}`;
+    const existing = catMap.get(key);
+    if (existing) existing.totalCents += r.amount_cents;
+    else catMap.set(key, { kind: r.kind, category: r.category, totalCents: r.amount_cents });
+  }
+
+  const byCategory = [...catMap.values()].sort((a, b) => b.totalCents - a.totalCents);
+
+  return { incomeCents, expenseCents, byCategory };
+}
+
+/** Resolves the active client user_id of a case (first by created_at). */
+export async function findCaseClientUserId(caseId: string): Promise<string | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("case_members")
+    .select("user_id, users!inner(kind, is_active)")
+    .eq("case_id", caseId)
+    .order("created_at", { ascending: true });
+
+  const rows = (data ?? []) as unknown as Array<{
+    user_id: string;
+    users: { kind: string; is_active: boolean };
+  }>;
+
+  for (const m of rows) {
+    if (m.users.kind === "client" && m.users.is_active) return m.user_id;
+  }
+  return null;
+}

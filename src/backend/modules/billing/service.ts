@@ -28,8 +28,16 @@ import {
   isOverdue,
   daysLate,
   canTransitionInstallment,
+  validateLedgerEntry,
+  monthRange,
+  previousMonth,
   PAYABLE_STATUSES,
 } from "./domain";
+import { enqueueJob } from "@/backend/platform/qstash";
+import {
+  insertNotificationIdempotent,
+  findUserById,
+} from "@/backend/modules/notifications";
 import {
   findPlanByContractId,
   findPlanByCaseId,
@@ -55,10 +63,17 @@ import {
   listDueCalendar as repoListDueCalendar,
   listOverdueForCollections as repoListOverdueForCollections,
   collectionMetrics as repoCollectionMetrics,
+  insertLedgerEntry,
+  findLedgerEntryById,
+  updateLedgerEntryRow,
+  listLedger as repoListLedger,
+  monthlyLedgerSummary,
+  findCaseClientUserId,
   type PaymentPlanRow,
   type InstallmentRow,
   type PaymentRow,
   type AccountStatementDto,
+  type LedgerItemRepo,
 } from "./repository";
 
 // Re-export AccountStatementDto so index.ts can pick it up without importing repository
@@ -93,6 +108,9 @@ export class BillingError extends Error {
       | "LEDGER_AMOUNT_INVALID"
       | "LEDGER_CATEGORY_REQUIRED"
       | "LEDGER_ENTRY_NOT_EDITABLE"
+      // F6-Ola3 (contabilidad + recordatorio manual)
+      | "LEDGER_ENTRY_NOT_FOUND"
+      | "REMINDER_TOO_SOON"
       // Rate limiting (HIGH-3)
       | "RATE_LIMITED",
     public readonly details?: Record<string, unknown>,
@@ -1474,6 +1492,292 @@ export async function listOverdueForCollections(
     dueDate: r.dueDate,
     daysLate: r.daysLateVal,
   }));
+}
+
+// ---------------------------------------------------------------------------
+// F6-Ola3: Contabilidad — libro + gasto manual + resumen (DOC-44 §3.11)
+// ---------------------------------------------------------------------------
+
+/** Ledger entry as shown in the libro (RF-AND-028). */
+export type LedgerEntryDto = LedgerItemRepo;
+
+const RecordLedgerEntrySchema = z.object({
+  kind: z.enum(["income", "expense"]),
+  category: z.string().min(1),
+  amountCents: z.number().int(),
+  entryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  description: z.string().max(500).nullable().optional(),
+  caseId: z.string().uuid().nullable().optional(),
+});
+
+export type RecordLedgerEntryInput = z.infer<typeof RecordLedgerEntrySchema>;
+
+/**
+ * Records a manual ledger entry (gasto/ingreso libre, payment_id = null).
+ *
+ * Gates: can(actor, 'billing', 'edit'). Amount + category validated in domain.
+ * If a case is linked, it must belong to the actor's org (cross-org guard).
+ *
+ * @api-id API-BIL-11
+ */
+export async function recordLedgerEntry(
+  actor: Actor,
+  input: RecordLedgerEntryInput,
+): Promise<{ id: string }> {
+  can(actor, "billing", "edit");
+  const parsed = RecordLedgerEntrySchema.parse(input);
+
+  const verr = validateLedgerEntry({ amountCents: parsed.amountCents, category: parsed.category });
+  if (verr) throw new BillingError(verr);
+
+  if (parsed.caseId) {
+    const orgId = await findOrgIdForCase(parsed.caseId);
+    if (!orgId || orgId !== actor.orgId) throw new AuthzError("cross_org_access_denied");
+  }
+
+  const row = await insertLedgerEntry({
+    orgId: actor.orgId,
+    kind: parsed.kind,
+    category: parsed.category.trim(),
+    amountCents: parsed.amountCents,
+    entryDate: parsed.entryDate ?? todayIso(),
+    description: parsed.description?.trim() || null,
+    caseId: parsed.caseId ?? null,
+    recordedBy: actor.userId,
+  });
+
+  await writeAudit(actor, "billing.ledger.recorded", "ledger_entries", row.id, {
+    after: { kind: row.kind, category: row.category, amountCents: row.amount_cents },
+  });
+
+  return { id: row.id };
+}
+
+const UpdateLedgerEntrySchema = z.object({
+  category: z.string().min(1).optional(),
+  amountCents: z.number().int().optional(),
+  entryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  description: z.string().max(500).nullable().optional(),
+});
+
+export type UpdateLedgerEntryInput = z.infer<typeof UpdateLedgerEntrySchema>;
+
+/**
+ * Edits a MANUAL ledger entry. Automatic entries (payment_id != null) are
+ * locked (LEDGER_ENTRY_NOT_EDITABLE) — the truth of an income is its payment.
+ *
+ * @api-id API-BIL-12
+ */
+export async function updateLedgerEntry(
+  actor: Actor,
+  entryId: string,
+  input: UpdateLedgerEntryInput,
+): Promise<void> {
+  can(actor, "billing", "edit");
+  const parsed = UpdateLedgerEntrySchema.parse(input);
+
+  const entry = await findLedgerEntryById(entryId);
+  if (!entry) throw new BillingError("LEDGER_ENTRY_NOT_FOUND");
+  // ledger_entries.org_id is authoritative for the cross-org guard
+  if (entry.org_id !== actor.orgId) throw new AuthzError("cross_org_access_denied");
+  // Candado: automatic (payment-linked) entries are not editable (RF-AND-029)
+  if (entry.payment_id !== null) throw new BillingError("LEDGER_ENTRY_NOT_EDITABLE");
+
+  const mergedAmount = parsed.amountCents ?? entry.amount_cents;
+  const mergedCategory = parsed.category ?? entry.category;
+  const verr = validateLedgerEntry({ amountCents: mergedAmount, category: mergedCategory });
+  if (verr) throw new BillingError(verr);
+
+  const patch: Record<string, unknown> = {};
+  if (parsed.category !== undefined) patch.category = parsed.category.trim();
+  if (parsed.amountCents !== undefined) patch.amount_cents = parsed.amountCents;
+  if (parsed.entryDate !== undefined) patch.entry_date = parsed.entryDate;
+  if (parsed.description !== undefined) patch.description = parsed.description?.trim() || null;
+
+  const updated = await updateLedgerEntryRow(
+    entryId,
+    patch as Parameters<typeof updateLedgerEntryRow>[1],
+  );
+
+  await writeAudit(actor, "billing.ledger.updated", "ledger_entries", entryId, {
+    before: {
+      category: entry.category,
+      amountCents: entry.amount_cents,
+      entryDate: entry.entry_date,
+      description: entry.description,
+    },
+    after: {
+      category: updated.category,
+      amountCents: updated.amount_cents,
+      entryDate: updated.entry_date,
+      description: updated.description,
+    },
+  });
+}
+
+export interface MonthlySummaryDto {
+  month: string; // YYYY-MM
+  incomeCents: number;
+  expenseCents: number;
+  balanceCents: number;
+  byCategory: Array<{ kind: "income" | "expense"; category: string; totalCents: number }>;
+  previous: { incomeCents: number; expenseCents: number; balanceCents: number };
+}
+
+const YearMonthSchema = z.string().regex(/^\d{4}-\d{2}$/);
+
+/**
+ * Monthly income/expense/balance summary + per-category breakdown + previous
+ * month comparison. Pure aggregation of the libro (RF-AND-032).
+ *
+ * @api-id API-BIL-16
+ */
+export async function getMonthlySummary(
+  actor: Actor,
+  yearMonth: string,
+): Promise<MonthlySummaryDto> {
+  can(actor, "billing", "view");
+  const ym = YearMonthSchema.parse(yearMonth);
+
+  const [cur, prev] = await Promise.all([
+    monthlyLedgerSummary(actor.orgId, monthRange(ym)),
+    monthlyLedgerSummary(actor.orgId, monthRange(previousMonth(ym))),
+  ]);
+
+  return {
+    month: ym,
+    incomeCents: cur.incomeCents,
+    expenseCents: cur.expenseCents,
+    balanceCents: cur.incomeCents - cur.expenseCents,
+    byCategory: cur.byCategory,
+    previous: {
+      incomeCents: prev.incomeCents,
+      expenseCents: prev.expenseCents,
+      balanceCents: prev.incomeCents - prev.expenseCents,
+    },
+  };
+}
+
+const ListLedgerSchema = z.object({
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  kind: z.enum(["income", "expense"]).optional(),
+  category: z.string().min(1).optional(),
+  caseId: z.string().uuid().optional(),
+  cursor: z.string().optional(),
+  limit: z.number().int().min(1).max(500).optional(),
+});
+
+export type ListLedgerInput = z.infer<typeof ListLedgerSchema>;
+
+/**
+ * Lists ledger entries (the libro) for the actor's org with keyset pagination.
+ *
+ * @api-id API-BIL-15
+ */
+export async function listLedger(
+  actor: Actor,
+  input: ListLedgerInput,
+): Promise<{ items: LedgerEntryDto[]; nextCursor: string | null }> {
+  can(actor, "billing", "view");
+  const parsed = ListLedgerSchema.parse(input ?? {});
+  return repoListLedger(actor.orgId, parsed);
+}
+
+// ---------------------------------------------------------------------------
+// F6-Ola3: Manual payment reminder (P-55-1 / RF-AND-016)
+// ---------------------------------------------------------------------------
+
+/**
+ * Sends a manual payment reminder for an installment (staff "Recordar" button).
+ *
+ * Reuses the notification + email pipeline. Anti-spam: at most one manual
+ * reminder per 12h (REMINDER_TOO_SOON). Records last_reminder_at.
+ *
+ * @api-id API-BIL-18
+ */
+export async function sendInstallmentReminder(
+  actor: Actor,
+  installmentId: string,
+): Promise<void> {
+  can(actor, "billing", "edit");
+  await requireInstallmentOrg(actor, installmentId);
+
+  const installment = await findInstallmentById(installmentId);
+  if (!installment) throw new BillingError("INSTALLMENT_NOT_FOUND");
+  if (installment.status !== "pending" && installment.status !== "overdue") {
+    throw new BillingError("INSTALLMENT_NOT_PAYABLE");
+  }
+
+  // Anti-spam: no more than one manual reminder per 12h
+  if (installment.last_reminder_at) {
+    const elapsed = Date.now() - new Date(installment.last_reminder_at).getTime();
+    if (elapsed < 12 * 60 * 60 * 1000) throw new BillingError("REMINDER_TOO_SOON");
+  }
+
+  const caseId = await findInstallmentCaseId(installmentId);
+  if (!caseId) throw new BillingError("INSTALLMENT_NOT_FOUND");
+
+  const clientUserId = await findCaseClientUserId(caseId);
+  if (clientUserId) {
+    const overdue = installment.status === "overdue";
+    const templateKey = overdue ? "installment-overdue" : "installment-reminder-due";
+    const titleI18n = overdue
+      ? { en: "You have an overdue installment", es: "Tienes una cuota vencida" }
+      : { en: "Payment reminder", es: "Recordatorio de pago" };
+    const bodyI18n = overdue
+      ? {
+          en: `Installment #${installment.number} is overdue. Please make your payment.`,
+          es: `La cuota #${installment.number} está vencida. Por favor realiza tu pago.`,
+        }
+      : {
+          en: `Reminder: installment #${installment.number} is pending payment.`,
+          es: `Recordatorio: la cuota #${installment.number} está pendiente de pago.`,
+        };
+    const dedupeKey = `installment.manual_reminder:${installmentId}:${clientUserId}:${todayIso()}`;
+
+    const result = await insertNotificationIdempotent({
+      userId: clientUserId,
+      type: "installment.manual_reminder",
+      titleI18n,
+      bodyI18n,
+      icon: overdue ? "alert-circle" : "bell",
+      color: overdue ? "red" : "gold",
+      actionUrl: "/pagos",
+      dedupeKey,
+    });
+
+    // Always (re-)enqueue the email, even when the notification already existed
+    // (result.created=false). The job dedupeId `email:${notificationId}` makes QStash
+    // idempotent, so a retry after a crash between insert and enqueue still delivers (STRONG-3).
+    const notificationId = result.row.id;
+    const user = await findUserById(clientUserId);
+    if (user?.email && !user.emailBouncedAt) {
+      try {
+        await enqueueJob({
+          jobKey: "deliver-notification",
+          entityId: notificationId,
+          attempt: 1,
+          dedupeId: `email:${notificationId}`,
+          channel: "email",
+          notificationId,
+          templateKey,
+          recipientEmail: user.email,
+          locale: user.locale ?? "es",
+        });
+      } catch (err) {
+        logger.warn(
+          { err, notificationId },
+          "billing.sendInstallmentReminder: failed to enqueue email — continuing",
+        );
+      }
+    }
+  }
+
+  await updateInstallment(installmentId, { last_reminder_at: nowIso() });
+  await writeAudit(actor, "billing.reminder.sent", "installments", installmentId, {
+    after: { manual: true, status: installment.status },
+  });
 }
 
 // ---------------------------------------------------------------------------

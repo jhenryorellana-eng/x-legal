@@ -41,6 +41,7 @@ import { handleAiBudgetAggregation } from "@/backend/jobs/ai-budget-aggregation"
 import { handleJobFailed } from "@/backend/jobs/job-failed";
 import { handleRetryAbogadosPolling } from "@/backend/jobs/retry-abogados-polling";
 import { handleInstallmentReminders } from "@/backend/jobs/installment-reminders";
+import { handleSendCampaign } from "@/backend/jobs/send-campaign";
 
 // ---------------------------------------------------------------------------
 // Job registry — jobKey → handler
@@ -67,6 +68,8 @@ const JOB_REGISTRY: Record<string, JobHandler> = {
   "retry-abogados-polling": handleRetryAbogadosPolling,
   // F6-Ola2 billing cron (DOC-44 §3.9)
   "installment-reminders": handleInstallmentReminders,
+  // F6-Ola3 campaigns (DOC-26 §2.5)
+  "send-campaign": handleSendCampaign,
 };
 
 // Export for tests that need to verify registry contents

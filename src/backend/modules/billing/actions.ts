@@ -19,7 +19,14 @@ import { AuthzError } from "@/backend/platform/authz";
 import { logger } from "@/backend/platform/logger";
 import { BillingError } from "./service";
 import * as svc from "./service";
-import type { AccountStatementDto } from "./service";
+import type {
+  AccountStatementDto,
+  RecordLedgerEntryInput,
+  UpdateLedgerEntryInput,
+  ListLedgerInput,
+  LedgerEntryDto,
+  MonthlySummaryDto,
+} from "./service";
 
 export type ActionResult<T> =
   | { success: true; data: T }
@@ -133,6 +140,76 @@ export async function getAccountStatementAction(
     const actor = await requireActor();
     const result = await svc.getAccountStatement(actor, caseId);
     return ok(result);
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// F6-Ola3 — Contabilidad (API-BIL-11/12/15/16) + recordatorio manual (API-BIL-18)
+// ---------------------------------------------------------------------------
+
+/** API-BIL-11 — record a manual ledger entry (staff billing:edit). */
+export async function recordLedgerEntryAction(
+  input: RecordLedgerEntryInput,
+): Promise<ActionResult<{ id: string }>> {
+  try {
+    const actor = await requireActor();
+    const result = await svc.recordLedgerEntry(actor, input);
+    return ok(result);
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+/** API-BIL-12 — edit a manual ledger entry (staff billing:edit). */
+export async function updateLedgerEntryAction(
+  entryId: string,
+  input: UpdateLedgerEntryInput,
+): Promise<ActionResult<void>> {
+  try {
+    const actor = await requireActor();
+    await svc.updateLedgerEntry(actor, entryId, input);
+    return ok(undefined);
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+/** API-BIL-15 — list ledger entries (the libro) for the actor's org. */
+export async function listLedgerAction(
+  input: ListLedgerInput,
+): Promise<ActionResult<{ items: LedgerEntryDto[]; nextCursor: string | null }>> {
+  try {
+    const actor = await requireActor();
+    const result = await svc.listLedger(actor, input);
+    return ok(result);
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+/** API-BIL-16 — monthly income/expense/balance summary. */
+export async function getMonthlySummaryAction(
+  yearMonth: string,
+): Promise<ActionResult<MonthlySummaryDto>> {
+  try {
+    const actor = await requireActor();
+    const result = await svc.getMonthlySummary(actor, yearMonth);
+    return ok(result);
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+/** API-BIL-18 — send a manual payment reminder for an installment (P-55-1). */
+export async function sendInstallmentReminderAction(
+  installmentId: string,
+): Promise<ActionResult<void>> {
+  try {
+    const actor = await requireActor();
+    await svc.sendInstallmentReminder(actor, installmentId);
+    return ok(undefined);
   } catch (err) {
     return fail(err);
   }

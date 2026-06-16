@@ -14,7 +14,9 @@
 import {
   createCipheriv,
   createDecipheriv,
+  createHmac,
   randomBytes,
+  timingSafeEqual,
 } from "node:crypto";
 import { env } from "./env";
 
@@ -133,4 +135,61 @@ export function maskValue(value: string): string {
  */
 export function isAllowedPiiKey(key: string): key is PiiFieldKey {
   return (ALLOWED_PII_KEYS as readonly string[]).includes(key);
+}
+
+// ---------------------------------------------------------------------------
+// Campaign unsubscribe tokens (DOC-73 §3.2 — CAN-SPAM footer link)
+// ---------------------------------------------------------------------------
+
+/**
+ * Domain-separated sub-key for unsubscribe HMACs.
+ *
+ * Derived (HKDF-style) from the master key with a fixed info label so the
+ * unsubscribe HMAC NEVER exposes a timing oracle against the PII encryption key
+ * itself (BLOCKER-1). The two key domains stay independent; a future dedicated
+ * env secret can replace this derivation without changing call sites.
+ */
+let _unsubKey: Buffer | null = null;
+function getUnsubscribeKey(): Buffer {
+  if (!_unsubKey) {
+    _unsubKey = createHmac("sha256", getKey(env.ENCRYPTION_KEY))
+      .update("ulp:unsubscribe:v1")
+      .digest();
+  }
+  return _unsubKey;
+}
+
+/**
+ * Signs an HMAC-SHA256 unsubscribe token over `${campaignId}:${userId}` using a
+ * sub-key derived from ENCRYPTION_KEY. Stateless: no token table needed.
+ */
+export function signUnsubscribeToken(campaignId: string, userId: string): string {
+  return createHmac("sha256", getUnsubscribeKey())
+    .update(`${campaignId}:${userId}`)
+    .digest("hex");
+}
+
+/** Verifies an unsubscribe token in constant time. */
+export function verifyUnsubscribeToken(
+  campaignId: string,
+  userId: string,
+  token: string,
+): boolean {
+  const expected = signUnsubscribeToken(campaignId, userId);
+  let a: Buffer;
+  let b: Buffer;
+  try {
+    a = Buffer.from(expected, "hex");
+    b = Buffer.from(token, "hex");
+  } catch {
+    return false;
+  }
+  if (a.length !== b.length || a.length === 0) return false;
+  return timingSafeEqual(a, b);
+}
+
+/** Builds the absolute unsubscribe URL for a recipient of a campaign. */
+export function buildUnsubscribeUrl(campaignId: string, userId: string): string {
+  const token = signUnsubscribeToken(campaignId, userId);
+  return `${env.NEXT_PUBLIC_APP_URL}/api/unsubscribe?c=${campaignId}&u=${userId}&t=${token}`;
 }

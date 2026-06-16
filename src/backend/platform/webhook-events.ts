@@ -75,3 +75,21 @@ export async function markWebhookEventProcessed(
     .eq("source", source)
     .eq("idempotency_key", idempotencyKey);
 }
+
+/**
+ * Records a handler error on a claimed delivery WITHOUT marking it processed.
+ * Used by providers (e.g. Resend status events) where retrying a malformed
+ * status event is pointless — we persist the error and return 200.
+ */
+export async function markWebhookEventError(
+  source: string,
+  idempotencyKey: string,
+  errorMsg: string,
+): Promise<void> {
+  const client = createServiceClient();
+  await client
+    .from("webhook_events")
+    .update({ error: errorMsg, updated_at: new Date().toISOString() })
+    .eq("source", source)
+    .eq("idempotency_key", idempotencyKey);
+}

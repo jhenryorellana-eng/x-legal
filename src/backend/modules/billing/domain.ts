@@ -220,6 +220,60 @@ export function daysLate(
 }
 
 // ---------------------------------------------------------------------------
+// Ledger (Contabilidad) — pure validation + month helpers (DOC-44 §3.11)
+// ---------------------------------------------------------------------------
+
+export type LedgerKind = "income" | "expense";
+
+/**
+ * Validates a manual ledger entry's amount + category.
+ *
+ * Returns the violating error code, or null if valid. Service maps the code to
+ * a BillingError. Pure — no I/O.
+ *   - amountCents must be a positive integer → LEDGER_AMOUNT_INVALID
+ *   - category must be non-empty after trim → LEDGER_CATEGORY_REQUIRED
+ */
+export function validateLedgerEntry(input: {
+  amountCents: number;
+  category: string;
+}): "LEDGER_AMOUNT_INVALID" | "LEDGER_CATEGORY_REQUIRED" | null {
+  if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) {
+    return "LEDGER_AMOUNT_INVALID";
+  }
+  if (!input.category.trim()) {
+    return "LEDGER_CATEGORY_REQUIRED";
+  }
+  return null;
+}
+
+/**
+ * Returns the [start, end] ISO dates (inclusive) for a YYYY-MM month.
+ * Example: monthRange("2026-06") → { start: "2026-06-01", end: "2026-06-30" }.
+ */
+export function monthRange(yearMonth: string): { start: string; end: string } {
+  const [yStr, mStr] = yearMonth.split("-");
+  const year = parseInt(yStr, 10);
+  const month = parseInt(mStr, 10);
+  const lastDay = new Date(year, month, 0).getDate();
+  return {
+    start: `${yearMonth}-01`,
+    end: `${yearMonth}-${String(lastDay).padStart(2, "0")}`,
+  };
+}
+
+/** Returns the previous YYYY-MM month. Example: "2026-01" → "2025-12". */
+export function previousMonth(yearMonth: string): string {
+  const [yStr, mStr] = yearMonth.split("-");
+  let year = parseInt(yStr, 10);
+  let month = parseInt(mStr, 10) - 1;
+  if (month < 1) {
+    month = 12;
+    year -= 1;
+  }
+  return `${year}-${String(month).padStart(2, "0")}`;
+}
+
+// ---------------------------------------------------------------------------
 // addMonthsClamped
 // ---------------------------------------------------------------------------
 

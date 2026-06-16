@@ -48,6 +48,7 @@ import {
   updateKanbanColumnAction,
   reorderKanbanColumnsAction,
   deleteKanbanColumnAction,
+  remindInstallmentAction,
 } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -113,8 +114,8 @@ export default async function FinanzasPage() {
   let metrics: Awaited<ReturnType<typeof getCollectionMetrics>> | null = null;
 
   // Per-case hydration maps (reuse the billing/expediente collection reads).
-  const overdueByCase = new Map<string, { amountCents: number; daysLate: number }>();
-  const downpaymentByCase = new Map<string, number>();
+  const overdueByCase = new Map<string, { amountCents: number; daysLate: number; installmentId: string }>();
+  const downpaymentByCase = new Map<string, { amountCents: number; installmentId: string }>();
   const printByCase = new Map<string, { attemptNo: number; pageCount: number | null }>();
 
   const nowDate = new Date();
@@ -145,14 +146,14 @@ export default async function FinanzasPage() {
         const cur = overdueByCase.get(o.caseId);
         // Keep the most-overdue installment per case for the card line.
         if (!cur || o.daysLate > cur.daysLate) {
-          overdueByCase.set(o.caseId, { amountCents: o.amountCents, daysLate: o.daysLate });
+          overdueByCase.set(o.caseId, { amountCents: o.amountCents, daysLate: o.daysLate, installmentId: o.installmentId });
         }
       }
     }
     if (calendarRes.status === "fulfilled") {
       for (const i of calendarRes.value) {
         if (i.isDownpayment && (i.status === "pending" || i.status === "overdue" || i.status === "processing")) {
-          downpaymentByCase.set(i.caseId, i.amountCents);
+          downpaymentByCase.set(i.caseId, { amountCents: i.amountCents, installmentId: i.installmentId });
         }
       }
     }
@@ -226,17 +227,20 @@ export default async function FinanzasPage() {
       let daysLate = 0;
       let attemptNo = 1;
       let statusChip: string | null = null;
+      let reminderInstallmentId: string | null = null;
 
       if (cardKind === "initial") {
-        const amt = downpaymentByCase.get(card.ref_id);
-        collectionLine = t.raw("lineInitial").replace("{monto}", amt != null ? usd(amt) : "—");
+        const dp = downpaymentByCase.get(card.ref_id);
+        collectionLine = t.raw("lineInitial").replace("{monto}", dp != null ? usd(dp.amountCents) : "—");
         statusChip = t("chipPending");
+        reminderInstallmentId = dp?.installmentId ?? null;
       } else if (cardKind === "overdue") {
         const ov = overdueByCase.get(card.ref_id);
         daysLate = ov?.daysLate ?? 0;
         collectionLine = t.raw("lineOverdue")
           .replace("{monto}", ov ? usd(ov.amountCents) : "—")
           .replace("{n}", String(daysLate));
+        reminderInstallmentId = ov?.installmentId ?? null;
       } else if (cardKind === "print") {
         const pr = printByCase.get(card.ref_id);
         attemptNo = pr?.attemptNo ?? 1;
@@ -263,6 +267,7 @@ export default async function FinanzasPage() {
         pinnedNote: card.pinned_note ?? null,
         ageLabel,
         ageTier,
+        reminderInstallmentId,
       };
     });
 
@@ -359,6 +364,7 @@ export default async function FinanzasPage() {
         updateColumn: updateKanbanColumnAction,
         reorderColumns: reorderKanbanColumnsAction,
         deleteColumn: deleteKanbanColumnAction,
+        remindInstallment: remindInstallmentAction,
       }}
     />
   );
