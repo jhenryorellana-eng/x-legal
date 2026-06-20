@@ -85,9 +85,14 @@ vi.mock("@/backend/platform/logger", () => ({
 }));
 
 vi.mock("@/backend/platform/ratelimit", () => ({
-  limitOtpSendEmail: vi.fn().mockResolvedValue({ allowed: true }),
+  limitOtpSendPhone: vi.fn().mockResolvedValue({ allowed: true }),
   limitOtpSendIp: vi.fn().mockResolvedValue({ allowed: true }),
-  limitOtpVerifyEmail: vi.fn().mockResolvedValue({ allowed: true }),
+}));
+
+// platform/env — phone-login password derivation reads SUPABASE_SERVICE_ROLE_KEY
+vi.mock("@/backend/platform/env", () => ({
+  env: { SUPABASE_SERVICE_ROLE_KEY: "test-service-key" },
+  providerEnv: vi.fn(),
 }));
 
 vi.mock("@/backend/platform/resend", () => ({
@@ -120,7 +125,7 @@ vi.mock("../repository", async (importOriginal) => {
     insertClientRows: mockInsertClientRows,
     insertPersonRecord: vi.fn().mockResolvedValue("person-id-1"),
     insertCasePartyRow: vi.fn().mockResolvedValue(undefined),
-    checkClientEligibilityByEmail: vi.fn().mockResolvedValue({ eligible: false }),
+    checkClientEligibility: vi.fn().mockResolvedValue({ eligible: false }),
     checkClientEligibilityById: vi.fn().mockResolvedValue({ eligible: false }),
     countActiveStaff: vi.fn().mockResolvedValue(1),
     getStaffProfileById: vi.fn().mockResolvedValue(null),
@@ -138,6 +143,7 @@ vi.mock("../repository", async (importOriginal) => {
 // ---------------------------------------------------------------------------
 
 import { provisionClientUser } from "../service";
+import { derivePhonePassword } from "../domain";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -202,11 +208,14 @@ describe("provisionClientUser", () => {
 
     expect(result).toEqual({ userId: AUTH_USER.id, created: true });
 
-    // auth.admin.createUser called with email + email_confirm:true (no password)
+    // auth.admin.createUser called with email + email_confirm:true + the
+    // deterministic phone-login password (phone present).
     expect(mockCreateUser).toHaveBeenCalledWith(
       expect.objectContaining({
         email: "pedro@example.com",
         email_confirm: true,
+        phone: "+13055550002",
+        password: derivePhonePassword("+13055550002", "test-service-key"),
       }),
     );
     // Rows inserted with email as identity + phone as contact
@@ -272,6 +281,24 @@ describe("provisionClientUser", () => {
       expect.objectContaining({
         firstName: "Ana",
         lastName: "Maria de la Cruz",
+      }),
+    );
+  });
+
+  it("forwards the full US address to insertClientRows (prefills the I-589)", async () => {
+    mockFindClientByEmail.mockResolvedValue(null);
+    mockCreateUser.mockResolvedValue({ data: { user: AUTH_USER }, error: null });
+
+    await provisionClientUser(ACTOR, {
+      fullName: "Rosa Diaz",
+      email: "rosa@example.com",
+      phoneE164: "+13055550123",
+      address: { line1: "123 Main St", city: "Miami", state: "FL", zip: "33101", apartment: "4B" },
+    });
+
+    expect(mockInsertClientRows).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address: { line1: "123 Main St", city: "Miami", state: "FL", zip: "33101", apartment: "4B" },
       }),
     );
   });

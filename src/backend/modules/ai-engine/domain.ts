@@ -60,6 +60,34 @@ export function nextVersion(currentMax: number | null): number {
 // Config snapshot type (DOC-42 §3.1.1)
 // ---------------------------------------------------------------------------
 
+/**
+ * A configurable section of a long-form generation (generalizes v1's 17 asylum
+ * sections). Structurally identical to catalog's GenerationSection.
+ */
+export interface GenerationSectionSpec {
+  key: string;
+  heading: string;
+  min_words: number;
+  max_tokens: number;
+  guidance: string;
+  type: "doctrinal" | "narrative" | "analysis";
+}
+
+/**
+ * Default anti-invention guardrails (generic, adapted from v1's R1-R7). Injected
+ * into the system prompt when `rules_enabled` and no custom `rules_text`.
+ */
+export const DEFAULT_GENERATION_RULES = [
+  "ABSOLUTE RULES (do NOT violate):",
+  "R1. NEVER invent facts, dates, names, places or events about the client. Every concrete client fact must trace to the provided case context (form answers, extracted documents). Legal argument and general context may be developed at length; CLIENT FACTS may not be invented.",
+  "R2. NEVER promote the client's characterization (e.g. \"they took my money\" does not become \"extortion\"; \"they hit me\" does not become \"torture\") unless a section is explicitly arguing that characterization as legal argument, flagged as argument and not fact.",
+  "R3. NEVER invent quotations attributed to the client.",
+  "R4. Cite jurisprudence, statistics, news or sources ONLY from verified material (web_search results when enabled, or the provided reference dataset/context). NEVER fabricate a citation, holding, statistic or URL.",
+  "R5. Maintain a professional, clinical, authoritative tone appropriate to an elite legal filing.",
+  "R6. When a required client fact is missing, write a clear placeholder (e.g. \"[TO BE CONFIRMED]\") rather than inventing it.",
+  "R7. The reference dataset (if any) is style/argumentation guidance only — NEVER a source of facts for the current case.",
+].join("\n");
+
 export interface ConfigSnapshot {
   system_prompt: string;
   input_document_slugs: string[];
@@ -69,6 +97,15 @@ export interface ConfigSnapshot {
   max_output_tokens: number;
   output_format: "pdf" | "docx" | "md";
   output_language: "es" | "en" | "both";
+  // --- v1-grade engine (generic, configurable) ---
+  web_search_enabled?: boolean;
+  web_search_max_uses?: number;
+  research_instructions?: string | null;
+  research_model?: string | null;
+  sections?: GenerationSectionSpec[];
+  rules_enabled?: boolean;
+  rules_text?: string | null;
+  assembly?: { cover?: boolean; toc?: boolean; closing?: string | null } | null;
   resolved_inputs: {
     documents: Array<{
       slug: string;
@@ -441,8 +478,13 @@ export function assemblePrompt(
 ): PromptAssembly {
   const system: SystemBlock[] = [];
 
-  // system[0]: system prompt (stable)
-  system.push({ text: snapshot.system_prompt });
+  // system[0]: system prompt + anti-invention rules (stable). Rules default to
+  // DEFAULT_GENERATION_RULES unless the admin disabled them or supplied custom text.
+  const rulesBlock =
+    snapshot.rules_enabled === false
+      ? ""
+      : `\n\n${(snapshot.rules_text && snapshot.rules_text.trim()) || DEFAULT_GENERATION_RULES}`;
+  system.push({ text: snapshot.system_prompt + rulesBlock });
 
   // system[1]: dataset XML (stable) — carries cache_control
   let datasetInjection: PromptAssembly["datasetInjection"] = null;
@@ -721,4 +763,105 @@ export interface ExtractionResult {
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
+}
+
+// ---------------------------------------------------------------------------
+// Sectioned generation helpers (generic long-form engine — generalizes v1)
+// ---------------------------------------------------------------------------
+
+/** Native Anthropic web_search tool spec (jurisprudence / country-conditions research). */
+export function buildWebSearchTool(
+  maxUses: number,
+): { type: "web_search_20250305"; name: "web_search"; max_uses: number } {
+  return { type: "web_search_20250305", name: "web_search", max_uses: Math.max(1, Math.min(10, maxUses)) };
+}
+
+export function countWords(text: string): number {
+  const t = text.trim();
+  return t ? t.split(/\s+/).filter(Boolean).length : 0;
+}
+
+/** Last `n` words of a text — the "tail" handed to the next section for continuity. */
+export function lastWords(text: string, n: number): string {
+  const w = text.trim().split(/\s+/).filter(Boolean);
+  return w.slice(Math.max(0, w.length - n)).join(" ");
+}
+
+/**
+ * Builds the per-section user message: base case context + the section's heading,
+ * guidance and (optional) the previous section's tail for seamless continuity.
+ */
+export function buildSectionUserMessage(
+  baseUserContent: string,
+  section: GenerationSectionSpec,
+  prevTail: string,
+  researchInstructions?: string | null,
+): string {
+  const parts = [baseUserContent, "", `## SECTION TO WRITE NOW: ${section.heading}`];
+  if (section.guidance.trim()) parts.push(section.guidance.trim());
+  if (section.min_words > 0) parts.push(`Target at least ${section.min_words} words, developed in depth (no filler).`);
+  if (researchInstructions && researchInstructions.trim()) parts.push(`Research guidance: ${researchInstructions.trim()}`);
+  if (prevTail.trim()) {
+    parts.push(
+      "",
+      "<previous_section_tail>",
+      prevTail.trim(),
+      "</previous_section_tail>",
+      "Continue seamlessly from where the previous section ended; do NOT repeat it.",
+    );
+  }
+  parts.push("", "Output ONLY the markdown body of THIS section (no preamble, no other sections).");
+  return parts.join("\n");
+}
+
+/** Expansion-pass user message when a section came in below its word floor. */
+export function buildExpansionUserMessage(sectionUserContent: string, draft: string, floor: number): string {
+  return [
+    sectionUserContent,
+    "",
+    `Your previous draft was below the required depth (${floor}+ words). Rewrite it at FULL depth — expand the analysis and detail, do NOT pad with filler or repetition. Your draft to expand:`,
+    "",
+    draft,
+  ].join("\n");
+}
+
+/** Assembles section parts into one markdown document (optional TOC + closing). */
+export function assembleDocument(
+  sections: GenerationSectionSpec[],
+  parts: string[],
+  assembly?: { cover?: boolean; toc?: boolean; closing?: string | null } | null,
+): string {
+  const out: string[] = [];
+  if (assembly?.toc) {
+    out.push(["## Index", ...sections.map((s) => `- ${s.heading}`)].join("\n"), "");
+  }
+  out.push(parts.join("\n\n"));
+  if (assembly?.closing && assembly.closing.trim()) {
+    out.push("", "---", "", assembly.closing.trim());
+  }
+  return out.join("\n\n");
+}
+
+// ---------------------------------------------------------------------------
+// Form segmentation (AI propose) — pure helper: drop clearly-internal fields so
+// the model's OUTPUT budget is spent on real client questions (not signatures,
+// barcodes, office-use, etc.). Input size is not the bottleneck; output is.
+// ---------------------------------------------------------------------------
+
+/**
+ * Field names that are NEVER client-answerable (signatures, preparer/interpreter/
+ * attorney blocks, barcodes, page numbers, office-use). Dropped before proposing
+ * so the token budget is spent on real questions (the v1 curated-field-map spirit).
+ * Conservative on purpose — only clearly-internal terms, to avoid dropping real fields.
+ * Field names use underscores heavily (e.g. "Attorney_StateBar") and `_` is a word
+ * char, so `\b` is unreliable here — use plain substrings where safe.
+ */
+const INTERNAL_FIELD_RE =
+  /(signature|preparer|interpreter|attorney|g-?28|barcode|bar_code|pdf417|qrcode|page[\s_-]?(number|no\b)|uscis\s*use|official\s*use|notary|date\s*of\s*signature)/i;
+
+export function curateInternalFields<T extends { name: string }>(
+  fields: T[],
+): { kept: T[]; dropped: number } {
+  const kept = fields.filter((f) => !INTERNAL_FIELD_RE.test(f.name ?? ""));
+  return { kept, dropped: fields.length - kept.length };
 }

@@ -246,6 +246,48 @@ export async function detectAcroFields(bytes: Uint8Array): Promise<DetectedField
   return fields;
 }
 
+/**
+ * Extracts the printed text of a PDF, one labeled block per page. Used to GROUND
+ * the AI form-segmentation: the official form's labels (e.g. "Your Occupation",
+ * "Name and Address of Employer") let the model map otherwise-anonymous AcroForm
+ * field names (e.g. "TextField13[39]") to the right question. Best-effort.
+ */
+export async function extractPdfText(bytes: Uint8Array, maxCharsPerPage = 2400): Promise<string> {
+  const mupdf = await import("mupdf");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const doc = (mupdf.Document as any).openDocument(bytes, "application/pdf");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const n = (doc as any).countPages();
+  const out: string[] = [];
+  for (let i = 0; i < n; i++) {
+    let pageText = "";
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const page = (doc as any).loadPage(i);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const stext = (page as any).toStructuredText?.("preserve-whitespace");
+      if (stext) {
+        // mupdf StructuredText: prefer asText(); fall back to parsing asJSON().
+        if (typeof stext.asText === "function") {
+          pageText = String(stext.asText());
+        } else if (typeof stext.asJSON === "function") {
+          const json = JSON.parse(String(stext.asJSON())) as {
+            blocks?: Array<{ lines?: Array<{ text?: string; spans?: Array<{ text?: string }> }> }>;
+          };
+          pageText = (json.blocks ?? [])
+            .flatMap((b) => (b.lines ?? []).map((l) => l.text ?? (l.spans ?? []).map((s) => s.text ?? "").join("")))
+            .join(" ");
+        }
+      }
+    } catch {
+      /* best-effort per page */
+    }
+    pageText = pageText.replace(/\s+/g, " ").trim().slice(0, maxCharsPerPage);
+    if (pageText) out.push(`=== Page ${i + 1} ===\n${pageText}`);
+  }
+  return out.join("\n\n");
+}
+
 // ---------------------------------------------------------------------------
 // D. fillAcroForm
 //    Fill + flatten AcroForm fields using the XFA-safe recipe from the spike
@@ -338,6 +380,48 @@ export async function fillAcroForm(
 }
 
 // ---------------------------------------------------------------------------
+// D2. backfillNaTextFields — USCIS "no blank box" acceptance rule
+// ---------------------------------------------------------------------------
+
+/** Office-use / non-applicant field names that must NOT be auto-filled with "N/A". */
+const PDF_OFFICE_USE_RE =
+  /(signature|preparer|interpreter|attorney|g-?28|barcode|bar_code|pdf417|qrcode|page[\s_-]?(number|no\b)|uscis\s*use|official\s*use|for\s*eoir|notary|date\s*of\s*signature|received|remarks|action\s*block)/i;
+
+/**
+ * USCIS rejects a form that leaves ANY field blank, but the instructions allow
+ * "N/A"/"None" for inapplicable fields (8 CFR 1208.3(c)(3)). This writes a
+ * placeholder into every applicant TEXT field that is still empty — SCOPED to the
+ * pages this form actually covers (so a split form, e.g. I-589 Part A on pages 1-4,
+ * does not stamp "N/A" onto another form's pages). Office-use / signature fields and
+ * non-text widgets (checkboxes) are never touched. Mutates `filled` in place.
+ *
+ * @returns how many fields were back-filled.
+ */
+export function backfillNaTextFields(
+  detectedFields: Array<{ pdf_field_name: string; field_type: string; page: number }>,
+  filled: Record<string, string | boolean>,
+  formFieldNames: Iterable<string>,
+  placeholder = "N/A",
+): number {
+  const formFieldSet = new Set(formFieldNames);
+  // The form's page scope = the pages its mapped questions live on.
+  const formPages = new Set<number>();
+  for (const f of detectedFields) if (formFieldSet.has(f.pdf_field_name)) formPages.add(f.page);
+  if (formPages.size === 0) return 0;
+
+  let n = 0;
+  for (const f of detectedFields) {
+    if (!formPages.has(f.page)) continue;
+    if (f.field_type !== "text") continue; // checkboxes can't hold "N/A"
+    if (f.pdf_field_name in filled) continue; // already has a value (answer or a SELECT's ticked box)
+    if (PDF_OFFICE_USE_RE.test(f.pdf_field_name)) continue;
+    filled[f.pdf_field_name] = placeholder;
+    n++;
+  }
+  return n;
+}
+
+// ---------------------------------------------------------------------------
 // E. renderCoverPdf  — deterministic cover page (carátula) via mupdf html→pdf
 // ---------------------------------------------------------------------------
 
@@ -398,7 +482,7 @@ export async function renderCoverPdf(data: CoverData): Promise<Uint8Array> {
   const isDivider = data.style === "ulp-divider";
   const html = `<!DOCTYPE html><html><body style="font-family:Helvetica,Arial,sans-serif;margin:0;padding:0;color:${NAVY}">
     <div style="margin:96pt 72pt;border:2pt solid ${GOLD};padding:48pt 36pt;text-align:center">
-      <div style="font-size:11pt;letter-spacing:3pt;color:${GOLD};font-weight:bold">USALATINOPRIME</div>
+      <div style="font-size:11pt;letter-spacing:3pt;color:${GOLD};font-weight:bold">X LEGAL</div>
       <div style="height:${isDivider ? "8pt" : "36pt"}"></div>
       <div style="font-size:${isDivider ? "22pt" : "30pt"};font-weight:bold;letter-spacing:1pt">${esc(data.title)}</div>
       ${data.subtitle ? `<div style="font-size:14pt;color:${NAVY};margin-top:8pt">${esc(data.subtitle)}</div>` : ""}
@@ -480,7 +564,7 @@ export async function compileExpedientePdf(items: ExpedienteItemInput[]): Promis
     String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string));
   const buildTocHtml = (rows: Array<{ title: string; startPage: number }>) =>
     `<!DOCTYPE html><html><body style="font-family:Helvetica,Arial,sans-serif;margin:54pt 60pt;color:${NAVY}">
-      <div style="font-size:11pt;letter-spacing:3pt;color:${GOLD};font-weight:bold">USALATINOPRIME</div>
+      <div style="font-size:11pt;letter-spacing:3pt;color:${GOLD};font-weight:bold">X LEGAL</div>
       <div style="font-size:22pt;font-weight:bold;margin:6pt 0 4pt">Índice del expediente</div>
       <div style="border-top:2pt solid ${GOLD};margin-bottom:14pt"></div>
       <table style="width:100%;font-size:12pt;border-collapse:collapse">

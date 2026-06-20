@@ -25,9 +25,15 @@ export interface TopbarProps {
   messages: TopbarMessages;
   /** Bound logout server action. */
   onLogout: () => void;
+  /** Live notification bell (NotificationBell). Falls back to an inert bell. */
+  bellSlot?: React.ReactNode;
+  /** Opens the mobile nav drawer (≤860px). Renders a hamburger when provided. */
+  onMenuClick?: () => void;
+  /** Accessible label for the hamburger. */
+  menuLabel?: string;
 }
 
-export function Topbar({ messages, onLogout }: TopbarProps) {
+export function Topbar({ messages, onLogout, bellSlot, onMenuClick, menuLabel }: TopbarProps) {
   return (
     <header
       style={{
@@ -45,9 +51,38 @@ export function Topbar({ messages, onLogout }: TopbarProps) {
         borderBottom: "1px solid var(--line)",
       }}
     >
+      {/* Mobile nav toggle — hidden ≥861px via .staff-menu-btn */}
+      <button
+        type="button"
+        className="staff-menu-btn"
+        onClick={onMenuClick}
+        aria-label={menuLabel ?? "Menú"}
+        style={{
+          placeItems: "center",
+          width: 40,
+          height: 40,
+          borderRadius: 12,
+          border: "1px solid var(--line)",
+          background: "var(--panel, var(--card))",
+          color: "var(--ink-2)",
+          cursor: "pointer",
+          flexShrink: 0,
+        }}
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path
+            d="M4 7h16M4 12h16M4 17h16"
+            stroke="currentColor"
+            strokeWidth={2.2}
+            strokeLinecap="round"
+          />
+        </svg>
+      </button>
+
       {/* Global search (button styled as input — ⌘K palette lands later) */}
       <button
         type="button"
+        className="staff-topbar-search"
         style={{
           display: "flex",
           alignItems: "center",
@@ -97,27 +132,33 @@ export function Topbar({ messages, onLogout }: TopbarProps) {
 
       <div style={{ flex: 1 }} />
 
-      <ThemeToggle />
+      {/* Theme + text-size — hidden ≤860px (moved to Configuración) to avoid
+          topbar overflow / horizontal scroll on mobile. */}
+      <span className="staff-topbar-appearance" style={{ display: "inline-flex" }}>
+        <ThemeToggle />
+      </span>
 
-      {/* Notifications */}
-      <button
-        type="button"
-        aria-label={messages.notificationsLabel}
-        style={{
-          position: "relative",
-          display: "inline-grid",
-          placeItems: "center",
-          width: 40,
-          height: 40,
-          borderRadius: 999,
-          border: "1px solid var(--line)",
-          background: "var(--panel, var(--card))",
-          color: "var(--ink-2)",
-          cursor: "pointer",
-        }}
-      >
-        <Icon name="bell" size={20} color="currentColor" />
-      </button>
+      {/* Notifications — live bell (NotificationBell) or an inert fallback. */}
+      {bellSlot ?? (
+        <button
+          type="button"
+          aria-label={messages.notificationsLabel}
+          style={{
+            position: "relative",
+            display: "inline-grid",
+            placeItems: "center",
+            width: 40,
+            height: 40,
+            borderRadius: 999,
+            border: "1px solid var(--line)",
+            background: "var(--panel, var(--card))",
+            color: "var(--ink-2)",
+            cursor: "pointer",
+          }}
+        >
+          <Icon name="bell" size={20} color="currentColor" />
+        </button>
+      )}
 
       {/* User chip + logout */}
       <div
@@ -130,6 +171,7 @@ export function Topbar({ messages, onLogout }: TopbarProps) {
         }}
       >
         <div
+          className="staff-topbar-userinfo"
           style={{
             display: "flex",
             flexDirection: "column",

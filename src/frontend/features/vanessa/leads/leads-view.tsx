@@ -13,6 +13,7 @@
  */
 
 import * as React from "react";
+import { getBridge } from "@/frontend/platform-bridge";
 import { MSym } from "../shared/msym";
 import { Chip, sourceMeta } from "../shared/ui";
 import { LexBubble } from "../shared/lex";
@@ -289,11 +290,11 @@ export function LeadsView({
                       </div>
                       <div className="kcard-foot">
                         <button type="button" className="kmini" title={strings.call} aria-label={`${strings.call} ${c.name ?? c.phone}`}
-                          onClick={(e) => { e.stopPropagation(); window.open(`tel:${c.phone}`, "_self"); }}>
+                          onClick={(e) => { e.stopPropagation(); getBridge().share.openExternal(`tel:${c.phone}`); }}>
                           <MSym name="call" size={15} />
                         </button>
                         <button type="button" className="kmini" title={strings.whatsapp} aria-label={`${strings.whatsapp} ${c.name ?? c.phone}`}
-                          onClick={(e) => { e.stopPropagation(); window.open(`https://wa.me/${c.phone.replace(/[^\d]/g, "")}`, "_blank"); }}>
+                          onClick={(e) => { e.stopPropagation(); getBridge().share.openExternal(`https://wa.me/${c.phone.replace(/[^\d]/g, "")}`); }}>
                           <MSym name="chat" size={15} />
                         </button>
                         <button type="button" className="kmini" title={strings.createCaseTooltip} aria-label={strings.createCaseTooltip}

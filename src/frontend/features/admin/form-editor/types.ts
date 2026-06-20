@@ -8,6 +8,7 @@
  */
 
 import type { I18nValue } from "../shared/i18n-field";
+import type { QuestionCondition } from "@/shared/form-logic/conditions";
 
 export type QuestionSource =
   | "client_answer"
@@ -42,6 +43,8 @@ export interface QuestionVM {
   is_required: boolean;
   position: number;
   validation: Record<string, unknown> | null;
+  /** Conditional visibility (show/lock/require depending on another answer). */
+  condition?: QuestionCondition | null;
   /** True while the question came from an AI proposal and has not been confirmed/edited. */
   proposed?: boolean;
 }
@@ -84,6 +87,15 @@ export interface FormEditorVM {
   datasets: { id: string; name: string; tokens: number; active: boolean }[];
 }
 
+export interface GenerationSectionVM {
+  key: string;
+  heading: string;
+  min_words: number;
+  max_tokens: number;
+  guidance: string;
+  type: "doctrinal" | "narrative" | "analysis";
+}
+
 export interface GenerationConfigVM {
   system_prompt: string;
   input_document_slugs: string[];
@@ -93,6 +105,14 @@ export interface GenerationConfigVM {
   max_output_tokens: number;
   output_format: "pdf" | "docx" | "md";
   output_language: "es" | "en" | "both";
+  // --- v1-grade engine (generic, configurable) ---
+  web_search_enabled: boolean;
+  web_search_max_uses: number;
+  research_instructions: string | null;
+  research_model: string | null;
+  sections: GenerationSectionVM[];
+  rules_enabled: boolean;
+  rules_text: string | null;
 }
 
 /* Injected action shapes (structurally identical to the app server actions). */
@@ -100,7 +120,7 @@ type Res<T> = { success: boolean; data?: T; error?: { code: string; message: str
 
 export interface FormEditorActions {
   createUploadUrl: (input: { form_definition_id: string; filename: string }) => Promise<Res<{ signedUrl: string; path: string }>>;
-  createVersion: (input: { form_definition_id: string; uploaded_pdf_path: string }) => Promise<Res<unknown>>;
+  createVersion: (input: { form_definition_id: string; uploaded_pdf_path: string; source_language?: "en" | "es" }) => Promise<Res<unknown>>;
   redetect: (versionId: string) => Promise<Res<unknown>>;
   getPdfUrl: (versionId: string) => Promise<Res<string | null>>;
   aiPropose: (input: { version_id: string; group_id?: string; mode: "replace" | "merge" }) => Promise<Res<{ groups: number; questions: number }>>;
@@ -111,6 +131,8 @@ export interface FormEditorActions {
   generateTestPdf: (input: { version_id: string; sample_answers: Record<string, unknown> }) => Promise<Res<{ pdfBase64: string; gaps: Array<{ question_id: string; pdf_field_name: string }> }>>;
   publish: (input: { version_id: string; acknowledge_unmapped?: boolean }) => Promise<Res<{ ok: boolean; issues: Array<{ code: string; severity: "blocking" | "warning"; detail: string }> }>>;
   unpublish: (versionId: string) => Promise<Res<unknown>>;
+  /** Duplicate an immutable version into a fresh editable draft (copies questions). */
+  duplicateVersion: (versionId: string) => Promise<Res<{ id: string }>>;
   saveGenerationConfig: (input: Record<string, unknown>) => Promise<Res<unknown>>;
   testGeneration: (input: { form_definition_id: string; case_id: string; party_id?: string }) => Promise<Res<{ run_id: string }>>;
 }

@@ -1044,6 +1044,16 @@ export async function createLeadCategory(
   return cat;
 }
 
+/**
+ * Lists the org's active lead categories (for the Nuevo-lead modal's chips).
+ * Their real UUIDs are what `createLead` stores in `leads.category_id`.
+ * @throws AuthzError('wrong_kind') if `actor` is not a staff actor.
+ */
+export async function listLeadCategories(actor: Actor): Promise<CategoryRow[]> {
+  can(actor, "leads", "view");
+  return repo.listLeadCategories(actor.orgId);
+}
+
 // ---------------------------------------------------------------------------
 // API-LEAD-08: expressServiceInterest (public/client CTA)
 // ---------------------------------------------------------------------------

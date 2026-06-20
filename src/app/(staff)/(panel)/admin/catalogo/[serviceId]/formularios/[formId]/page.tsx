@@ -30,6 +30,7 @@ import {
   generateTestPdfUi,
   publishVersionUi,
   unpublishVersionUi,
+  duplicateVersionUi,
   updateGenerationConfigUi,
   testGenerationUi,
 } from "./actions";
@@ -70,6 +71,7 @@ export default async function FormEditorPage({
     generateTestPdf: generateTestPdfUi,
     publish: publishVersionUi,
     unpublish: unpublishVersionUi,
+    duplicateVersion: duplicateVersionUi,
     saveGenerationConfig: updateGenerationConfigUi,
     testGeneration: testGenerationUi,
   };

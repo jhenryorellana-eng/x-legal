@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => {
     deleteQuestionGroup: vi.fn(),
     upsertQuestionGroup: vi.fn(),
     upsertQuestion: vi.fn(),
+    updateQuestionCondition: vi.fn(),
     findGenerationConfig: vi.fn(),
     findDataset: vi.fn(),
     findDatasetItem: vi.fn(),
@@ -130,6 +131,7 @@ vi.mock("../repository", () => ({
   deleteQuestionGroup: mocks.repo.deleteQuestionGroup,
   upsertQuestionGroup: mocks.repo.upsertQuestionGroup,
   upsertQuestion: mocks.repo.upsertQuestion,
+  updateQuestionCondition: mocks.repo.updateQuestionCondition,
   findGenerationConfig: mocks.repo.findGenerationConfig,
   findDataset: mocks.repo.findDataset,
   findDatasetItem: mocks.repo.findDatasetItem,
@@ -149,6 +151,7 @@ vi.mock("@/backend/platform/supabase", () => ({
 vi.mock("@/backend/platform/pdf", () => ({
   detectAcroFields: mocks.detectAcroFields,
   fillAcroForm: mocks.fillAcroForm,
+  backfillNaTextFields: () => 0,
 }));
 
 vi.mock("@/backend/platform/anthropic", () => ({
@@ -493,6 +496,113 @@ describe("aiProposeStructure", () => {
     expect(mocks.aiEngine.proposeFormSegmentation).toHaveBeenCalledOnce();
     expect(mocks.repo.upsertQuestionGroup).toHaveBeenCalledOnce();
     expect(mocks.repo.upsertQuestion).toHaveBeenCalledTimes(2);
+  });
+
+  it("resolves AI-proposed conditions by key → question id (Sí/No → explanation)", async () => {
+    mocks.repo.findVersionById.mockResolvedValue({ ...makeDraftVersion(), detected_fields: [{ pdf_field_name: "X", field_type: "text", page: 1 }] });
+    mocks.aiEngine.proposeFormSegmentation.mockResolvedValue({
+      groups: [
+        {
+          title_i18n: { es: "G", en: "G" },
+          position: 0,
+          questions: [
+            {
+              key: "has_kids",
+              question_i18n: { es: "¿Tienes hijos?", en: "Do you have children?" },
+              field_type: "select",
+              options: [
+                { value: "si", label_i18n: { es: "Sí", en: "Yes" } },
+                { value: "no", label_i18n: { es: "No", en: "No" } },
+              ],
+              is_required: true,
+              position: 0,
+            },
+            {
+              key: "kids_detail",
+              question_i18n: { es: "Cuéntanos sobre tus hijos", en: "Tell us about your children" },
+              field_type: "textarea",
+              is_required: true,
+              position: 1,
+              condition: { when: { question: "has_kids", op: "equals", value: "si" }, action: "show" },
+            },
+          ],
+        },
+      ],
+    });
+    mocks.repo.listQuestionGroups.mockResolvedValue([]);
+    mocks.repo.upsertQuestionGroup.mockResolvedValue({ id: "group-id-1", automation_version_id: "version-id-111", title_i18n: {}, position: 0 });
+    mocks.repo.upsertQuestion
+      .mockResolvedValueOnce({ id: "id-has-kids" })
+      .mockResolvedValueOnce({ id: "id-kids-detail" });
+
+    const result = await aiProposeStructure(makeActor(), { version_id: "version-id-111", mode: "replace" });
+
+    expect(result).toEqual({ groups: 1, questions: 2 });
+    // The condition on q2 referenced q1 by KEY → resolved to q1's real id and persisted on q2.
+    expect(mocks.repo.updateQuestionCondition).toHaveBeenCalledOnce();
+    expect(mocks.repo.updateQuestionCondition).toHaveBeenCalledWith("id-kids-detail", {
+      when: { question: "id-has-kids", op: "equals", value: "si" },
+      action: "show",
+      lock_message_i18n: null,
+    });
+  });
+
+  it("drops an AI condition whose key reference is unknown (fail-safe)", async () => {
+    mocks.repo.findVersionById.mockResolvedValue({ ...makeDraftVersion(), detected_fields: [{ pdf_field_name: "X", field_type: "text", page: 1 }] });
+    mocks.aiEngine.proposeFormSegmentation.mockResolvedValue({
+      groups: [
+        {
+          title_i18n: { es: "G", en: "G" },
+          position: 0,
+          questions: [
+            {
+              key: "lonely",
+              question_i18n: { es: "Detalle", en: "Detail" },
+              field_type: "textarea",
+              is_required: true,
+              position: 0,
+              condition: { when: { question: "does_not_exist", op: "equals", value: "si" }, action: "show" },
+            },
+          ],
+        },
+      ],
+    });
+    mocks.repo.listQuestionGroups.mockResolvedValue([]);
+    mocks.repo.upsertQuestionGroup.mockResolvedValue({ id: "g", automation_version_id: "version-id-111", title_i18n: {}, position: 0 });
+    mocks.repo.upsertQuestion.mockResolvedValue({ id: "q" });
+
+    await aiProposeStructure(makeActor(), { version_id: "version-id-111", mode: "replace" });
+
+    expect(mocks.repo.updateQuestionCondition).not.toHaveBeenCalled();
+  });
+
+  it("drops a self-referential condition (a field gated on its own value)", async () => {
+    mocks.repo.findVersionById.mockResolvedValue({ ...makeDraftVersion(), detected_fields: [{ pdf_field_name: "X", field_type: "text", page: 1 }] });
+    mocks.aiEngine.proposeFormSegmentation.mockResolvedValue({
+      groups: [
+        {
+          title_i18n: { es: "G", en: "G" },
+          position: 0,
+          questions: [
+            {
+              key: "self",
+              question_i18n: { es: "Detalle", en: "Detail" },
+              field_type: "textarea",
+              is_required: true,
+              position: 0,
+              condition: { when: { question: "self", op: "equals", value: "si" }, action: "show" }, // references itself
+            },
+          ],
+        },
+      ],
+    });
+    mocks.repo.listQuestionGroups.mockResolvedValue([]);
+    mocks.repo.upsertQuestionGroup.mockResolvedValue({ id: "g", automation_version_id: "version-id-111", title_i18n: {}, position: 0 });
+    mocks.repo.upsertQuestion.mockResolvedValue({ id: "q-self" });
+
+    await aiProposeStructure(makeActor(), { version_id: "version-id-111", mode: "replace" });
+
+    expect(mocks.repo.updateQuestionCondition).not.toHaveBeenCalled();
   });
 
   it("materializes rich fields safely (options, help, profile whitelist, validation, pdf mapping)", async () => {

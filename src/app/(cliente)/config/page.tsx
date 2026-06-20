@@ -9,8 +9,17 @@
 import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
-import { signOutAction } from "@/backend/modules/identity/actions";
-import { ConfigScreen } from "@/frontend/features/cliente/config/config-screen";
+import { signOutAction, setUserLocaleAction } from "@/backend/modules/identity/actions";
+import { getPreferences } from "@/backend/modules/notifications";
+import {
+  updatePreferencesAction,
+  registerPushSubscriptionAction,
+  removePushSubscriptionAction,
+} from "@/backend/modules/notifications/actions";
+import {
+  ConfigScreen,
+  type ConfigPrefs,
+} from "@/frontend/features/cliente/config/config-screen";
 
 export default async function ConfigPage() {
   const actor = await getActor();
@@ -18,6 +27,7 @@ export default async function ConfigPage() {
 
   const locale = (await getLocale()) as "es" | "en";
   const t = await getTranslations("cliente.config");
+  const prefs = await getPreferences(actor);
 
   async function onSignOut() {
     "use server";
@@ -25,10 +35,28 @@ export default async function ConfigPage() {
     redirect("/welcome");
   }
 
+  async function onUpdatePrefs(patch: Partial<ConfigPrefs>) {
+    "use server";
+    await updatePreferencesAction(patch);
+  }
+
   return (
     <ConfigScreen
       initialLocale={locale}
       signOut={onSignOut}
+      setLocale={setUserLocaleAction}
+      initialPrefs={{
+        messages: prefs.messages,
+        appointment_reminders: prefs.appointment_reminders,
+        payment_reminders: prefs.payment_reminders,
+        case_updates: prefs.case_updates,
+      }}
+      updatePrefs={onUpdatePrefs}
+      push={{
+        vapidPublicKey: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
+        registerAction: registerPushSubscriptionAction,
+        removeAction: removePushSubscriptionAction,
+      }}
       labels={{
         backCases: t("backCases"),
         title: t("title"),
@@ -43,6 +71,10 @@ export default async function ConfigPage() {
         notifMeetings: t("notifMeetings"),
         notifPayments: t("notifPayments"),
         notifUpdates: t("notifUpdates"),
+        notifPush: t("notifPush"),
+        notifPushAlert: t("notifPushAlert"),
+        notifPushUnsupported: t("notifPushUnsupported"),
+        notifPushDenied: t("notifPushDenied"),
         myAccount: t("myAccount"),
         myDetails: t("myDetails"),
         myDetailsSub: t("myDetailsSub"),

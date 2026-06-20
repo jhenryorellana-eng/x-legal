@@ -17,6 +17,16 @@ const mockFindCaseClientMembers = vi.hoisted(() => vi.fn());
 const mockFindCaseAssignedStaff = vi.hoisted(() => vi.fn());
 const mockFindUserById = vi.hoisted(() => vi.fn());
 const mockEnqueueJob = vi.hoisted(() => vi.fn());
+const mockGetPreferences = vi.hoisted(() => vi.fn());
+const mockFindUnreadMessageDigest = vi.hoisted(() => vi.fn());
+const mockBumpMessageDigest = vi.hoisted(() => vi.fn());
+const ALL_TRUE_PREFS = vi.hoisted(() => ({
+  messages: true,
+  appointment_reminders: true,
+  payment_reminders: true,
+  case_updates: true,
+  channels: { inapp: true, push: true, email: true },
+}));
 
 vi.mock("@/backend/platform/supabase", () => ({
   createServiceClient: vi.fn(),
@@ -29,9 +39,16 @@ vi.mock("../repository.js", () => ({
   findCaseClientMembers: mockFindCaseClientMembers,
   findCaseAssignedStaff: mockFindCaseAssignedStaff,
   findUserById: mockFindUserById,
+  getPreferences: mockGetPreferences,
+  upsertPreferences: vi.fn().mockResolvedValue(undefined),
+  findUnreadMessageDigest: mockFindUnreadMessageDigest,
+  bumpMessageDigest: mockBumpMessageDigest,
+  markAllNotificationsRead: vi.fn().mockResolvedValue(undefined),
+  getUnreadCountForUser: vi.fn().mockResolvedValue(0),
   listNotificationsForUser: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
   markNotificationRead: vi.fn().mockResolvedValue(undefined),
   findNotificationById: vi.fn().mockResolvedValue(null),
+  DEFAULT_PREFERENCES: ALL_TRUE_PREFS,
 }));
 
 vi.mock("@/backend/platform/qstash", () => ({
@@ -65,6 +82,11 @@ const NOTIFICATION_ID = "00000000-0000-0000-0000-000000000099";
 
 beforeEach(() => {
   vi.clearAllMocks();
+
+  // Default: all preference categories + channels ON (matches the all-true defaults)
+  mockGetPreferences.mockResolvedValue(ALL_TRUE_PREFS);
+  mockFindUnreadMessageDigest.mockResolvedValue(null);
+  mockBumpMessageDigest.mockResolvedValue(undefined);
 
   // Default: notification is newly created
   mockInsertNotificationIdempotent.mockResolvedValue({
@@ -375,5 +397,123 @@ describe("notifyFromEvent('downpayment.confirmed')", () => {
         payload.recipientEmail === `${CLIENT_USER_ID}@example.com`,
     );
     expect(clientWelcomeJobs).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F7-Ola7b — preference gating (categories + channels)
+// ---------------------------------------------------------------------------
+
+describe("notifyFromEvent — preference gating (F7-Ola7b)", () => {
+  it("category OFF suppresses a suppressible rule entirely (no in-app row)", async () => {
+    mockGetPreferences.mockResolvedValue({ ...ALL_TRUE_PREFS, payment_reminders: false });
+    await notifyFromEvent({
+      type: "installment.overdue",
+      payload: { caseId: CASE_ID, installmentId: "inst-9" },
+      occurredAt: new Date(),
+    });
+    expect(mockInsertNotificationIdempotent).not.toHaveBeenCalled();
+  });
+
+  it("category ON inserts in-app but channel OFF skips push", async () => {
+    mockGetPreferences.mockResolvedValue({
+      ...ALL_TRUE_PREFS,
+      channels: { inapp: true, push: false, email: true },
+    });
+    await notifyFromEvent({
+      type: "installment.overdue",
+      payload: { caseId: CASE_ID, installmentId: "inst-9" },
+      occurredAt: new Date(),
+    });
+    // in-app row still created for the client
+    const clientInserts = mockInsertNotificationIdempotent.mock.calls.filter(
+      ([i]) => i.userId === CLIENT_USER_ID,
+    );
+    expect(clientInserts.length).toBeGreaterThanOrEqual(1);
+    // but NO push job enqueued (channel off)
+    const pushJobs = mockEnqueueJob.mock.calls.filter(([p]) => p.channel === "push");
+    expect(pushJobs).toHaveLength(0);
+  });
+
+  it("unsuppressible rule ignores category AND channel prefs (welcome email)", async () => {
+    mockGetPreferences.mockResolvedValue({
+      ...ALL_TRUE_PREFS,
+      case_updates: false,
+      channels: { inapp: true, push: false, email: false },
+    });
+    mockFindUserById.mockResolvedValue({
+      id: CLIENT_USER_ID,
+      email: "client@example.com",
+      emailBouncedAt: null,
+      locale: "es",
+      kind: "client",
+    });
+    await notifyFromEvent({
+      type: "downpayment.confirmed",
+      payload: { caseId: CASE_ID },
+      occurredAt: new Date(),
+    });
+    const welcome = mockEnqueueJob.mock.calls.find(
+      ([p]) => p.channel === "email" && p.templateKey === "downpayment-confirmed",
+    );
+    expect(welcome).toBeDefined(); // ◆ sent despite both prefs off
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F7-Ola7b — message.sent anti-burst (DOC-47 §4.2 / §5.2)
+// ---------------------------------------------------------------------------
+
+describe("notifyFromEvent — message.sent anti-burst (F7-Ola7b)", () => {
+  const burst = {
+    type: "message.sent" as const,
+    payload: {
+      messageId: "msg-1",
+      conversationId: "conv-1",
+      caseId: CASE_ID,
+      senderUserId: SALES_USER_ID,
+      recipientIds: [CLIENT_USER_ID],
+    },
+    occurredAt: new Date(),
+  };
+
+  it("first message creates a message.received row + push with 5s grace", async () => {
+    mockFindUnreadMessageDigest.mockResolvedValue(null);
+    await notifyFromEvent(burst);
+
+    const inserts = mockInsertNotificationIdempotent.mock.calls.filter(
+      ([i]) => i.type === "message.received" && i.userId === CLIENT_USER_ID,
+    );
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0][0].dedupeKey).toBe(`message.sent:msg-1:${CLIENT_USER_ID}`);
+
+    const pushJob = mockEnqueueJob.mock.calls.find(([p]) => p.channel === "push");
+    expect(pushJob).toBeDefined();
+    expect(pushJob![1]).toMatchObject({ delay: 5 }); // grace period
+    expect(mockBumpMessageDigest).not.toHaveBeenCalled();
+  });
+
+  it("second message within window bumps the digest — no new row, no push", async () => {
+    mockFindUnreadMessageDigest.mockResolvedValue({
+      id: "notif-1",
+      created_at: new Date().toISOString(),
+      body_i18n: { es: "Nuevo mensaje", en: "New message" },
+    });
+    await notifyFromEvent(burst);
+
+    expect(mockBumpMessageDigest).toHaveBeenCalledTimes(1);
+    const inserts = mockInsertNotificationIdempotent.mock.calls.filter(
+      ([i]) => i.type === "message.received",
+    );
+    expect(inserts).toHaveLength(0);
+    const pushJob = mockEnqueueJob.mock.calls.find(([p]) => p.channel === "push");
+    expect(pushJob).toBeUndefined();
+  });
+
+  it("messages category OFF suppresses chat notifications entirely", async () => {
+    mockGetPreferences.mockResolvedValue({ ...ALL_TRUE_PREFS, messages: false });
+    await notifyFromEvent(burst);
+    expect(mockInsertNotificationIdempotent).not.toHaveBeenCalled();
+    expect(mockBumpMessageDigest).not.toHaveBeenCalled();
   });
 });

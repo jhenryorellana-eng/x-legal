@@ -93,6 +93,42 @@ describe("validateGroup + firstInvalidGroupIndex", () => {
     expect(firstInvalidGroupIndex(groups, { a: "x", b: "" })).toBe(1);
     expect(firstInvalidGroupIndex(groups, { a: "x", b: "y" })).toBe(-1);
   });
+
+  it("skips a required field hidden by its condition (show)", () => {
+    // explanation is required, but only visible when yn === 'si'
+    const questions = [
+      q({ id: "yn", fieldType: "select", options: [{ value: "si", labelI18n: { en: "Yes", es: "Sí" } }, { value: "no", labelI18n: { en: "No", es: "No" } }] }),
+      q({
+        id: "explanation",
+        isRequired: true,
+        fieldType: "textarea",
+        condition: { when: { question: "yn", op: "equals", value: "si" }, action: "show" },
+      }),
+    ];
+    // yn = no → explanation hidden → group valid even though it's empty
+    expect(validateGroup(questions, { yn: "no", explanation: "" }).ok).toBe(true);
+    // yn = si → explanation visible + required + empty → invalid
+    const res = validateGroup(questions, { yn: "si", explanation: "" });
+    expect(res.ok).toBe(false);
+    expect(res.errors).toEqual({ explanation: "required" });
+    // yn = si + filled → valid
+    expect(validateGroup(questions, { yn: "si", explanation: "porque..." }).ok).toBe(true);
+  });
+
+  it("does not require a field locked off by its condition (lock)", () => {
+    const questions = [
+      q({ id: "yn", fieldType: "select" }),
+      q({
+        id: "detail",
+        isRequired: true,
+        condition: { when: { question: "yn", op: "equals", value: "si" }, action: "lock" },
+      }),
+    ];
+    // locked (yn !== si) → not required
+    expect(validateGroup(questions, { yn: "no", detail: "" }).ok).toBe(true);
+    // unlocked + empty required → invalid
+    expect(validateGroup(questions, { yn: "si", detail: "" }).ok).toBe(false);
+  });
 });
 
 describe("buildQuestionSchema (Zod generation, DOC-50 §6.2)", () => {

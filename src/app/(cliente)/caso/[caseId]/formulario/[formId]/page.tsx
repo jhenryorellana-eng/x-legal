@@ -26,6 +26,7 @@ import { resolveWizardLabels } from "@/frontend/features/form-wizard";
 import { FormularioScreen } from "@/frontend/features/cliente/formulario/formulario-screen";
 import { EmptyCase } from "@/frontend/features/cliente/shared/empty-case";
 import { saveDraftAction, submitFormAction } from "./actions";
+import { translateAnswersAction } from "./translate-actions";
 
 export default async function FormularioPage({
   params,
@@ -82,6 +83,7 @@ export default async function FormularioPage({
       labels={labels}
       saveDraft={saveDraftAction}
       submitForm={submitFormAction}
+      translateAnswers={translateAnswersAction}
       exitHref={`/caso/${caseId}/camino`}
     />
   );

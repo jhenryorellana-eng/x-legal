@@ -7,6 +7,7 @@ import type {
   FieldType,
 } from "./types";
 import type { I18nValue } from "../shared/i18n-field";
+import { parseConditionOrNull } from "@/shared/form-logic/conditions";
 
 /**
  * buildFormEditorVM — pure mapper from the catalog module-pub FormEditorData
@@ -72,6 +73,7 @@ export function buildFormEditorVM(data: RawFormEditorData, datasets: RawDataset[
     is_required: (q.is_required as boolean) ?? true,
     position: (q.position as number) ?? 0,
     validation: (q.validation as Record<string, unknown> | null) ?? null,
+    condition: parseConditionOrNull(q.condition),
   });
 
   const groups: QuestionGroupVM[] = (data.openVersion?.groups ?? []).map((g) => ({
@@ -112,6 +114,13 @@ export function buildFormEditorVM(data: RawFormEditorData, datasets: RawDataset[
           max_output_tokens: (cfg.max_output_tokens as number) ?? 32000,
           output_format: (cfg.output_format as "pdf" | "docx" | "md") ?? "pdf",
           output_language: (cfg.output_language as "es" | "en" | "both") ?? "en",
+          web_search_enabled: (cfg.web_search_enabled as boolean) ?? false,
+          web_search_max_uses: (cfg.web_search_max_uses as number) ?? 5,
+          research_instructions: (cfg.research_instructions as string | null) ?? null,
+          research_model: (cfg.research_model as string | null) ?? null,
+          sections: (cfg.sections as import("./types").GenerationSectionVM[]) ?? [],
+          rules_enabled: (cfg.rules_enabled as boolean) ?? true,
+          rules_text: (cfg.rules_text as string | null) ?? null,
         }
       : null,
     datasets: datasets.map((d) => ({ id: d.id, name: d.name, tokens: d.total_tokens, active: d.is_active })),

@@ -13,6 +13,23 @@ import {
   type TextScale,
   type Theme,
 } from "@/frontend/lib/theme";
+import { usePushNotifications } from "@/frontend/features/notifications/use-push-notifications";
+import type { BrowserPushSubscription } from "@/frontend/features/notifications/push-helpers";
+
+type AR = { success: true } | { success: false; error: { code: string; message: string } };
+
+export interface ConfigPrefs {
+  messages: boolean;
+  appointment_reminders: boolean;
+  payment_reminders: boolean;
+  case_updates: boolean;
+}
+
+export interface ConfigPushProps {
+  vapidPublicKey: string | undefined;
+  registerAction: (input: BrowserPushSubscription & { platform?: string }) => Promise<AR>;
+  removeAction: (endpoint: string) => Promise<AR>;
+}
 
 /**
  * ConfigScreen — `/config` · nivel CUENTA (DOC-51 §11, prototype `screens4.jsx →
@@ -38,6 +55,10 @@ export interface ConfigLabels {
   notifMeetings: string;
   notifPayments: string;
   notifUpdates: string;
+  notifPush: string;
+  notifPushAlert: string;
+  notifPushUnsupported: string;
+  notifPushDenied: string;
   myAccount: string;
   myDetails: string;
   myDetailsSub: string;
@@ -111,21 +132,65 @@ export function ConfigScreen({
   initialLocale,
   signOut,
   labels,
+  initialPrefs,
+  updatePrefs,
+  push,
+  setLocale,
 }: {
   initialLocale: "es" | "en";
   signOut: () => Promise<void>;
   labels: ConfigLabels;
+  initialPrefs: ConfigPrefs;
+  /** Persists a single category toggle (DOC-47 §5.3 updatePreferences). */
+  updatePrefs: (patch: Partial<ConfigPrefs>) => Promise<void>;
+  push: ConfigPushProps;
+  /** Persists the UI language to users.locale + ulp-locale cookie (DOC-24 i18n). */
+  setLocale: (locale: "es" | "en") => Promise<{ ok: boolean }>;
 }) {
   const [theme, setTheme] = React.useState<Theme>("light");
   const [scale, setScale] = React.useState<TextScale>("md");
   const [lang, setLang] = React.useState<"es" | "en">(initialLocale);
   const [notif, setNotif] = React.useState({
-    msg: true,
-    cita: true,
-    pago: true,
-    avance: true,
+    msg: initialPrefs.messages,
+    cita: initialPrefs.appointment_reminders,
+    pago: initialPrefs.payment_reminders,
+    avance: initialPrefs.case_updates,
   });
   const dark = theme === "dark";
+
+  // Web Push device subscription (DOC-24). The toggle requests permission +
+  // subscribes; logout unsubscribes (handled in handleSignOut below).
+  const pushState = usePushNotifications({
+    vapidPublicKey: push.vapidPublicKey,
+    registerAction: push.registerAction,
+    removeAction: push.removeAction,
+  });
+
+  // Map a category toggle → its preference key + persist.
+  const PREF_KEY: Record<"msg" | "cita" | "pago" | "avance", keyof ConfigPrefs> = {
+    msg: "messages",
+    cita: "appointment_reminders",
+    pago: "payment_reminders",
+    avance: "case_updates",
+  };
+  function toggleNotif(k: "msg" | "cita" | "pago" | "avance") {
+    const next = !notif[k];
+    setNotif((n) => ({ ...n, [k]: next }));
+    void updatePrefs({ [PREF_KEY[k]]: next });
+  }
+
+  async function handleSignOut() {
+    // Deassociate this device's push subscription before ending the session.
+    try { await pushState.unsubscribe(); } catch { /* best-effort */ }
+    // DOC-24 §2.7 — purge runtime caches that may hold case data (the static
+    // app-shell precache is kept; it carries no session data).
+    try {
+      if (typeof caches !== "undefined") {
+        await Promise.all(["api-v1", "pages"].map((n) => caches.delete(n)));
+      }
+    } catch { /* best-effort */ }
+    await signOut();
+  }
 
   React.useEffect(() => {
     setTheme(getStoredTheme());
@@ -140,12 +205,12 @@ export function ConfigScreen({
     applyTextScale(next);
     setScale(next);
   };
-  const onLang = (next: "es" | "en") => {
+  const onLang = async (next: "es" | "en") => {
     if (next === lang) return;
-    // Persist the locale (next-intl "without routing" reads ulp-locale cookie),
-    // then reload so SSR re-renders in the new language.
-    document.cookie = `ulp-locale=${next}; path=/; max-age=31536000; samesite=lax`;
     setLang(next);
+    // Persist users.locale (BD, source of truth for emails/push) + the ulp-locale
+    // cookie server-side, then reload so SSR re-renders in the new language.
+    await setLocale(next);
     window.location.reload();
   };
 
@@ -153,7 +218,7 @@ export function ConfigScreen({
     <div
       style={{
         minHeight: "100dvh",
-        padding: "54px 20px 120px",
+        padding: "54px 20px var(--screen-pb)",
         background:
           "radial-gradient(135% 95% at 100% -8%, var(--blue-soft) 0%, transparent 46%), radial-gradient(120% 80% at -12% 4%, color-mix(in srgb, var(--gold-soft) 80%, transparent) 0%, transparent 42%), var(--bg)",
       }}
@@ -185,17 +250,15 @@ export function ConfigScreen({
       {/* Appearance */}
       <Section>{labels.appearance}</Section>
       <Card style={{ padding: 6, marginBottom: 14 }}>
-        <button
-          type="button"
-          onClick={() => onTheme(dark ? "light" : "dark")}
+        {/* Row is a div (not a button) so the inner Switch button is not nested
+            inside another button — avoids the hydration error. The Switch is the
+            single interactive control, matching the notification rows below. */}
+        <div
           style={{
             width: "100%",
             display: "flex",
             alignItems: "center",
             gap: 14,
-            background: "none",
-            border: "none",
-            cursor: "pointer",
             padding: "14px 12px",
           }}
         >
@@ -229,7 +292,7 @@ export function ConfigScreen({
             </div>
           </div>
           <Switch on={dark} onClick={() => onTheme(dark ? "light" : "dark")} />
-        </button>
+        </div>
       </Card>
 
       {/* Text size */}
@@ -336,12 +399,40 @@ export function ConfigScreen({
             <span style={{ flex: 1, fontSize: 16, color: "var(--navy)", fontWeight: 600 }}>
               {r.label}
             </span>
-            <Switch
-              on={notif[r.k]}
-              onClick={() => setNotif((n) => ({ ...n, [r.k]: !n[r.k] }))}
-            />
+            <Switch on={notif[r.k]} onClick={() => toggleNotif(r.k)} />
           </div>
         ))}
+        {/* Web Push device subscription (DOC-24). */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            padding: "14px 0",
+            borderTop: "1px solid var(--line)",
+          }}
+        >
+          <span style={{ flex: 1 }}>
+            <span style={{ display: "block", fontSize: 16, color: "var(--navy)", fontWeight: 600 }}>
+              {labels.notifPush}
+            </span>
+            <span style={{ display: "block", fontSize: 12.5, color: "var(--ink-2)", marginTop: 1 }}>
+              {pushState.status === "unsupported"
+                ? labels.notifPushUnsupported
+                : pushState.status === "denied"
+                ? labels.notifPushDenied
+                : labels.notifPushAlert}
+            </span>
+          </span>
+          <Switch
+            on={pushState.subscribed}
+            onClick={() => {
+              if (pushState.busy || pushState.status === "unsupported" || pushState.status === "denied") return;
+              if (pushState.subscribed) void pushState.unsubscribe();
+              else void pushState.subscribe();
+            }}
+          />
+        </div>
       </Card>
 
       {/* My account */}
@@ -403,7 +494,7 @@ export function ConfigScreen({
 
       <button
         type="button"
-        onClick={() => signOut()}
+        onClick={() => handleSignOut()}
         className="mp-tap"
         style={{
           width: "100%",

@@ -52,7 +52,11 @@ export function Modal({
           className="anim-fade-in"
         />
         <DialogPrimitive.Content
-          className="anim-bubin"
+          // `surface-staff`: the dialog portals to <body>, escaping the staff
+          // shell's `.surface-staff` scope, so its component classes (.vfield,
+          // .cat-chip, .vbtn …) would otherwise render unstyled. `anim-modal-pop`
+          // keeps the centering transform (plain `anim-bubin` de-centered it).
+          className="surface-staff anim-modal-pop"
           style={{
             position: "fixed",
             top: "50%",

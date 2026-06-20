@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon } from "@/frontend/components/brand/icon";
 import { Avatar } from "@/frontend/components/brand/avatar";
+import { Logo } from "@/frontend/components/brand/logo";
 
 /**
  * Sidebar — staff navigation rail (DOC-01 §5.3, DOC-53 §0.2).
@@ -44,6 +45,8 @@ export interface SidebarProps {
   user: SidebarUser;
   /** Footer — logout control (rendered by the layout; needs the action). */
   footerSlot?: React.ReactNode;
+  /** Drawer open state on mobile (≤860px); ignored on desktop (always visible). */
+  open?: boolean;
 }
 
 /** Active when the pathname equals the href or is a sub-route of it. */
@@ -52,11 +55,31 @@ function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(href + "/");
 }
 
-export function Sidebar({ panelLabel, groups, user, footerSlot }: SidebarProps) {
+export function Sidebar({ panelLabel, groups, user, footerSlot, open }: SidebarProps) {
   const pathname = usePathname() ?? "";
+
+  // Resolve a SINGLE active item. Two nav entries can legitimately share an href
+  // (e.g. "Calendario" in Operación and "Citas" in Ventas both → /ventas/citas);
+  // matching per-item would light BOTH. Pick the most specific match (longest
+  // href); on an exact tie the later entry wins, so the group that "owns" the
+  // URL (Ventas "Citas") lights rather than the cross-linked alias.
+  let activeGi = -1;
+  let activeIi = -1;
+  let bestLen = -1;
+  groups.forEach((group, gi) => {
+    group.items.forEach((item, ii) => {
+      if (isActive(pathname, item.href) && item.href.length >= bestLen) {
+        bestLen = item.href.length;
+        activeGi = gi;
+        activeIi = ii;
+      }
+    });
+  });
 
   return (
     <aside
+      className="staff-sidebar"
+      data-open={open ? "true" : "false"}
       style={{
         width: "var(--sb-w)",
         flexShrink: 0,
@@ -78,39 +101,7 @@ export function Sidebar({ panelLabel, groups, user, footerSlot }: SidebarProps) 
           padding: "18px 18px 14px",
         }}
       >
-        <span
-          aria-hidden="true"
-          style={{
-            position: "relative",
-            width: 38,
-            height: 38,
-            borderRadius: 11,
-            display: "grid",
-            placeItems: "center",
-            background:
-              "linear-gradient(135deg, var(--brand-navy), var(--accent))",
-            color: "#fff",
-            fontFamily: "var(--font-title)",
-            fontWeight: 900,
-            fontSize: 18,
-            boxShadow:
-              "0 6px 18px color-mix(in srgb, var(--accent) 35%, transparent)",
-            overflow: "hidden",
-            flexShrink: 0,
-          }}
-        >
-          U
-          <span
-            aria-hidden="true"
-            className="anim-sheen"
-            style={{
-              position: "absolute",
-              inset: 0,
-              background:
-                "linear-gradient(120deg, transparent 40%, rgba(255,255,255,0.5) 50%, transparent 60%)",
-            }}
-          />
-        </span>
+        <Logo size={38} elevated />
         <div style={{ minWidth: 0 }}>
           <div
             style={{
@@ -122,8 +113,8 @@ export function Sidebar({ panelLabel, groups, user, footerSlot }: SidebarProps) 
               lineHeight: 1.1,
             }}
           >
-            USALATINO
-            <span style={{ color: "var(--gold-deep)" }}>PRIME</span>
+            X{" "}
+            <span style={{ color: "var(--accent)" }}>LEGAL</span>
           </div>
           <div
             style={{
@@ -149,7 +140,7 @@ export function Sidebar({ panelLabel, groups, user, footerSlot }: SidebarProps) 
           padding: "4px 12px 12px",
         }}
       >
-        {groups.map((group) => (
+        {groups.map((group, gi) => (
           <div key={group.label} style={{ marginTop: 14 }}>
             <div
               style={{
@@ -164,8 +155,8 @@ export function Sidebar({ panelLabel, groups, user, footerSlot }: SidebarProps) 
               {group.label}
             </div>
             <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-              {group.items.map((item) => {
-                const active = isActive(pathname, item.href);
+              {group.items.map((item, ii) => {
+                const active = gi === activeGi && ii === activeIi;
                 return (
                   <li key={item.href}>
                     <Link

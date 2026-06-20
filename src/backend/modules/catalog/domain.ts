@@ -9,6 +9,11 @@
 
 import { z } from "zod";
 import { GENERATION_MODELS } from "@/shared/constants/ai-models";
+import { ConditionSchema } from "@/shared/form-logic/conditions";
+import {
+  PARTY_ROLE_KEYS,
+  PARTY_ROLE_CARDINALITIES,
+} from "@/shared/constants/party-roles";
 
 // ---------------------------------------------------------------------------
 // Primitive schemas
@@ -194,6 +199,36 @@ export const PhaseAppointmentPolicySchema = z.object({
 export type PhaseAppointmentPolicy = z.infer<typeof PhaseAppointmentPolicySchema>;
 
 // ---------------------------------------------------------------------------
+// Service Party Role — the ADDITIONAL case parties a service declares
+// (besides the implicit applicant). DOC-41. role_key mirrors the
+// case_parties.party_role CHECK; cardinality single|multiple.
+// ---------------------------------------------------------------------------
+
+const PartyRoleKeySchema = z.enum(PARTY_ROLE_KEYS);
+const PartyRoleCardinalitySchema = z.enum(PARTY_ROLE_CARDINALITIES);
+
+export const ServicePartyRoleSchema = z.object({
+  id: z.string().uuid(),
+  service_id: z.string().uuid(),
+  role_key: PartyRoleKeySchema,
+  label_i18n: I18nTextDraftSchema,
+  cardinality: PartyRoleCardinalitySchema.default("single"),
+  is_required: z.boolean().default(false),
+  position: z.number().int().default(0),
+});
+export type ServicePartyRole = z.infer<typeof ServicePartyRoleSchema>;
+
+export const UpsertServicePartyRoleDtoSchema = z.object({
+  service_id: z.string().uuid(),
+  role_key: PartyRoleKeySchema,
+  label_i18n: I18nTextDraftSchema,
+  cardinality: PartyRoleCardinalitySchema.default("single"),
+  is_required: z.boolean().default(false),
+  position: z.number().int().default(0),
+});
+export type UpsertServicePartyRoleDto = z.infer<typeof UpsertServicePartyRoleDtoSchema>;
+
+// ---------------------------------------------------------------------------
 // Required Document Type
 // ---------------------------------------------------------------------------
 
@@ -269,11 +304,16 @@ export const DetectedFieldSchema = z.object({
 });
 export type DetectedField = z.infer<typeof DetectedFieldSchema>;
 
+export const FormLanguageSchema = z.enum(["en", "es"]);
+export type FormLanguage = z.infer<typeof FormLanguageSchema>;
+
 export const AutomationVersionSchema = z.object({
   id: z.string().uuid(),
   form_definition_id: z.string().uuid(),
   version: z.number().int().min(1),
   source_pdf_path: z.string(),
+  /** Language of the official PDF/AcroForm. Drives client-answer translation. */
+  source_language: FormLanguageSchema.default("en"),
   detected_fields: z.array(DetectedFieldSchema).default([]),
   status: VersionStatusSchema.default("draft"),
   published_at: z.string().datetime().nullable(),
@@ -316,7 +356,16 @@ export const QuestionSchema = z.object({
   help_i18n: I18nTextDraftSchema.nullable(),
   field_type: FieldTypeSchema,
   options: z
-    .array(z.object({ value: z.string(), label_i18n: I18nTextDraftSchema }))
+    .array(
+      z.object({
+        value: z.string(),
+        label_i18n: I18nTextDraftSchema,
+        // For a SELECT mapped to a GROUP of checkboxes (Sex Male/Female, Marital
+        // Single/Married/…, a Yes/No pair), the chosen option marks THIS AcroForm
+        // checkbox. null/absent = the question fills its own pdf_field_name.
+        pdf_field_name: z.string().nullable().optional(),
+      }),
+    )
     .nullable(),
   pdf_field_name: z.string().nullable(),
   source: QuestionSourceSchema.default("client_answer"),
@@ -324,12 +373,37 @@ export const QuestionSchema = z.object({
   is_required: z.boolean().default(true),
   position: z.number().int(),
   validation: z.record(z.string(), z.unknown()).nullable(),
+  // Conditional/dynamic visibility (show/lock/require depending on another
+  // answer). NULL = unconditional. See src/shared/form-logic/conditions.ts.
+  condition: ConditionSchema.nullable().default(null),
 });
 export type Question = z.infer<typeof QuestionSchema>;
 
 // ---------------------------------------------------------------------------
 // Generation Config (ai_letter)
 // ---------------------------------------------------------------------------
+
+/**
+ * A configurable section of a long-form generation (generalizes v1's 17 asylum
+ * memorandum sections). The engine generates each section in order, enforcing
+ * `min_words` (one expansion pass if below), then assembles them.
+ */
+export const GenerationSectionSchema = z.object({
+  key: z.string().min(1),
+  heading: z.string().min(1),
+  min_words: z.number().int().min(0).max(20000).default(0),
+  max_tokens: z.number().int().min(256).max(16000).default(4000),
+  guidance: z.string().default(""),
+  type: z.enum(["doctrinal", "narrative", "analysis"]).default("analysis"),
+});
+export type GenerationSection = z.infer<typeof GenerationSectionSchema>;
+
+export const GenerationAssemblySchema = z.object({
+  cover: z.boolean().default(false),
+  toc: z.boolean().default(false),
+  closing: z.string().nullable().optional(),
+});
+export type GenerationAssembly = z.infer<typeof GenerationAssemblySchema>;
 
 export const GenerationConfigSchema = z.object({
   form_definition_id: z.string().uuid(),
@@ -341,6 +415,15 @@ export const GenerationConfigSchema = z.object({
   max_output_tokens: z.number().int().min(1024).max(64000).default(32000),
   output_format: z.enum(["pdf", "docx", "md"]).default("pdf"),
   output_language: z.enum(["es", "en", "both"]).default("en"),
+  // --- v1-grade engine (generic, configurable) ---
+  web_search_enabled: z.boolean().default(false),
+  web_search_max_uses: z.number().int().min(1).max(10).default(5),
+  research_instructions: z.string().nullable().optional(),
+  research_model: z.enum(GENERATION_MODELS).nullable().optional(),
+  sections: z.array(GenerationSectionSchema).default([]),
+  rules_enabled: z.boolean().default(true),
+  rules_text: z.string().nullable().optional(),
+  assembly: GenerationAssemblySchema.nullable().optional(),
 });
 export type GenerationConfig = z.infer<typeof GenerationConfigSchema>;
 

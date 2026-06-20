@@ -486,10 +486,38 @@ function TextareaField(props: FieldProps & { showDictation?: boolean }) {
   );
 }
 
+// --- locked note ------------------------------------------------------------
+
+/** Shown under a field locked by a condition (action='lock', condition unmet). */
+function LockNote({ message }: { message: string }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 7,
+        marginTop: 9,
+        color: "var(--ink-3)",
+        fontSize: 13.5,
+        fontWeight: 600,
+        lineHeight: 1.35,
+      }}
+    >
+      <Icon name="info" size={16} color="var(--ink-3)" />
+      {message}
+    </div>
+  );
+}
+
 // --- dispatcher -------------------------------------------------------------
 
-/** Renders a single question: prefill chip + the right control + inline error. */
-export function WizardField(props: FieldProps & { showDictation?: boolean }) {
+/** Renders a single question: prefill chip + the right control + inline error.
+ *  When `disabled` (a condition with action='lock' that is not met), the control
+ *  is wrapped in a native `<fieldset disabled>` so every descendant control is
+ *  inert, and the optional `lockMessage` explains why. */
+export function WizardField(
+  props: FieldProps & { showDictation?: boolean; disabled?: boolean; lockMessage?: string | null },
+) {
   const { question } = props;
   const edited = question.isPrefilled && !props.showPrefill;
 
@@ -518,7 +546,14 @@ export function WizardField(props: FieldProps & { showDictation?: boolean }) {
   return (
     <div>
       <PrefillChip question={question} edited={edited} labels={props.labels} />
-      {control}
+      <fieldset
+        disabled={props.disabled}
+        aria-disabled={props.disabled || undefined}
+        style={{ border: 0, padding: 0, margin: 0, minInlineSize: 0, opacity: props.disabled ? 0.55 : 1 }}
+      >
+        {control}
+      </fieldset>
+      {props.disabled && props.lockMessage ? <LockNote message={props.lockMessage} /> : null}
       <FieldError error={props.error} labels={props.labels} />
     </div>
   );

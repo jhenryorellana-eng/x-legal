@@ -23,7 +23,7 @@ export interface TabConfig {
 }
 
 export interface BuildTabsInput {
-  labels: { resumen: string; documentos: string; partes: string };
+  labels: { resumen: string; documentos: string; partes: string; mensajes: string };
   documentsToReview: number;
 }
 
@@ -36,5 +36,6 @@ export function buildTabs(input: BuildTabsInput): TabConfig[] {
       badge: input.documentsToReview,
     },
     { id: "partes", label: input.labels.partes },
+    { id: "mensajes", label: input.labels.mensajes },
   ];
 }

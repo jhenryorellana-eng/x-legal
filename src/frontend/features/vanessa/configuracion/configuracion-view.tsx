@@ -13,7 +13,13 @@ import * as React from "react";
 import { MSym } from "../shared/msym";
 import { Chip } from "../shared/ui";
 import { Switch } from "@/frontend/components/desktop";
-import { applyTheme, getStoredTheme } from "@/frontend/lib/theme";
+import {
+  applyTheme,
+  getStoredTheme,
+  applyTextScale,
+  getStoredTextScale,
+  type TextScale,
+} from "@/frontend/lib/theme";
 import { useLexPrefs } from "../shared/lex-prefs";
 import { useToast } from "../shared/toast-bridge";
 
@@ -30,6 +36,7 @@ export interface ConfigStrings {
   appearance: string;
   darkMode: string;
   darkModeSub: string;
+  textSize: string;
   accent: string;
   lexTitle: string;
   lexBubbles: string;
@@ -53,11 +60,13 @@ export interface ConfiguracionViewProps {
 export function ConfiguracionView({ strings, locale, actions }: ConfiguracionViewProps) {
   const toast = useToast();
   const [dark, setDark] = React.useState(false);
+  const [scale, setScale] = React.useState<TextScale>("md");
   const [accent, setAccent] = React.useState(ACCENTS[0]);
   const { bubbles, setBubbles } = useLexPrefs();
 
   React.useEffect(() => {
     setDark(getStoredTheme() === "dark");
+    setScale(getStoredTextScale());
     try {
       const a = localStorage.getItem("ulp-accent");
       if (a) setAccent(a);
@@ -70,6 +79,11 @@ export function ConfiguracionView({ strings, locale, actions }: ConfiguracionVie
     const next = !dark;
     setDark(next);
     applyTheme(next ? "dark" : "light");
+  };
+
+  const pickScale = (s: TextScale) => {
+    setScale(s);
+    applyTextScale(s);
   };
 
   const pickAccent = (a: string) => {
@@ -149,6 +163,34 @@ export function ConfiguracionView({ strings, locale, actions }: ConfiguracionVie
                   boxShadow: accent === a ? "0 0 0 3px var(--ink)" : "none",
                 }}
               />
+            ))}
+          </div>
+        </div>
+        <div style={{ paddingTop: 16, marginTop: 16, borderTop: "1px solid var(--line-2)" }}>
+          <div style={{ fontWeight: 800, fontSize: 13.5, color: "var(--ink)", marginBottom: 12 }}>{strings.textSize}</div>
+          <div style={{ display: "inline-flex", background: "var(--card-alt)", borderRadius: 999, padding: 3, gap: 2 }}>
+            {(["sm", "md", "lg"] as const).map((s, i) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => pickScale(s)}
+                aria-pressed={scale === s}
+                aria-label={`${strings.textSize} ${["A−", "A", "A+"][i]}`}
+                style={{
+                  minWidth: 44,
+                  height: 32,
+                  borderRadius: 999,
+                  border: "none",
+                  cursor: "pointer",
+                  background: scale === s ? "var(--accent)" : "transparent",
+                  color: scale === s ? "var(--on-accent)" : "var(--ink-2)",
+                  fontFamily: "var(--font-title)",
+                  fontWeight: 800,
+                  fontSize: 13,
+                }}
+              >
+                {["A−", "A", "A+"][i]}
+              </button>
             ))}
           </div>
         </div>

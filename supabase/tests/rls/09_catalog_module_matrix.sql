@@ -55,19 +55,19 @@ create extension if not exists pgtap with schema extensions;
 select plan(13);
 
 -- ── UUIDs ────────────────────────────────────────────────────────────────────
-\set org_id          '''f9000000-0000-0000-0000-000000i00100'''
-\set staff_nocat     '''f9000000-0000-0000-0000-000000i00200'''
-\set staff_viewcat   '''f9000000-0000-0000-0000-000000i00300'''
-\set staff_editcat   '''f9000000-0000-0000-0000-000000i00400'''
-\set staff_admin     '''f9000000-0000-0000-0000-000000i00500'''
-\set staff_revoke    '''f9000000-0000-0000-0000-000000i00600'''
-\set client_id       '''f9000000-0000-0000-0000-000000i00700'''
-\set svc_active      '''f9000000-0000-0000-0000-000000i00800'''
-\set svc_draft       '''f9000000-0000-0000-0000-000000i00900'''
-\set svc_plan_id     '''f9000000-0000-0000-0000-000000i00a00'''
-\set phase_id        '''f9000000-0000-0000-0000-000000i00b00'''
-\set case_id         '''f9000000-0000-0000-0000-000000i00c00'''
-\set dataset_id      '''f9000000-0000-0000-0000-000000i00d00'''
+\set org_id          '''f9000000-0000-0000-0000-000000e00100'''
+\set staff_nocat     '''f9000000-0000-0000-0000-000000e00200'''
+\set staff_viewcat   '''f9000000-0000-0000-0000-000000e00300'''
+\set staff_editcat   '''f9000000-0000-0000-0000-000000e00400'''
+\set staff_admin     '''f9000000-0000-0000-0000-000000e00500'''
+\set staff_revoke    '''f9000000-0000-0000-0000-000000e00600'''
+\set client_id       '''f9000000-0000-0000-0000-000000e00700'''
+\set svc_active      '''f9000000-0000-0000-0000-000000e00800'''
+\set svc_draft       '''f9000000-0000-0000-0000-000000e00900'''
+\set svc_plan_id     '''f9000000-0000-0000-0000-000000e00a00'''
+\set phase_id        '''f9000000-0000-0000-0000-000000e00b00'''
+\set case_id         '''f9000000-0000-0000-0000-000000e00c00'''
+\set dataset_id      '''f9000000-0000-0000-0000-000000e00d00'''
 
 -- ── Fixtures (postgres = bypass RLS) ─────────────────────────────────────────
 
@@ -153,9 +153,9 @@ values (:dataset_id::uuid, :org_id::uuid, 'Dataset T9', 'manual', true, :staff_a
 -- ── (a) Staff with NO catalog row ────────────────────────────────────────────
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object(
-  'sub',       'f9000000-0000-0000-0000-000000i00200',
+  'sub',       'f9000000-0000-0000-0000-000000e00200',
   'role',      'authenticated',
-  'org_id',    'f9000000-0000-0000-0000-000000i00100',
+  'org_id',    'f9000000-0000-0000-0000-000000e00100',
   'user_kind', 'staff',
   'user_role', 'paralegal'
 )::text, true);
@@ -177,7 +177,7 @@ select results_eq(
 select throws_ok(
   $$ insert into public.services (org_id, slug, category, label_i18n, is_active)
      values (
-       'f9000000-0000-0000-0000-000000i00100'::uuid,
+       'f9000000-0000-0000-0000-000000e00100'::uuid,
        'blocked-insert-t9', 'migratorio',
        '{"es":"Bloqueado","en":"Blocked"}'::jsonb,
        false
@@ -191,9 +191,9 @@ select throws_ok(
 set local role postgres;
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object(
-  'sub',       'f9000000-0000-0000-0000-000000i00300',
+  'sub',       'f9000000-0000-0000-0000-000000e00300',
   'role',      'authenticated',
-  'org_id',    'f9000000-0000-0000-0000-000000i00100',
+  'org_id',    'f9000000-0000-0000-0000-000000e00100',
   'user_kind', 'staff',
   'user_role', 'paralegal'
 )::text, true);
@@ -209,7 +209,7 @@ select results_eq(
 select throws_ok(
   $$ insert into public.services (org_id, slug, category, label_i18n, is_active)
      values (
-       'f9000000-0000-0000-0000-000000i00100'::uuid,
+       'f9000000-0000-0000-0000-000000e00100'::uuid,
        'view-only-insert-t9', 'migratorio',
        '{"es":"ViewOnly","en":"ViewOnly"}'::jsonb,
        false
@@ -223,9 +223,9 @@ select throws_ok(
 set local role postgres;
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object(
-  'sub',       'f9000000-0000-0000-0000-000000i00400',
+  'sub',       'f9000000-0000-0000-0000-000000e00400',
   'role',      'authenticated',
-  'org_id',    'f9000000-0000-0000-0000-000000i00100',
+  'org_id',    'f9000000-0000-0000-0000-000000e00100',
   'user_kind', 'staff',
   'user_role', 'paralegal'
 )::text, true);
@@ -241,7 +241,7 @@ select results_eq(
 select lives_ok(
   $$ insert into public.services (org_id, slug, category, label_i18n, is_active)
      values (
-       'f9000000-0000-0000-0000-000000i00100'::uuid,
+       'f9000000-0000-0000-0000-000000e00100'::uuid,
        'edit-inserted-t9', 'migratorio',
        '{"es":"Insertado","en":"Inserted"}'::jsonb,
        false
@@ -253,9 +253,9 @@ select lives_ok(
 set local role postgres;
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object(
-  'sub',       'f9000000-0000-0000-0000-000000i00500',
+  'sub',       'f9000000-0000-0000-0000-000000e00500',
   'role',      'authenticated',
-  'org_id',    'f9000000-0000-0000-0000-000000i00100',
+  'org_id',    'f9000000-0000-0000-0000-000000e00100',
   'user_kind', 'staff',
   'user_role', 'admin'
 )::text, true);
@@ -271,9 +271,9 @@ select results_eq(
 select lives_ok(
   $$ insert into public.ai_datasets (org_id, name, source_kind, is_active, created_by)
      values (
-       'f9000000-0000-0000-0000-000000i00100'::uuid,
+       'f9000000-0000-0000-0000-000000e00100'::uuid,
        'Admin Inserted Dataset', 'manual', true,
-       'f9000000-0000-0000-0000-000000i00500'::uuid
+       'f9000000-0000-0000-0000-000000e00500'::uuid
      ) $$,
   'T12h: admin can INSERT ai_datasets without datasets module row (bypass)'
 );
@@ -300,9 +300,9 @@ select results_eq(
 set local role postgres;
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object(
-  'sub',       'f9000000-0000-0000-0000-000000i00600',
+  'sub',       'f9000000-0000-0000-0000-000000e00600',
   'role',      'authenticated',
-  'org_id',    'f9000000-0000-0000-0000-000000i00100',
+  'org_id',    'f9000000-0000-0000-0000-000000e00100',
   'user_kind', 'staff',
   'user_role', 'paralegal'
 )::text, true);
@@ -317,7 +317,7 @@ select results_eq(
 -- Step 2: reset to postgres and DELETE the module row
 set local role postgres;
 delete from public.employee_module_permissions
- where staff_id  = 'f9000000-0000-0000-0000-000000i00600'::uuid
+ where staff_id  = 'f9000000-0000-0000-0000-000000e00600'::uuid
    and module_key = 'cases';
 
 -- Step 3: re-set role to authenticated with the SAME JWT claims (no re-login)
@@ -325,9 +325,9 @@ delete from public.employee_module_permissions
 -- semantics of (select has_module('cases', false)) in the policy USING expression.
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object(
-  'sub',       'f9000000-0000-0000-0000-000000i00600',
+  'sub',       'f9000000-0000-0000-0000-000000e00600',
   'role',      'authenticated',
-  'org_id',    'f9000000-0000-0000-0000-000000i00100',
+  'org_id',    'f9000000-0000-0000-0000-000000e00100',
   'user_kind', 'staff',
   'user_role', 'paralegal'
 )::text, true);
@@ -353,12 +353,12 @@ select throws_ok(
   $$ insert into public.cases
        (id, org_id, case_number, service_id, service_plan_id, primary_client_id)
      values (
-       'f9000000-0000-0000-0000-000000i00e00'::uuid,
-       'f9000000-0000-0000-0000-000000i00100'::uuid,
+       'f9000000-0000-0000-0000-000000e00e00'::uuid,
+       'f9000000-0000-0000-0000-000000e00100'::uuid,
        'T9-REVOKED-1',
-       'f9000000-0000-0000-0000-000000i00800'::uuid,
-       'f9000000-0000-0000-0000-000000i00a00'::uuid,
-       'f9000000-0000-0000-0000-000000i00700'::uuid
+       'f9000000-0000-0000-0000-000000e00800'::uuid,
+       'f9000000-0000-0000-0000-000000e00a00'::uuid,
+       'f9000000-0000-0000-0000-000000e00700'::uuid
      ) $$,
   '42501',
   null,

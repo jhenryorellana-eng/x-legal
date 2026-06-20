@@ -33,6 +33,27 @@ export type GenerationRunRow = Tables<"ai_generation_runs">;
 export type DocumentExtractionRow = Tables<"document_extractions">;
 export type DocumentTranslationRow = Tables<"document_translations">;
 export type DatasetItemRow = Tables<"ai_dataset_items">;
+export type GenerationConfigRow = Tables<"ai_generation_configs">;
+
+/**
+ * Loads the ai_generation_config for a form definition. The ai-engine reads this
+ * (catalog owns the editing) to freeze a real config_snapshot at run start.
+ */
+export async function findGenerationConfig(
+  formDefinitionId: string,
+): Promise<GenerationConfigRow | null> {
+  const client = createServiceClient();
+  const { data, error } = await client
+    .from("ai_generation_configs")
+    .select("*")
+    .eq("form_definition_id", formDefinitionId)
+    .maybeSingle();
+  if (error) {
+    logger.error({ err: error, formDefinitionId }, "ai-engine: findGenerationConfig failed");
+    return null;
+  }
+  return data;
+}
 
 // ---------------------------------------------------------------------------
 // Generation runs

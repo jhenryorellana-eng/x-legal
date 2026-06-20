@@ -58,7 +58,7 @@ export function FormulariosList({
   };
 
   return (
-    <div style={{ minHeight: "100dvh", padding: "26px 20px 120px" }}>
+    <div style={{ minHeight: "100dvh", padding: "26px 20px var(--screen-pb)" }}>
       <ScreenHead eyebrow={labels.eyebrow} title={labels.title} sub={labels.subtitle} lexMood="atento" />
       <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 8 }}>
         {entries.map((e) => {

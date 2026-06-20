@@ -56,10 +56,18 @@ function mapErr(err: unknown): Err {
 
 export interface CreateCaseUiInput {
   clientName: string;
-  /** Login identity (DOC-22 §1, email auth) — captured at intake. */
+  /** Login credential (DOC-22 §1, email auth) — captured at intake. */
   clientEmail: string;
-  /** Optional contact phone (NOT the login identity). */
-  clientPhone?: string;
+  /** Login credential (DOC-22 §1) — required: phone + email together. */
+  clientPhone: string;
+  /** Full US mailing address — required (prefills the I-589 via profile). */
+  clientAddress: {
+    line1: string;
+    city: string;
+    state: string;
+    zip: string;
+    apartment?: string;
+  };
   /**
    * Encoded plan resolution: serviceId|planId|priceCents|downCents|installments.
    * Matches the encoding used by the plan selector in new-case-modal.tsx.
@@ -103,17 +111,24 @@ export async function createCaseAction(
       return { ok: false, error: { code: "INVALID_PLAN" } };
     }
 
-    // Email is the login identity (DOC-22 §1). Validate shape; phone is optional contact.
+    // Email + phone are BOTH login credentials (DOC-22 §1). Both required.
     if (!isValidEmail(input.clientEmail)) {
       return { ok: false, error: { code: "INVALID_EMAIL" } };
     }
-    let phoneE164: string | null = null;
-    if (input.clientPhone && input.clientPhone.trim()) {
-      try {
-        phoneE164 = normalizePhoneE164(input.clientPhone);
-      } catch {
-        return { ok: false, error: { code: "INVALID_PHONE" } };
-      }
+    if (!input.clientPhone || !input.clientPhone.trim()) {
+      return { ok: false, error: { code: "INVALID_PHONE" } };
+    }
+    let phoneE164: string;
+    try {
+      phoneE164 = normalizePhoneE164(input.clientPhone);
+    } catch {
+      return { ok: false, error: { code: "INVALID_PHONE" } };
+    }
+
+    // Full US address is required — it prefills the I-589 (address.* via profile).
+    const addr = input.clientAddress;
+    if (!addr?.line1?.trim() || !addr.city?.trim() || !addr.state?.trim() || !addr.zip?.trim()) {
+      return { ok: false, error: { code: "INVALID_ADDRESS" } };
     }
 
     // Step 1: Provision client user (idempotent — email is the identity)
@@ -121,6 +136,13 @@ export async function createCaseAction(
       fullName: input.clientName,
       email: input.clientEmail,
       phoneE164,
+      address: {
+        line1: addr.line1.trim(),
+        city: addr.city.trim(),
+        state: addr.state.trim(),
+        zip: addr.zip.trim(),
+        apartment: addr.apartment?.trim() || null,
+      },
     });
 
     // Map modal parties to the cases module input shape

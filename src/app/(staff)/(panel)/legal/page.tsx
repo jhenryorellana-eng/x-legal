@@ -209,6 +209,14 @@ export default async function LegalPage() {
     cancelledChip: t("cancelledChip"),
     emptyTitle: t("emptyTitle"),
     emptyBody: t("emptyBody"),
+    notePlaceholder: t("notePlaceholder"),
+    rfeInProgress: t("rfeInProgress"),
+    timeInColumn: t("timeInColumn"),
+    colMenuEdit: t("colMenuEdit"),
+    colMenuDelete: t("colMenuDelete"),
+    // Raw templates: client interpolates {title}/{caseNumber} per render.
+    colMenuAria: t.raw("colMenuAria"),
+    openCaseAria: t.raw("openCaseAria"),
   };
 
   // ── Error state (non-500) ────────────────────────────────────────────────

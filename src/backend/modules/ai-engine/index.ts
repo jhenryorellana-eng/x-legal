@@ -20,6 +20,8 @@ export {
   getRunsForCase,
   translateDocument,
   translateText,
+  translateAnswerText,
+  extractRawTextFromStorage,
   completeI18n,
   reprocessExtraction,
   getCostsSummary,

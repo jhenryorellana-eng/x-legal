@@ -3,10 +3,13 @@
  *
  * Exports:
  * - normalizePhoneE164: mirrors the SQL normalize_phone() function (DOC-30 §15).
+ * - derivePhonePassword: deterministic per-phone password for phone-only login.
  * - passwordPolicy: pure validation rules for staff passwords.
  *
  * These are unit-tested independently to verify the mirroring is correct.
  */
+
+import { createHmac } from "node:crypto";
 
 // ---------------------------------------------------------------------------
 // Phone normalization (E.164) — DOC-22 §1.3, DOC-30 §15
@@ -52,6 +55,31 @@ export function normalizePhoneE164(raw: string): string {
   }
 
   throw new PhoneNormalizationError(raw);
+}
+
+// ---------------------------------------------------------------------------
+// Phone-only login — deterministic password derivation (DOC-22 §1, June 2026)
+//
+// The client logs in with ONLY their phone number (no OTP, no SMS — temporary,
+// SMS-OTP comes later). To establish a real Supabase session we sign the client
+// in with email + a backend-derived password they never see or set. The password
+// is a stable HMAC of the E.164 phone keyed by a server-only secret, so the same
+// phone always yields the same password (set at provisioning, re-derivable on
+// login). The secret is passed in by the caller (service layer reads it from env)
+// to keep this module pure (no platform/ imports).
+//
+// SECURITY: anyone who knows a client's phone can log in (no second factor). This
+// is a conscious TEMPORARY product decision; the SMS-OTP step lands on top later.
+// ---------------------------------------------------------------------------
+
+/**
+ * Derives the deterministic login password for a client from their E.164 phone.
+ * `secret` is a stable server-only key (the service-role key). Returns a base64
+ * HMAC-SHA256 — a 44-char high-entropy string that satisfies Supabase's password
+ * requirements. Pure + deterministic: same (phone, secret) → same password.
+ */
+export function derivePhonePassword(phoneE164: string, secret: string): string {
+  return createHmac("sha256", secret).update(phoneE164).digest("base64");
 }
 
 // ---------------------------------------------------------------------------

@@ -62,6 +62,9 @@ jobs:
       - name: i18n key parity es/en (RNF-027)
         run: npm run check:i18n
 
+      - name: Asset size budget (RNF-035 — no public/ asset > 1 MB)
+        run: npm run check:assets
+
       - name: Build (dummy env — build must not require real secrets)
         env:
           NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co

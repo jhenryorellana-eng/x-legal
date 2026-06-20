@@ -6,6 +6,8 @@
  * @module cases/domain
  */
 
+import { deriveFieldState, parseConditionOrNull } from "@/shared/form-logic/conditions";
+
 // ---------------------------------------------------------------------------
 // CaseStatus
 // ---------------------------------------------------------------------------
@@ -221,6 +223,8 @@ export interface QuestionValidationRule {
   options?: Array<{ value: string }> | null;
   /** JSON: {regex?, min?: number, max?: number} */
   validation?: Record<string, unknown> | null;
+  /** Conditional visibility jsonb (show/lock/require). Raw — parsed per call. */
+  condition?: unknown;
 }
 
 export interface AnswerValidationError {
@@ -246,11 +250,16 @@ export function validateAnswerTypes(
   const errors: AnswerValidationError[] = [];
 
   for (const q of questions) {
+    // Conditional/dynamic: a field hidden by its condition is never validated
+    // (and is left blank at PDF time); a condition can also flip `required`.
+    const condState = deriveFieldState(parseConditionOrNull(q.condition), q.is_required, answers);
+    if (!condState.visible) continue;
+
     const value = answers[q.id];
     const isEmpty = value === undefined || value === null || value === "";
 
     // Required check (submit only)
-    if (enforceRequired && q.is_required && isEmpty) {
+    if (enforceRequired && condState.required && isEmpty) {
       errors.push({ questionId: q.id, code: "required" });
       continue;
     }
@@ -315,15 +324,11 @@ export function validateAnswerTypes(
 // ---------------------------------------------------------------------------
 
 /**
- * Party roles that may appear in a case. Sourced from catalog.
- * This list drives which parties are eligible to submit documents.
+ * Party roles that may appear in a case. Canonical source of truth is the shared
+ * constant (mirrors the case_parties.party_role CHECK). A service declares which
+ * of these its cases use via service_party_roles.
  */
-export type PartyRole =
-  | "primary_applicant"
-  | "co_applicant"
-  | "spouse"
-  | "dependent"
-  | "guarantor";
+export type PartyRole = import("@/shared/constants/party-roles").PartyRoleKey;
 
 /**
  * Returns true if the party role is an eligible party for document submission.

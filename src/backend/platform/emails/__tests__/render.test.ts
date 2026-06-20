@@ -29,9 +29,9 @@ describe("renderTransactionalEmail", () => {
     });
 
     expect(subject).toBe("Bienvenido — tu caso está activo");
-    // Brand wordmark
-    expect(html).toContain("USALATINO");
-    expect(html).toContain("PRIME");
+    // Brand: logo alt ("X Legal") + wordmark suffix ("LEGAL")
+    expect(html).toContain("X Legal");
+    expect(html).toContain("LEGAL");
     // Content
     expect(html).toContain("Bienvenido a tu caso");
     expect(html).toContain("Tu pago inicial fue recibido.");

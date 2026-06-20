@@ -95,6 +95,12 @@ export default async function AdminCasosPage({
           installments: p.default_installments ?? 1,
         })),
         encodedByKind,
+        partyRoles: (tree?.partyRoles ?? []).map((r) => ({
+          roleKey: r.role_key,
+          label: resolveI18n(r.label_i18n, locale),
+          cardinality: r.cardinality,
+          required: r.is_required,
+        })),
       };
     }),
   );

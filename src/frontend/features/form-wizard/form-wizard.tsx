@@ -11,12 +11,16 @@ import { WizardField } from "./fields";
 import { useAutosave } from "./use-autosave";
 import { validateGroup, firstInvalidGroupIndex } from "./build-question-schema";
 import { pickI18n, buildInitialAnswers, isReadOnly } from "./resolve";
+import { translateClientAnswers } from "./answer-translation";
+import { deriveFieldState } from "@/shared/form-logic/conditions";
+import { resolveI18n } from "@/shared/i18n";
 import type {
   WizardForm,
   WizardLabels,
   Locale,
   SaveDraftFn,
   SubmitFormFn,
+  TranslateAnswersFn,
   FieldErrorCode,
   SaveState,
 } from "./types";
@@ -48,6 +52,8 @@ export interface FormWizardProps {
   partyName?: string | null;
   saveDraft: SaveDraftFn;
   submitForm: SubmitFormFn;
+  /** Server-side translator fallback (Gemini) for the answer-translation flow. */
+  translateAnswers?: TranslateAnswersFn;
   /** Called after a successful submit (cliente navigates to /exito). */
   onSubmitted?: () => void;
   /** Back affordance from step 0 (cliente → Camino / list). */
@@ -73,6 +79,7 @@ export function FormWizard({
   partyName,
   saveDraft,
   submitForm,
+  translateAnswers,
   onSubmitted,
   onExit,
 }: FormWizardProps) {
@@ -183,10 +190,36 @@ export function FormWizard({
     setSubmitError(false);
     autosave.flush();
     try {
+      // Best-effort: translate textual answers to the PDF's source language when
+      // the client filled the form in a different language (Chrome Translator API,
+      // Gemini fallback). Never blocks submit — the server fills any gap at PDF time.
+      let answersTranslated: Record<string, string> | undefined;
+      let translationStatus: "none" | "partial" | "pending_server" | "done" | undefined;
+      if (form.kind === "pdf_automation" && form.sourceLanguage !== locale) {
+        // Default to pending_server: even if the on-device translation throws
+        // entirely, the server then translates on-demand at PDF time — the filled
+        // PDF is always in the form's language, never silently wrong.
+        translationStatus = "pending_server";
+        try {
+          const tr = await translateClientAnswers({
+            groups,
+            answers,
+            from: locale,
+            to: form.sourceLanguage,
+            serverFallback: translateAnswers,
+          });
+          answersTranslated = Object.keys(tr.translated).length > 0 ? tr.translated : undefined;
+          translationStatus = tr.status; // 'none' (no textual answers) | partial | pending_server | done
+        } catch {
+          /* keep pending_server → the server fills the gap on-demand */
+        }
+      }
       const res = await submitForm({
         caseId,
         formDefinitionId: form.formDefinitionId,
         partyId,
+        answersTranslated,
+        translationStatus,
       });
       if (res.ok) {
         setDone(true);
@@ -206,7 +239,7 @@ export function FormWizard({
   // --- read-only (submitted / approved) -------------------------------------
   if (readOnly) {
     return (
-      <div style={{ minHeight: "100dvh", padding: "26px 20px 120px" }}>
+      <div style={{ minHeight: "100dvh", padding: "26px 20px var(--screen-pb)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>
           <button
             type="button"
@@ -307,7 +340,7 @@ export function FormWizard({
       style={{
         minHeight: "100dvh",
         overflowY: "auto",
-        padding: "26px 20px 132px",
+        padding: "26px 20px calc(132px + var(--safe-bottom))",
         display: "flex",
         flexDirection: "column",
       }}
@@ -440,9 +473,15 @@ export function FormWizard({
       {/* Zona 3 — questions of this group */}
       <div style={{ display: "flex", flexDirection: "column", gap: 26, flex: 1 }}>
         {current?.questions.map((q) => {
+          // Conditional/dynamic visibility — hide (show), disable (lock), or flip
+          // required, depending on another answer. The server re-evaluates the
+          // same logic at submit/PDF time, so it stays the source of truth.
+          const cond = deriveFieldState(q.condition, q.isRequired, answers);
+          if (!cond.visible) return null;
           const isTextarea = q.fieldType === "textarea";
           // checkbox renders the label inside the control, so suppress the heading.
           const showHeading = q.fieldType !== "checkbox";
+          const lockMessage = cond.disabled ? resolveI18n(cond.lockMessage, locale) || null : null;
           return (
             <div key={q.id}>
               {showHeading && (
@@ -458,7 +497,7 @@ export function FormWizard({
                     }}
                   >
                     {pickI18n(q.questionI18n, locale)}
-                    {q.isRequired && <span style={{ color: "var(--accent)" }}> *</span>}
+                    {cond.required && <span style={{ color: "var(--accent)" }}> *</span>}
                   </h2>
                   {pickI18n(q.helpI18n, locale) && (
                     <p style={{ fontSize: 14.5, color: "var(--ink-2)", lineHeight: 1.45, margin: "0 0 12px" }}>
@@ -477,6 +516,8 @@ export function FormWizard({
                 onChange={(v) => setAnswer(q.id, v)}
                 onBlur={() => autosave.flush()}
                 showDictation={isTextarea}
+                disabled={cond.disabled}
+                lockMessage={lockMessage}
               />
             </div>
           );

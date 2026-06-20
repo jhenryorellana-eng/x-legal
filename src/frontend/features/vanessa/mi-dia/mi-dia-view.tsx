@@ -11,6 +11,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
+import { getBridge } from "@/frontend/platform-bridge";
 import { MSym } from "../shared/msym";
 import { Chip, sourceMeta, timeTier } from "../shared/ui";
 import { LexBubble } from "../shared/lex";
@@ -148,7 +149,7 @@ export function MiDiaView({
         channel === "call"
           ? `tel:${l.phone}`
           : `https://wa.me/${l.phone.replace(/[^\d]/g, "")}`;
-      window.open(url, channel === "call" ? "_self" : "_blank");
+      getBridge().share.openExternal(url);
     }
     const res = await actions.contactLead({ leadId: l.id, channel });
     if (res.ok) {

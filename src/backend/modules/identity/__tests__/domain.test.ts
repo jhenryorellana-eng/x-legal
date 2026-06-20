@@ -10,6 +10,7 @@ import { describe, it, expect } from "vitest";
 import {
   normalizePhoneE164,
   PhoneNormalizationError,
+  derivePhonePassword,
   normalizeEmail,
   normalizeEmailStrict,
   isValidEmail,
@@ -147,6 +148,38 @@ describe("normalizePhoneE164", () => {
       const normalized = "+13055550100";
       expect(normalizePhoneE164(normalized)).toBe(normalized);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// derivePhonePassword (DOC-22 §1 — phone-only login)
+// ---------------------------------------------------------------------------
+
+describe("derivePhonePassword", () => {
+  const secret = "test-service-key";
+
+  it("is deterministic: same phone + secret → same password", () => {
+    const a = derivePhonePassword("+13055550100", secret);
+    const b = derivePhonePassword("+13055550100", secret);
+    expect(a).toBe(b);
+  });
+
+  it("differs for different phones (same secret)", () => {
+    const a = derivePhonePassword("+13055550100", secret);
+    const b = derivePhonePassword("+13055550199", secret);
+    expect(a).not.toBe(b);
+  });
+
+  it("differs for different secrets (same phone)", () => {
+    const a = derivePhonePassword("+13055550100", "secret-a");
+    const b = derivePhonePassword("+13055550100", "secret-b");
+    expect(a).not.toBe(b);
+  });
+
+  it("returns a high-entropy base64 string (>= 40 chars — satisfies Supabase)", () => {
+    const pw = derivePhonePassword("+13055550100", secret);
+    expect(pw.length).toBeGreaterThanOrEqual(40);
+    expect(pw).toMatch(/^[A-Za-z0-9+/]+=*$/);
   });
 });
 

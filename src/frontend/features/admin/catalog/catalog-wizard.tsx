@@ -15,6 +15,12 @@ import {
 } from "@/frontend/components/brand";
 import { ViewHead, FieldLabel, TextInput, SelectInput } from "../shared/chrome";
 import { I18nField, type I18nValue } from "../shared/i18n-field";
+import {
+  PARTY_ROLE_KEYS,
+  DEFAULT_PARTY_ROLE_LABELS,
+  PRINCIPAL_ROLE_KEY,
+  type PartyRoleKey,
+} from "@/shared/constants/party-roles";
 
 /* ───────────────────────── Types (editor tree VM) ───────────────────────── */
 
@@ -41,6 +47,15 @@ export interface WizardDoc {
   is_active: boolean;
 }
 
+export interface WizardPartyRole {
+  id: string;
+  role_key: string;
+  label: I18nValue;
+  cardinality: "single" | "multiple";
+  is_required: boolean;
+  position: number;
+}
+
 export interface WizardForm {
   id: string;
   slug: string;
@@ -48,6 +63,9 @@ export interface WizardForm {
   kind: "ai_letter" | "pdf_automation";
   filled_by: "client" | "staff" | "both";
   is_active: boolean;
+  position: number;
+  /** Published version number (pdf_automation only); null = no published version yet. */
+  published_version: number | null;
 }
 
 export interface WizardPhase {
@@ -86,6 +104,7 @@ export interface CatalogWizardProps {
   /** Existing service tree (edit mode) or null (create mode). */
   service: WizardService | null;
   plans: WizardPlan[];
+  partyRoles: WizardPartyRole[];
   phases: WizardPhase[];
   slugLocked: boolean;
   messages: Record<string, string>;
@@ -99,13 +118,18 @@ export interface CatalogWizardProps {
     deletePhase: (id: string) => Promise<ActionRes<unknown>>;
     upsertPolicy: (input: Record<string, unknown>) => Promise<ActionRes<unknown>>;
     createRequiredDoc: (input: Record<string, unknown>) => Promise<ActionRes<{ id: string }>>;
+    createPartyRole: (input: Record<string, unknown>) => Promise<ActionRes<{ id: string }>>;
+    updatePartyRole: (id: string, patch: Record<string, unknown>) => Promise<ActionRes<unknown>>;
+    deletePartyRole: (id: string) => Promise<ActionRes<unknown>>;
+    createForm: (input: Record<string, unknown>) => Promise<ActionRes<{ id: string }>>;
+    updateForm: (id: string, patch: Record<string, unknown>) => Promise<ActionRes<unknown>>;
     activate: (id: string) => Promise<ActionRes<{ ok: boolean; issues: PublicationIssueVM[] }>>;
   };
 }
 
 type ActionRes<T> = { success: boolean; data?: T; error?: { code: string; message: string } };
 
-const STEP_IDS = ["basics", "plans", "phases", "docs", "forms", "publish"] as const;
+const STEP_IDS = ["basics", "plans", "parties", "phases", "docs", "forms", "publish"] as const;
 type StepId = (typeof STEP_IDS)[number];
 
 const COLOR_SWATCHES: { id: string; value: string }[] = [
@@ -124,6 +148,7 @@ const ICON_CHOICES: IconName[] = ["scale", "family", "shield", "briefcase", "doc
 export function CatalogWizard({
   service,
   plans: initialPlans,
+  partyRoles: initialPartyRoles,
   phases: initialPhases,
   slugLocked,
   messages: t,
@@ -156,7 +181,10 @@ export function CatalogWizard({
         ],
   );
 
-  // Step 3 phases
+  // Step 3 parties (additional case roles)
+  const [partyRoles, setPartyRoles] = React.useState<WizardPartyRole[]>(initialPartyRoles);
+
+  // Step 4 phases
   const [phases, setPhases] = React.useState<WizardPhase[]>(initialPhases);
   const [activePhaseIdx, setActivePhaseIdx] = React.useState(0);
 
@@ -217,7 +245,7 @@ export function CatalogWizard({
     }
     if (step === "plans") {
       await savePlans();
-      setStep("phases");
+      setStep("parties");
       return;
     }
     const order: StepId[] = [...STEP_IDS];
@@ -300,6 +328,15 @@ export function CatalogWizard({
           />
         )}
         {step === "plans" && <PlansStep plans={plans} setPlans={setPlans} t={t} />}
+        {step === "parties" && (
+          <PartiesStep
+            serviceId={serviceId}
+            partyRoles={partyRoles}
+            setPartyRoles={setPartyRoles}
+            actions={actions}
+            t={t}
+          />
+        )}
         {step === "phases" && (
           <PhasesStep
             serviceId={serviceId}
@@ -312,9 +349,9 @@ export function CatalogWizard({
           />
         )}
         {step === "docs" && (
-          <DocsStep phases={phases} setPhases={setPhases} actions={actions} t={t} />
+          <DocsStep phases={phases} setPhases={setPhases} partyRoles={partyRoles} actions={actions} t={t} />
         )}
-        {step === "forms" && <FormsStep t={t} serviceId={serviceId} phases={phases} />}
+        {step === "forms" && <FormsStep t={t} serviceId={serviceId} phases={phases} setPhases={setPhases} actions={actions} />}
         {step === "publish" && <PublishStep issues={pubIssues} published={published} label={label.es ?? slug} t={t} onGoToStep={setStep} />}
       </Card>
 
@@ -717,31 +754,238 @@ function PhasesStep({
   );
 }
 
+/* ───────────────────────── Step 3: Parties ───────────────────────── */
+
+function PartiesStep({
+  serviceId,
+  partyRoles,
+  setPartyRoles,
+  actions,
+  t,
+}: {
+  serviceId: string | null;
+  partyRoles: WizardPartyRole[];
+  setPartyRoles: React.Dispatch<React.SetStateAction<WizardPartyRole[]>>;
+  actions: CatalogWizardProps["actions"];
+  t: Record<string, string>;
+}) {
+  // Available role types = the 8 keys minus the implicit applicant and any
+  // already-defined role (unique per service).
+  const used = new Set(partyRoles.map((r) => r.role_key));
+  const available = PARTY_ROLE_KEYS.filter(
+    (k) => k !== PRINCIPAL_ROLE_KEY && !used.has(k),
+  );
+
+  const [roleKey, setRoleKey] = React.useState<PartyRoleKey | "">(available[0] ?? "");
+  const [label, setLabel] = React.useState<I18nValue>(
+    available[0] ? { ...DEFAULT_PARTY_ROLE_LABELS[available[0]] } : { es: "", en: "" },
+  );
+  const [cardinality, setCardinality] = React.useState<"single" | "multiple">("single");
+  const [required, setRequired] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
+
+  function pickRole(k: string) {
+    const key = k as PartyRoleKey;
+    setRoleKey(key);
+    // Default the label to the role's canonical label (admin may override).
+    setLabel({ ...DEFAULT_PARTY_ROLE_LABELS[key] });
+  }
+
+  async function addRole() {
+    if (!serviceId || !roleKey) return;
+    if (!label.es?.trim()) {
+      toast.error(t.partyNeedLabel);
+      return;
+    }
+    if (used.has(roleKey)) {
+      toast.error(t.partyDup);
+      return;
+    }
+    setSaving(true);
+    const r = await actions.createPartyRole({
+      service_id: serviceId,
+      role_key: roleKey,
+      label_i18n: { es: label.es ?? "", en: label.en ?? "" },
+      cardinality,
+      is_required: required,
+      position: partyRoles.length,
+    });
+    setSaving(false);
+    if (r.success && r.data) {
+      const created: WizardPartyRole = {
+        id: r.data.id,
+        role_key: roleKey,
+        label: { es: label.es ?? "", en: label.en ?? "" },
+        cardinality,
+        is_required: required,
+        position: partyRoles.length,
+      };
+      setPartyRoles((prev) => [...prev, created]);
+      // Derive the next available role from the UPDATED list (not the render-time
+      // `used` set, which doesn't yet include the role we just added).
+      const usedNow = new Set([...partyRoles, created].map((r) => r.role_key));
+      const nextAvailable = PARTY_ROLE_KEYS.filter(
+        (k) => k !== PRINCIPAL_ROLE_KEY && !usedNow.has(k),
+      );
+      setRoleKey(nextAvailable[0] ?? "");
+      setLabel(nextAvailable[0] ? { ...DEFAULT_PARTY_ROLE_LABELS[nextAvailable[0]] } : { es: "", en: "" });
+      setCardinality("single");
+      setRequired(false);
+      toast.success(t.saved);
+    } else {
+      toast.error(r.error?.message ?? "Error");
+    }
+  }
+
+  async function removeRole(id: string) {
+    const r = await actions.deletePartyRole(id);
+    if (r.success) {
+      setPartyRoles((prev) => prev.filter((x) => x.id !== id));
+      toast.success(t.saved);
+    } else {
+      toast.error(r.error?.message ?? "Error");
+    }
+  }
+
+  return (
+    <div>
+      <ViewHead title={t.partiesTitle} sub={t.partiesSub} />
+      <div style={bannerStyle}>
+        <Icon name="info" size={16} color="var(--gold-deep)" />
+        {t.partiesApplicantNote}
+      </div>
+
+      {serviceId && available.length > 0 && (
+        <div
+          style={{
+            border: "1px solid var(--line)",
+            borderRadius: 12,
+            padding: 16,
+            margin: "12px 0 16px",
+            display: "grid",
+            gap: 12,
+          }}
+        >
+          <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <div style={{ minWidth: 180 }}>
+              <FieldLabel>{t.partyType}</FieldLabel>
+              <SelectInput value={roleKey} onChange={(e) => pickRole(e.target.value)}>
+                {available.map((k) => (
+                  <option key={k} value={k}>
+                    {DEFAULT_PARTY_ROLE_LABELS[k].es}
+                  </option>
+                ))}
+              </SelectInput>
+            </div>
+            <div style={{ minWidth: 180 }}>
+              <FieldLabel>{t.partyCardinality}</FieldLabel>
+              <SelectInput
+                value={cardinality}
+                onChange={(e) => setCardinality(e.target.value as "single" | "multiple")}
+              >
+                <option value="single">{t.partySingle}</option>
+                <option value="multiple">{t.partyMultiple}</option>
+              </SelectInput>
+            </div>
+            <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer", paddingBottom: 8 }}>
+              <Switch checked={required} onCheckedChange={setRequired} aria-label={t.partyRequired} />
+              {t.partyRequired}
+            </label>
+          </div>
+          <I18nField label={t.partyLabel} value={label} onChange={setLabel} />
+          <div>
+            <GradientBtn onClick={addRole} disabled={saving || !roleKey} aria-label={t.partiesAdd}>
+              {saving ? "…" : t.partiesAdd}
+            </GradientBtn>
+          </div>
+        </div>
+      )}
+
+      {partyRoles.length === 0 ? (
+        <p style={{ color: "var(--ink-3)", fontSize: 14 }}>{t.partiesEmpty}</p>
+      ) : (
+        <div style={{ display: "grid", gap: 8 }}>
+          {partyRoles.map((r) => (
+            <div
+              key={r.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                border: "1px solid var(--line)",
+                borderRadius: 10,
+                padding: "10px 14px",
+              }}
+            >
+              <span style={{ fontWeight: 700, color: "var(--ink)" }}>{r.label.es || r.role_key}</span>
+              <Chip tone={r.cardinality === "multiple" ? "blue" : "gold"}>
+                {r.cardinality === "multiple" ? t.partyMultiple : t.partySingle}
+              </Chip>
+              {r.is_required && <Chip tone="green">{t.partyRequired}</Chip>}
+              <button
+                type="button"
+                onClick={() => removeRole(r.id)}
+                aria-label={t.partyRemove}
+                style={{
+                  marginLeft: "auto",
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  display: "grid",
+                  placeItems: "center",
+                }}
+              >
+                <Icon name="x" size={16} color="var(--ink-3)" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ───────────────────────── Step 4: Documents ───────────────────────── */
 
 function DocsStep({
   phases,
   setPhases,
+  partyRoles,
   actions,
   t,
 }: {
   phases: WizardPhase[];
   setPhases: React.Dispatch<React.SetStateAction<WizardPhase[]>>;
+  partyRoles: WizardPartyRole[];
   actions: CatalogWizardProps["actions"];
   t: Record<string, string>;
 }) {
   const [phaseIdx, setPhaseIdx] = React.useState(0);
   const phase = phases[phaseIdx];
 
+  // Role options for the per-party picker: the implicit applicant + this
+  // service's declared additional roles. The doc is requested from whoever is checked.
+  const roleOptions: { key: string; label: string }[] = [
+    { key: PRINCIPAL_ROLE_KEY, label: t.docPartyApplicant },
+    ...partyRoles.map((r) => ({ key: r.role_key, label: r.label.es || r.role_key })),
+  ];
+
   // Add-document form (RF-ADM-023)
   const [docLabel, setDocLabel] = React.useState<I18nValue>({ es: "", en: "" });
   const [docCategory, setDocCategory] = React.useState("");
   const [docRequired, setDocRequired] = React.useState(true);
   const [docPerParty, setDocPerParty] = React.useState(false);
-  // Domain rule: is_per_party requires party_roles (CATALOG_PER_PARTY_WITHOUT_ROLES)
-  const [docPartyRoles, setDocPartyRoles] = React.useState("beneficiary");
+  // Domain rule: is_per_party requires party_roles (CATALOG_PER_PARTY_WITHOUT_ROLES).
+  // Constrained to the service's roles via the multiselect below.
+  const [docPartyRoles, setDocPartyRoles] = React.useState<string[]>([]);
   const [docAiExtract, setDocAiExtract] = React.useState(false);
   const [savingDoc, setSavingDoc] = React.useState(false);
+
+  function togglePartyRole(key: string) {
+    setDocPartyRoles((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
+    );
+  }
 
   const docSlugFrom = (es: string) =>
     es
@@ -758,9 +1002,11 @@ function DocsStep({
       toast.error(t.docNeedName);
       return;
     }
-    const partyRoles = docPerParty
-      ? docPartyRoles.split(",").map((s) => s.trim()).filter(Boolean)
-      : null;
+    if (docPerParty && docPartyRoles.length === 0) {
+      toast.error(t.docNeedRoles);
+      return;
+    }
+    const docRoles = docPerParty ? docPartyRoles : null;
     setSavingDoc(true);
     const r = await actions.createRequiredDoc({
       service_phase_id: phase.id,
@@ -769,7 +1015,7 @@ function DocsStep({
       category_i18n: docCategory.trim() ? { es: docCategory.trim(), en: "" } : null,
       is_required: docRequired,
       is_per_party: docPerParty,
-      party_roles: partyRoles,
+      party_roles: docRoles,
       ai_extract: docAiExtract,
       position: phase.docs.length,
     });
@@ -783,7 +1029,7 @@ function DocsStep({
         category: { es: docCategory.trim(), en: "" },
         is_required: docRequired,
         is_per_party: docPerParty,
-        party_roles: partyRoles ?? [],
+        party_roles: docRoles ?? [],
         ai_extract: docAiExtract,
         is_active: true,
       };
@@ -794,6 +1040,7 @@ function DocsStep({
       setDocCategory("");
       setDocRequired(true);
       setDocPerParty(false);
+      setDocPartyRoles([]);
       setDocAiExtract(false);
       toast.success(t.saved);
     } else {
@@ -843,15 +1090,6 @@ function DocsStep({
               <Switch checked={docPerParty} onCheckedChange={setDocPerParty} aria-label={t.docPerParty} />
               {t.docPerParty}
             </label>
-            {docPerParty && (
-              <TextInput
-                value={docPartyRoles}
-                onChange={(e) => setDocPartyRoles(e.target.value)}
-                placeholder="beneficiary, spouse, minor"
-                aria-label="Roles por parte"
-                style={{ maxWidth: 240 }}
-              />
-            )}
             <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer" }}>
               <Switch checked={docAiExtract} onCheckedChange={setDocAiExtract} aria-label={t.docAiExtract} />
               {t.docAiExtract}
@@ -860,6 +1098,27 @@ function DocsStep({
               {savingDoc ? "…" : t.docAdd}
             </GradientBtn>
           </div>
+
+          {docPerParty && (
+            <div>
+              <FieldLabel>{t.docPartyRolesLabel}</FieldLabel>
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 4 }}>
+                {roleOptions.map((opt) => (
+                  <label
+                    key={opt.key}
+                    style={{ display: "flex", gap: 7, alignItems: "center", cursor: "pointer", fontSize: 13.5 }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={docPartyRoles.includes(opt.key)}
+                      onChange={() => togglePartyRole(opt.key)}
+                    />
+                    {opt.label}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -906,38 +1165,248 @@ function DocsStep({
   );
 }
 
-/* ───────────────────────── Step 5: Forms (F4 stub) ───────────────────────── */
+/* ───────────────────────── Step 5: Forms (DOC-40 §3.5/§3.6) ───────────────────────── */
 
-function FormsStep({ t, serviceId, phases }: { t: Record<string, string>; serviceId: string | null; phases: WizardPhase[] }) {
-  const allForms = phases.flatMap((ph) => ph.forms.map((f) => ({ ...f, phaseLabel: ph.label.es || ph.label.en || ph.slug })));
+function formSlugFrom(es: string, fallbackIdx: number): string {
+  return (
+    es
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60) || `formulario-${fallbackIdx}`
+  );
+}
 
-  if (!serviceId || allForms.length === 0) {
+function FormsStep({
+  t,
+  serviceId,
+  phases,
+  setPhases,
+  actions,
+}: {
+  t: Record<string, string>;
+  serviceId: string | null;
+  phases: WizardPhase[];
+  setPhases: React.Dispatch<React.SetStateAction<WizardPhase[]>>;
+  actions: CatalogWizardProps["actions"];
+}) {
+  const [phaseIdx, setPhaseIdx] = React.useState(0);
+  const phase = phases[phaseIdx];
+
+  // Create-form state
+  const [formKind, setFormKind] = React.useState<"pdf_automation" | "ai_letter">("pdf_automation");
+  const [formLabel, setFormLabel] = React.useState<I18nValue>({ es: "", en: "" });
+  const [formSlug, setFormSlug] = React.useState("");
+  const [slugTouched, setSlugTouched] = React.useState(false);
+  const [formFilledBy, setFormFilledBy] = React.useState<"client" | "staff" | "both">("client");
+  const [saving, setSaving] = React.useState(false);
+  const [togglingIds, setTogglingIds] = React.useState<Set<string>>(() => new Set());
+
+  // Reset the create-form draft when switching phases so a slug typed for one
+  // phase never leaks into another (forms are scoped per phase).
+  React.useEffect(() => {
+    setFormLabel({ es: "", en: "" });
+    setFormSlug("");
+    setSlugTouched(false);
+  }, [phaseIdx]);
+
+  // No persisted service yet → forms need a phase id (service must be saved first).
+  if (!serviceId || phases.length === 0) {
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: 8, padding: "40px 24px" }}>
         <Lex size={120} mood="señala" />
-        <h3 style={{ margin: "6px 0 0", fontFamily: "var(--font-title)", fontWeight: 800, fontSize: 17, color: "var(--ink)" }}>{t.formStub}</h3>
-        <p style={{ margin: 0, maxWidth: 420, fontSize: 14, lineHeight: 1.5, color: "var(--ink-2)" }}>{t.formStubSub}</p>
+        <h3 style={{ margin: "6px 0 0", fontFamily: "var(--font-title)", fontWeight: 800, fontSize: 17, color: "var(--ink)" }}>{t.formsNeedPhaseTitle}</h3>
+        <p style={{ margin: 0, maxWidth: 420, fontSize: 14, lineHeight: 1.5, color: "var(--ink-2)" }}>{t.formsNeedPhaseSub}</p>
       </div>
     );
   }
 
+  function onLabelChange(v: I18nValue) {
+    setFormLabel(v);
+    if (!slugTouched) setFormSlug(formSlugFrom(v.es ?? "", (phase?.forms.length ?? 0) + 1));
+  }
+
+  async function addForm() {
+    if (!phase) return;
+    if (!formLabel.es?.trim()) {
+      toast.error(t.formsNeedName);
+      return;
+    }
+    const slug = (formSlug.trim() || formSlugFrom(formLabel.es, phase.forms.length + 1));
+    setSaving(true);
+    const r = await actions.createForm({
+      service_phase_id: phase.id,
+      slug,
+      kind: formKind,
+      label_i18n: { es: formLabel.es ?? "", en: formLabel.en ?? "" },
+      filled_by: formFilledBy,
+      position: phase.forms.length,
+    });
+    setSaving(false);
+    if (r.success && r.data) {
+      const created: WizardForm = {
+        id: r.data.id,
+        slug,
+        label: { es: formLabel.es ?? "", en: formLabel.en ?? "" },
+        kind: formKind,
+        filled_by: formFilledBy,
+        is_active: true,
+        position: phase.forms.length,
+        published_version: null,
+      };
+      setPhases((prev) => prev.map((p, i) => (i === phaseIdx ? { ...p, forms: [...p.forms, created] } : p)));
+      setFormLabel({ es: "", en: "" });
+      setFormSlug("");
+      setSlugTouched(false);
+      setFormFilledBy("client");
+      toast.success(t.formsCreated);
+    } else {
+      toast.error(r.error?.message ?? "Error");
+    }
+  }
+
+  async function toggleActive(form: WizardForm) {
+    if (togglingIds.has(form.id)) return; // guard against double-click races
+    setTogglingIds((s) => new Set(s).add(form.id));
+    const next = !form.is_active;
+    const r = await actions.updateForm(form.id, { is_active: next });
+    if (r.success) {
+      setPhases((prev) =>
+        prev.map((p, i) =>
+          i === phaseIdx ? { ...p, forms: p.forms.map((f) => (f.id === form.id ? { ...f, is_active: next } : f)) } : p,
+        ),
+      );
+    } else {
+      toast.error(r.error?.message ?? "Error");
+    }
+    setTogglingIds((s) => {
+      const n = new Set(s);
+      n.delete(form.id);
+      return n;
+    });
+  }
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {allForms.map((f) => (
-        <a
-          key={f.id}
-          href={`/admin/catalogo/${serviceId}/formularios/${f.id}`}
-          style={{ display: "flex", alignItems: "center", gap: 12, textDecoration: "none", borderRadius: 14, border: "1px solid var(--line)", background: "var(--card,#fff)", padding: "14px 16px" }}
-        >
-          <Icon name={f.kind === "ai_letter" ? "sparkle" : "form"} size={20} color={f.kind === "ai_letter" ? "var(--gold-deep)" : "var(--accent)"} />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--ink)" }}>{f.label.es || f.label.en || f.slug}</div>
-            <div style={{ fontSize: 12, color: "var(--ink-3)" }}>{f.phaseLabel}</div>
+    <div>
+      <div style={{ marginBottom: 16, maxWidth: 320 }}>
+        <FieldLabel>{t.selectPhase}</FieldLabel>
+        <SelectInput value={String(phaseIdx)} onChange={(e) => setPhaseIdx(Number(e.target.value))}>
+          {phases.map((ph, i) => (
+            <option key={ph.id} value={i}>
+              {ph.label.es || ph.slug}
+            </option>
+          ))}
+        </SelectInput>
+      </div>
+
+      {phase && (
+        <div style={{ border: "1px solid var(--line)", borderRadius: 12, padding: 16, marginBottom: 16, display: "grid", gap: 12 }}>
+          {/* Kind selector */}
+          <div>
+            <FieldLabel>{t.formsKind}</FieldLabel>
+            <div role="radiogroup" aria-label={t.formsKind} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {(["pdf_automation", "ai_letter"] as const).map((k) => {
+                const on = formKind === k;
+                return (
+                  <button
+                    key={k}
+                    type="button"
+                    role="radio"
+                    aria-checked={on}
+                    onClick={() => setFormKind(k)}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      height: 40,
+                      padding: "0 14px",
+                      borderRadius: 12,
+                      border: `1.5px solid ${on ? "var(--accent)" : "var(--line)"}`,
+                      background: on ? "var(--accent-soft)" : "var(--card,#fff)",
+                      color: on ? "var(--accent)" : "var(--ink-2)",
+                      fontWeight: 800,
+                      fontSize: 13,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <Icon name={k === "ai_letter" ? "sparkle" : "form"} size={16} />
+                    {k === "ai_letter" ? t.formsKindLetter : t.formsKindPdf}
+                  </button>
+                );
+              })}
+            </div>
+            <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--ink-3)", lineHeight: 1.4 }}>
+              {formKind === "ai_letter" ? t.formsKindLetterHint : t.formsKindPdfHint}
+            </p>
           </div>
-          <Chip tone={f.kind === "ai_letter" ? "gold" : "blue"}>{f.kind === "ai_letter" ? "Generación IA" : "PDF oficial"}</Chip>
-          <Icon name="chevR" size={16} color="var(--ink-3)" />
-        </a>
-      ))}
+
+          <I18nField label={t.formsLabel} value={formLabel} onChange={onLabelChange} />
+
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <div style={{ flex: "1 1 240px", minWidth: 200 }}>
+              <FieldLabel>{t.formsSlug}</FieldLabel>
+              <TextInput
+                value={formSlug}
+                onChange={(e) => {
+                  setSlugTouched(true);
+                  setFormSlug(e.target.value);
+                }}
+                placeholder="formulario-i589"
+                aria-label={t.formsSlug}
+              />
+            </div>
+            <div style={{ flex: "0 1 200px", minWidth: 160 }}>
+              <FieldLabel>{t.formsFilledBy}</FieldLabel>
+              <SelectInput value={formFilledBy} aria-label={t.formsFilledBy} onChange={(e) => setFormFilledBy(e.target.value as "client" | "staff" | "both")}>
+                <option value="client">{t.formsFilledClient}</option>
+                <option value="staff">{t.formsFilledStaff}</option>
+                <option value="both">{t.formsFilledBoth}</option>
+              </SelectInput>
+            </div>
+            <GradientBtn onClick={addForm} disabled={saving} aria-label={t.formsCreate}>
+              {saving ? "…" : t.formsCreate}
+            </GradientBtn>
+          </div>
+        </div>
+      )}
+
+      {/* Forms list for the selected phase */}
+      {phase && phase.forms.length === 0 ? (
+        <p style={{ color: "var(--ink-3)" }}>{t.formsEmpty}</p>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {phase?.forms.map((f) => (
+            <div
+              key={f.id}
+              style={{ display: "flex", alignItems: "center", gap: 12, borderRadius: 14, border: "1px solid var(--line)", background: "var(--card,#fff)", padding: "12px 16px" }}
+            >
+              <Icon name={f.kind === "ai_letter" ? "sparkle" : "form"} size={20} color={f.kind === "ai_letter" ? "var(--gold-deep)" : "var(--accent)"} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "var(--ink)" }}>{f.label.es || f.label.en || f.slug}</div>
+                <code style={{ fontSize: 11, color: "var(--ink-3)" }}>{f.slug}</code>
+              </div>
+              <Chip tone={f.kind === "ai_letter" ? "gold" : "blue"}>{f.kind === "ai_letter" ? t.formsKindLetter : t.formsKindPdf}</Chip>
+              {f.kind === "pdf_automation" && (
+                <Chip tone={f.published_version ? "green" : "amber"} dot>
+                  {f.published_version ? `v${f.published_version}` : t.formsDraft}
+                </Chip>
+              )}
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "var(--ink-2)", cursor: "pointer" }}>
+                <Switch checked={f.is_active} disabled={togglingIds.has(f.id)} onCheckedChange={() => toggleActive(f)} aria-label={t.formsActive} />
+                {t.formsActive}
+              </label>
+              <a
+                href={`/admin/catalogo/${serviceId}/formularios/${f.id}`}
+                style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 700, color: "var(--accent)", textDecoration: "none" }}
+              >
+                {t.formsConfigure} <Icon name="chevR" size={15} color="var(--accent)" />
+              </a>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

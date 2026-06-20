@@ -161,7 +161,7 @@ export function DisclaimerScreen({
             letterSpacing: "-0.02em",
           }}
         >
-          USALATINO<span style={{ color: "var(--accent)" }}>{labels.brandPrime}</span>
+          X <span style={{ color: "var(--accent)" }}>{labels.brandPrime}</span>
         </span>
       </div>
 

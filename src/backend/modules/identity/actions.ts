@@ -16,12 +16,11 @@
 
 "use server";
 
-import { headers } from "next/headers";
+import { headers, cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import {
-  requestClientOtp,
-  verifyClientOtp,
+  loginClientByPhone,
   requestStaffPasswordReset,
   updateStaffPassword,
   inviteEmployee,
@@ -29,6 +28,7 @@ import {
   deactivateEmployee,
   reactivateEmployee,
   listEmployees,
+  setUserLocale,
   IdentityError,
   type EmployeeRow,
 } from "./service";
@@ -108,25 +108,55 @@ export async function signOutAction(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// requestClientOtpAction — public, no Actor
+// setUserLocaleAction — authenticated (client or staff)
+// ---------------------------------------------------------------------------
+
+const SetLocaleSchema = z.enum(["es", "en"]);
+
+/**
+ * Persists the authenticated user's UI language to `users.locale` AND mirrors it
+ * to the `ulp-locale` cookie so next-intl re-renders in the new language on the
+ * next request. Used by the client /config switch and every staff role's
+ * configuración (DOC-24 i18n). The caller reloads after this resolves.
+ */
+export async function setUserLocaleAction(rawLocale: string): Promise<ActionResult> {
+  try {
+    const actor = await requireActor();
+    const locale = SetLocaleSchema.parse(rawLocale);
+    await setUserLocale(actor, locale);
+    const jar = await cookies();
+    jar.set("ulp-locale", locale, { path: "/", maxAge: 60 * 60 * 24 * 365, sameSite: "lax" });
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof AuthzError) {
+      return { ok: false, error: { code: "unauthorized", message: "No autorizado." } };
+    }
+    logger.error({ err }, "[setUserLocaleAction] Unexpected error");
+    return { ok: false, error: { code: "unknown", message: "No se pudo cambiar el idioma." } };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// loginClientByPhoneAction — public, no Actor (DOC-22 §1, phone-only login)
 // ---------------------------------------------------------------------------
 
 /**
- * Requests an email OTP for the given client email (DOC-22 §1, email auth).
- * Always returns { ok: true } even if the email is not registered (anti-enumeration).
- * Only throws on rate limit (so UI can show the "wait" message).
+ * Logs a client in with ONLY their phone number (no OTP — TEMPORARY, SMS-OTP
+ * comes later). On success the SSR session cookie is set and the UI navigates to
+ * /home. A non-existent / ineligible phone returns the SAME uniform error as a
+ * sign-in failure (anti-enumeration). Only rate limit / malformed phone get a
+ * specific message.
  */
-export async function requestClientOtpAction(
-  rawEmail: string,
+export async function loginClientByPhoneAction(
+  rawPhone: string,
 ): Promise<ActionResult> {
-  // Extract IP for per-IP rate limiting
   const headerStore = await headers();
   const ip = headerStore.get("x-forwarded-for")?.split(",")[0]?.trim()
     ?? headerStore.get("x-real-ip")
     ?? "unknown";
 
   try {
-    await requestClientOtp(rawEmail, ip);
+    await loginClientByPhone(rawPhone, ip);
     return { ok: true };
   } catch (err) {
     if (err instanceof IdentityError) {
@@ -139,67 +169,27 @@ export async function requestClientOtpAction(
           },
         };
       }
-      if (err.code === "invalid_email") {
+      if (err.code === "invalid_phone") {
         return {
           ok: false,
           error: {
-            code: "invalid_email",
-            message: "El correo no es válido. Verifica e intenta de nuevo.",
+            code: "invalid_phone",
+            message: "El teléfono no es válido. Verifica e intenta de nuevo.",
+          },
+        };
+      }
+      if (err.code === "wrong_kind") {
+        // Not found / ineligible / sign-in failed — uniform message (anti-enum).
+        return {
+          ok: false,
+          error: {
+            code: "no_access",
+            message: "No encontramos un caso con ese número. Verifica e intenta de nuevo.",
           },
         };
       }
     }
-    // Unexpected error — return generic, log server-side
-    logger.error({ err }, "[requestClientOtpAction] Unexpected error");
-    return {
-      ok: false,
-      error: { code: "unknown", message: "Algo salió mal. Intenta de nuevo." },
-    };
-  }
-}
-
-// ---------------------------------------------------------------------------
-// verifyClientOtpAction — public, no Actor
-// ---------------------------------------------------------------------------
-
-/**
- * Verifies an OTP code.
- * On re-gate failure (RF-CLI-006): redirects to /no-access.
- * On invalid code: returns generic error ("Ese código no coincide").
- */
-export async function verifyClientOtpAction(
-  rawEmail: string,
-  code: string,
-): Promise<ActionResult> {
-  try {
-    await verifyClientOtp(rawEmail, code);
-    return { ok: true };
-  } catch (err) {
-    if (err instanceof IdentityError) {
-      if (err.code === "wrong_kind" && err.message === "no_access") {
-        // Re-gate failed — redirect to no-access (DOC-22 RF-CLI-006)
-        redirect("/no-access");
-      }
-      if (err.code === "rate_limited") {
-        return {
-          ok: false,
-          error: {
-            code: "rate_limited",
-            message: "Demasiados intentos. Espera unos minutos.",
-          },
-        };
-      }
-      if (err.code === "invalid_otp") {
-        return {
-          ok: false,
-          error: {
-            code: "invalid_otp",
-            message: "Ese código no coincide. Inténtalo de nuevo, sin prisa.",
-          },
-        };
-      }
-    }
-    logger.error({ err }, "[verifyClientOtpAction] Unexpected error");
+    logger.error({ err }, "[loginClientByPhoneAction] Unexpected error");
     return {
       ok: false,
       error: { code: "unknown", message: "Algo salió mal. Intenta de nuevo." },

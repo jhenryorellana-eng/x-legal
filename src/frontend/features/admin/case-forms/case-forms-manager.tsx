@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Card, GradientBtn, GhostBtn, StatusPill, Chip, Lex, type StatusKind } from "@/frontend/components/brand";
 import { toast } from "@/frontend/components/desktop";
+import { getBridge } from "@/frontend/platform-bridge";
 
 /**
  * CaseFormsManager — staff review of a case's form RESPONSES (RF-ADM-010 / DOC-53
@@ -74,7 +75,7 @@ export function CaseFormsManager({
       setPdfUrls((m) => ({ ...m, [it.responseId]: r.downloadUrl! }));
       setItems((xs) => xs.map((x) => (x.responseId === it.responseId ? { ...x, hasPdf: true } : x)));
       toast.success("PDF generado");
-      window.open(r.downloadUrl, "_blank", "noopener");
+      getBridge().share.openExternal(r.downloadUrl);
     } else {
       toast.error(pdfErrorMessage(r.error?.code ?? "UNEXPECTED", r.error?.details));
     }

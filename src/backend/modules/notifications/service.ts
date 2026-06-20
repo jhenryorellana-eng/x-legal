@@ -28,11 +28,22 @@ import {
   insertNotificationIdempotent,
   listNotificationsForUser,
   markNotificationRead,
+  markAllNotificationsRead,
+  getUnreadCountForUser,
   findUserById,
   findStaffByRole,
   findCaseClientMembers,
   findCaseAssignedStaff,
+  getPreferences as repoGetPreferences,
+  upsertPreferences,
+  findUnreadMessageDigest,
+  bumpMessageDigest,
+  upsertPushSubscription,
+  removePushSubscriptionForUser,
+  DEFAULT_PREFERENCES,
   type NotificationsPage,
+  type NotificationPreferences,
+  type NotificationCategory,
 } from "./repository";
 // findLeadAssignedStaff is exported from repository for jobs layer use (DOC-26 §2 rule R3),
 // but the service resolves lead.assigned_to directly from the event payload
@@ -54,25 +65,29 @@ interface MatrixRule {
       | "appointment_staff"
       | "appointment_client"
       | "appointment_counterpart"
-      | "lead_assigned_staff";
+      | "lead_assigned_staff"
+      | "message_participants";
   }>;
   channels: { push: boolean; email: boolean };
+  /** Preference category that gates this rule (DOC-47 §4.1 step 4). */
+  category: NotificationCategory;
   /** Email template key from DOC-73 catalog */
   emailTemplateKey?: string;
-  /** Whether to suppress by user preferences */
+  /** Whether to suppress by user preferences (◆ in the matrix). */
   unsuppressible?: boolean;
   /** Deep link template */
   deepLinkTemplate: string;
 }
 
-// Combined F2 + F3 matrix rows (DOC-47 §4.3).
-// Rename was intentional: adding F3 rows to the same map (extending, not replacing).
+// Canonical matrix (DOC-47 §4.3). F2 + F3 + F7 rows in one map (extending).
+// Each rule carries its preference `category` (gates suppressible rules).
 const F2_MATRIX: Record<string, MatrixRule[]> = {
   "contract.signed": [
     {
       type: "contract.signed",
       recipients: [{ resolverKey: "finance" }],
       channels: { push: true, email: true },
+      category: "case_updates",
       emailTemplateKey: "contract-signed-finance",
       deepLinkTemplate: "/admin/cobranza/{caseId}",
     },
@@ -80,6 +95,7 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
       type: "contract.signed",
       recipients: [{ resolverKey: "sales_of_case" }],
       channels: { push: false, email: false }, // sales only gets in-app ①
+      category: "case_updates",
       deepLinkTemplate: "/ventas/casos/{caseId}",
     },
   ],
@@ -88,6 +104,7 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
       type: "document.approved",
       recipients: [{ resolverKey: "clients_of_case" }],
       channels: { push: true, email: true },
+      category: "case_updates",
       emailTemplateKey: "document-approved",
       deepLinkTemplate: "/caso/{caseId}/documentos",
     },
@@ -97,6 +114,7 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
       type: "document.rejected",
       recipients: [{ resolverKey: "clients_of_case" }],
       channels: { push: true, email: true },
+      category: "case_updates",
       emailTemplateKey: "document-rejected",
       deepLinkTemplate: "/caso/{caseId}/corregir?docId={documentId}",
     },
@@ -106,6 +124,7 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
       type: "downpayment.confirmed",
       recipients: [{ resolverKey: "sales_of_case" }],
       channels: { push: true, email: true },
+      category: "case_updates",
       emailTemplateKey: "downpayment-confirmed-sales",
       deepLinkTemplate: "/ventas/casos/{caseId}",
     },
@@ -113,14 +132,16 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
       type: "downpayment.confirmed",
       recipients: [{ resolverKey: "paralegal_of_case" }],
       channels: { push: false, email: false }, // paralegal only in-app ①
+      category: "case_updates",
       deepLinkTemplate: "/legal/caso/{caseId}?tab=resumen",
     },
     {
       type: "downpayment.confirmed",
       recipients: [{ resolverKey: "clients_of_case" }],
       channels: { push: false, email: true },
+      category: "case_updates",
       emailTemplateKey: "downpayment-confirmed",
-      unsuppressible: true, // ◆
+      unsuppressible: true, // ◆ (cliente — bienvenida)
       deepLinkTemplate: "/caso/{caseId}",
     },
   ],
@@ -135,6 +156,7 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
       type: "appointment.booked",
       recipients: [{ resolverKey: "appointment_client" }],
       channels: { push: true, email: true },
+      category: "appointment_reminders",
       emailTemplateKey: "appointment-booked",
       deepLinkTemplate: "/caso/{caseId}/citas/{appointmentId}",
     },
@@ -142,6 +164,7 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
       type: "appointment.booked",
       recipients: [{ resolverKey: "appointment_staff" }],
       channels: { push: false, email: false }, // staff: in-app ① only
+      category: "appointment_reminders",
       deepLinkTemplate: "/agenda?appointmentId={appointmentId}",
     },
   ],
@@ -152,6 +175,7 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
       type: "appointment.cancelled",
       recipients: [{ resolverKey: "appointment_counterpart" }],
       channels: { push: true, email: true },
+      category: "appointment_reminders",
       emailTemplateKey: "appointment-cancelled",
       deepLinkTemplate: "/caso/{caseId}/citas",
     },
@@ -163,6 +187,7 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
       type: "appointment.rescheduled",
       recipients: [{ resolverKey: "appointment_counterpart" }],
       channels: { push: true, email: true },
+      category: "appointment_reminders",
       emailTemplateKey: "appointment-rescheduled",
       deepLinkTemplate: "/caso/{caseId}/citas/{newAppointmentId}",
     },
@@ -181,7 +206,96 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
       type: "lead.created",
       recipients: [{ resolverKey: "lead_assigned_staff" }],
       channels: { push: true, email: false }, // ①② per matrix, no email
+      category: "case_updates",
       deepLinkTemplate: "/ventas/leads?leadId={leadId}",
+    },
+  ],
+
+  // ---------------------------------------------------------------------------
+  // F7 rows — payments (DOC-47 §4.3). These events are already wired in
+  // register-consumers; adding the matrix rows activates their notifications.
+  // ---------------------------------------------------------------------------
+
+  // installment.overdue → Client ①②③ + Finance ① (payment_reminders)
+  "installment.overdue": [
+    {
+      type: "installment.overdue",
+      recipients: [{ resolverKey: "clients_of_case" }],
+      channels: { push: true, email: true },
+      category: "payment_reminders",
+      emailTemplateKey: "installment-overdue",
+      deepLinkTemplate: "/pagos",
+    },
+    {
+      type: "installment.overdue",
+      recipients: [{ resolverKey: "finance" }],
+      channels: { push: false, email: false }, // finance: in-app ① only
+      category: "payment_reminders",
+      deepLinkTemplate: "/finanzas/pagos?caseId={caseId}",
+    },
+  ],
+
+  // installment.paid → Client ①③ + Finance ① (payment_reminders)
+  "installment.paid": [
+    {
+      type: "installment.paid",
+      recipients: [{ resolverKey: "clients_of_case" }],
+      channels: { push: false, email: true }, // ①③ (no push per matrix)
+      category: "payment_reminders",
+      emailTemplateKey: "installment-paid",
+      deepLinkTemplate: "/pagos",
+    },
+    {
+      type: "installment.paid",
+      recipients: [{ resolverKey: "finance" }],
+      channels: { push: false, email: false }, // finance: in-app ① only
+      category: "payment_reminders",
+      deepLinkTemplate: "/finanzas/pagos?caseId={caseId}",
+    },
+  ],
+
+  // payment.proof_submitted → Finance ①② + Client ① (payment_reminders)
+  "payment.proof_submitted": [
+    {
+      type: "payment.proof_submitted",
+      recipients: [{ resolverKey: "finance" }],
+      channels: { push: true, email: false }, // ①②
+      category: "payment_reminders",
+      deepLinkTemplate: "/finanzas/pagos?caseId={caseId}",
+    },
+    {
+      type: "payment.proof_submitted",
+      recipients: [{ resolverKey: "clients_of_case" }],
+      channels: { push: false, email: false }, // client acknowledgement ①
+      category: "payment_reminders",
+      deepLinkTemplate: "/pagos",
+    },
+  ],
+
+  // payment.refunded → Finance ① (payment_reminders, RF-AND-018)
+  "payment.refunded": [
+    {
+      type: "payment.refunded",
+      recipients: [{ resolverKey: "finance" }],
+      channels: { push: false, email: false }, // in-app ① only
+      category: "payment_reminders",
+      deepLinkTemplate: "/finanzas/pagos?caseId={caseId}",
+    },
+  ],
+
+  // ---------------------------------------------------------------------------
+  // F7 — message.sent → message.received (anti-burst §4.2). Routed to
+  // notifyMessageBurst inside notifyFromEvent (special-cased before the loop).
+  // The row exists so the dispatcher recognizes the event; channels/category
+  // are applied inside notifyMessageBurst.
+  // ---------------------------------------------------------------------------
+  "message.sent": [
+    {
+      type: "message.received",
+      recipients: [{ resolverKey: "message_participants" }],
+      channels: { push: true, email: false }, // ①② anti-burst, no email V2.0
+      category: "messages",
+      deepLinkTemplate: "/caso/{caseId}",
     },
   ],
 };
@@ -256,6 +370,13 @@ async function resolveRecipients(
     case "lead_assigned_staff": {
       const assignedTo = eventPayload["assignedTo"] as string | undefined;
       return assignedTo ? [assignedTo] : [];
+    }
+
+    // F7: message.sent → conversation participants except the sender.
+    // The messaging emitter precomputes recipientIds (participants minus sender).
+    case "message_participants": {
+      const ids = eventPayload["recipientIds"];
+      return Array.isArray(ids) ? (ids as string[]) : [];
     }
 
     default:
@@ -355,6 +476,39 @@ function renderContent(
       icon: "user-plus",
       color: "accent",
     },
+    // F7 payments
+    "installment.overdue": {
+      titleI18n: { en: "Payment overdue", es: "Cuota vencida" },
+      bodyI18n: { en: "An installment is past due. Please review your payments.", es: "Tienes una cuota vencida. Revisa tus pagos." },
+      icon: "alert-circle",
+      color: "amber", // never red toward the client (RF-TRX-022)
+    },
+    "installment.paid": {
+      titleI18n: { en: "Payment received", es: "Pago recibido" },
+      bodyI18n: { en: "We received your payment. Thank you!", es: "Recibimos tu pago. ¡Gracias!" },
+      icon: "dollar-sign",
+      color: "green",
+    },
+    "payment.proof_submitted": {
+      titleI18n: { en: "Payment proof to verify", es: "Comprobante por verificar" },
+      bodyI18n: { en: "A payment proof was submitted and is awaiting verification.", es: "Se envió un comprobante de pago pendiente de verificación." },
+      icon: "file-check",
+      color: "accent",
+    },
+    "payment.refunded": {
+      titleI18n: { en: "Payment refunded", es: "Pago reembolsado" },
+      bodyI18n: { en: "A payment has been refunded.", es: "Se ha reembolsado un pago." },
+      icon: "dollar-sign",
+      color: "gold",
+    },
+    // F7 message digest (anti-burst). Title carries the thread label; the body is
+    // replaced by notifyMessageBurst with a counter on the 2nd+ message.
+    "message.received": {
+      titleI18n: { en: "New message", es: "Nuevo mensaje" },
+      bodyI18n: { en: "You have a new message from your team.", es: "Tienes un nuevo mensaje de tu equipo." },
+      icon: "message-circle",
+      color: "accent",
+    },
   };
 
   return contentMap[type] ?? {
@@ -363,6 +517,97 @@ function renderContent(
     icon: "bell",
     color: "gray",
   };
+}
+
+// ---------------------------------------------------------------------------
+// notifyMessageBurst — anti-burst digest for message.sent (DOC-47 §4.2 / §5.2)
+// ---------------------------------------------------------------------------
+
+const FIVE_MIN_MS = 5 * 60 * 1000;
+const PUSH_GRACE_SECONDS = 5;
+
+/** True if `iso` is within `ms` of now (sliding 5-min digest window). */
+function withinWindow(iso: string, ms: number): boolean {
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return false;
+  return Date.now() - t < ms;
+}
+
+/** Parses the leading count from a digest body ("3 mensajes nuevos…"); else 1. */
+function parseDigestCount(bodyI18n: unknown): number {
+  const es = (bodyI18n as { es?: string } | null)?.es ?? "";
+  const m = es.match(/^(\d+)/);
+  const n = m ? Number(m[1]) : 1;
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+/**
+ * Anti-burst dispatcher for chat messages. The first unread message in a
+ * conversation creates one in-app row + a push enqueued with a 5 s grace
+ * (the handler re-verifies read_at IS NULL before sending — DOC-46 §5.3.2).
+ * Subsequent messages within a 5-min sliding window bump the SAME unread row
+ * ("N mensajes nuevos…") with NO new row and NO additional push.
+ */
+async function notifyMessageBurst(
+  payload: Record<string, unknown>,
+  recipientId: string,
+  prefs: NotificationPreferences,
+): Promise<void> {
+  if (!prefs.messages) return; // category gate (messages off → nothing)
+
+  const messageId = payload["messageId"] as string | undefined;
+  if (!messageId) return;
+
+  // Deep link must resolve to a real screen per the recipient kind: clients open
+  // the case home (chat overlay reachable there), staff open the case detail with
+  // the Mensajes tab. Per-recipient stable → also the digest scoping key.
+  const caseId = payload["caseId"] as string | undefined;
+  const recipient = await findUserById(recipientId);
+  const actionUrl = caseId
+    ? recipient?.kind === "client"
+      ? `/caso/${caseId}/camino`
+      : `/admin/casos/${caseId}`
+    : "/";
+  const threadTitle = { es: "tu equipo", en: "your team" };
+
+  // Digest: bump an existing unread row for this conversation within the window.
+  const open = await findUnreadMessageDigest(recipientId, actionUrl);
+  if (open && withinWindow(open.created_at, FIVE_MIN_MS)) {
+    const nextCount = Math.min(parseDigestCount(open.body_i18n) + 1, 999); // cap the display
+    await bumpMessageDigest(open.id, recipientId, nextCount, threadTitle);
+    return; // no new row, no push
+  }
+
+  const content = renderContent("message.received", payload);
+  const result = await insertNotificationIdempotent({
+    userId: recipientId,
+    type: "message.received",
+    titleI18n: content.titleI18n,
+    bodyI18n: content.bodyI18n,
+    icon: content.icon,
+    color: content.color,
+    actionUrl,
+    dedupeKey: `message.sent:${messageId}:${recipientId}`,
+  });
+  if (!result.created) return; // idempotent re-delivery
+
+  if (prefs.channels.push) {
+    try {
+      await enqueueJob(
+        {
+          jobKey: "deliver-notification",
+          entityId: result.row.id,
+          attempt: 1,
+          dedupeId: `push:${result.row.id}`,
+          channel: "push",
+          notificationId: result.row.id,
+        },
+        { delay: PUSH_GRACE_SECONDS }, // grace period; handler re-checks read_at
+      );
+    } catch (err) {
+      logger.warn({ err, notificationId: result.row.id }, "notifications: failed to enqueue message push — continuing");
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -386,6 +631,25 @@ export async function notifyFromEvent(event: DomainEvent): Promise<void> {
       const userIds = await resolveRecipients(recipientDef.resolverKey, payload);
 
       for (const userId of userIds) {
+        const prefs = await repoGetPreferences(userId);
+
+        // F7 anti-burst: message.sent → message.received (DOC-47 §5.2).
+        // Handles its own digest/grace/channel logic.
+        if (event.type === "message.sent") {
+          await notifyMessageBurst(payload, userId, prefs);
+          continue;
+        }
+
+        // Category gate (DOC-47 §4.1 step 4): a suppressible rule whose category
+        // is turned off produces ZERO channels (RF-TRX-010 CA2) — including in-app.
+        if (!rule.unsuppressible && !prefs[rule.category]) continue;
+
+        // NOTE: the in-app row is the BASE channel (DOC-47 §4.1 step 6) and the
+        // source-of-truth the deliver-notification job reads for push/email, so it
+        // is always inserted once the category gate passes. `channels.inapp` is not
+        // independently enforced here and is NOT exposed as a user toggle (the
+        // preferences UI exposes the 4 categories + the push device subscription).
+
         // Build dedupe key — pick the most specific entity id available
         const entityId = (
           payload["appointmentId"] ??
@@ -418,8 +682,8 @@ export async function notifyFromEvent(event: DomainEvent): Promise<void> {
         // Heavy channels via QStash (out of request)
         const notificationId = result.row.id;
 
-        // Push channel
-        if (rule.channels.push) {
+        // Push channel — channel toggle applies unless the rule is unsuppressible
+        if (rule.channels.push && (rule.unsuppressible || prefs.channels.push)) {
           try {
             await enqueueJob({
               jobKey: "deliver-notification",
@@ -441,14 +705,11 @@ export async function notifyFromEvent(event: DomainEvent): Promise<void> {
         if (rule.channels.email) {
           const user = await findUserById(userId);
           const hasEmail = user?.email && !user.emailBouncedAt;
-          // C-2 FIX: removed `|| true` that made every email unsuppressible.
-          // Correct logic (DOC-47 §4.3):
-          //   - unsuppressible:true  → always send (cannot be turned off)
-          //   - unsuppressible:false/undefined (suppresible) → send UNLESS the user
-          //     has opted out. User preference table not yet implemented, so default=send.
-          // TODO(SoT DOC-47): replace `?? true` with a real pref check once
-          //   notification_preferences table is provisioned.
-          const shouldSendEmail = rule.unsuppressible ?? true;
+          // Channel gate (DOC-47 §4.1 step 4): unsuppressible rules always email;
+          // suppressible rules respect the user's email channel toggle (the
+          // category was already gated above). email also requires a non-bounced
+          // address (DOC-73 §6.2) and a catalog template key.
+          const shouldSendEmail = rule.unsuppressible || prefs.channels.email;
           if (shouldSendEmail && hasEmail && rule.emailTemplateKey) {
             try {
               await enqueueJob({
@@ -504,3 +765,85 @@ export async function markRead(
 ): Promise<void> {
   await markNotificationRead(notificationId, actor.userId);
 }
+
+// ---------------------------------------------------------------------------
+// markAllRead + unread badge (DOC-47 §5.3)
+// ---------------------------------------------------------------------------
+
+/** Marks every unread notification of the actor as read (bell "mark all"). */
+export async function markAllRead(actor: Actor): Promise<void> {
+  await markAllNotificationsRead(actor.userId);
+}
+
+/** Unread count for the bell/Avisos badge — consistent across surfaces (RF-TRX-014 CA3). */
+export async function getUnreadCount(actor: Actor): Promise<{ total: number }> {
+  return { total: await getUnreadCountForUser(actor.userId) };
+}
+
+// ---------------------------------------------------------------------------
+// Preferences (DOC-47 §5.3) — read + update (no retroactive effect)
+// ---------------------------------------------------------------------------
+
+/** Returns the actor's notification preferences (all-true defaults if unset). */
+export async function getPreferences(actor: Actor): Promise<NotificationPreferences> {
+  return repoGetPreferences(actor.userId);
+}
+
+/**
+ * Updates the actor's notification preferences. Unknown/missing fields fall back
+ * to the current defaults so a partial update never drops a category silently.
+ */
+export async function updatePreferences(
+  actor: Actor,
+  input: Partial<NotificationPreferences> & { channels?: Partial<NotificationPreferences["channels"]> },
+): Promise<NotificationPreferences> {
+  const current = await repoGetPreferences(actor.userId);
+  const next: NotificationPreferences = {
+    messages: input.messages ?? current.messages,
+    appointment_reminders: input.appointment_reminders ?? current.appointment_reminders,
+    payment_reminders: input.payment_reminders ?? current.payment_reminders,
+    case_updates: input.case_updates ?? current.case_updates,
+    channels: {
+      inapp: input.channels?.inapp ?? current.channels.inapp,
+      push: input.channels?.push ?? current.channels.push,
+      email: input.channels?.email ?? current.channels.email,
+    },
+  };
+  await upsertPreferences(actor.userId, next);
+  return next;
+}
+
+// ---------------------------------------------------------------------------
+// Push subscriptions (DOC-47 §5.3 + DOC-24) — register / remove a device
+// ---------------------------------------------------------------------------
+
+export interface PushSubscriptionInput {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+  platform?: string;
+}
+
+/** Registers (upserts by endpoint) a Web Push subscription for the actor's device. */
+export async function registerPushSubscription(
+  actor: Actor,
+  input: PushSubscriptionInput,
+): Promise<void> {
+  await upsertPushSubscription({
+    userId: actor.userId,
+    endpoint: input.endpoint,
+    keys: input.keys,
+    platform: input.platform ?? "web",
+  });
+}
+
+/** Removes a Web Push subscription owned by the actor (logout / opt-out). */
+export async function removePushSubscription(
+  actor: Actor,
+  endpoint: string,
+): Promise<void> {
+  await removePushSubscriptionForUser(actor.userId, endpoint);
+}
+
+// Re-export types + defaults for the index boundary / actions.
+export { DEFAULT_PREFERENCES };
+export type { NotificationPreferences, NotificationCategory };

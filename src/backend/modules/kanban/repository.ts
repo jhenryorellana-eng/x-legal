@@ -502,6 +502,18 @@ export async function findLeadCategory(
   return data;
 }
 
+export async function listLeadCategories(orgId: string): Promise<CategoryRow[]> {
+  const client = createServiceClient();
+  const { data, error } = await client
+    .from("lead_categories")
+    .select("*")
+    .eq("org_id", orgId)
+    .eq("is_active", true)
+    .order("position", { ascending: true });
+  if (error) throw new Error(`kanban: listLeadCategories: ${error.message}`);
+  return data ?? [];
+}
+
 export async function insertLeadCategory(
   insert: TablesInsert<"lead_categories">,
 ): Promise<CategoryRow> {

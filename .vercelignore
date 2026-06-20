@@ -1,0 +1,11 @@
+# Exclude from the Vercel deployment upload — none of these are needed to build
+# or run the Next.js app, and trimming them speeds up the build (DOC-82 §8).
+docs/
+e2e/
+supabase/tests/
+.github/
+.playwright-mcp/
+*.log
+
+# Dev-only SW source backup / artifacts (the prod SW is generated at build time)
+public/sw.dev-pushonly.bak.js

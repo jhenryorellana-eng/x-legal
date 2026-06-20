@@ -34,6 +34,7 @@ export interface LeadsClientProps {
   newLeadStrings: NuevoLeadStrings;
   sources: SourceOption[];
   services: ServiceOption[];
+  categories: CategoryOption[];
   newCaseServices: NewCaseService[];
   casosStrings: CasosStrings;
   signingBaseUrl: string;
@@ -54,6 +55,7 @@ export function LeadsClient({
   newLeadStrings,
   sources,
   services,
+  categories,
   newCaseServices,
   casosStrings,
   signingBaseUrl,
@@ -64,13 +66,6 @@ export function LeadsClient({
 }: LeadsClientProps) {
   const [leadModal, setLeadModal] = React.useState<{ open: boolean; columnId?: string }>({ open: false });
   const [caseModal, setCaseModal] = React.useState(false);
-
-  const categories: CategoryOption[] = [
-    { id: "caliente", label: "Caliente", color: "#E4002B" },
-    { id: "tibio", label: "Tibio", color: "#F59E0B" },
-    { id: "frio", label: "Frío", color: "#5B8CFF" },
-    { id: "vip", label: "VIP", color: "#FFC629" },
-  ];
 
   return (
     <LexPrefsProvider>

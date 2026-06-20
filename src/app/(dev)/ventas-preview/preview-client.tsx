@@ -350,6 +350,7 @@ function ConfiguracionPreview() {
         appearance: "Apariencia",
         darkMode: "Modo oscuro",
         darkModeSub: "Ideal para sesiones largas",
+        textSize: "Tamaño del texto",
         accent: "Color de acento",
         lexTitle: "Lex · asistente IA",
         lexBubbles: "Burbujas proactivas",

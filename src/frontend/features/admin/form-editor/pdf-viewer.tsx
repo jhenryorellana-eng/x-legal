@@ -20,11 +20,17 @@ import type { FormEditorStrings } from "./strings";
  */
 
 type PdfDoc = { numPages: number; getPage: (n: number) => Promise<PdfPage> };
+type PdfAnnotation = { subtype?: string; fieldName?: string; rect: number[] };
 type PdfPage = {
   getViewport: (opts: { scale: number }) => PdfViewport;
+  getAnnotations: () => Promise<PdfAnnotation[]>;
   render: (opts: { canvasContext: CanvasRenderingContext2D; viewport: PdfViewport }) => { promise: Promise<void> };
 };
-type PdfViewport = { width: number; height: number };
+type PdfViewport = { width: number; height: number; convertToViewportRectangle: (rect: number[]) => number[] };
+
+/** A form field positioned in pdfjs viewport (canvas) coords — guaranteed to align
+ *  with the rendered page because both come from the SAME pdfjs page object. */
+type PlacedField = { name: string; page: number; left: number; top: number; width: number; height: number };
 
 export interface PdfViewerProps {
   /** Object URL or signed URL of the PDF. */
@@ -42,19 +48,21 @@ const RENDER_SCALE = 1.35;
 
 export function PdfViewer({
   src,
-  fields,
   mappedNames,
   selectedField,
   onSelectField,
   strings,
 }: PdfViewerProps) {
   const scrollRef = React.useRef<HTMLDivElement>(null);
+  const docRef = React.useRef<PdfDoc | null>(null);
   const [pages, setPages] = React.useState<{ width: number; height: number }[]>([]);
+  const [placed, setPlaced] = React.useState<PlacedField[]>([]);
   const [error, setError] = React.useState(false);
   const canvasRefs = React.useRef<Record<number, HTMLCanvasElement | null>>({});
 
-  // Load + render the PDF when src changes.
+  // STEP 1 — load the doc + measure page dims when src changes (no painting yet).
   React.useEffect(() => {
+    docRef.current = null;
     if (!src) {
       setPages([]);
       return;
@@ -64,34 +72,50 @@ export function PdfViewer({
     (async () => {
       try {
         const pdfjs = await import("pdfjs-dist");
-        // Wire the worker to the bundled version (Turbopack resolves the URL).
-        const workerSrc = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")).default;
+        // Worker URL — bundler-agnostic. The previous `?url` import only resolved
+        // under Turbopack (npm run dev), leaving the worker UNSET under webpack
+        // (the production `next build` AND `npx next dev`), so the canvas never
+        // painted (the right panel looked empty). `new URL(module, import.meta.url)`
+        // is honored by both webpack 5 and Turbopack.
         (pdfjs as unknown as { GlobalWorkerOptions: { workerSrc: string } }).GlobalWorkerOptions.workerSrc =
-          workerSrc;
+          new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
 
         const loadingTask = (pdfjs as unknown as { getDocument: (s: { url: string }) => { promise: Promise<PdfDoc> } }).getDocument({
           url: src,
         });
         const doc = await loadingTask.promise;
         if (cancelled) return;
+        docRef.current = doc;
 
         const dims: { width: number; height: number }[] = [];
+        const placedFields: PlacedField[] = [];
         for (let i = 1; i <= doc.numPages; i++) {
           const page = await doc.getPage(i);
           const viewport = page.getViewport({ scale: RENDER_SCALE });
           dims.push({ width: viewport.width, height: viewport.height });
-          // Defer the actual canvas paint to a microtask after state commits.
-          queueMicrotask(async () => {
-            const canvas = canvasRefs.current[i];
-            if (!canvas) return;
-            const ctx = canvas.getContext("2d");
-            if (!ctx) return;
-            canvas.width = viewport.width;
-            canvas.height = viewport.height;
-            await page.render({ canvasContext: ctx, viewport }).promise;
-          });
+          // Field positions come from pdfjs's OWN annotations + viewport transform,
+          // so the overlay boxes ALWAYS line up with the rendered page (the previous
+          // mupdf rects used a different coordinate system → misaligned overlays).
+          const annots = await page.getAnnotations();
+          for (const a of annots) {
+            if (a.subtype !== "Widget" || typeof a.fieldName !== "string" || !a.fieldName) continue;
+            const r = viewport.convertToViewportRectangle(a.rect);
+            const left = Math.min(r[0], r[2]);
+            const top = Math.min(r[1], r[3]);
+            placedFields.push({
+              name: a.fieldName,
+              page: i,
+              left,
+              top,
+              width: Math.abs(r[2] - r[0]),
+              height: Math.abs(r[3] - r[1]),
+            });
+          }
         }
-        if (!cancelled) setPages(dims);
+        if (!cancelled) {
+          setPages(dims);
+          setPlaced(placedFields);
+        }
       } catch {
         if (!cancelled) setError(true);
       }
@@ -102,28 +126,69 @@ export function PdfViewer({
     };
   }, [src]);
 
+  // STEP 2 — paint each page AFTER its <canvas> has mounted (pages committed). This
+  // fixes the race where the old code painted in a microtask before the canvases
+  // existed (canvasRefs were null → backing stayed the 300px default → blurry upscale).
+  // Render at device-pixel-ratio so the official-form text is CRISP.
+  React.useEffect(() => {
+    const doc = docRef.current;
+    if (!doc || pages.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      for (let i = 1; i <= doc.numPages; i++) {
+        if (cancelled) return;
+        const canvas = canvasRefs.current[i];
+        if (!canvas) continue;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) continue;
+        const page = await doc.getPage(i);
+        const vp = page.getViewport({ scale: RENDER_SCALE * dpr });
+        canvas.width = Math.floor(vp.width);
+        canvas.height = Math.floor(vp.height);
+        await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pages]);
+
   // Scroll to the selected field's page.
   React.useEffect(() => {
     if (!selectedField) return;
-    const f = fields.find((x) => x.pdf_field_name === selectedField);
+    const f = placed.find((x) => x.name === selectedField);
     if (!f) return;
     const el = scrollRef.current?.querySelector<HTMLElement>(`[data-pdf-page="${f.page}"]`);
     el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }, [selectedField, fields]);
+  }, [selectedField, placed]);
 
   const fieldsByPage = React.useMemo(() => {
-    const map = new Map<number, DetectedFieldVM[]>();
-    for (const f of fields) {
+    const map = new Map<number, PlacedField[]>();
+    for (const f of placed) {
       const arr = map.get(f.page) ?? [];
       arr.push(f);
       map.set(f.page, arr);
     }
     return map;
-  }, [fields]);
+  }, [placed]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
-      <Legend strings={strings} />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 10, flexWrap: "wrap" }}>
+        <Legend strings={strings} />
+        {src && (
+          <a
+            href={src}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, padding: "0 13px", borderRadius: 999, background: "var(--accent)", color: "#fff", fontSize: 12.5, fontWeight: 800, textDecoration: "none", flexShrink: 0 }}
+            title={strings.viewOfficialPdf}
+          >
+            <Icon name="doc" size={13} color="#fff" /> {strings.viewOfficialPdf}
+          </a>
+        )}
+      </div>
       <div
         ref={scrollRef}
         style={{
@@ -174,17 +239,16 @@ export function PdfViewer({
               />
               {pageFields.map((f) => (
                 <FieldOverlay
-                  key={f.pdf_field_name}
-                  field={f}
-                  pageHeight={dim.height}
+                  key={f.name}
+                  placed={f}
                   state={
-                    selectedField === f.pdf_field_name
+                    selectedField === f.name
                       ? "selected"
-                      : mappedNames.has(f.pdf_field_name)
+                      : mappedNames.has(f.name)
                         ? "mapped"
                         : "unmapped"
                   }
-                  onClick={() => onSelectField(f.pdf_field_name)}
+                  onClick={() => onSelectField(f.name)}
                 />
               ))}
             </div>
@@ -196,48 +260,42 @@ export function PdfViewer({
 }
 
 function FieldOverlay({
-  field,
-  pageHeight,
+  placed,
   state,
   onClick,
 }: {
-  field: DetectedFieldVM;
-  pageHeight: number;
+  placed: PlacedField;
   state: "mapped" | "unmapped" | "selected";
   onClick: () => void;
 }) {
-  // mupdf rect is [x0, y0, x1, y1] in PDF points (origin bottom-left). We scale
-  // by RENDER_SCALE and flip Y to the top-left canvas origin.
-  const [x0, y0, x1, y1] = field.rect;
-  const left = x0 * RENDER_SCALE;
-  const width = (x1 - x0) * RENDER_SCALE;
-  const heightPx = (y1 - y0) * RENDER_SCALE;
-  const top = pageHeight - y1 * RENDER_SCALE;
-
+  // Coordinates already in canvas/viewport space (from pdfjs convertToViewportRectangle),
+  // so they line up exactly with the rendered page — no manual scale/flip needed.
+  // Subtle by default so the official form text reads THROUGH the overlays: unmapped
+  // fields are just a dashed outline; mapped a faint tint; the selected one stands out.
   const palette = {
-    mapped: { bg: "color-mix(in srgb, var(--accent) 30%, transparent)", border: "1.5px solid var(--accent)" },
-    unmapped: { bg: "var(--gold-soft)", border: "1.5px dashed var(--gold-deep)" },
-    selected: { bg: "var(--accent)", border: "2px solid var(--accent)" },
+    mapped: { bg: "color-mix(in srgb, var(--accent) 14%, transparent)", border: "1.5px solid var(--accent)", op: 0.85 },
+    unmapped: { bg: "transparent", border: "1.5px dashed var(--gold-deep)", op: 0.65 },
+    selected: { bg: "color-mix(in srgb, var(--accent) 38%, transparent)", border: "2px solid var(--accent)", op: 1 },
   }[state];
 
   return (
     <button
       type="button"
       onClick={onClick}
-      title={`${field.pdf_field_name} · ${field.field_type}`}
-      aria-label={`${field.pdf_field_name} (${state})`}
+      title={placed.name}
+      aria-label={`${placed.name} (${state})`}
       style={{
         position: "absolute",
-        left,
-        top,
-        width: Math.max(width, 8),
-        height: Math.max(heightPx, 8),
+        left: placed.left,
+        top: placed.top,
+        width: Math.max(placed.width, 8),
+        height: Math.max(placed.height, 8),
         background: palette.bg,
         border: palette.border,
         borderRadius: 3,
         cursor: "pointer",
         padding: 0,
-        opacity: state === "selected" ? 0.55 : 0.85,
+        opacity: palette.op,
         transition: "background .15s, opacity .15s",
       }}
     />
@@ -251,7 +309,7 @@ function Legend({ strings }: { strings: FormEditorStrings }) {
     { label: strings.legendSelected, swatch: { background: "var(--accent)" } },
   ];
   return (
-    <div style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 10, flexWrap: "wrap" }}>
+    <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
       {items.map((it) => (
         <span key={it.label} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--ink-2)" }}>
           <span style={{ width: 13, height: 13, borderRadius: 3, ...it.swatch }} />

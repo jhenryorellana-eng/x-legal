@@ -16,8 +16,11 @@ import { appEvents } from "@/backend/platform/events";
 import type { Actor } from "@/backend/platform/authz";
 import { writeAudit } from "@/backend/modules/audit";
 import { PROFILE_SOURCE_FIELDS } from "@/shared/constants/profile-fields";
+import { isPartyRoleKey } from "@/shared/constants/party-roles";
 import { GENERATION_MODELS } from "@/shared/constants/ai-models";
-import { detectAcroFields as platformDetectAcroFields, fillAcroForm } from "@/backend/platform/pdf";
+import { deriveFieldState, parseConditionOrNull, type QuestionCondition } from "@/shared/form-logic/conditions";
+import type { ProposedQuestion } from "@/backend/modules/ai-engine";
+import { detectAcroFields as platformDetectAcroFields, fillAcroForm, extractPdfText, backfillNaTextFields } from "@/backend/platform/pdf";
 import { createServiceClient } from "@/backend/platform/supabase";
 import { logger } from "@/backend/platform/logger";
 import { getAnthropicClient } from "@/backend/platform/anthropic";
@@ -30,6 +33,7 @@ import {
   UpdatePhaseDtoSchema,
   CreateMilestoneDtoSchema,
   CreateRequiredDocDtoSchema,
+  UpsertServicePartyRoleDtoSchema,
   CreateFormDtoSchema,
   QuestionSchema,
   validateServicePublication,
@@ -44,6 +48,8 @@ import {
   assertNoIssues,
   isFkViolation,
   nextVersionNumber,
+  GenerationSectionSchema,
+  GenerationAssemblySchema,
 } from "./domain";
 
 import { z } from "zod";
@@ -64,6 +70,8 @@ import type {
   QuestionGroup,
   Question,
   GenerationConfig,
+  GenerationSection,
+  GenerationAssembly,
   Dataset,
   DatasetItem,
   PublicationCheck,
@@ -77,6 +85,8 @@ import type {
   UpdatePhaseDto,
   CreateMilestoneDto,
   CreateRequiredDocDto,
+  ServicePartyRole,
+  UpsertServicePartyRoleDto,
   CreateFormDto,
 } from "./domain";
 
@@ -495,6 +505,9 @@ export async function createRequiredDocument(
   if (dto.is_per_party && (!dto.party_roles || dto.party_roles.length === 0)) {
     throw catalogError("CATALOG_PER_PARTY_WITHOUT_ROLES");
   }
+  if (dto.party_roles?.some((r) => !isPartyRoleKey(r))) {
+    throw catalogError("CATALOG_PER_PARTY_INVALID_ROLE");
+  }
 
   if (dto.ai_extract && dto.extraction_schema) {
     const { valid, reason } = validateExtractionSchema(dto.extraction_schema);
@@ -526,6 +539,9 @@ export async function updateRequiredDocument(
 
   if (patch.is_per_party && (!patch.party_roles || patch.party_roles.length === 0)) {
     throw catalogError("CATALOG_PER_PARTY_WITHOUT_ROLES");
+  }
+  if (patch.party_roles?.some((r) => !isPartyRoleKey(r))) {
+    throw catalogError("CATALOG_PER_PARTY_INVALID_ROLE");
   }
 
   if (patch.ai_extract && patch.extraction_schema) {
@@ -644,7 +660,7 @@ export async function updateFormDefinition(
  */
 export async function createAutomationVersion(
   actor: Actor,
-  input: { form_definition_id: string; uploaded_pdf_path: string },
+  input: { form_definition_id: string; uploaded_pdf_path: string; source_language?: "en" | "es" },
 ): Promise<AutomationVersion> {
   can(actor, "catalog", "edit");
 
@@ -675,6 +691,7 @@ export async function createAutomationVersion(
     form_definition_id: form.id,
     version: versionNumber,
     source_pdf_path: input.uploaded_pdf_path,
+    source_language: input.source_language ?? "en",
     detected_fields: [],
     status: "draft",
     created_by: actor.userId,
@@ -686,6 +703,90 @@ export async function createAutomationVersion(
 
   // Chain: immediately run field detection on the newly created version
   return redetectFields(actor, versionRow.id);
+}
+
+/**
+ * Remaps a copied condition's controlling-question id (old → new). Dropped if the
+ * controlling question wasn't part of the copy (should not happen on a full copy).
+ */
+function remapConditionIds(raw: unknown, oldToNew: Map<string, string>): QuestionCondition | null {
+  const cond = parseConditionOrNull(raw);
+  if (!cond) return null;
+  const newQ = oldToNew.get(cond.when.question);
+  if (!newQ) return null;
+  return { ...cond, when: { ...cond.when, question: newQ } };
+}
+
+/**
+ * Duplicates an immutable (published/archived) version into a fresh editable
+ * DRAFT: same PDF + detected_fields, with ALL groups/questions copied and their
+ * conditions remapped to the new question ids. Lets the admin keep iterating on a
+ * published form without re-uploading the PDF or re-structuring from scratch — the
+ * published version stays intact (cases that started on it keep using it).
+ *
+ * @api-id API-CAT-44
+ */
+export async function duplicateVersionAsDraft(actor: Actor, versionId: string): Promise<AutomationVersion> {
+  can(actor, "catalog", "edit");
+  const source = await repo.findVersionById(versionId);
+  if (!source) throw catalogError("CATALOG_VERSION_NOT_FOUND");
+
+  const existingVersions = await repo.listVersions(source.form_definition_id);
+  const versionNumber = nextVersionNumber(existingVersions as unknown as AutomationVersion[]);
+
+  const draft = await repo.insertAutomationVersion({
+    form_definition_id: source.form_definition_id,
+    version: versionNumber,
+    source_pdf_path: source.source_pdf_path,
+    source_language: (source.source_language as "en" | "es" | null) ?? "en",
+    detected_fields: source.detected_fields,
+    status: "draft",
+    created_by: actor.userId,
+  });
+
+  // Copy groups + questions. Pass 1: create (without conditions) recording old→new
+  // question ids; Pass 2: remap each condition's controlling id + persist.
+  const tree = await repo.getVersionTree(versionId);
+  const oldToNewQ = new Map<string, string>();
+  if (tree) {
+    for (const g of tree.groups) {
+      const newGroup = await repo.upsertQuestionGroup({
+        automation_version_id: draft.id,
+        title_i18n: g.title_i18n,
+        position: g.position,
+      });
+      for (const q of g.questions) {
+        const newQ = await repo.upsertQuestion({
+          group_id: newGroup.id,
+          question_i18n: q.question_i18n,
+          help_i18n: q.help_i18n,
+          field_type: q.field_type,
+          options: q.options,
+          pdf_field_name: q.pdf_field_name,
+          source: q.source,
+          source_ref: q.source_ref,
+          is_required: q.is_required,
+          position: q.position,
+          validation: q.validation,
+        });
+        oldToNewQ.set(q.id, newQ.id);
+      }
+    }
+    for (const g of tree.groups) {
+      for (const q of g.questions) {
+        if (!q.condition) continue;
+        const remapped = remapConditionIds(q.condition, oldToNewQ);
+        if (remapped) {
+          await repo.updateQuestionCondition(oldToNewQ.get(q.id)!, remapped as unknown as import("@/shared/database.types").Json);
+        }
+      }
+    }
+  }
+
+  await writeAudit(actor, "catalog.form_version.created", "form_automation_versions", draft.id, {
+    after: { form_definition_id: source.form_definition_id, version: versionNumber, duplicated_from: versionId },
+  });
+  return draft as unknown as AutomationVersion;
 }
 
 /**
@@ -781,6 +882,7 @@ export async function aiProposeStructure(
     pdf_field_name: string;
     field_type: string;
     page: number;
+    rect?: [number, number, number, number];
   }>;
 
   if (detectedFields.length === 0) {
@@ -793,13 +895,22 @@ export async function aiProposeStructure(
     const groupQs = await repo.listQuestions(input.group_id);
     const groupFieldNames = new Set(groupQs.map((q) => q.pdf_field_name).filter(Boolean));
     scopeFields = detectedFields.filter((f) => groupFieldNames.has(f.pdf_field_name));
+    // A scoped re-proposal with no mapped fields would call the AI with an empty
+    // field list (silent no-op / hallucination) — fail loudly instead.
+    if (scopeFields.length === 0) {
+      throw catalogError("CATALOG_NO_ACROFORM_FIELDS", "No AcroForm fields in this group's scope.");
+    }
   }
 
-  // Map domain detected_fields to the shape proposeFormSegmentation expects
+  // Map domain detected_fields to the shape proposeFormSegmentation expects.
+  // rect is passed so the model can reconstruct repeating tables SPATIALLY (rows
+  // share y, columns share x) instead of guessing from the anonymous bracket index
+  // — the index order does NOT follow visual order on USCIS forms.
   const aiFields = scopeFields.map((f) => ({
     name: f.pdf_field_name,
     type: f.field_type,
     page: f.page,
+    rect: f.rect,
   }));
   const detectedNames = new Set(detectedFields.map((f) => f.pdf_field_name));
 
@@ -815,13 +926,28 @@ export async function aiProposeStructure(
     ? [pickEs(phase.label_i18n), pickEs(phase.client_explainer_i18n)].filter(Boolean).join(" — ")
     : undefined;
 
+  // Extract the form's printed text to GROUND the proposal: the official labels
+  // ("Your Occupation", "Name and Address of Employer", column headers, …) let the
+  // model map otherwise-anonymous AcroForm field names ("TextField13[39]") to the
+  // right question instead of guessing. Best-effort — a failure proceeds ungrounded.
+  let pdfText = "";
+  try {
+    const dl = await createServiceClient().storage.from("catalog-assets").download(version.source_pdf_path);
+    if (dl.data) pdfText = await extractPdfText(new Uint8Array(await dl.data.arrayBuffer()));
+  } catch (err) {
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err), versionId: input.version_id },
+      "catalog: aiProposeStructure — PDF text extraction failed, proceeding without it",
+    );
+  }
+
   // M-4: Call AI FIRST, then delete existing groups — reduces the window where
   // the version is empty. If AI fails, existing groups are preserved intact.
   // Import ai-engine via its public index (module boundary — no direct service import)
   const { proposeFormSegmentation } = await import("@/backend/modules/ai-engine");
   const proposal = await proposeFormSegmentation(actor, {
     detectedFields: aiFields,
-    pdfText: "", // PDF text extraction is a future enhancement (P-40-2)
+    pdfText,
     groupScope: input.group_id ? [input.group_id] : undefined,
     formName: pickEs(formDef?.label_i18n),
     formSlug: formDef?.slug,
@@ -829,6 +955,27 @@ export async function aiProposeStructure(
     serviceContext,
     profileFields: PROFILE_SOURCE_FIELDS,
   });
+
+  // Coverage accountability (DOC-74): surface detected fields the proposal left
+  // UNMAPPED so a silently-dropped applicant field is visible in the logs (purely
+  // internal/office-use fields are expected to be uncovered). Deterministic — does
+  // not trust the model to self-report.
+  const proposedPdfNames = new Set(
+    proposal.groups.flatMap((g) =>
+      g.questions.map((q) => q.pdf_field_name).filter((n): n is string => !!n),
+    ),
+  );
+  const uncovered = scopeFields.map((f) => f.pdf_field_name).filter((n) => !proposedPdfNames.has(n));
+  logger.info(
+    {
+      versionId: input.version_id,
+      detected: scopeFields.length,
+      mapped: proposedPdfNames.size,
+      uncovered: uncovered.length,
+      uncoveredSample: uncovered.slice(0, 25),
+    },
+    "catalog: aiProposeStructure — field coverage",
+  );
 
   // Materialize proposal as draft groups + questions
   let totalQuestions = 0;
@@ -842,6 +989,12 @@ export async function aiProposeStructure(
     }
   }
 
+  // Conditions reference other questions by an AI-assigned `key`; questions get
+  // their real ids only on insert. So we insert everything first (recording
+  // key → id), then resolve + persist each condition in a second pass.
+  const keyToId = new Map<string, string>();
+  const pendingConditions: Array<{ questionId: string; raw: NonNullable<ProposedQuestion["condition"]> }> = [];
+
   for (let gi = 0; gi < proposal.groups.length; gi++) {
     const g = proposal.groups[gi];
 
@@ -854,8 +1007,9 @@ export async function aiProposeStructure(
 
     const questions = g.questions ?? [];
     for (let qi = 0; qi < questions.length; qi++) {
-      const safe = sanitizeProposedQuestion(questions[qi], qi, detectedNames);
-      await repo.upsertQuestion({
+      const proposed = questions[qi];
+      const safe = sanitizeProposedQuestion(proposed, qi, detectedNames);
+      const inserted = await repo.upsertQuestion({
         group_id: group.id,
         question_i18n: safe.question_i18n as import("@/shared/database.types").Json,
         help_i18n: safe.help_i18n as import("@/shared/database.types").Json | null,
@@ -868,7 +1022,30 @@ export async function aiProposeStructure(
         position: safe.position,
         validation: safe.validation as import("@/shared/database.types").Json | null,
       });
+      // Only register AI-assigned keys: a synthetic fallback could collide with
+      // a real AI key and mis-wire a condition. Conditions only ever reference
+      // explicit AI keys, so questions without one need no entry.
+      const aiKey = typeof proposed.key === "string" && proposed.key ? proposed.key : null;
+      if (aiKey) keyToId.set(aiKey, inserted.id);
+      if (proposed.condition) pendingConditions.push({ questionId: inserted.id, raw: proposed.condition });
       totalQuestions++;
+    }
+  }
+
+  // Pass 2 — resolve each condition's key reference to the real question id and
+  // validate it; an unresolved/invalid condition is dropped (fail-safe). A persist
+  // failure for one condition must NOT abort the whole proposal (conditions are
+  // enrichment on top of already-inserted questions).
+  for (const pc of pendingConditions) {
+    const cond = resolveProposedCondition(pc.raw, keyToId, pc.questionId);
+    if (!cond) continue;
+    try {
+      await repo.updateQuestionCondition(pc.questionId, cond as unknown as import("@/shared/database.types").Json);
+    } catch (err) {
+      logger.warn(
+        { err: err instanceof Error ? err.message : String(err), questionId: pc.questionId },
+        "catalog: aiProposeStructure — condition persist failed, skipping",
+      );
     }
   }
 
@@ -877,6 +1054,33 @@ export async function aiProposeStructure(
   });
 
   return { groups: proposal.groups.length, questions: totalQuestions };
+}
+
+/**
+ * Resolves an AI-proposed condition: substitutes the `when.question` KEY for the
+ * real question id (via keyToId) and validates the result with ConditionSchema.
+ * Returns null (condition dropped) when the key is unknown or the shape is invalid.
+ */
+function resolveProposedCondition(
+  raw: NonNullable<ProposedQuestion["condition"]>,
+  keyToId: Map<string, string>,
+  selfId: string,
+): QuestionCondition | null {
+  if (!raw || typeof raw !== "object" || !raw.when) return null;
+  const keyRef = typeof raw.when.question === "string" ? raw.when.question : "";
+  // Accept either an AI `key` (normal path) or, defensively, a raw id — but ONLY if
+  // that id is among the questions we just minted for THIS version (keyToId.values()),
+  // so a stray/foreign UUID can never leak into a condition.
+  const mintedIds = new Set(keyToId.values());
+  const resolvedId = keyToId.get(keyRef) ?? (mintedIds.has(keyRef) ? keyRef : undefined);
+  // Drop unresolved refs AND self-references (a field gated on its own value would
+  // hide itself forever on first render, since it has no answer yet).
+  if (!resolvedId || resolvedId === selfId) return null;
+  return parseConditionOrNull({
+    when: { question: resolvedId, op: raw.when.op, value: raw.when.value },
+    action: raw.action,
+    lock_message_i18n: raw.lock_message_i18n ?? null,
+  });
 }
 
 const FIELD_TYPES = ["text", "number", "date", "checkbox", "select", "textarea"] as const;
@@ -905,7 +1109,7 @@ interface SafeQuestion {
  * gate (validateSourceRef) is the final authority.
  */
 function sanitizeProposedQuestion(
-  q: import("@/backend/modules/ai-engine").ProposedQuestion,
+  q: ProposedQuestion,
   index: number,
   detectedNames: Set<string>,
 ): SafeQuestion {
@@ -1127,18 +1331,58 @@ export async function generateTestPdf(
   const gaps: Array<{ question_id: string; pdf_field_name: string }> = [];
 
   for (const q of tree.questions) {
+    // SELECT mapped to a checkbox group: each option carries its own pdf_field_name
+    // (Sex, Marital, a Yes/No pair); the chosen option's box is ticked. Same logic
+    // as production generateFilledPdf.
+    const optionFields =
+      q.field_type === "select" && Array.isArray(q.options)
+        ? (q.options as Array<{ value: string; pdf_field_name?: string | null }>)
+        : null;
+    const hasOptionFields = !!optionFields && optionFields.some((o) => o?.pdf_field_name);
     const fieldName = q.pdf_field_name;
-    if (!fieldName) continue; // intermediate field without AcroForm mapping
+    if (!fieldName && !hasOptionFields) continue; // intermediate field without AcroForm mapping
+
+    // Conditional/dynamic: skip a field hidden by its condition (left blank, like
+    // production); a condition can also flip whether it counts as a required gap.
+    const condState = deriveFieldState(parseConditionOrNull(q.condition), q.is_required, input.sample_answers);
+    if (!condState.visible) continue;
 
     const answerId = q.id;
     if (answerId in input.sample_answers) {
       const val = input.sample_answers[answerId];
-      valuesByPdfName[fieldName] = typeof val === "boolean" ? val : String(val ?? "");
-    } else if (q.is_required) {
+      if (hasOptionFields) {
+        const chosen = optionFields.find((o) => String(o.value) === String(val));
+        if (chosen?.pdf_field_name) valuesByPdfName[chosen.pdf_field_name] = true;
+      } else {
+        valuesByPdfName[fieldName!] = typeof val === "boolean" ? val : String(val ?? "");
+      }
+    } else if (condState.required) {
       // Required field with no sample answer — record gap (non-blocking per RF-ADM-034 E1)
-      gaps.push({ question_id: q.id, pdf_field_name: fieldName });
+      gaps.push({ question_id: q.id, pdf_field_name: fieldName ?? q.id });
     }
   }
+
+  // USCIS acceptance rule (8 CFR 1208.3(c)(3)): a blank field makes the form
+  // incomplete, but "N/A" is an allowed response — backfill blank applicant text
+  // fields on this form's pages so the test PDF reflects an acceptable filing.
+  const detectedForNa = (tree.version.detected_fields ?? []) as Array<{
+    pdf_field_name: string;
+    field_type: string;
+    page: number;
+  }>;
+  // Seed the page-scope with both top-level and per-option pdf field names (a page
+  // of only checkbox-group SELECTs would otherwise be undercounted).
+  const naFormFields = [
+    ...tree.questions.map((q) => q.pdf_field_name).filter((n): n is string => !!n),
+    ...tree.questions.flatMap((q) =>
+      Array.isArray(q.options)
+        ? (q.options as Array<{ pdf_field_name?: string | null }>)
+            .map((o) => o?.pdf_field_name)
+            .filter((n): n is string => !!n)
+        : [],
+    ),
+  ];
+  backfillNaTextFields(detectedForNa, valuesByPdfName, naFormFields);
 
   // Fill AcroForm using mupdf (same engine as production)
   const pdfBytes = await fillAcroForm(bytes, {}, valuesByPdfName);
@@ -1294,6 +1538,14 @@ export async function updateGenerationConfig(
     max_output_tokens?: number;
     output_format?: string;
     output_language?: string;
+    web_search_enabled?: boolean;
+    web_search_max_uses?: number;
+    research_instructions?: string | null;
+    research_model?: string | null;
+    sections?: GenerationSection[];
+    rules_enabled?: boolean;
+    rules_text?: string | null;
+    assembly?: GenerationAssembly | null;
   },
 ): Promise<GenerationConfig> {
   can(actor, "catalog", "edit");
@@ -1325,6 +1577,15 @@ export async function updateGenerationConfig(
     if (!ds.is_active) throw catalogError("CATALOG_DATASET_INACTIVE");
   }
 
+  if (input.research_model && !(GENERATION_MODELS as readonly string[]).includes(input.research_model)) {
+    throw catalogError("CATALOG_MODEL_NOT_ALLOWED");
+  }
+
+  // Validate/normalize sections (generic long-form config — generalizes v1's 17
+  // asylum sections). Empty = single-call generation.
+  const sections = (input.sections ?? []).map((s) => GenerationSectionSchema.parse(s));
+  const assembly = input.assembly ? GenerationAssemblySchema.parse(input.assembly) : null;
+
   const config = await repo.upsertGenerationConfig({
     form_definition_id: input.form_definition_id,
     system_prompt: input.system_prompt,
@@ -1335,6 +1596,14 @@ export async function updateGenerationConfig(
     max_output_tokens: input.max_output_tokens ?? 32000,
     output_format: input.output_format ?? "pdf",
     output_language: input.output_language ?? "en",
+    web_search_enabled: input.web_search_enabled ?? false,
+    web_search_max_uses: input.web_search_max_uses ?? 5,
+    research_instructions: input.research_instructions ?? null,
+    research_model: input.research_model ?? null,
+    sections: sections as unknown as import("@/shared/database.types").Json,
+    rules_enabled: input.rules_enabled ?? true,
+    rules_text: input.rules_text ?? null,
+    assembly: (assembly ?? null) as unknown as import("@/shared/database.types").Json,
     updated_by: actor.userId,
   });
 
@@ -1468,11 +1737,23 @@ export async function createDatasetItem(
     }
   }
 
+  // OCR: a file-only item (e.g. a public won-case PDF) is transcribed to text so
+  // it becomes injectable reference material. Best-effort — kept without content
+  // if extraction fails (then excluded from injection until re-processed).
+  let resolvedContent = input.content ?? null;
+  if (!resolvedContent && input.file_path) {
+    const { extractRawTextFromStorage } = await import("@/backend/modules/ai-engine");
+    resolvedContent = await extractRawTextFromStorage({
+      bucket: "catalog-assets",
+      path: input.file_path,
+    });
+  }
+
   // Count tokens for the item text (RF-ADM-039 §3 / DOC-74 §4.2)
   // Uses claude-sonnet-4-6 tokenizer as a proxy for claude-fable-5
   // (same Anthropic tokenizer family). NULL → excluded from dataset injection.
   let token_count: number | null = null;
-  const textToCount = input.content ?? null;
+  const textToCount = resolvedContent;
   if (textToCount !== null) {
     try {
       const client = getAnthropicClient();
@@ -1490,7 +1771,7 @@ export async function createDatasetItem(
   const item = await repo.insertDatasetItem({
     dataset_id: input.dataset_id,
     title: input.title,
-    content: input.content ?? null,
+    content: resolvedContent,
     file_path: input.file_path ?? null,
     jurisdiction: input.jurisdiction ?? null,
     outcome: input.outcome ?? null,
@@ -1714,6 +1995,17 @@ export async function listContractableServices(orgId: string) {
 }
 
 /**
+ * Lists a contractable service's plans for the "Nuevo caso" contract flow. No
+ * `catalog` gate (unlike getServiceEditorTree, which requires catalog.view): a
+ * SALES rep must be able to win a lead into a contract, and the plan pricing is
+ * non-sensitive reference data. serviceId comes from the org's own
+ * listContractableServices, so it is already org-scoped.
+ */
+export async function listContractableServicePlans(serviceId: string) {
+  return repo.listPlans(serviceId);
+}
+
+/**
  * Returns the FIRST phase of a service for case activation (DOC-41 §3.4):
  * the explicit entry_phase_id if set, otherwise the lowest-position phase.
  * Internal cross-module read (no actor): consumed by cases.onDownpaymentConfirmed
@@ -1846,12 +2138,14 @@ export interface ServiceEditorPhase {
   milestones: Milestone[];
   appointment_policy: PolicyRow | null;
   documents: RequiredDocRow[];
-  forms: FormDefinitionRow[];
+  forms: (FormDefinitionRow & { published_version: number | null })[];
 }
 
 export interface ServiceEditorTree {
   service: Service;
   plans: ServicePlan[];
+  /** The additional case parties this service declares (besides the applicant). */
+  partyRoles: ServicePartyRole[];
   phases: ServiceEditorPhase[];
 }
 
@@ -1871,8 +2165,9 @@ export async function getServiceEditorTree(
   const service = await repo.findServiceById(serviceId);
   if (!service) return null;
 
-  const [plans, phaseRows] = await Promise.all([
+  const [plans, partyRoleRows, phaseRows] = await Promise.all([
     repo.listPlans(serviceId),
+    repo.listServicePartyRoles(serviceId),
     repo.listPhases(serviceId),
   ]);
 
@@ -1884,6 +2179,15 @@ export async function getServiceEditorTree(
         repo.listRequiredDocs(ph.id),
         repo.listFormDefinitions(ph.id),
       ]);
+      // Enrich pdf_automation forms with their published version number (if any)
+      // so the wizard can show "v3" vs "Borrador" without a second round-trip.
+      const formsWithVersion = await Promise.all(
+        forms.map(async (f) => {
+          const published =
+            f.kind === "pdf_automation" ? await repo.getPublishedVersion(f.id) : null;
+          return { ...f, published_version: published?.version ?? null };
+        }),
+      );
       return {
         id: ph.id,
         slug: ph.slug,
@@ -1894,7 +2198,7 @@ export async function getServiceEditorTree(
         milestones: milestones as unknown as Milestone[],
         appointment_policy: policy,
         documents: documents,
-        forms: forms,
+        forms: formsWithVersion,
       };
     }),
   );
@@ -1902,8 +2206,119 @@ export async function getServiceEditorTree(
   return {
     service: service as unknown as Service,
     plans: plans as unknown as ServicePlan[],
+    partyRoles: partyRoleRows.map(mapPartyRoleRow),
     phases,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Service party roles — admin config (DOC-41) + runtime read for "Nuevo caso"
+// ---------------------------------------------------------------------------
+
+function mapPartyRoleRow(r: repo.ServicePartyRoleRow): ServicePartyRole {
+  return {
+    id: r.id,
+    service_id: r.service_id,
+    role_key: r.role_key as ServicePartyRole["role_key"],
+    label_i18n: (r.label_i18n ?? {}) as ServicePartyRole["label_i18n"],
+    cardinality: r.cardinality as ServicePartyRole["cardinality"],
+    is_required: r.is_required,
+    position: r.position,
+  };
+}
+
+/**
+ * Lists the additional case parties a service declares — for the "Nuevo caso"
+ * modal role picker. No catalog gate: sales/admin building a case need it, and
+ * it is non-sensitive config. Returns [] for a service with none.
+ *
+ * @api-id API-CAT-30
+ */
+export async function listServicePartyRoles(serviceId: string): Promise<ServicePartyRole[]> {
+  const rows = await repo.listServicePartyRoles(serviceId);
+  return rows.map(mapPartyRoleRow);
+}
+
+/**
+ * Creates a service party-role definition (admin catalog editor).
+ * @api-id API-CAT-31
+ */
+export async function createServicePartyRole(
+  actor: Actor,
+  input: UpsertServicePartyRoleDto,
+): Promise<ServicePartyRole> {
+  can(actor, "catalog", "edit");
+  const dto = UpsertServicePartyRoleDtoSchema.parse(input);
+  // Org ownership: the service client bypasses RLS, so verify in code that the
+  // target service belongs to the actor's org (defense in depth).
+  await assertServiceInOrg(actor, dto.service_id);
+  const row = await repo.insertServicePartyRole({
+    service_id: dto.service_id,
+    role_key: dto.role_key,
+    label_i18n: dto.label_i18n as import("@/shared/database.types").Json,
+    cardinality: dto.cardinality,
+    is_required: dto.is_required,
+    position: dto.position,
+  });
+  await writeAudit(actor, "catalog.service_party_role.created", "service_party_roles", row.id, {
+    after: row,
+  });
+  return mapPartyRoleRow(row);
+}
+
+/**
+ * Updates a service party-role definition (label, cardinality, required, position).
+ * @api-id API-CAT-32
+ */
+export async function updateServicePartyRole(
+  actor: Actor,
+  id: string,
+  patch: Partial<Omit<UpsertServicePartyRoleDto, "service_id" | "role_key">>,
+): Promise<ServicePartyRole> {
+  can(actor, "catalog", "edit");
+  // Org ownership: load the row and assert its service belongs to the actor's org.
+  const existing = await repo.findServicePartyRoleById(id);
+  if (!existing) throw catalogError("CATALOG_SERVICE_NOT_FOUND");
+  await assertServiceInOrg(actor, existing.service_id);
+  const row = await repo.updateServicePartyRole(id, {
+    ...(patch.label_i18n !== undefined
+      ? { label_i18n: patch.label_i18n as import("@/shared/database.types").Json }
+      : {}),
+    ...(patch.cardinality !== undefined ? { cardinality: patch.cardinality } : {}),
+    ...(patch.is_required !== undefined ? { is_required: patch.is_required } : {}),
+    ...(patch.position !== undefined ? { position: patch.position } : {}),
+  });
+  await writeAudit(actor, "catalog.service_party_role.updated", "service_party_roles", id, {
+    after: row,
+  });
+  return mapPartyRoleRow(row);
+}
+
+/**
+ * Removes a service party-role definition (config only; existing case_parties
+ * are unaffected — they store the role_key string independently).
+ * @api-id API-CAT-33
+ */
+export async function deleteServicePartyRole(actor: Actor, id: string): Promise<void> {
+  can(actor, "catalog", "edit");
+  const existing = await repo.findServicePartyRoleById(id);
+  if (!existing) throw catalogError("CATALOG_SERVICE_NOT_FOUND");
+  await assertServiceInOrg(actor, existing.service_id);
+  await repo.deleteServicePartyRole(id);
+  await writeAudit(actor, "catalog.service_party_role.deleted", "service_party_roles", id, {
+    before: { id, service_id: existing.service_id, role_key: existing.role_key },
+  });
+}
+
+/**
+ * Asserts a service belongs to the actor's org. The catalog mutations use the
+ * service client (RLS bypass), so this is the authoritative org-isolation check.
+ */
+async function assertServiceInOrg(actor: Actor, serviceId: string): Promise<void> {
+  const svc = await repo.findServiceById(serviceId);
+  if (!svc || svc.org_id !== actor.orgId) {
+    throw catalogError("CATALOG_SERVICE_NOT_FOUND");
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -8,18 +8,22 @@
 
 import {
   Body,
+  Column,
   Container,
   Head,
   Hr,
   Html,
+  Img,
   Link,
   Preview,
+  Row,
   Section,
   Text,
 } from "@react-email/components";
 import * as React from "react";
 import { COLORS, FONT_STACK, MAX_WIDTH } from "./theme";
 import { footerCopy, type Locale } from "./i18n";
+import { env } from "../env";
 
 export interface BrandLayoutProps {
   locale: Locale;
@@ -63,19 +67,35 @@ export function BrandLayout({
             border: `1px solid ${COLORS.border}`,
           }}
         >
-          {/* Header */}
-          <Section style={{ backgroundColor: COLORS.navy, padding: "22px 32px" }}>
-            <Text
-              style={{
-                margin: 0,
-                fontSize: 20,
-                fontWeight: 800,
-                letterSpacing: "0.5px",
-                color: COLORS.white,
-              }}
-            >
-              USALATINO<span style={{ color: COLORS.gold }}>PRIME</span>
-            </Text>
+          {/* Header — real logo mark (white disc on navy) + wordmark. PRIME stays
+              gold here for contrast against the navy header (accent blue is too
+              dark on navy). The logo needs an ABSOLUTE url (email clients can't
+              resolve site-relative paths). */}
+          <Section style={{ backgroundColor: COLORS.navy, padding: "20px 32px" }}>
+            <Row>
+              <Column style={{ width: 44, verticalAlign: "middle" }}>
+                <Img
+                  src={`${env.NEXT_PUBLIC_APP_URL}/icons/logo.png`}
+                  width={36}
+                  height={36}
+                  alt="X Legal"
+                  style={{ display: "block", borderRadius: "50%" }}
+                />
+              </Column>
+              <Column style={{ verticalAlign: "middle", paddingLeft: 12 }}>
+                <Text
+                  style={{
+                    margin: 0,
+                    fontSize: 20,
+                    fontWeight: 800,
+                    letterSpacing: "0.5px",
+                    color: COLORS.white,
+                  }}
+                >
+                  X <span style={{ color: COLORS.gold }}>LEGAL</span>
+                </Text>
+              </Column>
+            </Row>
           </Section>
 
           {/* Content */}

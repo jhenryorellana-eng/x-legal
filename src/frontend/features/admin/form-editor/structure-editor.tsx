@@ -68,9 +68,21 @@ export function StructureEditor({
     window.setTimeout(() => setSavingFlash(false), 1500);
   }
 
-  // --- Selecting a PDF field selects/jumps to its question (or scrolls) ---
+  // --- Clicking a PDF field: if a question is being edited, ASSIGN the field to
+  // it ("click the box on the PDF where this answer goes"). Otherwise, jump to the
+  // question already mapped to that field. (Read-only published versions never assign.)
   function handleSelectField(name: string) {
     setSelectedField(name);
+    if (expandedQ && !readOnly) {
+      const target = allQuestions.find((x) => x.id === expandedQ);
+      if (target) {
+        if (target.pdf_field_name !== name) {
+          patchQuestion(target, { pdf_field_name: name });
+          toast.success(strings.fieldAssigned);
+        }
+        return;
+      }
+    }
     const q = allQuestions.find((x) => x.pdf_field_name === name);
     if (q) setExpandedQ(q.id);
   }
@@ -153,6 +165,9 @@ export function StructureEditor({
       is_required: next.is_required,
       position: next.position,
       validation: next.validation,
+      // Only persist a fully-formed condition (a controlling question is set);
+      // a half-configured one would fail server validation and block the save.
+      condition: next.condition && next.condition.when?.question ? next.condition : null,
     });
     if (r.success) flashSaved();
     else if (r.error) toast.error(r.error.code);
@@ -219,7 +234,7 @@ export function StructureEditor({
           {groups.length === 0 && (
             <div style={{ textAlign: "center", padding: "32px 16px", color: "var(--ink-2)" }}>
               <Lex mood="calma" size={92} />
-              <p style={{ fontSize: 13.5, marginTop: 10 }}>{strings.aiOverlay}</p>
+              <p style={{ fontSize: 13.5, marginTop: 10 }}>{strings.structureEmpty}</p>
             </div>
           )}
           {groups.map((group) => (
@@ -252,6 +267,9 @@ export function StructureEditor({
                   detectedFields={detectedFields}
                   sources={vm.sources}
                   groups={groupChoices}
+                  siblingQuestions={allQuestions
+                    .filter((x) => x.id !== q.id)
+                    .map((x) => ({ id: x.id, label: x.question_i18n.es || x.question_i18n.en || x.pdf_field_name || "Pregunta" }))}
                   strings={strings}
                   readOnly={readOnly}
                   onToggle={() => {

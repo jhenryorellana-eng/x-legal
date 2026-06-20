@@ -12,7 +12,11 @@
  */
 
 import { getTranslations } from "next-intl/server";
+import { getActor } from "@/backend/modules/identity";
+import { getCasesForClient } from "@/backend/modules/cases";
 import { AccountChrome } from "./account-chrome";
+import { PushSwRegister } from "./push-sw-register";
+import { PwaUpdateBanner } from "./pwa-update-banner";
 
 export default async function ClienteLayout({
   children,
@@ -21,6 +25,21 @@ export default async function ClienteLayout({
 }) {
   const tNav = await getTranslations("cliente.nav");
   const tTeam = await getTranslations("cliente.team");
+
+  // Resolve the client's primary (most-recent) case so the account-level
+  // "Tu equipo" launcher opens that case's team chat (overlay O1). On ACCESO
+  // routes the actor is null (unauthenticated) → no launcher. RLS scopes the
+  // list to the client's own cases.
+  let primaryCaseId: string | null = null;
+  const actor = await getActor();
+  if (actor?.kind === "client") {
+    try {
+      const cases = await getCasesForClient(actor, { limit: 1 });
+      primaryCaseId = cases.items[0]?.id ?? null;
+    } catch {
+      primaryCaseId = null;
+    }
+  }
 
   const navLabels = {
     servicios: tNav("servicios"),
@@ -44,7 +63,13 @@ export default async function ClienteLayout({
       }}
     >
       {children}
-      <AccountChrome navLabels={navLabels} teamLabel={tTeam("launcher")} />
+      <AccountChrome
+        navLabels={navLabels}
+        teamLabel={tTeam("launcher")}
+        caseId={primaryCaseId}
+      />
+      <PushSwRegister />
+      <PwaUpdateBanner />
     </div>
   );
 }

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Sin conexión — UsaLatinoPrime</title>
+  <meta name="robots" content="noindex" />
+  <!--
+    Static offline fallback (DOC-24 §2.4). Served by the service worker when a
+    navigation fails with no network. It MUST be a static, self-contained file
+    (no Next SSR / design-system CSS) so it can be precached and rendered with
+    zero network. Bilingual via the `ulp-locale` cookie.
+  -->
+  <style>
+    :root {
+      --bg: #f4f7fb; --navy: #002855; --ink2: #3a4a63;
+      --accent: #2f6bff; --accent-deep: #1b4fd6;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; }
+    body {
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      gap: 14px;
+      padding: calc(54px + env(safe-area-inset-top, 0px)) 28px
+               calc(48px + env(safe-area-inset-bottom, 0px));
+      background: radial-gradient(120% 70% at 50% 0%, #ffffff 0%, var(--bg) 55%, #eaf1ff 100%);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: var(--ink2);
+    }
+    .brand { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .bar { display: flex; gap: 2px; }
+    .bar i { width: 6px; height: 20px; border-radius: 2px; display: block; }
+    .wm { font-weight: 800; font-size: 16px; color: var(--navy); letter-spacing: -0.02em; }
+    .wm b { color: var(--accent); }
+    img.lex { width: 128px; height: 128px; object-fit: contain; }
+    h1 { font-size: 25px; color: var(--navy); margin: 0; font-weight: 800; letter-spacing: -0.02em; text-wrap: balance; }
+    p { font-size: 16px; max-width: 300px; line-height: 1.5; margin: 0; }
+    button {
+      margin-top: 6px; height: 52px; padding: 0 28px; border: none; border-radius: 999px;
+      cursor: pointer; color: #fff; font-weight: 800; font-size: 16px;
+      background: linear-gradient(120deg, var(--accent), var(--accent-deep));
+      box-shadow: 0 12px 28px rgba(47, 107, 255, 0.33);
+    }
+  </style>
+</head>
+<body>
+  <div class="brand">
+    <span class="bar">
+      <i style="background:#002855"></i>
+      <i style="background:#fff;box-shadow:0 0 0 1px #e3e9f2 inset"></i>
+      <i style="background:#E4002B"></i>
+    </span>
+    <span class="wm">USALATINO<b>PRIME</b></span>
+  </div>
+  <img class="lex" src="/assets/lex.webp" alt=""
+       onerror="this.onerror=null;this.src='/assets/lex.gif'" />
+  <h1 id="t"></h1>
+  <p id="b"></p>
+  <button id="r"></button>
+  <script>
+    var C = {
+      es: { t: "Parece que no tienes conexión", b: "Tu información está guardada — vuelve a intentarlo cuando tengas señal.", r: "Reintentar" },
+      en: { t: "Looks like you're offline", b: "Your information is saved — try again when you have a signal.", r: "Try again" }
+    };
+    var m = document.cookie.match(/(?:^|;\s*)ulp-locale=(en|es)/);
+    var l = m ? m[1] : (((navigator.language || "es").indexOf("en") === 0) ? "en" : "es");
+    document.documentElement.lang = l;
+    var d = C[l];
+    document.getElementById("t").textContent = d.t;
+    document.getElementById("b").textContent = d.b;
+    var r = document.getElementById("r");
+    r.textContent = d.r;
+    r.onclick = function () { location.reload(); };
+  </script>
+</body>
+</html>

@@ -1,5 +1,7 @@
 # CLAUDE.md — UsaLatinoPrime V2 (project memory)
 
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 > Memoria de proyecto para Claude Code. Se carga al trabajar en este repo. Para el sistema multi-agente global ver `~/.claude/CLAUDE.md`.
 
 ## Qué es
@@ -8,6 +10,25 @@ PWA de gestión de casos migratorios/legales. Stack: **Next.js 15** (App Router,
 
 - **Repo**: `C:\Users\mauri\Documents\Trabajos\usalatino-v2\`
 - **SoT (biblioteca de docs)**: `C:\Users\mauri\Documents\Trabajos\USALATINO V2\V2\docs\` (104 docs `DOC-XX`). El plan por fases es **DOC-80** (F0→F8). Continuidad de sesión en `PROGRESO.md` (raíz del repo).
+
+## Comandos (scripts en `package.json`)
+
+| Comando | Qué hace |
+|---|---|
+| `npm run dev` | Dev server con **Turbopack** (`next dev --turbopack`). Para verificación en vivo usar `npx next dev -p 3100` (sin chocar con Playwright en :3000). |
+| `npm run dev:e2e` | Dev server con IA stubeada (`AI_E2E_STUB=1`, sin Turbopack) — para E2E sin gastar tokens de Anthropic/Gemini. |
+| `npm run build` | Build de producción (webpack). **`next start` NO funciona** (`routesManifest.dataRoutes is not iterable`) — usar `next dev`. |
+| `npm run typecheck` | `tsc --noEmit` — gate (debe dar **0**). |
+| `npm run lint` | `eslint . --max-warnings=0` — gate (boundaries + RNF-036, ver Arquitectura). |
+| `npm test` | `vitest run` — toda la suite unit. **Un solo archivo/caso:** `npx vitest run src/backend/modules/cases/__tests__/domain.test.ts` · por nombre: `npx vitest run -t "nombre del test"` · watch: `npm run test:watch`. |
+| `npm run test:e2e` | Playwright (`test:e2e:update` para regenerar snapshots). |
+| `npm run test:rls` | `supabase test db` (pgTAP, 30 escenarios). **Requiere Docker/stack local — no disponible aquí; corre en CI.** |
+| `npm run check:i18n` | Paridad de claves es/en (`next-intl`) — gate. |
+| `npm run check:assets` | Falla si algún `public/*` supera 1MB — gate (RNF-035). |
+| `npm run check:drift` | Compara el schema de la BD contra las migraciones. |
+| `npm run db:types` | Regenera `src/shared/database.types.ts` desde el proyecto remoto (`db:types:local` para stack local). |
+
+**Definition of Done (DOC-80 §6)**: `typecheck` (0) · `lint` (0 warnings) · `vitest run` (verde) · `build` · `check:i18n`. Más detalles de verificación en vivo en la sección *Verificación / dev / test*.
 
 ## Supabase MCP — cómo leer/escribir la BD (CONFIRMADO funcionando 2026-06-14)
 
@@ -48,7 +69,20 @@ select count(*) from public.cases;   -- vía mcp__supabase__execute_sql
 
 ## Arquitectura (resumen, ver DOC-21)
 
-`src/backend/modules/<m>/{domain,service,repository,actions,events,index}.ts` con `eslint-plugin-boundaries` (5 reglas: app→module-pub/frontend/shared; module-int→platform/shared; etc.). Eventos vía `appEvents` (globalThis-backed). Jobs en `src/backend/jobs/` + registry consumido por `api/webhooks/qstash/[job]`. PDF: **mupdf** (motor de formularios AcroForm + render md→pdf; pdf-lib NO sirve con formularios XFA-híbridos de USCIS — ver `docs/_evidence/f4-spike/SPIKE-FINDINGS.md`).
+**Capas y boundaries** (`eslint.config.mjs`, error si se violan — DOC-21 §2):
+- `src/backend/modules/<m>/{domain,service,repository,actions,events,index}.ts`. El **borde público** de cada módulo es `index.ts` + `actions.ts` (`module-pub`); el resto (`domain`/`service`/`repository`) es `module-int` y **solo el propio módulo lo importa**. La app y otros módulos consumen únicamente `module-pub`.
+- Reglas de import: `app → module-pub | frontend | shared` · `frontend → frontend | shared` · `module-int → module-int | platform | shared | module-pub` · `jobs → module-pub | platform | shared` · `platform → platform | shared`. `app/api/webhooks/**` es su propia capa (autentica por firma, despacha jobs).
+- **RNF-036 (Capacitor-ready)**: las features (`src/frontend/features/**`) **NO** pueden tocar APIs nativas del navegador directamente — `SpeechRecognition`, `Notification`, `PushManager`, `navigator.mediaDevices/share/clipboard/serviceWorker`, `window.open`, etc. están prohibidas por ESLint. Todo va por `getBridge()` de `src/frontend/platform-bridge/` (`web.ts` / `capacitor.ts`), para que un futuro build nativo intercambie la implementación sin tocar features.
+
+**Módulos** (`src/backend/modules/`): `org`, `identity`, `audit`, `catalog`, `cases`, `contracts`, `scheduling`, `kanban`, `expediente`, `ai-engine`, `billing`, `campaigns`, `messaging`, `notifications`, `community`, `integrations`.
+
+**Route-groups** (`src/app/`): `(cliente)` (PWA móvil del cliente) · `(staff)/(panel)` (paneles admin/legal/ventas/finanzas, role-aware) · `(public)` (firma de contratos por token, sin auth) · `(dev)` (previews con mocks, fuera de prod) · `api/webhooks/qstash/[job]`.
+
+**Eventos y jobs**: eventos de dominio vía `appEvents` (globalThis-backed, `src/backend/platform/events.ts`); consumidores registrados en `register-consumers.ts` (cargado por `instrumentation.ts`). Jobs en `src/backend/jobs/` (run-generation, extract/translate-document, *-reminders, send-campaign, deliver-notification, …) + registry consumido por `api/webhooks/qstash/[job]` (`maxDuration=300` para IA larga).
+
+**i18n**: `next-intl`, contenido en español + inglés. Toda clave nueva necesita ambos idiomas o `check:i18n` falla.
+
+**PDF**: **mupdf** (motor de formularios AcroForm + render md→pdf; pdf-lib NO sirve con formularios XFA-híbridos de USCIS — ver `docs/_evidence/f4-spike/SPIKE-FINDINGS.md`).
 
 ## Cadencia de trabajo
 

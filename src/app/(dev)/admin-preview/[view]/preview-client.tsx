@@ -109,6 +109,7 @@ export function PreviewClient({ view }: { view: string }) {
         <CatalogWizard
           service={null}
           plans={[]}
+          partyRoles={[]}
           phases={[]}
           slugLocked={false}
           messages={catalogMessages}
@@ -122,6 +123,11 @@ export function PreviewClient({ view }: { view: string }) {
             deletePhase: noopRes,
             upsertPolicy: noopRes,
             createRequiredDoc: async () => ({ success: true, data: { id: "mock-doc" } }),
+            createPartyRole: async () => ({ success: true, data: { id: "mock-role" } }),
+            updatePartyRole: noopRes,
+            deletePartyRole: noopRes,
+            createForm: async () => ({ success: true, data: { id: "mock-form" } }),
+            updateForm: noopRes,
             activate: async () => ({ success: true, data: { ok: true, issues: [] } }),
           }}
         />
@@ -224,6 +230,7 @@ const formEditorNoopActions: FormEditorActions = {
   generateTestPdf: async () => ({ success: true, data: { pdfBase64: "", gaps: [] } }),
   publish: async () => ({ success: true, data: { ok: false, issues: [{ code: "CATALOG_PDF_FIELD_UNMAPPED", severity: "warning", detail: "Pt3Line1_Signature · pág. 3 sin pregunta" }] } }),
   unpublish: async () => ({ success: true }),
+  duplicateVersion: async () => ({ success: true, data: { id: "ver-draft-new" } }),
   saveGenerationConfig: async () => ({ success: true }),
   testGeneration: async () => ({ success: true, data: { run_id: "run-demo-001" } }),
 };

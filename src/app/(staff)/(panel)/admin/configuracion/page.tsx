@@ -11,9 +11,12 @@
 import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
+import { setUserLocaleAction } from "@/backend/modules/identity/actions";
 import { getOrgConfig, listCoverTemplates, getTermsOverview } from "@/backend/modules/org";
 import { resolveI18n, type Locale } from "@/shared/i18n";
 import { ConfigView } from "@/frontend/features/admin/config/config-view";
+import { StaffLanguageCard } from "@/frontend/components/desktop/staff-language-card";
+import { StaffAppearanceCard } from "@/frontend/components/desktop/staff-appearance-card";
 import { saveOrgSettings, setCoverActive, createTerms, publishTerms } from "./actions";
 
 /** Common US/Latam IANA timezones (the form offers a curated list). */
@@ -35,7 +38,9 @@ export default async function ConfigPage() {
 
   const locale = (await getLocale()) as Locale;
   const t = await getTranslations("staff.admin");
+  const tCfg = await getTranslations("staff.config");
   const tt = t as unknown as (key: string) => string;
+  const tRaw = t.raw as unknown as (key: string) => string;
 
   const [org, covers, termsOverview] = await Promise.all([
     getOrgConfig(actor),
@@ -52,19 +57,39 @@ export default async function ConfigPage() {
   }));
 
   return (
-    <ConfigView
-      org={{ id: org.id, name: org.name, settings: org.settings }}
-      covers={covers.map((c) => ({ id: c.id, name: c.name, is_active: c.is_active }))}
-      terms={terms}
-      acceptances={termsOverview.acceptances}
-      timezones={TIMEZONES}
-      messages={buildConfigStrings(tt)}
-      actions={{ saveOrg: saveOrgSettings, setCoverActive, createTerms, publishTerms }}
-    />
+    <>
+      <ConfigView
+        org={{ id: org.id, name: org.name, settings: org.settings }}
+        covers={covers.map((c) => ({ id: c.id, name: c.name, is_active: c.is_active }))}
+        terms={terms}
+        acceptances={termsOverview.acceptances}
+        timezones={TIMEZONES}
+        messages={buildConfigStrings(tt, tRaw)}
+        actions={{ saveOrg: saveOrgSettings, setCoverActive, createTerms, publishTerms }}
+      />
+      <div style={{ marginTop: 20, display: "grid", gap: 16, maxWidth: 760 }}>
+        <StaffAppearanceCard
+          strings={{ title: tCfg("appearance"), subtitle: tCfg("appearanceSub") }}
+        />
+        <StaffLanguageCard
+          current={locale === "en" ? "en" : "es"}
+          setLocale={setUserLocaleAction}
+          strings={{
+            title: tCfg("language"),
+            subtitle: tCfg("languageSub"),
+            spanish: tCfg("spanish"),
+            english: tCfg("english"),
+          }}
+        />
+      </div>
+    </>
   );
 }
 
-function buildConfigStrings(tt: (k: string) => string): Record<string, string> {
+function buildConfigStrings(
+  tt: (k: string) => string,
+  raw: (k: string) => string,
+): Record<string, string> {
   const keys = [
     "title", "sub", "tabGeneral", "tabCovers", "tabTerms", "orgName", "logo",
     "contactPhones", "phoneLabel", "phoneNumber", "addPhone", "timezone",
@@ -75,8 +100,11 @@ function buildConfigStrings(tt: (k: string) => string): Record<string, string> {
     "termsCompliance", "termsAcceptedBy", "termsImmutable", "termsEmptyTitle",
     "termsEmptySub",
   ];
+  // These carry ICU placeholders ({date}/{n}) substituted downstream by ConfigView;
+  // t() would throw FORMATTING_ERROR (values not provided here) — use raw templates.
+  const RAW_KEYS = new Set(["termsPublished", "termsAcceptedBy"]);
   const out: Record<string, string> = {};
-  for (const k of keys) out[k] = tt(`config.${k}`);
+  for (const k of keys) out[k] = RAW_KEYS.has(k) ? raw(`config.${k}`) : tt(`config.${k}`);
   out.save = tt("common.save");
   out.cancel = tt("common.cancel");
   out.delete = tt("common.delete");

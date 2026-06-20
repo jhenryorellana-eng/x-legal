@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Icon, type IconName } from "@/frontend/components/brand/icon";
 import { IconTile } from "@/frontend/components/brand/icon-tile";
 import { StatusPill } from "@/frontend/components/brand/status-pill";
+import { Logo } from "@/frontend/components/brand/logo";
 
 /**
  * DashboardScreen — `/home` (DOC-51 §5, prototype `screens6.jsx → DashboardScreen`).
@@ -73,11 +74,16 @@ export function DashboardScreen({
     <div
       style={{
         minHeight: "100dvh",
-        padding: "26px 20px 120px",
+        padding: "26px 20px var(--screen-pb)",
         background:
           "radial-gradient(135% 95% at 100% -8%, var(--blue-soft) 0%, transparent 46%), radial-gradient(120% 80% at -12% 4%, color-mix(in srgb, var(--gold-soft) 80%, transparent) 0%, transparent 42%), var(--bg)",
       }}
     >
+      {/* Brand */}
+      <div style={{ display: "flex", alignItems: "center", marginBottom: 18 }}>
+        <Logo size={26} withWordmark wordmarkSize={15} />
+      </div>
+
       {/* Header */}
       <div
         style={{

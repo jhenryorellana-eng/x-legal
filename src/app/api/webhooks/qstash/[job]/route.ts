@@ -72,8 +72,10 @@ const JOB_REGISTRY: Record<string, JobHandler> = {
   "send-campaign": handleSendCampaign,
 };
 
-// Export for tests that need to verify registry contents
-export { JOB_REGISTRY };
+// On-demand AI jobs (run-generation/extract/translate) can run past the default
+// 60s function limit — request up to 300s (capped by the Vercel plan; QStash
+// retries on timeout regardless). DOC-82 §8.
+export const maxDuration = 300;
 
 // ---------------------------------------------------------------------------
 // POST handler

@@ -44,6 +44,9 @@ const {
   mockGetPublishedAutomationVersion,
   mockListQuestionGroups,
   mockListQuestions,
+  // pdf + ai-engine mocks
+  mockFillAcroForm,
+  mockTranslateText,
   // audit mocks
   mockWriteAudit,
   mockAppendCaseTimeline,
@@ -68,6 +71,8 @@ const {
   mockGetPublishedAutomationVersion: vi.fn(),
   mockListQuestionGroups: vi.fn().mockResolvedValue([]),
   mockListQuestions: vi.fn().mockResolvedValue([]),
+  mockFillAcroForm: vi.fn().mockResolvedValue(new Uint8Array([37, 80, 68, 70])),
+  mockTranslateText: vi.fn(),
   mockWriteAudit: vi.fn().mockResolvedValue(undefined),
   mockAppendCaseTimeline: vi.fn().mockResolvedValue(undefined),
   mockEmit: vi.fn(),
@@ -163,7 +168,12 @@ vi.mock("@/backend/platform/storage", () => ({
 }));
 
 vi.mock("@/backend/platform/pdf", () => ({
-  fillAcroForm: vi.fn().mockResolvedValue(new Uint8Array([37, 80, 68, 70])), // %PDF
+  fillAcroForm: mockFillAcroForm,
+  backfillNaTextFields: () => 0,
+}));
+
+vi.mock("@/backend/modules/ai-engine", () => ({
+  translateAnswerText: mockTranslateText,
 }));
 
 vi.mock("@/backend/platform/crypto", () => ({
@@ -292,6 +302,24 @@ describe("validateAnswerTypes", () => {
     const questions = [makeQuestion({ id: "q1" }), makeQuestion({ id: "q2", is_required: false })];
     const answers = { q1: "hello" };
     expect(validateAnswerTypes(answers, questions)).toHaveLength(0);
+  });
+
+  it("skips a required field hidden by its condition, enforces it when shown", () => {
+    const questions = [
+      makeQuestion({ id: "yn", field_type: "select", options: [{ value: "si" }, { value: "no" }], is_required: false }),
+      makeQuestion({
+        id: "explanation",
+        field_type: "textarea",
+        is_required: true,
+        condition: { when: { question: "yn", op: "equals", value: "si" }, action: "show" },
+      }),
+    ];
+    // yn = no → explanation hidden → no error despite being empty+required
+    expect(validateAnswerTypes({ yn: "no" }, questions)).toHaveLength(0);
+    // yn = si → explanation shown + required + empty → required error
+    expect(validateAnswerTypes({ yn: "si" }, questions)).toEqual([{ questionId: "explanation", code: "required" }]);
+    // yn = si + filled → no error
+    expect(validateAnswerTypes({ yn: "si", explanation: "porque..." }, questions)).toHaveLength(0);
   });
 
   it("returns error for missing required field", () => {
@@ -925,6 +953,66 @@ describe("generateFilledPdf", () => {
 
     const url = await generateFilledPdf(staffActor, { responseId: RESPONSE_ID });
     expect(url).toBeDefined();
+  });
+
+  it("translates free-text answers to the PDF source language on-demand (pending_server)", async () => {
+    mockFindFormResponseById.mockResolvedValue({
+      ...approvedResponse,
+      answers: { q1: "hola mundo" },
+      answers_translated: {},
+      translation_status: "pending_server",
+    });
+    mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
+    mockGetPublishedAutomationVersion.mockResolvedValue({ ...publishedVersion, source_language: "en" });
+    mockListQuestionGroups.mockResolvedValue([{ id: "grp1" }]);
+    mockListQuestions.mockResolvedValue([
+      { id: "q1", source: "client_answer", source_ref: null, pdf_field_name: "Story", is_required: false, field_type: "textarea" },
+    ]);
+    mockTranslateText.mockResolvedValue({ text: "hello world" });
+
+    await generateFilledPdf(staffActor, { responseId: RESPONSE_ID });
+
+    expect(mockTranslateText).toHaveBeenCalledWith({ text: "hola mundo", direction: "es-en" });
+    expect(mockFillAcroForm).toHaveBeenCalledWith(expect.anything(), {}, { Story: "hello world" });
+  });
+
+  it("prefers the client's on-device translation (answers_translated) without a server call", async () => {
+    mockFindFormResponseById.mockResolvedValue({
+      ...approvedResponse,
+      answers: { q1: "hola mundo" },
+      answers_translated: { q1: "hello world" },
+      translation_status: "done",
+    });
+    mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
+    mockGetPublishedAutomationVersion.mockResolvedValue({ ...publishedVersion, source_language: "en" });
+    mockListQuestionGroups.mockResolvedValue([{ id: "grp1" }]);
+    mockListQuestions.mockResolvedValue([
+      { id: "q1", source: "client_answer", source_ref: null, pdf_field_name: "Story", is_required: false, field_type: "textarea" },
+    ]);
+
+    await generateFilledPdf(staffActor, { responseId: RESPONSE_ID });
+
+    expect(mockTranslateText).not.toHaveBeenCalled();
+    expect(mockFillAcroForm).toHaveBeenCalledWith(expect.anything(), {}, { Story: "hello world" });
+  });
+
+  it("does not translate when the form language matches (translation_status none)", async () => {
+    mockFindFormResponseById.mockResolvedValue({
+      ...approvedResponse,
+      answers: { q1: "hello world" },
+      translation_status: "none",
+    });
+    mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
+    mockGetPublishedAutomationVersion.mockResolvedValue({ ...publishedVersion, source_language: "en" });
+    mockListQuestionGroups.mockResolvedValue([{ id: "grp1" }]);
+    mockListQuestions.mockResolvedValue([
+      { id: "q1", source: "client_answer", source_ref: null, pdf_field_name: "Story", is_required: false, field_type: "textarea" },
+    ]);
+
+    await generateFilledPdf(staffActor, { responseId: RESPONSE_ID });
+
+    expect(mockTranslateText).not.toHaveBeenCalled();
+    expect(mockFillAcroForm).toHaveBeenCalledWith(expect.anything(), {}, { Story: "hello world" });
   });
 });
 

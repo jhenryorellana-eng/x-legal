@@ -23,6 +23,8 @@ import { buildTabs } from "./build-tabs";
 import { ResumenTab } from "./tabs/resumen-tab";
 import { DocumentosTab } from "./tabs/documentos-tab";
 import { PartesTab } from "./tabs/partes-tab";
+import { MensajesTab } from "./tabs/mensajes-tab";
+import { buildChatActions, type RawChatActions } from "@/frontend/features/messaging/build-chat-actions";
 import type { CaseWorkspaceVM, CaseDetailActions, CaseTabId } from "./types";
 import type { CasosStrings } from "./strings";
 
@@ -35,6 +37,8 @@ export interface SharedCaseViewProps {
   backHref: string;
   /** Admin-mode bar visible only for the admin role. */
   isAdmin: boolean;
+  /** F7-Ola7a — raw messaging server actions (object of "use server" refs). */
+  chatRaw?: RawChatActions;
 }
 
 export function SharedCaseView({
@@ -44,15 +48,26 @@ export function SharedCaseView({
   locale,
   backHref,
   isAdmin,
+  chatRaw,
 }: SharedCaseViewProps) {
   const t = strings.detail;
   const h = vm.header;
   const documentsToReview = vm.documents.filter((d) => d.status === "uploaded").length;
 
+  const chat = React.useMemo(
+    () => (chatRaw ? buildChatActions(chatRaw, vm.header.caseId) : null),
+    [chatRaw, vm.header.caseId],
+  );
+
   const tabs = buildTabs({
-    labels: { resumen: t.tabSummary, documentos: t.tabDocuments, partes: t.tabParties },
+    labels: {
+      resumen: t.tabSummary,
+      documentos: t.tabDocuments,
+      partes: t.tabParties,
+      mensajes: locale === "es" ? "Mensajes" : "Messages",
+    },
     documentsToReview,
-  });
+  }).filter((tab) => tab.id !== "mensajes" || !!chat);
   const [active, setActive] = React.useState<CaseTabId>("resumen");
 
   return (
@@ -213,6 +228,9 @@ export function SharedCaseView({
           <DocumentosTab vm={vm} actions={actions} strings={strings} />
         )}
         {active === "partes" && <PartesTab vm={vm} strings={strings} />}
+        {active === "mensajes" && chat && (
+          <MensajesTab loadThread={chat.loadThread} actions={chat.actions} locale={locale} />
+        )}
       </div>
     </div>
   );

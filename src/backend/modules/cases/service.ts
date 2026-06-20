@@ -27,6 +27,8 @@ import { logger } from "@/backend/platform/logger";
 import { writeAudit, appendCaseTimeline } from "@/backend/modules/audit";
 
 import type { TablesUpdate } from "@/shared/database.types";
+import { PRINCIPAL_ROLE_KEY } from "@/shared/constants/party-roles";
+import { parseConditionOrNull, deriveFieldState, type QuestionCondition } from "@/shared/form-logic/conditions";
 
 import {
   canTransitionCase,
@@ -113,6 +115,7 @@ export class CaseError extends Error {
       | "CASE_PHASE_INVALID"
       | "CASE_SERVICE_NOT_AVAILABLE"
       | "CASE_PAYMENT_PLAN_INVALID"
+      | "CASE_PARTY_ROLE_INVALID"
       | "DOC_NOT_FOUND"
       | "DOC_INVALID_STATE"
       | "DOC_REJECTION_REASON_REQUIRED"
@@ -318,12 +321,15 @@ export async function createCaseFromContract(
   }
 
   if (serviceRow === null) {
-    // Fallback: query directly if catalog module isn't ready
+    // Fallback: query directly if catalog module isn't ready. Scope to the
+    // actor's org — the service client bypasses RLS, so a missing org filter
+    // would let a case be created against another org's service.
     const supabase = createServiceClient();
     const { data } = await (supabase as unknown as ReturnType<typeof createServiceClient>)
       .from("services")
       .select("id, is_active, label_i18n")
       .eq("id", p.serviceId)
+      .eq("org_id", actor.orgId)
       .maybeSingle();
     serviceRow = data;
   }
@@ -372,8 +378,10 @@ export async function createCaseFromContract(
   // Step 4c: upsertCaseMember (primaryClient = owner)
   await upsertCaseMember(caseRow.id, p.primaryClientId, "owner");
 
-  // Step 4d: Parties (person_records via identity module)
-  if (p.parties.length > 0) {
+  // Step 4d: Parties. The applicant is auto-added as the principal party (role
+  // 'petitioner', position 0); the additional parties from the modal are
+  // validated against the service's declared roles and inserted after.
+  {
     const { insertCasePartyRow: insertParty, upsertPersonRecord: upsertPerson } =
       await import("@/backend/modules/identity") as {
         insertCasePartyRow: (i: {
@@ -386,12 +394,43 @@ export async function createCaseFromContract(
         ) => Promise<string>;
       };
 
+    // Validate additional roles ⊆ the service's declared roles (clean error
+    // instead of a raw DB constraint violation). The principal role is implicit
+    // and must NOT appear among the additional parties.
+    if (p.parties.length > 0) {
+      let allowed: Set<string>;
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const catalogModule = await import("@/backend/modules/catalog") as any;
+        const roles = await catalogModule.listServicePartyRoles(p.serviceId);
+        allowed = new Set((roles as Array<{ role_key: string }>).map((r) => r.role_key));
+      } catch {
+        // Transient catalog failure — surface a retryable error, NOT a false
+        // "invalid role" (the roles may well be valid; we just couldn't load them).
+        throw new CaseError("CASE_SERVICE_NOT_AVAILABLE");
+      }
+      for (const party of p.parties) {
+        if (party.role === PRINCIPAL_ROLE_KEY || !allowed.has(party.role)) {
+          throw new CaseError("CASE_PARTY_ROLE_INVALID", { role: party.role });
+        }
+      }
+    }
+
+    // Principal applicant first (the primary client).
+    await insertParty({
+      caseId: caseRow.id,
+      personRecordId: null,
+      userId: p.primaryClientId,
+      partyRole: PRINCIPAL_ROLE_KEY,
+      position: 0,
+    });
+
+    // Additional parties (person_records via identity), positions 1..N.
     for (const [i, party] of p.parties.entries()) {
       let personRecordId: string | null = null;
       const partyUserId: string | null = party.userId ?? null;
 
       if (!partyUserId && party.person) {
-        // Non-user party: create a person_records row via identity
         personRecordId = await upsertPerson(actor, {
           firstName: party.person.firstName,
           lastName: party.person.lastName,
@@ -404,7 +443,7 @@ export async function createCaseFromContract(
         personRecordId,
         userId: partyUserId,
         partyRole: party.role,
-        position: i,
+        position: i + 1,
       });
     }
   }
@@ -1763,6 +1802,8 @@ export interface FormQuestionDto {
   isPrefilled: boolean;
   /** Current answer saved in the response (null if none yet). */
   currentAnswer: unknown;
+  /** Conditional visibility (show/lock/require). NULL = unconditional. */
+  condition: QuestionCondition | null;
 }
 
 export interface FormGroupDto {
@@ -1786,6 +1827,9 @@ export interface FormForClientDto {
   submittedAt: string | null;
   filledPdfPath: string | null;
   filledBy: string;
+  /** Language of the official PDF/AcroForm (pdf_automation). Drives answer
+   *  translation when the client locale differs. Defaults 'en'. */
+  sourceLanguage: "en" | "es";
   groups: FormGroupDto[];
 }
 
@@ -1813,7 +1857,7 @@ export async function getFormForClient(
 
   // Get published version (for pdf_automation)
   const catalog = await import("@/backend/modules/catalog" as string) as {
-    getPublishedAutomationVersion: (id: string) => Promise<{ id: string; detected_fields: unknown } | null>;
+    getPublishedAutomationVersion: (id: string) => Promise<{ id: string; detected_fields: unknown; source_language?: string } | null>;
     listQuestionGroups: (versionId: string) => Promise<Array<{ id: string; title_i18n: unknown; position: number }>>;
     listQuestions: (groupId: string) => Promise<Array<{
       id: string;
@@ -1827,6 +1871,7 @@ export async function getFormForClient(
       source: string;
       source_ref: unknown;
       validation: unknown;
+      condition: unknown;
     }>>;
   };
 
@@ -1887,6 +1932,7 @@ export async function getFormForClient(
           prefillValue,
           isPrefilled,
           currentAnswer: answers[q.id] ?? null,
+          condition: parseConditionOrNull(q.condition),
         };
       }));
 
@@ -1912,6 +1958,7 @@ export async function getFormForClient(
     submittedAt: existingResponse?.submitted_at ?? null,
     filledPdfPath: existingResponse?.filled_pdf_path ?? null,
     filledBy: formDef.filled_by,
+    sourceLanguage: (published?.source_language === "es" ? "es" : "en"),
     groups,
   };
 }
@@ -2176,6 +2223,10 @@ const SubmitFormResponseSchema = z.object({
   caseId: zUuid,
   formDefinitionId: zUuid,
   partyId: zUuid.nullable().optional(),
+  /** Client-side best-effort translation of textual answers to the form's
+   *  source language (Chrome Translator API). Keyed by question id. */
+  answersTranslated: z.record(z.string(), z.string()).optional(),
+  translationStatus: z.enum(["none", "partial", "pending_server", "done"]).optional(),
 });
 
 export type SubmitFormResponseInput = z.infer<typeof SubmitFormResponseSchema>;
@@ -2244,6 +2295,20 @@ export async function submitFormResponse(
     status: "submitted",
     submitted_at: new Date().toISOString(),
   });
+
+  // Best-effort: persist the client's on-device translations (Feature: answer
+  // translation). Wrapped so a pre-0020 schema (columns absent) never blocks the
+  // submit — generateFilledPdf still translates on-demand server-side.
+  if (parsed.translationStatus && parsed.translationStatus !== "none") {
+    try {
+      await updateFormResponse(response.id, {
+        answers_translated: parsed.answersTranslated ?? {},
+        translation_status: parsed.translationStatus,
+      });
+    } catch {
+      /* columns land with migration 0020 — translation persistence degrades gracefully */
+    }
+  }
 
   appEvents.emit({
     type: "form_response.submitted",
@@ -2364,7 +2429,7 @@ export async function generateFilledPdf(
 
   // Gate: FORM_VERSION_MISMATCH — only fill against the currently published version
   const catalog = await import("@/backend/modules/catalog" as string) as {
-    getPublishedAutomationVersion: (id: string) => Promise<{ id: string; source_pdf_path: string; detected_fields: unknown } | null>;
+    getPublishedAutomationVersion: (id: string) => Promise<{ id: string; source_pdf_path: string; detected_fields: unknown; source_language?: string } | null>;
     listQuestionGroups: (versionId: string) => Promise<Array<{ id: string }>>;
     listQuestions: (groupId: string) => Promise<Array<{
       id: string;
@@ -2372,6 +2437,9 @@ export async function generateFilledPdf(
       source_ref: unknown;
       pdf_field_name: string | null;
       is_required: boolean;
+      field_type: string;
+      condition: unknown;
+      options: unknown;
     }>>;
   };
 
@@ -2393,6 +2461,9 @@ export async function generateFilledPdf(
     source_ref: unknown;
     pdf_field_name: string | null;
     is_required: boolean;
+    field_type: string;
+    condition: unknown;
+    options: unknown;
   }> = [];
 
   if (catalog.listQuestionGroups && catalog.listQuestions) {
@@ -2407,12 +2478,54 @@ export async function generateFilledPdf(
   const caseId = response.case_id;
   const partyId = response.party_id;
 
+  // Answer-translation context (Feature: client answer translation). When the
+  // official PDF language differs from the language the client answered in, the
+  // textual answers must be translated before filling the AcroForm. The client
+  // pre-translates on-device (answers_translated); anything missing is filled in
+  // here on-demand with the Gemini translator — so the PDF is always correct.
+  const sourceLang: "en" | "es" = published.source_language === "es" ? "es" : "en";
+  const translationStatus = (response.translation_status ?? "none") as string;
+  const answersTranslated = (response.answers_translated ?? {}) as Record<string, unknown>;
+  const needsTranslation = translationStatus !== "none";
+  let translateAnswer: ((text: string) => Promise<string>) | null = null;
+  if (needsTranslation) {
+    // 2-language system: if translation is needed, answers are in the non-source language.
+    const answerLang: "en" | "es" = sourceLang === "en" ? "es" : "en";
+    const direction = `${answerLang}-${sourceLang}` as "es-en" | "en-es";
+    // translateAnswerText masks structured PII (SSN/A-number/passport) before the
+    // provider — structured PII for the form arrives via source='profile' (local).
+    const { translateAnswerText } = (await import("@/backend/modules/ai-engine")) as {
+      translateAnswerText: (i: { text: string; direction: "es-en" | "en-es" }) => Promise<{ text: string }>;
+    };
+    translateAnswer = async (text: string) => {
+      try {
+        const r = await translateAnswerText({ text, direction });
+        return r.text?.trim() ? r.text : text;
+      } catch {
+        return text; // best-effort — never block PDF generation on translation
+      }
+    };
+  }
+
   // Resolve all field values
   const fieldValues: Record<string, string | boolean> = {};
   const missingRequired: string[] = [];
 
   for (const q of questions) {
-    if (!q.pdf_field_name) continue; // intermediate data — no AcroField mapping
+    // A SELECT may map a GROUP of checkboxes (Sex Male/Female, Marital, a Yes/No
+    // pair): each option carries its own pdf_field_name and the chosen option's box
+    // is the one we check. Such a question can have a null top-level pdf_field_name.
+    const optionFields =
+      q.field_type === "select" && Array.isArray(q.options)
+        ? (q.options as Array<{ value: string; pdf_field_name?: string | null }>)
+        : null;
+    const hasOptionFields = !!optionFields && optionFields.some((o) => o?.pdf_field_name);
+    if (!q.pdf_field_name && !hasOptionFields) continue; // intermediate — no AcroField mapping
+
+    // Conditional/dynamic: a field hidden by its condition is left blank in the
+    // PDF (v1 parity: "NO ⇒ blank"); a locked-off field is likewise not required.
+    const condState = deriveFieldState(parseConditionOrNull(q.condition), q.is_required, answers);
+    if (!condState.visible) continue;
 
     // Prefer an explicit client answer: an editable prefill (e.g. a profile field
     // the client had to fill because their profile was empty) is overridden by what
@@ -2429,17 +2542,34 @@ export async function generateFilledPdf(
           );
 
     const isEmpty = resolved === null || resolved === undefined || resolved === "";
-    if (isEmpty && q.is_required) {
-      missingRequired.push(q.pdf_field_name);
+    if (isEmpty && condState.required) {
+      missingRequired.push(q.pdf_field_name ?? q.id);
+      continue;
+    }
+    if (isEmpty) continue;
+
+    // SELECT → checkbox group: tick the chosen option's box (an option with no
+    // pdf_field_name, e.g. "No" on a single "I am married" checkbox, ticks nothing).
+    if (hasOptionFields) {
+      const chosen = optionFields.find((o) => String(o.value) === String(resolved));
+      if (chosen?.pdf_field_name) fieldValues[chosen.pdf_field_name] = true;
       continue;
     }
 
-    if (!isEmpty) {
-      if (typeof resolved === "boolean") {
-        fieldValues[q.pdf_field_name] = resolved;
-      } else {
-        fieldValues[q.pdf_field_name] = String(resolved);
+    if (typeof resolved === "boolean") {
+      fieldValues[q.pdf_field_name!] = resolved;
+    } else {
+      let str = String(resolved);
+      // Translate only free-text fields (dates/numbers/selects map to codes).
+      if (needsTranslation && (q.field_type === "text" || q.field_type === "textarea")) {
+        const pre = answersTranslated[q.id];
+        if (typeof pre === "string" && pre.trim()) {
+          str = pre; // client already translated this one on-device
+        } else if (translationStatus !== "done" && translateAnswer) {
+          str = await translateAnswer(str); // fill the gap server-side
+        }
       }
+      fieldValues[q.pdf_field_name!] = str;
     }
   }
 
@@ -2461,8 +2591,29 @@ export async function generateFilledPdf(
   const pdfBuffer = await pdfResponse.arrayBuffer();
   const pdfBytes = new Uint8Array(pdfBuffer);
 
-  // Fill AcroForm via mupdf
-  const { fillAcroForm } = await import("@/backend/platform/pdf");
+  // USCIS acceptance rule (8 CFR 1208.3(c)(3)): a blank field makes the form
+  // incomplete, but "N/A" is an allowed response. Backfill blank applicant text
+  // fields on this form's pages so the filed PDF is not rejected for blanks.
+  const { fillAcroForm, backfillNaTextFields } = await import("@/backend/platform/pdf");
+  const detectedForNa = (published.detected_fields ?? []) as Array<{
+    pdf_field_name: string;
+    field_type: string;
+    page: number;
+  }>;
+  // Seed the page-scope with BOTH top-level and per-option pdf field names, so a
+  // page whose questions are all checkbox-group SELECTs (null top-level field) is
+  // still recognised as in-scope for the N/A backfill.
+  const naFormFields = [
+    ...questions.map((q) => q.pdf_field_name).filter((n): n is string => !!n),
+    ...questions.flatMap((q) =>
+      Array.isArray(q.options)
+        ? (q.options as Array<{ pdf_field_name?: string | null }>)
+            .map((o) => o?.pdf_field_name)
+            .filter((n): n is string => !!n)
+        : [],
+    ),
+  ];
+  backfillNaTextFields(detectedForNa, fieldValues, naFormFields);
   const filledBytes = await fillAcroForm(pdfBytes, {}, fieldValues);
 
   // Store in generated bucket

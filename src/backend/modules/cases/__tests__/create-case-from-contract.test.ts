@@ -38,6 +38,7 @@ const {
   mockGetActiveTermsVersion,
   mockCreatePaymentPlan,
   mockListContractableServices,
+  mockListServicePartyRoles,
 } = vi.hoisted(() => {
   // Build a chainable Supabase-style client mock
   const client = {
@@ -69,6 +70,9 @@ const {
     mockGetActiveTermsVersion: vi.fn().mockResolvedValue({ version: "v1.0" }),
     mockCreatePaymentPlan: vi.fn().mockResolvedValue({ id: "plan-1" }),
     mockListContractableServices: vi.fn().mockResolvedValue([]),
+    mockListServicePartyRoles: vi
+      .fn()
+      .mockResolvedValue([{ role_key: "spouse" }, { role_key: "minor" }]),
   };
 });
 
@@ -181,6 +185,7 @@ vi.mock("@/backend/modules/billing", () => ({
 // Catalog module
 vi.mock("@/backend/modules/catalog", () => ({
   listContractableServices: mockListContractableServices,
+  listServicePartyRoles: mockListServicePartyRoles,
 }));
 
 // ---------------------------------------------------------------------------
@@ -275,6 +280,7 @@ describe("createCaseFromContract", () => {
     mockCreatePaymentPlan.mockResolvedValue({ id: "plan-1" });
     mockGetActiveTermsVersion.mockResolvedValue({ version: "v1.0" });
     mockListContractableServices.mockResolvedValue([]);
+    mockListServicePartyRoles.mockResolvedValue([{ role_key: "spouse" }, { role_key: "minor" }]);
     mockUpsertPersonRecord.mockResolvedValue("person-record-id-1");
     mockInsertCasePartyRow.mockResolvedValue(undefined);
     mockNextCaseNumber.mockResolvedValue("ULP-2026-0001");
@@ -406,14 +412,14 @@ describe("createCaseFromContract", () => {
     expect(mockWriteAudit).toHaveBeenCalled();
   });
 
-  it("creates person_records for non-user parties via identity module", async () => {
+  it("creates person_records for non-user parties; applicant auto-added first", async () => {
     const result = await createCaseFromContract(ACTOR, {
       primaryClientId: CLIENT_ID,
       serviceId: SERVICE_ID,
       servicePlanId: PLAN_ID,
       parties: [
         { role: "spouse", person: { firstName: "Rosa", lastName: "Diaz" } },
-        { role: "child", person: { firstName: "Tito", lastName: "Diaz", relationship: "minor" } },
+        { role: "minor", person: { firstName: "Tito", lastName: "Diaz", relationship: "minor" } },
       ],
       paymentPlan: VALID_PAYMENT_PLAN,
     });
@@ -422,29 +428,74 @@ describe("createCaseFromContract", () => {
 
     // upsertPersonRecord called for each non-user party
     expect(mockUpsertPersonRecord).toHaveBeenCalledTimes(2);
-    expect(mockUpsertPersonRecord).toHaveBeenNthCalledWith(
-      1,
-      ACTOR,
-      expect.objectContaining({ firstName: "Rosa", lastName: "Diaz" }),
-    );
-    expect(mockUpsertPersonRecord).toHaveBeenNthCalledWith(
-      2,
-      ACTOR,
-      expect.objectContaining({ firstName: "Tito", lastName: "Diaz", relationship: "minor" }),
-    );
 
-    // case_parties rows inserted
-    expect(mockInsertCasePartyRow).toHaveBeenCalledTimes(2);
+    // case_parties rows inserted: applicant (principal) first, then the 2 additional
+    expect(mockInsertCasePartyRow).toHaveBeenCalledTimes(3);
+    // Principal applicant — auto-added as 'petitioner', userId = primary client, position 0
     expect(mockInsertCasePartyRow).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
         caseId: CASE_ROW.id,
-        personRecordId: "person-record-id-1",
-        userId: null,
-        partyRole: "spouse",
+        userId: CLIENT_ID,
+        personRecordId: null,
+        partyRole: "petitioner",
         position: 0,
       }),
     );
+    // Additional parties shift to positions 1..N
+    expect(mockInsertCasePartyRow).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        personRecordId: "person-record-id-1",
+        userId: null,
+        partyRole: "spouse",
+        position: 1,
+      }),
+    );
+    expect(mockInsertCasePartyRow).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ partyRole: "minor", position: 2 }),
+    );
+  });
+
+  it("auto-adds only the applicant when there are no additional parties", async () => {
+    await createCaseFromContract(ACTOR, {
+      primaryClientId: CLIENT_ID,
+      serviceId: SERVICE_ID,
+      servicePlanId: PLAN_ID,
+      parties: [],
+      paymentPlan: VALID_PAYMENT_PLAN,
+    });
+
+    expect(mockInsertCasePartyRow).toHaveBeenCalledTimes(1);
+    expect(mockInsertCasePartyRow).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: CLIENT_ID, partyRole: "petitioner", position: 0 }),
+    );
+  });
+
+  it("rejects an additional party whose role is not declared by the service", async () => {
+    // The service declares only spouse + minor; 'guardian' is not allowed.
+    await expect(
+      createCaseFromContract(ACTOR, {
+        primaryClientId: CLIENT_ID,
+        serviceId: SERVICE_ID,
+        servicePlanId: PLAN_ID,
+        parties: [{ role: "guardian", person: { firstName: "X", lastName: "Y" } }],
+        paymentPlan: VALID_PAYMENT_PLAN,
+      }),
+    ).rejects.toMatchObject({ code: "CASE_PARTY_ROLE_INVALID" });
+  });
+
+  it("rejects the principal role among the additional parties", async () => {
+    await expect(
+      createCaseFromContract(ACTOR, {
+        primaryClientId: CLIENT_ID,
+        serviceId: SERVICE_ID,
+        servicePlanId: PLAN_ID,
+        parties: [{ role: "petitioner", person: { firstName: "Dup", lastName: "Licant" } }],
+        paymentPlan: VALID_PAYMENT_PLAN,
+      }),
+    ).rejects.toMatchObject({ code: "CASE_PARTY_ROLE_INVALID" });
   });
 
   it("skips upsertPersonRecord for user parties (userId provided)", async () => {

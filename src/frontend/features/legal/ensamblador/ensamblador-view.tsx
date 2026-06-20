@@ -12,6 +12,8 @@
  */
 
 import * as React from "react";
+import { useTranslations, useLocale } from "next-intl";
+import { getBridge } from "@/frontend/platform-bridge";
 import {
   Card,
   GradientBtn,
@@ -22,6 +24,9 @@ import {
   type StatusKind,
 } from "@/frontend/components/brand";
 import { toast } from "@/frontend/components/desktop";
+
+// Shared translator type for module-level helpers (next-intl `t` signature).
+type T = (key: string, values?: Record<string, string | number>) => string;
 
 // ---------------------------------------------------------------------------
 // VM types (fed from the server component)
@@ -85,28 +90,28 @@ export interface EnsambladorViewProps {
 // Status → StatusPill mapping
 // ---------------------------------------------------------------------------
 
-const STATUS_PILL: Record<string, { kind: StatusKind; label: string }> = {
-  draft:               { kind: "pendiente", label: "Borrador" },
-  compiling:           { kind: "revision",  label: "Compilando…" },
-  compiled:            { kind: "aprobado",  label: "Compilado" },
-  compile_failed:      { kind: "corregir",  label: "Falló la compilación" },
-  sent_to_lawyer:      { kind: "revision",  label: "En validación" },
-  corrections_needed:  { kind: "corregir",  label: "Necesita correcciones" },
-  approved:            { kind: "aprobado",  label: "Aprobado" },
-  sent_to_finance:     { kind: "hecho",     label: "En impresión" },
-  printed:             { kind: "hecho",     label: "Impreso" },
+const STATUS_PILL: Record<string, { kind: StatusKind; labelKey: string }> = {
+  draft:               { kind: "pendiente", labelKey: "statusDraft" },
+  compiling:           { kind: "revision",  labelKey: "statusCompiling" },
+  compiled:            { kind: "aprobado",  labelKey: "statusCompiled" },
+  compile_failed:      { kind: "corregir",  labelKey: "statusCompileFailed" },
+  sent_to_lawyer:      { kind: "revision",  labelKey: "statusSentToLawyer" },
+  corrections_needed:  { kind: "corregir",  labelKey: "statusCorrectionsNeeded" },
+  approved:            { kind: "aprobado",  labelKey: "statusApproved" },
+  sent_to_finance:     { kind: "hecho",     labelKey: "statusSentToFinance" },
+  printed:             { kind: "hecho",     labelKey: "statusPrinted" },
 };
 
 // ---------------------------------------------------------------------------
 // Error code → friendly message
 // ---------------------------------------------------------------------------
 
-function errorMessage(code: string): string {
+function errorMessage(code: string, t: T): string {
   switch (code) {
-    case "EXPEDIENTE_COMPILE_FAILED":   return "No se pudo compilar el expediente.";
-    case "EXPEDIENTE_NOT_EDITABLE":     return "El expediente ya no es editable.";
-    case "EXPEDIENTE_DRAFT_EXISTS":     return "Ya existe un borrador.";
-    default:                            return "Algo salió mal.";
+    case "EXPEDIENTE_COMPILE_FAILED":   return t("errCompileFailed");
+    case "EXPEDIENTE_NOT_EDITABLE":     return t("errNotEditable");
+    case "EXPEDIENTE_DRAFT_EXISTS":     return t("errDraftExists");
+    default:                            return t("errUnexpected");
   }
 }
 
@@ -114,9 +119,12 @@ function errorMessage(code: string): string {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function formatDate(iso: string): string {
+function formatDate(iso: string, locale: string): string {
   try {
-    return new Date(iso).toLocaleDateString("es-PE", { day: "2-digit", month: "short" });
+    return new Date(iso).toLocaleDateString(locale === "en" ? "en-US" : "es-PE", {
+      day: "2-digit",
+      month: "short",
+    });
   } catch {
     return iso;
   }
@@ -135,9 +143,11 @@ interface MaterialSectionProps {
   onAdd: (item: MaterialItem) => Promise<void>;
   busy: string | null;
   editable: boolean;
+  t: T;
+  locale: string;
 }
 
-function MaterialSection({ title, items, emptyText, onAdd, busy, editable }: MaterialSectionProps) {
+function MaterialSection({ title, items, emptyText, onAdd, busy, editable, t, locale }: MaterialSectionProps) {
   return (
     <div style={{ marginBottom: 20 }}>
       <p style={{ fontSize: 13, fontWeight: 800, color: "var(--ink-2)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>
@@ -165,7 +175,7 @@ function MaterialSection({ title, items, emptyText, onAdd, busy, editable }: Mat
                 <p style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {it.title}
                 </p>
-                <p style={{ fontSize: 11.5, color: "var(--ink-3)", margin: 0 }}>{formatDate(it.createdAt)}</p>
+                <p style={{ fontSize: 11.5, color: "var(--ink-3)", margin: 0 }}>{formatDate(it.createdAt, locale)}</p>
               </div>
               {editable && (
                 <GhostBtn
@@ -175,7 +185,7 @@ function MaterialSection({ title, items, emptyText, onAdd, busy, editable }: Mat
                   onClick={() => onAdd(it)}
                   style={{ fontSize: 13, height: 32, padding: "0 14px", flexShrink: 0 }}
                 >
-                  {busy === it.refId ? "…" : "Agregar →"}
+                  {busy === it.refId ? "…" : t("addBtn")}
                 </GhostBtn>
               )}
             </div>
@@ -194,9 +204,10 @@ interface InlineEditTitleProps {
   value: string;
   onSave: (next: string) => Promise<void>;
   disabled: boolean;
+  t: T;
 }
 
-function InlineEditTitle({ value, onSave, disabled }: InlineEditTitleProps) {
+function InlineEditTitle({ value, onSave, disabled, t }: InlineEditTitleProps) {
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState(value);
 
@@ -238,7 +249,7 @@ function InlineEditTitle({ value, onSave, disabled }: InlineEditTitleProps) {
       type="button"
       disabled={disabled}
       onClick={() => { if (!disabled) setEditing(true); }}
-      title={disabled ? undefined : "Clic para editar el título"}
+      title={disabled ? undefined : t("editTitleHint")}
       style={{
         background: "none",
         border: "none",
@@ -262,6 +273,8 @@ function InlineEditTitle({ value, onSave, disabled }: InlineEditTitleProps) {
 // ---------------------------------------------------------------------------
 
 export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
+  const t = useTranslations("staff_ensamblador") as unknown as T;
+  const locale = useLocale();
   // Per-action busy keys (null = idle)
   const [busyCreate, setBusyCreate] = React.useState(false);
   const [busyMaterial, setBusyMaterial] = React.useState<string | null>(null);
@@ -282,10 +295,10 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
       <div style={{ textAlign: "center", padding: "48px 20px", color: "var(--ink-2)" }}>
         <Lex mood="calma" size={110} />
         <h3 style={{ fontSize: 16, fontWeight: 800, color: "var(--ink)", marginTop: 12 }}>
-          Este caso aun no tiene expediente
+          {t("emptyTitle")}
         </h3>
         <p style={{ fontSize: 13.5, marginTop: 6, marginBottom: 20 }}>
-          Crea el primer borrador para comenzar a ensamblar el expediente.
+          {t("emptyBody")}
         </p>
         <div style={{ display: "flex", justifyContent: "center" }}>
           <GradientBtn
@@ -299,11 +312,11 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
               if (r.ok) {
                 window.location.reload();
               } else {
-                toast.error(errorMessage(r.error?.code ?? "UNEXPECTED"));
+                toast.error(errorMessage(r.error?.code ?? "UNEXPECTED", t));
               }
             }}
           >
-            {busyCreate ? "Creando…" : "Crear expediente"}
+            {busyCreate ? t("creatingBtn") : t("createBtn")}
           </GradientBtn>
         </div>
       </div>
@@ -314,7 +327,8 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
   // Expediente exists
   // -------------------------------------------------------------------------
   const { id: expedienteId, attemptNo, status, hasPdf } = vm.expediente;
-  const pill = STATUS_PILL[status] ?? { kind: "pendiente" as StatusKind, label: status };
+  const pill = STATUS_PILL[status] ?? { kind: "pendiente" as StatusKind, labelKey: "" };
+  const pillLabel = pill.labelKey ? t(pill.labelKey) : status;
   const editable = EDITABLE_STATUSES.has(status);
 
   // ---- Compile action ----
@@ -323,10 +337,10 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
     const r = await actions.compileExpediente({ expedienteId });
     setBusyCompile(false);
     if (r.ok) {
-      toast.success("Compilacion iniciada. Recargando…");
+      toast.success(t("compileStartedToast"));
       window.location.reload();
     } else {
-      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED"));
+      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED", t));
     }
   }
 
@@ -336,9 +350,9 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
     const r = await actions.getCompiledPdfUrl({ expedienteId });
     setBusyPdf(false);
     if (r.ok && r.data) {
-      window.open(r.data, "_blank", "noopener");
+      getBridge().share.openExternal(r.data);
     } else {
-      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED"));
+      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED", t));
     }
   }
 
@@ -348,27 +362,27 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
     const r = await actions.createCorrectionAttempt({ expedienteId });
     setBusyCorrection(false);
     if (r.ok) {
-      toast.success("Nueva correccion creada.");
+      toast.success(t("correctionCreatedToast"));
       window.location.reload();
     } else {
-      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED"));
+      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED", t));
     }
   }
 
   // ---- Generate cover ----
   async function handleGenerateCover() {
     if (!selectedTemplateId) {
-      toast.error("Selecciona una plantilla de caratula.");
+      toast.error(t("selectCoverTemplateToast"));
       return;
     }
     setBusyCover(true);
     const r = await actions.generateCover({ caseId, templateId: selectedTemplateId, data: {} });
     setBusyCover(false);
     if (r.ok) {
-      toast.success("Caratula generada. Recargando…");
+      toast.success(t("coverGeneratedToast"));
       window.location.reload();
     } else {
-      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED"));
+      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED", t));
     }
   }
 
@@ -387,10 +401,10 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
     });
     setBusyMaterial(null);
     if (r.ok) {
-      toast.success("Item agregado.");
+      toast.success(t("itemAddedToast"));
       window.location.reload();
     } else {
-      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED"));
+      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED", t));
     }
   }
 
@@ -400,10 +414,10 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
     const r = await actions.removeItem({ itemId });
     setBusyItem(null);
     if (r.ok) {
-      toast.success("Item eliminado.");
+      toast.success(t("itemRemovedToast"));
       window.location.reload();
     } else {
-      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED"));
+      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED", t));
     }
   }
 
@@ -426,7 +440,7 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
     if (r.ok) {
       window.location.reload();
     } else {
-      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED"));
+      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED", t));
     }
   }
 
@@ -434,10 +448,10 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
   async function handleUpdateTitle(itemId: string, title: string) {
     const r = await actions.updateItem({ itemId, title });
     if (r.ok) {
-      toast.success("Título actualizado.");
+      toast.success(t("titleUpdatedToast"));
       window.location.reload();
     } else {
-      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED"));
+      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED", t));
     }
   }
 
@@ -449,7 +463,7 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
     if (r.ok) {
       window.location.reload();
     } else {
-      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED"));
+      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED", t));
     }
   }
 
@@ -481,10 +495,10 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
                   fontFamily: "var(--font-title)",
                 }}
               >
-                Expediente
+                {t("title")}
               </span>
-              <Chip tone="blue">{"Intento " + String(attemptNo)}</Chip>
-              <StatusPill kind={pill.kind}>{pill.label}</StatusPill>
+              <Chip tone="blue">{t("attemptChip", { n: attemptNo })}</Chip>
+              <StatusPill kind={pill.kind}>{pillLabel}</StatusPill>
             </div>
           </div>
 
@@ -497,7 +511,7 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
                 disabled={busyCorrection}
                 onClick={handleCreateCorrection}
               >
-                {busyCorrection ? "Creando…" : "Crear corrección"}
+                {busyCorrection ? t("creatingBtn") : t("createCorrectionBtn")}
               </GhostBtn>
             )}
             {hasPdf && (
@@ -507,7 +521,7 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
                 disabled={busyPdf}
                 onClick={handleViewPdf}
               >
-                {busyPdf ? "Cargando…" : "Ver PDF ↗"}
+                {busyPdf ? t("loadingBtn") : t("viewPdfBtn")}
               </GhostBtn>
             )}
             {canCompile && (
@@ -517,7 +531,7 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
                 disabled={busyCompile}
                 onClick={handleCompile}
               >
-                {busyCompile ? "Compilando…" : "Compilar"}
+                {busyCompile ? t("compilingBtn") : t("compileBtn")}
               </GradientBtn>
             )}
           </div>
@@ -550,7 +564,7 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
                 marginBottom: 16,
               }}
             >
-              Material disponible
+              {t("materialTitle")}
             </p>
 
             {/* Cover generator */}
@@ -565,11 +579,11 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
                   marginBottom: 8,
                 }}
               >
-                Generar caratula
+                {t("generateCoverTitle")}
               </p>
               {vm.coverTemplates.length === 0 ? (
                 <p style={{ fontSize: 13, color: "var(--ink-3)", fontStyle: "italic" }}>
-                  No hay plantillas de caratula. El administrador debe crearlas.
+                  {t("noCoverTemplates")}
                 </p>
               ) : (
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -592,9 +606,9 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
                       fontFamily: "inherit",
                     }}
                   >
-                    {vm.coverTemplates.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name}
+                    {vm.coverTemplates.map((tpl) => (
+                      <option key={tpl.id} value={tpl.id}>
+                        {tpl.name}
                       </option>
                     ))}
                   </select>
@@ -605,7 +619,7 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
                     onClick={handleGenerateCover}
                     style={{ fontSize: 13, height: 34, padding: "0 14px" }}
                   >
-                    {busyCover ? "Generando…" : "Generar caratula"}
+                    {busyCover ? t("generatingBtn") : t("generateCoverBtn")}
                   </GhostBtn>
                 </div>
               )}
@@ -613,42 +627,50 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
 
             {/* Caratulas */}
             <MaterialSection
-              title="Caratulas"
+              title={t("coversTitle")}
               items={vm.material.covers}
-              emptyText="No hay caratulas generadas aun."
+              emptyText={t("coversEmpty")}
               editable={editable}
               busy={busyMaterial}
               onAdd={(it) => handleAddMaterial("cover", it)}
+              t={t}
+              locale={locale}
             />
 
             {/* Cartas IA */}
             <MaterialSection
-              title="Cartas IA"
+              title={t("aiLettersTitle")}
               items={vm.material.generations}
-              emptyText="No hay generaciones IA completadas."
+              emptyText={t("aiLettersEmpty")}
               editable={editable}
               busy={busyMaterial}
               onAdd={(it) => handleAddMaterial("ai_generation", it)}
+              t={t}
+              locale={locale}
             />
 
             {/* Formularios */}
             <MaterialSection
-              title="Formularios"
+              title={t("formsTitle")}
               items={vm.material.forms}
-              emptyText="No hay formularios con PDF generado."
+              emptyText={t("formsEmpty")}
               editable={editable}
               busy={busyMaterial}
               onAdd={(it) => handleAddMaterial("automated_form", it)}
+              t={t}
+              locale={locale}
             />
 
             {/* Documentos del cliente */}
             <MaterialSection
-              title="Documentos"
+              title={t("documentsTitle")}
               items={vm.material.documents}
-              emptyText="No hay documentos aprobados del cliente."
+              emptyText={t("documentsEmpty")}
               editable={editable}
               busy={busyMaterial}
               onAdd={(it) => handleAddMaterial("client_document", it)}
+              t={t}
+              locale={locale}
             />
           </div>
         </Card>
@@ -667,7 +689,7 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
                 marginBottom: 16,
               }}
             >
-              {"Expediente (orden)"}
+              {t("orderTitle")}
             </p>
 
             {vm.items.length === 0 ? (
@@ -681,7 +703,7 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
                 }}
               >
                 <p style={{ fontSize: 13.5 }}>
-                  Agrega material de la izquierda para armar el expediente.
+                  {t("orderEmpty")}
                 </p>
               </div>
             ) : (
@@ -728,11 +750,12 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
                         <InlineEditTitle
                           value={item.title}
                           disabled={!editable || !!isBusyThis}
-                          onSave={(t) => handleUpdateTitle(item.id, t)}
+                          onSave={(next) => handleUpdateTitle(item.id, next)}
+                          t={t}
                         />
                         {item.pageCount != null && (
                           <p style={{ fontSize: 11, color: "var(--ink-3)", margin: 0 }}>
-                            {String(item.pageCount)} p.
+                            {t("pageCount", { n: item.pageCount })}
                           </p>
                         )}
                       </div>
@@ -741,7 +764,7 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
                       <button
                         type="button"
                         disabled={!editable || !!isBusyThis}
-                        title={item.includeInToc ? "Quitar del TOC" : "Incluir en TOC"}
+                        title={item.includeInToc ? t("tocRemove") : t("tocInclude")}
                         onClick={() => handleToggleToc(item)}
                         style={{
                           width: 30,
@@ -762,16 +785,16 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
                           transition: "background 0.15s",
                         }}
                       >
-                        TOC
+                        {t("tocToggle")}
                       </button>
 
                       {/* Up / Down */}
                       <button
                         type="button"
                         disabled={!editable || !!isBusyThis || idx === 0}
-                        title="Subir"
+                        title={t("moveUp")}
                         onClick={() => handleMove(item.id, "up")}
-                        aria-label="Subir item"
+                        aria-label={t("moveUpAria")}
                         style={{
                           width: 28,
                           height: 28,
@@ -793,9 +816,9 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
                       <button
                         type="button"
                         disabled={!editable || !!isBusyThis || idx === vm.items.length - 1}
-                        title="Bajar"
+                        title={t("moveDown")}
                         onClick={() => handleMove(item.id, "down")}
-                        aria-label="Bajar item"
+                        aria-label={t("moveDownAria")}
                         style={{
                           width: 28,
                           height: 28,
@@ -819,8 +842,8 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
                       <button
                         type="button"
                         disabled={!editable || !!isBusyThis}
-                        title="Eliminar item"
-                        aria-label="Eliminar item"
+                        title={t("removeItem")}
+                        aria-label={t("removeItem")}
                         onClick={() => handleRemoveItem(item.id)}
                         style={{
                           width: 28,

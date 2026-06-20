@@ -90,6 +90,7 @@ function makeVersion(overrides: Partial<AutomationVersion> = {}): AutomationVers
     form_definition_id: "form-1",
     version: 1,
     source_pdf_path: "forms/form-1/v1/i-589.pdf",
+    source_language: "en",
     detected_fields: [
       { pdf_field_name: "Applicant.LastName", field_type: "text", page: 1, rect: [10, 10, 100, 20] },
       { pdf_field_name: "Applicant.FirstName", field_type: "text", page: 1, rect: [10, 30, 100, 20] },
@@ -125,6 +126,7 @@ function makeQuestion(overrides: Partial<Question> = {}): Question {
     is_required: true,
     position: 0,
     validation: null,
+    condition: null,
     ...overrides,
   };
 }

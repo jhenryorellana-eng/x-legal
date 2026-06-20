@@ -23,7 +23,7 @@ function shell(title: string, inner: string): Response {
 <title>${title}</title></head>
 <body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#f8f9fa;color:#1a1a2e;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0">
 <div style="max-width:480px;background:#fff;border-radius:16px;padding:40px;text-align:center;box-shadow:0 1px 4px rgba(0,0,0,.08)">
-<div style="font-size:20px;font-weight:800;color:#003366;margin-bottom:16px">USALATINO<span style="color:#FFC629">PRIME</span></div>
+<div style="font-size:20px;font-weight:800;color:#003366;margin-bottom:16px">X <span style="color:#2F6BFF">LEGAL</span></div>
 ${inner}
 </div></body></html>`;
   return new Response(html, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });

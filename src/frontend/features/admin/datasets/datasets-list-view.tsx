@@ -36,7 +36,7 @@ export interface DatasetsListActions {
 const SOURCE_LABEL: Record<string, { label: string; tone: "blue" | "gold" | "green" | "amber" }> = {
   eoir: { label: "EOIR", tone: "blue" },
   uscis: { label: "USCIS", tone: "green" },
-  public_court: { label: "Corte pública", tone: "amber" },
+  court_public: { label: "Corte pública", tone: "amber" },
   manual: { label: "Manual", tone: "gold" },
 };
 
@@ -181,7 +181,7 @@ function NewDatasetModal({ onClose, onCreate }: { onClose: () => void; onCreate:
             <option value="manual">Manual</option>
             <option value="eoir">EOIR</option>
             <option value="uscis">USCIS</option>
-            <option value="public_court">Corte pública</option>
+            <option value="court_public">Corte pública</option>
           </SelectInput>
         </div>
       </div>

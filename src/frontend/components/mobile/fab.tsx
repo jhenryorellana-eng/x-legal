@@ -52,7 +52,7 @@ export function MessagingLauncher({
       style={{
         position: absolute ? "absolute" : "fixed",
         ...fixedAnchor("left", absolute),
-        bottom: 104,
+        bottom: "calc(104px + var(--safe-bottom))",
         zIndex: 32,
         height: 56,
         padding: "0 16px 0 6px",
@@ -135,7 +135,7 @@ export function LexFab({ label, onClick, absolute = false }: LexFabProps) {
       style={{
         position: absolute ? "absolute" : "fixed",
         ...fixedAnchor("right", absolute),
-        bottom: 104,
+        bottom: "calc(104px + var(--safe-bottom))",
         zIndex: 32,
         width: 64,
         height: 64,

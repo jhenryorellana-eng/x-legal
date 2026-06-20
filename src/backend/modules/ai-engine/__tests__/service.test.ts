@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => {
     isCancelled: vi.fn(),
     updateRunProgress: vi.fn(),
     patchConfigSnapshot: vi.fn(),
+    findGenerationConfig: vi.fn().mockResolvedValue(null),
     countRunningByOrg: vi.fn(),
     listRunsForCase: vi.fn(),
     sumMonthlyCosts: vi.fn(),
@@ -115,6 +116,7 @@ const mocks = vi.hoisted(() => {
     repo,
     authz,
     qstash,
+    anthropic,
     anthropicClient,
     getAnthropicClient,
     geminiModels,
@@ -233,6 +235,7 @@ import {
   markTranslationFailed,
   getRunsForCase,
   proposeFormSegmentation,
+  translateAnswerText,
   AiEngineError,
 } from "../service";
 
@@ -647,7 +650,10 @@ describe("getRunsForCase", () => {
 // ---------------------------------------------------------------------------
 
 describe("proposeFormSegmentation", () => {
-  function mockCreateText(text: string) {
+  // STEP A research uses non-streaming `create`; STEP B generation uses
+  // `stream().finalMessage()` (large forms need a big max_tokens, which the SDK
+  // only allows via streaming). Helpers below mock each accordingly.
+  function mockResearch(text = "Per the official USCIS I-589 instructions, fill Part A…") {
     mocks.anthropicClient.messages.create.mockResolvedValue({
       content: [
         { type: "server_tool_use", id: "srv1", name: "web_search", input: { query: "USCIS I-589 instructions" } },
@@ -656,10 +662,17 @@ describe("proposeFormSegmentation", () => {
       ],
     });
   }
+  const genMsg = (text: string) => ({
+    content: [{ type: "text", text }],
+    stop_reason: "end_turn",
+    usage: { input_tokens: 100, output_tokens: 100 },
+    model: "claude-sonnet-4-6",
+  });
 
-  it("researches via web_search (step A) then generates JSON tool-free (step B)", async () => {
-    mockCreateText(
-      '```json\n{"research_summary":"Per the official USCIS I-589 instructions","groups":[{"title_i18n":{"es":"A","en":"A"},"questions":[{"question_i18n":{"es":"N","en":"N"},"field_type":"text","source":"profile","source_ref":{"profile_field":"email"}}]}]}\n```',
+  it("researches via web_search (step A, create) then STREAMS the JSON (step B)", async () => {
+    mockResearch();
+    mocks.anthropic.finalMessage.mockResolvedValue(
+      genMsg('{"groups":[{"title_i18n":{"es":"A","en":"A"},"questions":[{"question_i18n":{"es":"N","en":"N"},"field_type":"text","source":"profile","source_ref":{"profile_field":"email"}}]}]}'),
     );
 
     const res = await proposeFormSegmentation(ADMIN_ACTOR, {
@@ -673,41 +686,126 @@ describe("proposeFormSegmentation", () => {
 
     expect(res.groups).toHaveLength(1);
     expect(res.research_summary).toContain("I-589");
-    expect(mocks.anthropicClient.messages.create).toHaveBeenCalledTimes(2);
+    expect(mocks.anthropicClient.messages.create).toHaveBeenCalledTimes(1); // research only
+    expect(mocks.anthropicClient.messages.stream).toHaveBeenCalledTimes(1); // ONE generation
 
     type Body = { tools?: Array<{ type: string; name: string }>; messages: Array<{ content: string }> };
-    // calls[0] = research (web_search tool + form/service context)
     const research = mocks.anthropicClient.messages.create.mock.calls[0][0] as Body;
     expect(research.tools?.[0]).toMatchObject({ type: "web_search_20250305", name: "web_search" });
     expect(research.messages[0].content).toContain("uscis-i-589");
     expect(research.messages[0].content).toContain("Asilo Político");
-    // calls[1] = generation (NO tools, full budget; whitelist surfaced here)
-    const generation = mocks.anthropicClient.messages.create.mock.calls[1][0] as Body;
+    // generation (stream) carries NO tools + surfaces the profile whitelist
+    const generation = (mocks.anthropicClient.messages.stream.mock.calls[0] as unknown[])[0] as Body;
     expect(generation.tools).toBeUndefined();
     expect(generation.messages[0].content).toContain("email");
   });
 
-  it("extracts JSON even when wrapped in prose, and retries on invalid output", async () => {
-    mocks.anthropicClient.messages.create
-      .mockResolvedValueOnce({ content: [{ type: "text", text: "I could not find anything useful." }] })
-      .mockResolvedValueOnce({
-        content: [{ type: "text", text: 'Here is the structure:\n{"groups":[{"title_i18n":{"es":"B","en":"B"},"questions":[]}]}\nHope it helps!' }],
-      });
+  it("extracts JSON even when wrapped in prose, and retries the stream on invalid output", async () => {
+    mockResearch("brief");
+    mocks.anthropic.finalMessage
+      .mockResolvedValueOnce(genMsg("I could not produce JSON."))
+      .mockResolvedValueOnce(genMsg('Here is the structure:\n{"groups":[{"title_i18n":{"es":"B","en":"B"},"questions":[]}]}\nHope it helps!'));
 
     const res = await proposeFormSegmentation(ADMIN_ACTOR, {
       detectedFields: [{ name: "F1", type: "text", page: 1 }],
       pdfText: "",
+      formName: "X",
+      formSlug: "x",
     });
 
     expect(res.groups).toHaveLength(1);
-    expect(mocks.anthropicClient.messages.create).toHaveBeenCalledTimes(2);
+    expect(mocks.anthropicClient.messages.stream).toHaveBeenCalledTimes(2);
   });
 
-  it("throws AI_OUTPUT_INVALID after both attempts fail to parse", async () => {
-    mocks.anthropicClient.messages.create.mockResolvedValue({ content: [{ type: "text", text: "no json here at all" }] });
+  it("throws AI_OUTPUT_INVALID after both stream attempts fail to parse", async () => {
+    mockResearch("brief");
+    mocks.anthropic.finalMessage.mockResolvedValue(genMsg("no json here at all"));
 
     await expect(
-      proposeFormSegmentation(ADMIN_ACTOR, { detectedFields: [{ name: "F1", type: "text", page: 1 }], pdfText: "" }),
+      proposeFormSegmentation(ADMIN_ACTOR, { detectedFields: [{ name: "F1", type: "text", page: 1 }], pdfText: "", formName: "X", formSlug: "x" }),
     ).rejects.toMatchObject({ code: "AI_OUTPUT_INVALID" });
+  });
+
+  it("sends ALL curated fields in one generation call (no blind 180-field cap), curating internal ones out", async () => {
+    // 200 real fields incl. ones on page 12 (past the old slice(0,180)) + an internal field.
+    const fields = [
+      ...Array.from({ length: 200 }, (_, i) => ({ name: `Pt${i}_Field`, type: "text", page: (i % 12) + 1 })),
+      { name: "LateField_Page12", type: "text", page: 12 },
+      { name: "Pt1_Signature", type: "text", page: 12 }, // curated out
+    ];
+    mockResearch("brief");
+    mocks.anthropic.finalMessage.mockResolvedValue(
+      genMsg('{"groups":[{"title_i18n":{"es":"A","en":"A"},"questions":[{"question_i18n":{"es":"N","en":"N"},"field_type":"text"}]}]}'),
+    );
+
+    const res = await proposeFormSegmentation(ADMIN_ACTOR, {
+      detectedFields: fields,
+      pdfText: "",
+      formName: "USCIS I-589",
+      formSlug: "uscis-i-589",
+    });
+
+    expect(res.groups).toHaveLength(1);
+    expect(mocks.anthropicClient.messages.stream).toHaveBeenCalledTimes(1);
+    const gen = (mocks.anthropicClient.messages.stream.mock.calls[0] as unknown[])[0] as { messages: Array<{ content: string }> };
+    expect(gen.messages[0].content).toContain("LateField_Page12"); // would have been cut by slice(0,180)
+    expect(gen.messages[0].content).not.toContain("Pt1_Signature"); // curated out
+  });
+
+  it("retries once and succeeds when the first stream attempt throws (timeout/5xx)", async () => {
+    mockResearch("brief");
+    mocks.anthropic.finalMessage
+      .mockRejectedValueOnce(new Error("Request timed out")) // generation attempt 0 throws
+      .mockResolvedValueOnce(genMsg('{"groups":[{"title_i18n":{"es":"A","en":"A"},"questions":[]}]}')); // attempt 1 ok
+
+    const res = await proposeFormSegmentation(ADMIN_ACTOR, {
+      detectedFields: [{ name: "F1", type: "text", page: 1 }],
+      pdfText: "",
+      formName: "X",
+      formSlug: "x",
+    });
+
+    expect(res.groups).toHaveLength(1);
+    expect(mocks.anthropicClient.messages.stream).toHaveBeenCalledTimes(2);
+  });
+
+  it("does NOT retry a non-retryable auth error (401) — fails fast after one attempt", async () => {
+    mockResearch("brief");
+    mocks.anthropic.finalMessage.mockRejectedValue(new Error("401 Unauthorized: invalid x-api-key"));
+
+    await expect(
+      proposeFormSegmentation(ADMIN_ACTOR, { detectedFields: [{ name: "F1", type: "text", page: 1 }], pdfText: "", formName: "X", formSlug: "x" }),
+    ).rejects.toMatchObject({ code: "AI_OUTPUT_INVALID" });
+    expect(mocks.anthropicClient.messages.stream).toHaveBeenCalledTimes(1); // broke after attempt 0, no retry
+  });
+});
+
+// ---------------------------------------------------------------------------
+// translateAnswerText — PII masking before the provider (review SHOULD-FIX #1)
+// ---------------------------------------------------------------------------
+
+describe("translateAnswerText", () => {
+  beforeEach(() => {
+    mocks.geminiModels.generateContent.mockReset();
+  });
+
+  it("masks structured PII (SSN) before sending the answer to Gemini", async () => {
+    mocks.geminiModels.generateContent.mockResolvedValue({
+      candidates: [{ content: { parts: [{ text: "My son's number is •••-••-6789" }] } }],
+    });
+
+    await translateAnswerText({ text: "El número de mi hijo es 123-45-6789", direction: "es-en" });
+
+    const sentPrompt = mocks.geminiModels.generateContent.mock.calls[0][0].contents[0].parts[0].text as string;
+    expect(sentPrompt).toContain("•••-••-6789"); // masked
+    expect(sentPrompt).not.toContain("123-45-6789"); // raw SSN never sent
+  });
+
+  it("returns the provider translation", async () => {
+    mocks.geminiModels.generateContent.mockResolvedValue({
+      candidates: [{ content: { parts: [{ text: "hello world" }] } }],
+    });
+    const r = await translateAnswerText({ text: "hola mundo", direction: "es-en" });
+    expect(r.text).toBe("hello world");
   });
 });

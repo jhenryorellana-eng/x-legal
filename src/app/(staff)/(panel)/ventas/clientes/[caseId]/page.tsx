@@ -22,6 +22,17 @@ import { getPaymentPlanForCase } from "@/backend/modules/billing";
 import { getContractForCase } from "@/backend/modules/contracts";
 import { resolveI18n, type Locale } from "@/shared/i18n";
 import { SharedCaseView, buildCasosStrings } from "@/frontend/features/shared-case";
+import {
+  getCaseThreadAction,
+  sendMessageAction,
+  loadMoreMessagesAction,
+  listSinceAction,
+  markReadAction,
+  translateMessageAction,
+  getAttachmentUploadUrlAction,
+  confirmAttachmentAction,
+  getAttachmentDownloadUrlAction,
+} from "@/backend/modules/messaging/actions";
 import type { CaseWorkspaceVM } from "@/frontend/features/shared-case";
 import { mapStatusToPill } from "../../../admin/casos/view-helpers";
 import {
@@ -130,6 +141,17 @@ export default async function VentasCasoDetailPage({
       locale={lc}
       backHref="/ventas/clientes"
       isAdmin={false}
+      chatRaw={{
+        getCaseThread: getCaseThreadAction,
+        send: sendMessageAction,
+        loadMore: loadMoreMessagesAction,
+        listSince: listSinceAction,
+        markRead: markReadAction,
+        translate: translateMessageAction,
+        getUploadUrl: getAttachmentUploadUrlAction,
+        confirmAttachment: confirmAttachmentAction,
+        getDownloadUrl: getAttachmentDownloadUrlAction,
+      }}
     />
   );
 }

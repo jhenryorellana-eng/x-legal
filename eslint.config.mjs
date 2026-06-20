@@ -20,6 +20,7 @@ const eslintConfig = [
       "build/**",
       "next-env.d.ts",
       "docs/**", // evidence harness scripts (CJS) — not app code
+      "public/**", // static assets + the serwist-generated/minified service worker (public/sw.js)
     ],
   },
   {
@@ -101,6 +102,86 @@ const eslintConfig = [
             // (register-consumers.ts is unclassified/module-int; allow both)
             { from: "instrumentation", allow: ["module-pub", "module-int", "platform", "shared"] },
           ],
+        },
+      ],
+    },
+  },
+  {
+    // RNF-036 (DOC-24 §3 + §5) — features MUST NOT touch native browser/platform
+    // APIs directly. Everything goes through the platform-bridge so a future
+    // Capacitor build swaps the implementation without changing feature code.
+    // The platform-bridge itself lives at src/frontend/platform-bridge/ (outside
+    // features/) and is therefore naturally exempt.
+    files: ["src/frontend/features/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-globals": [
+        "error",
+        {
+          name: "SpeechRecognition",
+          message: "Use getBridge().dictation from @/frontend/platform-bridge instead of SpeechRecognition (RNF-036).",
+        },
+        {
+          name: "webkitSpeechRecognition",
+          message: "Use getBridge().dictation from @/frontend/platform-bridge instead of webkitSpeechRecognition (RNF-036).",
+        },
+        {
+          name: "Notification",
+          message: "Use getBridge().push from @/frontend/platform-bridge instead of the Notification API (RNF-036).",
+        },
+        {
+          name: "PushManager",
+          message: "Use getBridge().push from @/frontend/platform-bridge instead of PushManager (RNF-036).",
+        },
+        {
+          name: "Translator",
+          message: "Use getBridge().translator from @/frontend/platform-bridge instead of the Translator API (RNF-036).",
+        },
+        {
+          name: "LanguageDetector",
+          message: "Use getBridge().translator from @/frontend/platform-bridge instead of the LanguageDetector API (RNF-036).",
+        },
+      ],
+      "no-restricted-properties": [
+        "error",
+        {
+          object: "navigator",
+          property: "mediaDevices",
+          message: "Use getBridge().camera / getBridge().files from @/frontend/platform-bridge instead of navigator.mediaDevices (RNF-036).",
+        },
+        {
+          object: "navigator",
+          property: "share",
+          message: "Use getBridge().share.share() from @/frontend/platform-bridge instead of navigator.share (RNF-036).",
+        },
+        {
+          object: "navigator",
+          property: "vibrate",
+          message: "Use getBridge().haptics.vibrate() from @/frontend/platform-bridge instead of navigator.vibrate (RNF-036).",
+        },
+        {
+          object: "navigator",
+          property: "clipboard",
+          message: "Use getBridge().share.copyText() from @/frontend/platform-bridge instead of navigator.clipboard (RNF-036).",
+        },
+        {
+          object: "navigator",
+          property: "serviceWorker",
+          message: "Use getBridge().push from @/frontend/platform-bridge instead of navigator.serviceWorker (RNF-036).",
+        },
+        {
+          object: "window",
+          property: "Notification",
+          message: "Use getBridge().push from @/frontend/platform-bridge instead of window.Notification (RNF-036).",
+        },
+        {
+          object: "window",
+          property: "PushManager",
+          message: "Use getBridge().push from @/frontend/platform-bridge instead of window.PushManager (RNF-036).",
+        },
+        {
+          object: "window",
+          property: "open",
+          message: "Use getBridge().share.openExternal() from @/frontend/platform-bridge instead of window.open (RNF-036).",
         },
       ],
     },

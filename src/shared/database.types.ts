@@ -153,6 +153,7 @@ export type Database = {
       }
       ai_generation_configs: {
         Row: {
+          assembly: Json | null
           created_at: string
           dataset_id: string | null
           form_definition_id: string
@@ -162,11 +163,19 @@ export type Database = {
           model: string
           output_format: string
           output_language: string
+          research_instructions: string | null
+          research_model: string | null
+          rules_enabled: boolean
+          rules_text: string | null
+          sections: Json
           system_prompt: string
           updated_at: string
           updated_by: string | null
+          web_search_enabled: boolean
+          web_search_max_uses: number
         }
         Insert: {
+          assembly?: Json | null
           created_at?: string
           dataset_id?: string | null
           form_definition_id: string
@@ -176,11 +185,19 @@ export type Database = {
           model?: string
           output_format?: string
           output_language?: string
+          research_instructions?: string | null
+          research_model?: string | null
+          rules_enabled?: boolean
+          rules_text?: string | null
+          sections?: Json
           system_prompt: string
           updated_at?: string
           updated_by?: string | null
+          web_search_enabled?: boolean
+          web_search_max_uses?: number
         }
         Update: {
+          assembly?: Json | null
           created_at?: string
           dataset_id?: string | null
           form_definition_id?: string
@@ -190,9 +207,16 @@ export type Database = {
           model?: string
           output_format?: string
           output_language?: string
+          research_instructions?: string | null
+          research_model?: string | null
+          rules_enabled?: boolean
+          rules_text?: string | null
+          sections?: Json
           system_prompt?: string
           updated_at?: string
           updated_by?: string | null
+          web_search_enabled?: boolean
+          web_search_max_uses?: number
         }
         Relationships: [
           {
@@ -853,6 +877,7 @@ export type Database = {
       case_form_responses: {
         Row: {
           answers: Json
+          answers_translated: Json
           automation_version_id: string | null
           case_id: string
           created_at: string
@@ -862,10 +887,12 @@ export type Database = {
           party_id: string | null
           status: string
           submitted_at: string | null
+          translation_status: string
           updated_at: string
         }
         Insert: {
           answers?: Json
+          answers_translated?: Json
           automation_version_id?: string | null
           case_id: string
           created_at?: string
@@ -875,10 +902,12 @@ export type Database = {
           party_id?: string | null
           status?: string
           submitted_at?: string | null
+          translation_status?: string
           updated_at?: string
         }
         Update: {
           answers?: Json
+          answers_translated?: Json
           automation_version_id?: string | null
           case_id?: string
           created_at?: string
@@ -888,6 +917,7 @@ export type Database = {
           party_id?: string | null
           status?: string
           submitted_at?: string | null
+          translation_status?: string
           updated_at?: string
         }
         Relationships: [
@@ -2214,6 +2244,7 @@ export type Database = {
           form_definition_id: string
           id: string
           published_at: string | null
+          source_language: string
           source_pdf_path: string
           status: string
           updated_at: string
@@ -2226,6 +2257,7 @@ export type Database = {
           form_definition_id: string
           id?: string
           published_at?: string | null
+          source_language?: string
           source_pdf_path: string
           status?: string
           updated_at?: string
@@ -2238,6 +2270,7 @@ export type Database = {
           form_definition_id?: string
           id?: string
           published_at?: string | null
+          source_language?: string
           source_pdf_path?: string
           status?: string
           updated_at?: string
@@ -2353,6 +2386,7 @@ export type Database = {
       }
       form_questions: {
         Row: {
+          condition: Json | null
           created_at: string
           field_type: string
           group_id: string
@@ -2369,6 +2403,7 @@ export type Database = {
           validation: Json | null
         }
         Insert: {
+          condition?: Json | null
           created_at?: string
           field_type: string
           group_id: string
@@ -2385,6 +2420,7 @@ export type Database = {
           validation?: Json | null
         }
         Update: {
+          condition?: Json | null
           created_at?: string
           field_type?: string
           group_id?: string
@@ -3411,6 +3447,50 @@ export type Database = {
             columns: ["service_phase_id"]
             isOneToOne: false
             referencedRelation: "service_phases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      service_party_roles: {
+        Row: {
+          cardinality: string
+          created_at: string
+          id: string
+          is_required: boolean
+          label_i18n: Json
+          position: number
+          role_key: string
+          service_id: string
+          updated_at: string
+        }
+        Insert: {
+          cardinality?: string
+          created_at?: string
+          id?: string
+          is_required?: boolean
+          label_i18n: Json
+          position?: number
+          role_key: string
+          service_id: string
+          updated_at?: string
+        }
+        Update: {
+          cardinality?: string
+          created_at?: string
+          id?: string
+          is_required?: boolean
+          label_i18n?: Json
+          position?: number
+          role_key?: string
+          service_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "service_party_roles_service_id_fkey"
+            columns: ["service_id"]
+            isOneToOne: false
+            referencedRelation: "services"
             referencedColumns: ["id"]
           },
         ]

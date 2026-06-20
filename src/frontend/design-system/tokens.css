@@ -16,7 +16,7 @@
  * ------------------------------------------------------------------------- */
 :root {
   --brand-navy: #002855;
-  --brand-blue: #2f6bff;
+  --brand-blue: #2a63f2; /* WCAG AA as text (staff --accent references this); was #2f6bff */
   --brand-blue-2: #5b8cff;
   --brand-blue-deep: #1b4fd6;
   --brand-gold: #ffc629;
@@ -50,14 +50,19 @@
 [data-theme="light"] {
   --bg: #f4f7fb;
   --card: #ffffff;
+  /* Stable base alias for the mobile card surface. shadcn-theme.css maps its
+   * `--card` to `var(--panel, var(--card-surface))`; without this the chain fell
+   * back to `var(--card)` itself → CSS self-reference cycle → `--card` resolved
+   * to the empty string (transparent sheets/modals). DOC-01 §4. */
+  --card-surface: #ffffff;
   --card-alt: #f1f5fb;
   --nav-bg: rgba(255, 255, 255, 0.92);
   --navy: #002855;
   --ink: #0b1b33;
   --ink-2: #5b6b82;
-  --ink-3: #94a2b8;
+  --ink-3: #647088; /* WCAG AA: 4.6:1 on --bg (was #94a2b8 @ 2.4:1) — DOC-19 RNF-037 */
   --line: #eaeff6;
-  --accent: #2f6bff;
+  --accent: #2a63f2; /* WCAG AA: 4.7:1 as text on --bg (was #2f6bff @ 4.2:1) */
   --accent-deep: #1b4fd6;
   --gold: #ffc629;
   --gold-deep: #f0a500;
@@ -85,12 +90,13 @@
 [data-theme="dark"] {
   --bg: #0c1322;
   --card: #172238;
+  --card-surface: #172238; /* mobile card surface base alias — see light scope */
   --card-alt: #101a2d;
   --nav-bg: rgba(15, 22, 38, 0.92);
   --navy: #f3f7ff;
   --ink: #e7eefb;
   --ink-2: #9fb1cc;
-  --ink-3: #64768f;
+  --ink-3: #7c8da6; /* WCAG AA on dark --bg (was #64768f @ 4.0:1) — RNF-037 */
   --line: #27344e;
   --accent: #5b8cff;
   --accent-deep: #2f6bff;
@@ -134,7 +140,7 @@
   --sidebar: #ffffff;
   --ink: #0b1b33;
   --ink-2: #5b6b82;
-  --ink-3: #8a99b2;
+  --ink-3: #647088; /* WCAG AA on the staff light bg (was #8a99b2) — RNF-037 */
   --line: #e3e9f2;
   --line-2: #edf1f8;
   --chip: #f2f6fd;
@@ -167,7 +173,7 @@
   --sidebar: #0c1830;
   --ink: #eaf1ff;
   --ink-2: #9fb2ce;
-  --ink-3: #6c82a6;
+  --ink-3: #8294b3; /* WCAG AA on staff dark cards (was #6c82a6 @ 3.8:1) — RNF-037 */
   --line: #1e3050;
   --line-2: #172643;
   --chip: #172845;
@@ -263,7 +269,9 @@
   --radius-lg: var(--r-lg);
   --radius-pill: var(--r-pill);
 
-  /* Fonts (provided by next/font in fonts.ts) */
+  /* Fonts (provided by next/font in fonts.ts; the variable lives on <html>).
+   * Plus Jakarta Sans for BOTH title and body — matches the prototype
+   * (MigrationPrime.html). system-ui is only the load/no-support fallback. */
   --font-title: var(--font-plus-jakarta), system-ui, sans-serif;
-  --font-body: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-body: var(--font-plus-jakarta), system-ui, -apple-system, "Segoe UI", sans-serif;
 }

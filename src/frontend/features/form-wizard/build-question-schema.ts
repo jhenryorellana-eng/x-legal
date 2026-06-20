@@ -16,6 +16,7 @@
  */
 
 import { z } from "zod";
+import { deriveFieldState } from "@/shared/form-logic/conditions";
 import type { WizardQuestion, FieldErrorCode } from "./types";
 
 /**
@@ -187,7 +188,11 @@ export function validateGroup(
 ): GroupValidationResult {
   const errors: Record<string, FieldErrorCode> = {};
   for (const q of questions) {
-    const res = validateQuestion(q, answers[q.id]);
+    // A field hidden by its condition is not rendered and not validated; a
+    // condition can also flip `required` on/off (mirrors the server validator).
+    const st = deriveFieldState(q.condition, q.isRequired, answers);
+    if (!st.visible) continue;
+    const res = validateQuestion({ ...q, isRequired: st.required }, answers[q.id]);
     if (!res.ok && res.code) errors[q.id] = res.code;
   }
   return { ok: Object.keys(errors).length === 0, errors };

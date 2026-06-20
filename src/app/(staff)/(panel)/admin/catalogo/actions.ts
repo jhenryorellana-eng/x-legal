@@ -21,6 +21,11 @@ import {
   deletePhaseAction,
   upsertPhasePolicyAction,
   createRequiredDocumentAction,
+  createServicePartyRoleAction,
+  updateServicePartyRoleAction,
+  deleteServicePartyRoleAction,
+  createFormDefinitionAction,
+  updateFormDefinitionAction,
 } from "@/backend/modules/catalog/actions";
 
 type Res<T> = { success: boolean; data?: T; error?: { code: string; message: string } };
@@ -88,6 +93,57 @@ export async function createRequiredDocUi(
 
 export async function upsertPolicyUi(input: Record<string, unknown>): Promise<Res<unknown>> {
   const r = await upsertPhasePolicyAction(input as Parameters<typeof upsertPhasePolicyAction>[0]);
+  return r.success ? { success: true, data: r.data } : { success: false, error: r.error };
+}
+
+export async function createServicePartyRoleUi(
+  input: Record<string, unknown>,
+): Promise<Res<{ id: string }>> {
+  const r = await createServicePartyRoleAction(
+    input as Parameters<typeof createServicePartyRoleAction>[0],
+  );
+  return r.success
+    ? { success: true, data: { id: (r.data as { id: string }).id } }
+    : { success: false, error: r.error };
+}
+
+export async function updateServicePartyRoleUi(
+  id: string,
+  patch: Record<string, unknown>,
+): Promise<Res<unknown>> {
+  const r = await updateServicePartyRoleAction(
+    id,
+    patch as Parameters<typeof updateServicePartyRoleAction>[1],
+  );
+  return r.success ? { success: true, data: r.data } : { success: false, error: r.error };
+}
+
+export async function deleteServicePartyRoleUi(id: string): Promise<Res<unknown>> {
+  const r = await deleteServicePartyRoleAction(id);
+  return r.success ? { success: true } : { success: false, error: r.error };
+}
+
+export async function createFormUi(
+  input: Record<string, unknown>,
+): Promise<Res<{ id: string }>> {
+  // The cast is safe: createFormDefinition runs CreateFormDtoSchema.parse(input)
+  // immediately, throwing on any malformed payload from the wizard.
+  const r = await createFormDefinitionAction(
+    input as Parameters<typeof createFormDefinitionAction>[0],
+  );
+  return r.success
+    ? { success: true, data: { id: (r.data as { id: string }).id } }
+    : { success: false, error: r.error };
+}
+
+export async function updateFormUi(
+  id: string,
+  patch: Record<string, unknown>,
+): Promise<Res<unknown>> {
+  const r = await updateFormDefinitionAction(
+    id,
+    patch as Parameters<typeof updateFormDefinitionAction>[1],
+  );
   return r.success ? { success: true, data: r.data } : { success: false, error: r.error };
 }
 

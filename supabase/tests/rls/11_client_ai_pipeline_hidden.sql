@@ -99,7 +99,7 @@ insert into public.staff_profiles (user_id, role, display_name)
 values (:staff_id::uuid, 'paralegal', 'CasesParalegal_T11');
 
 -- employee_module_permissions: staff has cases module with can_view+can_edit
-insert into public.employee_module_permissions (user_id, module, can_view, can_edit)
+insert into public.employee_module_permissions (staff_id, module_key, can_view, can_edit)
 values (:staff_id::uuid, 'cases', true, true);
 
 -- service catalog skeleton

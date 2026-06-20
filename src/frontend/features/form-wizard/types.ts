@@ -11,6 +11,8 @@
  * `modules/cases/index.ts` and passes it as a prop — it matches structurally.
  */
 
+import type { QuestionCondition } from "@/shared/form-logic/conditions";
+
 export type Locale = "es" | "en";
 
 export interface I18nValue {
@@ -46,6 +48,8 @@ export interface WizardQuestion {
   isPrefilled: boolean;
   /** The answer currently saved in the response (null if none yet). */
   currentAnswer: unknown;
+  /** Conditional visibility (show/lock/require). NULL/absent = unconditional. */
+  condition?: QuestionCondition | null;
 }
 
 export interface WizardGroup {
@@ -68,6 +72,8 @@ export interface WizardForm {
   submittedAt: string | null;
   filledPdfPath: string | null;
   filledBy: string;
+  /** Language of the official PDF (pdf_automation). Drives answer translation. */
+  sourceLanguage: Locale;
   groups: WizardGroup[];
 }
 
@@ -100,7 +106,18 @@ export type SubmitFormFn = (input: {
   caseId: string;
   formDefinitionId: string;
   partyId: string | null;
+  /** Best-effort client-side translation of textual answers (Chrome Translator). */
+  answersTranslated?: Record<string, string>;
+  translationStatus?: "none" | "partial" | "pending_server" | "done";
 }) => Promise<SubmitFormResult>;
+
+/** Server fallback translator (Gemini) injected into the wizard for the cases
+ *  where the on-device Chrome Translator API is unavailable. */
+export type TranslateAnswersFn = (input: {
+  items: Array<{ id: string; text: string }>;
+  from: Locale;
+  to: Locale;
+}) => Promise<{ ok: boolean; translations?: Record<string, string>; error?: { code: string } }>;
 
 // ---------------------------------------------------------------------------
 // Wizard runtime state (UI-only — never the source of truth)

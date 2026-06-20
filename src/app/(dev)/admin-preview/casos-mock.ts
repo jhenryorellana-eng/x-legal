@@ -93,6 +93,10 @@ export const newCaseServicesMock: NewCaseService[] = [
       with_lawyer: "svc-asilo|plan-wl|500000|125000|4",
       self: "svc-asilo|plan-self|250000|60000|4",
     },
+    partyRoles: [
+      { roleKey: "spouse", label: "Cónyuge", cardinality: "single", required: false },
+      { roleKey: "minor", label: "Hijos", cardinality: "multiple", required: false },
+    ],
   },
   {
     id: "svc-sijs",
@@ -107,6 +111,7 @@ export const newCaseServicesMock: NewCaseService[] = [
       },
     ],
     encodedByKind: { self: "svc-sijs|plan-sijs|360000|60000|6" },
+    partyRoles: [],
   },
 ];
 

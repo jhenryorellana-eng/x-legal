@@ -15,6 +15,8 @@ export {
   getPublishedAutomationVersion,
   getAutomationVersionById,
   listContractableServices,
+  listContractableServicePlans,
+  listServicePartyRoles,
   getCatalogFirstPhase,
   isServiceContractable,
   // Form runtime reads (consumed by cases/form-runtime — API-CASE-16 through API-CASE-19)
@@ -24,6 +26,10 @@ export {
   // Admin panel reads (DOC-53 §4 — page-initial RSC reads)
   listServicesAdmin,
   getServiceEditorTree,
+  // Service party-role config (DOC-41 — admin catalog editor)
+  createServicePartyRole,
+  updateServicePartyRole,
+  deleteServicePartyRole,
   // Form editor + datasets reads (DOC-53 §5 / §6 — page-initial RSC reads)
   getFormEditorData,
   getVersionPdfUrl,
@@ -63,4 +69,6 @@ export type {
   ExpandedRequirement,
   RequirementOverrideInput,
   ResolvedForm,
+  ServicePartyRole,
+  UpsertServicePartyRoleDto,
 } from "./domain";

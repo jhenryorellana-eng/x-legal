@@ -14,6 +14,11 @@ import {
   deletePhaseUi,
   upsertPolicyUi,
   createRequiredDocUi,
+  createServicePartyRoleUi,
+  updateServicePartyRoleUi,
+  deleteServicePartyRoleUi,
+  createFormUi,
+  updateFormUi,
   activateServiceUi,
 } from "./actions";
 
@@ -26,5 +31,10 @@ export const catalogWizardActions = {
   deletePhase: deletePhaseUi,
   upsertPolicy: upsertPolicyUi,
   createRequiredDoc: createRequiredDocUi,
+  createPartyRole: createServicePartyRoleUi,
+  updatePartyRole: updateServicePartyRoleUi,
+  deletePartyRole: deleteServicePartyRoleUi,
+  createForm: createFormUi,
+  updateForm: updateFormUi,
   activate: activateServiceUi,
 };

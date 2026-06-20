@@ -157,6 +157,7 @@ vi.mock("@/backend/modules/ai-engine", () => ({
   proposeFormSegmentation: mocks.aiEngine.proposeFormSegmentation,
   proposeExtractionSchema: mocks.aiEngine.proposeExtractionSchema,
   startGeneration: mocks.aiEngine.startGeneration,
+  extractRawTextFromStorage: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("@/backend/platform/storage", () => ({

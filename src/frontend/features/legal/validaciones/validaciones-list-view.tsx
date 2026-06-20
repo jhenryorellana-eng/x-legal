@@ -12,6 +12,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
+import { useTranslations, useLocale } from "next-intl";
 import {
   Card,
   StatusPill,
@@ -19,6 +20,10 @@ import {
   Lex,
   type StatusKind,
 } from "@/frontend/components/brand";
+
+// Loose translator signature for dynamic keys (status/filter labelKey are
+// resolved at runtime, so the strict next-intl literal-key type is widened).
+type T = (key: string, values?: Record<string, string | number>) => string;
 // ---------------------------------------------------------------------------
 // Inline row type (mirrors LegalValidationRow from integrations module).
 // Frontend components MUST NOT import from @/backend — types flow via VM.
@@ -60,15 +65,15 @@ export interface ValidacionesListViewProps {
 
 type ValidationStatus = ValidationRowVM["status"];
 
-const STATUS_PILL: Record<ValidationStatus, { kind: StatusKind; label: string }> = {
-  pending:           { kind: "pendiente", label: "Enviando…" },
-  sent:              { kind: "pendiente", label: "Enviando…" },
-  queued:            { kind: "revision",  label: "En cola del abogado" },
-  in_review:         { kind: "revision",  label: "En revisión" },
-  validated:         { kind: "aprobado",  label: "Validado" },
-  needs_corrections: { kind: "corregir",  label: "Devuelto con correcciones" },
-  cancelled:         { kind: "pendiente", label: "Cancelada en el SaaS" },
-  error:             { kind: "corregir",  label: "Error de envío" },
+const STATUS_PILL: Record<ValidationStatus, { kind: StatusKind; labelKey: string }> = {
+  pending:           { kind: "pendiente", labelKey: "statusSending" },
+  sent:              { kind: "pendiente", labelKey: "statusSending" },
+  queued:            { kind: "revision",  labelKey: "statusQueued" },
+  in_review:         { kind: "revision",  labelKey: "statusInReview" },
+  validated:         { kind: "aprobado",  labelKey: "statusValidated" },
+  needs_corrections: { kind: "corregir",  labelKey: "statusNeeds" },
+  cancelled:         { kind: "pendiente", labelKey: "statusCancelled" },
+  error:             { kind: "corregir",  labelKey: "statusError" },
 };
 
 // ---------------------------------------------------------------------------
@@ -85,7 +90,7 @@ function SemaforoDot({ value }: { value: Semaforo | string | null }) {
     "var(--red)";
   return (
     <span
-      aria-label={"Semáforo " + value}
+      aria-hidden="true"
       style={{
         display: "inline-block",
         width: 10,
@@ -104,11 +109,11 @@ function SemaforoDot({ value }: { value: Semaforo | string | null }) {
 
 type FilterTab = "all" | "active" | "corrections" | "validated";
 
-const FILTER_TABS: { id: FilterTab; label: string }[] = [
-  { id: "all",         label: "Todas" },
-  { id: "active",      label: "En curso" },
-  { id: "corrections", label: "Con correcciones" },
-  { id: "validated",   label: "Validadas" },
+const FILTER_TABS: { id: FilterTab; labelKey: string }[] = [
+  { id: "all",         labelKey: "filterAll" },
+  { id: "active",      labelKey: "filterActive" },
+  { id: "corrections", labelKey: "filterCorrections" },
+  { id: "validated",   labelKey: "filterValidated" },
 ];
 
 function matchesFilter(row: ValidationRowVM, tab: FilterTab): boolean {
@@ -128,14 +133,21 @@ function sortRows(rows: ValidationRowVM[]): ValidationRowVM[] {
   });
 }
 
-function formatRelative(iso: string): string {
+function formatRelative(
+  iso: string,
+  t: T,
+  locale: string,
+): string {
   try {
     const diff = Date.now() - new Date(iso).getTime();
     const mins = Math.floor(diff / 60_000);
-    if (mins < 60) return "hace " + String(mins) + " min";
+    if (mins < 60) return t("relMinAgo", { n: mins });
     const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return "hace " + String(hrs) + " h";
-    return new Date(iso).toLocaleDateString("es-PE", { day: "2-digit", month: "short" });
+    if (hrs < 24) return t("relHrAgo", { n: hrs });
+    return new Date(iso).toLocaleDateString(locale === "en" ? "en-US" : "es-PE", {
+      day: "2-digit",
+      month: "short",
+    });
   } catch {
     return iso;
   }
@@ -147,6 +159,8 @@ function formatRelative(iso: string): string {
 
 export function ValidacionesListView({ vm }: ValidacionesListViewProps) {
   const router = useRouter();
+  const t = useTranslations("staff_validaciones") as unknown as T;
+  const locale = useLocale();
   const [activeTab, setActiveTab] = React.useState<FilterTab>("all");
 
   const filtered = sortRows(vm.rows.filter((r) => matchesFilter(r, activeTab)));
@@ -166,10 +180,10 @@ export function ValidacionesListView({ vm }: ValidacionesListViewProps) {
             fontFamily: "var(--font-title)",
           }}
         >
-          Validaciones
+          {t("pageTitle")}
         </h1>
         <p style={{ fontSize: 14, color: "var(--ink-2)", margin: 0 }}>
-          Todos los expedientes enviados a revisión con abogado.
+          {t("pageSubtitle")}
         </p>
       </div>
 
@@ -205,7 +219,7 @@ export function ValidacionesListView({ vm }: ValidacionesListViewProps) {
                 transition: "all 0.15s var(--ease)",
               }}
             >
-              {tab.label}
+              {t(tab.labelKey)}
             </button>
           );
         })}
@@ -232,10 +246,10 @@ export function ValidacionesListView({ vm }: ValidacionesListViewProps) {
                 marginTop: 12,
               }}
             >
-              Nada en validación ahora mismo
+              {t("emptyTitle")}
             </h3>
             <p style={{ fontSize: 13.5, marginTop: 6, color: "var(--ink-2)" }}>
-              Cuando se envíe un expediente a revisión con el abogado aparecerá aquí.
+              {t("emptyBody")}
             </p>
           </div>
         </Card>
@@ -252,7 +266,13 @@ export function ValidacionesListView({ vm }: ValidacionesListViewProps) {
                 borderBottom: "1.5px solid var(--line)",
               }}
             >
-              {["Caso", "Intento", "Estado", "Semáforo", "Movimiento"].map((h) => (
+              {[
+                t("colCase"),
+                t("colAttempt"),
+                t("colStatus"),
+                t("colSemaforo"),
+                t("colMovement"),
+              ].map((h) => (
                 <span
                   key={h}
                   style={{
@@ -272,11 +292,12 @@ export function ValidacionesListView({ vm }: ValidacionesListViewProps) {
             {/* Rows */}
             <div style={{ display: "flex", flexDirection: "column" }}>
               {filtered.map((row, idx) => {
-                const pill = STATUS_PILL[row.status] ?? { kind: "pendiente" as StatusKind, label: row.status };
+                const pill = STATUS_PILL[row.status] ?? { kind: "pendiente" as StatusKind, labelKey: "" };
+                const pillLabel = pill.labelKey ? t(pill.labelKey) : row.status;
                 const semColor: Record<string, string> = {
-                  green: "Semáforo verde",
-                  amber: "Semáforo ámbar",
-                  red: "Semáforo rojo",
+                  green: t("semaforoGreen"),
+                  amber: t("semaforoAmber"),
+                  red: t("semaforoRed"),
                 };
                 const semLabel = row.semaforo ? semColor[row.semaforo] ?? row.semaforo : null;
                 const semTone: Record<string, "green" | "gold" | "amber" | "red"> = {
@@ -336,18 +357,18 @@ export function ValidacionesListView({ vm }: ValidacionesListViewProps) {
                           margin: 0,
                         }}
                       >
-                        {"Caso " + row.case_id.slice(0, 8)}
+                        {t("caseLabel", { id: row.case_id.slice(0, 8) })}
                       </p>
                     </div>
 
                     {/* Attempt col */}
                     <div style={{ display: "flex", alignItems: "center" }}>
-                      <Chip tone="blue">{"Intento " + String(row.attempt_no)}</Chip>
+                      <Chip tone="blue">{t("attemptChip", { n: row.attempt_no })}</Chip>
                     </div>
 
                     {/* Status col */}
                     <div style={{ display: "flex", alignItems: "center" }}>
-                      <StatusPill kind={pill.kind}>{pill.label}</StatusPill>
+                      <StatusPill kind={pill.kind}>{pillLabel}</StatusPill>
                     </div>
 
                     {/* Semáforo col */}
@@ -364,7 +385,7 @@ export function ValidacionesListView({ vm }: ValidacionesListViewProps) {
                     {/* Movement col */}
                     <div style={{ display: "flex", alignItems: "center" }}>
                       <span style={{ fontSize: 12, color: "var(--ink-2)", fontWeight: 700 }}>
-                        {formatRelative(lastEvent)}
+                        {formatRelative(lastEvent, t, locale)}
                       </span>
                     </div>
                   </button>

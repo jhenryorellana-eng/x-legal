@@ -339,6 +339,8 @@ export async function updateFormResponse(
     status: string;
     submitted_at: string;
     filled_pdf_path: string;
+    answers_translated: Record<string, string>;
+    translation_status: string;
   }>,
 ): Promise<void> {
   const supabase = createServiceClient();

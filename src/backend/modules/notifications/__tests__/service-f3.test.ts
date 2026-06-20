@@ -20,6 +20,14 @@ const mockFindCaseAssignedStaff = vi.hoisted(() => vi.fn());
 const mockFindUserById = vi.hoisted(() => vi.fn());
 const mockFindLeadAssignedStaff = vi.hoisted(() => vi.fn());
 const mockEnqueueJob = vi.hoisted(() => vi.fn());
+const mockGetPreferences = vi.hoisted(() => vi.fn());
+const ALL_TRUE_PREFS = vi.hoisted(() => ({
+  messages: true,
+  appointment_reminders: true,
+  payment_reminders: true,
+  case_updates: true,
+  channels: { inapp: true, push: true, email: true },
+}));
 
 vi.mock("@/backend/platform/supabase", () => ({
   createServiceClient: vi.fn(),
@@ -33,9 +41,16 @@ vi.mock("../repository.js", () => ({
   findCaseAssignedStaff: mockFindCaseAssignedStaff,
   findUserById: mockFindUserById,
   findLeadAssignedStaff: mockFindLeadAssignedStaff,
+  getPreferences: mockGetPreferences,
+  upsertPreferences: vi.fn().mockResolvedValue(undefined),
+  findUnreadMessageDigest: vi.fn().mockResolvedValue(null),
+  bumpMessageDigest: vi.fn().mockResolvedValue(undefined),
+  markAllNotificationsRead: vi.fn().mockResolvedValue(undefined),
+  getUnreadCountForUser: vi.fn().mockResolvedValue(0),
   listNotificationsForUser: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
   markNotificationRead: vi.fn().mockResolvedValue(undefined),
   findNotificationById: vi.fn().mockResolvedValue(null),
+  DEFAULT_PREFERENCES: ALL_TRUE_PREFS,
 }));
 
 vi.mock("@/backend/platform/qstash", () => ({
@@ -67,6 +82,9 @@ const NOTIF_ID = "11111111-1111-4111-8111-111111111099";
 
 beforeEach(() => {
   vi.clearAllMocks();
+
+  // Default: all preference categories + channels ON
+  mockGetPreferences.mockResolvedValue(ALL_TRUE_PREFS);
 
   // Default: notification is newly created
   mockInsertNotificationIdempotent.mockResolvedValue({

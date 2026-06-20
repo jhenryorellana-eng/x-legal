@@ -127,6 +127,13 @@ export const formEditorAiMock: FormEditorVM = {
     max_output_tokens: 32000,
     output_format: "pdf",
     output_language: "both",
+    web_search_enabled: false,
+    web_search_max_uses: 5,
+    research_instructions: null,
+    research_model: null,
+    sections: [],
+    rules_enabled: true,
+    rules_text: null,
   },
 };
 

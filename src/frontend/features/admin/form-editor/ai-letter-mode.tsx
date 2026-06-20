@@ -2,10 +2,10 @@
 
 import * as React from "react";
 import { GradientBtn, Icon, Chip } from "@/frontend/components/brand";
-import { toast } from "@/frontend/components/desktop";
+import { Switch, toast } from "@/frontend/components/desktop";
 import { FieldLabel, SelectInput, TextInput } from "../shared/chrome";
 import { GENERATION_MODELS, DEFAULT_GENERATION_MODEL } from "@/shared/constants/ai-models";
-import type { FormEditorVM, FormEditorActions, GenerationConfigVM } from "./types";
+import type { FormEditorVM, FormEditorActions, GenerationConfigVM, GenerationSectionVM } from "./types";
 import type { FormEditorStrings } from "./strings";
 
 /**
@@ -36,6 +36,13 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
     max_output_tokens: 32000,
     output_format: "pdf",
     output_language: "en",
+    web_search_enabled: false,
+    web_search_max_uses: 5,
+    research_instructions: null,
+    research_model: null,
+    sections: [],
+    rules_enabled: true,
+    rules_text: null,
   };
   const [cfg, setCfg] = React.useState<GenerationConfigVM>(initial);
   const [saving, setSaving] = React.useState(false);
@@ -62,6 +69,13 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
       max_output_tokens: cfg.max_output_tokens,
       output_format: cfg.output_format,
       output_language: cfg.output_language,
+      web_search_enabled: cfg.web_search_enabled,
+      web_search_max_uses: cfg.web_search_max_uses,
+      research_instructions: cfg.research_instructions,
+      research_model: cfg.research_model,
+      sections: cfg.sections,
+      rules_enabled: cfg.rules_enabled,
+      rules_text: cfg.rules_text,
     });
     setSaving(false);
     if (!r.success) return toast.error(r.error?.code ?? "Error");
@@ -77,6 +91,18 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
     if (!r.success) return toast.error(r.error?.code ?? "Error");
     setRunId(r.data!.run_id);
     toast.success("Prueba iniciada");
+  }
+
+  // Sections editor (generic long-form config — generalizes v1's 17 sections)
+  function addSection() {
+    const next: GenerationSectionVM = { key: `s${cfg.sections.length + 1}`, heading: "", min_words: 0, max_tokens: 4000, guidance: "", type: "analysis" };
+    setCfg({ ...cfg, sections: [...cfg.sections, next] });
+  }
+  function updateSection(idx: number, patch: Partial<GenerationSectionVM>) {
+    setCfg({ ...cfg, sections: cfg.sections.map((s, i) => (i === idx ? { ...s, ...patch } : s)) });
+  }
+  function removeSection(idx: number) {
+    setCfg({ ...cfg, sections: cfg.sections.filter((_, i) => i !== idx) });
   }
 
   return (
@@ -168,6 +194,64 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
                 </button>
               );
             })}
+          </div>
+        </div>
+
+        {/* --- v1-grade engine: research + rules + sections (generic) --- */}
+        <div style={{ borderTop: "1px solid var(--line)", paddingTop: 16, display: "flex", flexDirection: "column", gap: 16 }}>
+          <h3 style={{ margin: 0, fontSize: 14, fontWeight: 800, color: "var(--ink)" }}>Generación avanzada</h3>
+
+          {/* Web search */}
+          <div>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+              <Switch checked={cfg.web_search_enabled} onCheckedChange={(c) => setCfg({ ...cfg, web_search_enabled: c })} aria-label="Búsqueda en internet" />
+              <span style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>Búsqueda en internet (jurisprudencia / condiciones de país)</span>
+            </label>
+            {cfg.web_search_enabled && (
+              <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+                <div style={{ maxWidth: 220 }}>
+                  <FieldLabel>Máx. búsquedas</FieldLabel>
+                  <TextInput type="number" value={String(cfg.web_search_max_uses)} aria-label="Máximo de búsquedas" onChange={(e) => setCfg({ ...cfg, web_search_max_uses: Math.max(1, Math.min(10, Number(e.target.value) || 5)) })} />
+                </div>
+                <div>
+                  <FieldLabel>Instrucciones de investigación</FieldLabel>
+                  <textarea value={cfg.research_instructions ?? ""} aria-label="Instrucciones de investigación" placeholder="Ej. Busca precedentes federales favorables por nacionalidad y tipo de persecución (CourtListener, Justia)." onChange={(e) => setCfg({ ...cfg, research_instructions: e.target.value || null })} style={{ width: "100%", minHeight: 70, borderRadius: 12, border: "1.5px solid var(--line)", background: "var(--panel-2, var(--card-alt))", padding: 10, fontSize: 13, color: "var(--ink)", resize: "vertical", boxSizing: "border-box" }} />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Anti-invention rules */}
+          <div>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+              <Switch checked={cfg.rules_enabled} onCheckedChange={(c) => setCfg({ ...cfg, rules_enabled: c })} aria-label="Reglas anti-invención" />
+              <span style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>Reglas anti-invención (no inventar hechos, citas verificadas)</span>
+            </label>
+            {cfg.rules_enabled && (
+              <textarea value={cfg.rules_text ?? ""} aria-label="Reglas personalizadas" placeholder="(Por defecto se aplican R1–R7). Escribe aquí para personalizarlas." onChange={(e) => setCfg({ ...cfg, rules_text: e.target.value || null })} style={{ width: "100%", minHeight: 60, marginTop: 10, borderRadius: 12, border: "1.5px solid var(--line)", background: "var(--panel-2, var(--card-alt))", padding: 10, fontSize: 12.5, color: "var(--ink)", resize: "vertical", boxSizing: "border-box" }} />
+            )}
+          </div>
+
+          {/* Sections */}
+          <div>
+            <FieldLabel>Secciones (documento largo)</FieldLabel>
+            <p style={{ fontSize: 11.5, color: "var(--ink-3)", margin: "0 0 10px" }}>Vacío = una sola generación. Con secciones, la IA genera y ensambla cada una en orden (piso de palabras + pase de expansión).</p>
+            {cfg.sections.map((s, i) => (
+              <div key={i} style={{ border: "1px solid var(--line)", borderRadius: 12, padding: 12, marginBottom: 10, display: "grid", gap: 8 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: "var(--ink-3)" }}>{i + 1}</span>
+                  <TextInput value={s.heading} placeholder="Título de la sección" aria-label={`Título sección ${i + 1}`} onChange={(e) => updateSection(i, { heading: e.target.value })} />
+                  <button type="button" onClick={() => removeSection(i)} aria-label={`Eliminar sección ${i + 1}`} style={{ border: "none", background: "none", color: "var(--red)", cursor: "pointer", display: "inline-flex" }}><Icon name="x" size={16} /></button>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                  <div><FieldLabel>Mín. palabras</FieldLabel><TextInput type="number" value={String(s.min_words)} aria-label={`Mín palabras sección ${i + 1}`} onChange={(e) => updateSection(i, { min_words: Math.max(0, Number(e.target.value) || 0) })} /></div>
+                  <div><FieldLabel>Máx. tokens</FieldLabel><TextInput type="number" value={String(s.max_tokens)} aria-label={`Máx tokens sección ${i + 1}`} onChange={(e) => updateSection(i, { max_tokens: Math.max(256, Math.min(16000, Number(e.target.value) || 4000)) })} /></div>
+                  <div><FieldLabel>Tipo</FieldLabel><SelectInput value={s.type} aria-label={`Tipo sección ${i + 1}`} onChange={(e) => updateSection(i, { type: e.target.value as GenerationSectionVM["type"] })}><option value="doctrinal">Doctrinal</option><option value="narrative">Narrativa</option><option value="analysis">Análisis</option></SelectInput></div>
+                </div>
+                <textarea value={s.guidance} placeholder="Guía: qué debe cubrir esta sección" aria-label={`Guía sección ${i + 1}`} onChange={(e) => updateSection(i, { guidance: e.target.value })} style={{ width: "100%", minHeight: 56, borderRadius: 10, border: "1.5px solid var(--line)", background: "var(--panel-2, var(--card-alt))", padding: 10, fontSize: 12.5, color: "var(--ink)", resize: "vertical", boxSizing: "border-box" }} />
+              </div>
+            ))}
+            <button type="button" onClick={addSection} style={{ border: "none", background: "none", color: "var(--accent)", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>+ Agregar sección</button>
           </div>
         </div>
 

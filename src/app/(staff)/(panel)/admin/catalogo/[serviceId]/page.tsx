@@ -15,6 +15,7 @@ import { getServiceEditorTree } from "@/backend/modules/catalog";
 import {
   CatalogWizard,
   type WizardPlan,
+  type WizardPartyRole,
   type WizardPhase,
   type WizardService,
 } from "@/frontend/features/admin/catalog/catalog-wizard";
@@ -67,6 +68,15 @@ export default async function ServiceDetailPage({
     };
   });
 
+  const partyRoles: WizardPartyRole[] = tree.partyRoles.map((r) => ({
+    id: r.id,
+    role_key: r.role_key,
+    label: i18n(r.label_i18n),
+    cardinality: r.cardinality,
+    is_required: r.is_required,
+    position: r.position,
+  }));
+
   const phases: WizardPhase[] = tree.phases.map((ph) => ({
     id: ph.id,
     slug: ph.slug,
@@ -96,6 +106,8 @@ export default async function ServiceDetailPage({
       kind: f.kind as "ai_letter" | "pdf_automation",
       filled_by: f.filled_by as "client" | "staff" | "both",
       is_active: f.is_active,
+      position: f.position,
+      published_version: f.published_version,
     })),
   }));
 
@@ -103,6 +115,7 @@ export default async function ServiceDetailPage({
     <CatalogWizard
       service={service}
       plans={plans}
+      partyRoles={partyRoles}
       phases={phases}
       slugLocked={false}
       messages={buildCatalogStrings(tt)}

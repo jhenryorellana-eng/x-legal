@@ -18,7 +18,13 @@ import { z } from "zod";
 import { logger } from "@/backend/platform/logger";
 import { sendTransactional } from "@/backend/platform/resend";
 import { renderTransactionalEmail } from "@/backend/platform/emails";
-import { findNotificationById } from "@/backend/modules/notifications";
+import { sendPush } from "@/backend/platform/webpush";
+import {
+  findNotificationById,
+  findUserById,
+  listPushSubscriptions,
+  deletePushSubscriptionByEndpoint,
+} from "@/backend/modules/notifications";
 
 // ---------------------------------------------------------------------------
 // Payload schema
@@ -132,11 +138,59 @@ export async function handleDeliverNotification(
       throw err;
     }
   } else if (payload.channel === "push") {
-    // Push delivery (web push VAPID) — F2 minimal stub
-    // Full implementation in F3 (platform/webpush.ts + push_subscriptions)
+    // Push delivery (Web Push VAPID — DOC-24 / DOC-47 §5.3).
+    // Re-verify read_at IS NULL: a read notification needs no push. This also
+    // implements the message anti-burst grace (DOC-46 §5.3.2) — the recipient
+    // who opened the thread within the 5 s grace already ran markRead.
+    if (notification.read_at) {
+      logger.info(
+        { notificationId: notification.id },
+        "deliver-notification: notification already read — push suppressed",
+      );
+      return;
+    }
+
+    const subs = await listPushSubscriptions(notification.user_id);
+    if (subs.length === 0) {
+      // No subscriptions → omit silently (RF-TRX-010 CA4)
+      return;
+    }
+
+    const user = await findUserById(notification.user_id);
+    const locale = user?.locale ?? "es";
+    const title = pickI18n(notification.title_i18n, locale, notification.type);
+    const body = pickI18n(notification.body_i18n, locale, "");
+
+    let delivered = 0;
+    for (const sub of subs) {
+      try {
+        const { stale } = await sendPush(
+          { endpoint: sub.endpoint, keys: sub.keys },
+          {
+            title,
+            body,
+            url: notification.action_url ?? "/",
+            tag: notification.type, // collapse same-type notifications
+            icon: "/icons/icon-192.png",
+          },
+        );
+        if (stale) {
+          await deletePushSubscriptionByEndpoint(sub.endpoint);
+        } else {
+          delivered += 1;
+        }
+      } catch (err) {
+        // One bad endpoint must not abort the others; log and continue.
+        logger.warn(
+          { err, notificationId: notification.id, endpoint: sub.endpoint.slice(0, 60) },
+          "deliver-notification: push to one endpoint failed — continuing",
+        );
+      }
+    }
+
     logger.info(
-      { notificationId: notification.id },
-      "deliver-notification: push channel — not yet implemented in F2",
+      { notificationId: notification.id, delivered, subscriptions: subs.length },
+      "deliver-notification: push processed",
     );
   }
 }

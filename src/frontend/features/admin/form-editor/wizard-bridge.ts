@@ -43,6 +43,8 @@ function mapQuestion(q: QuestionGroupVM["questions"][number], groupId: string): 
     prefillValue: isPrefilled ? "—" : null,
     isPrefilled,
     currentAnswer: null,
+    // Carry the condition so the preview honors show/lock/require like the client.
+    condition: q.condition ?? null,
   };
 }
 
@@ -68,6 +70,7 @@ export function buildPreviewForm(
     isPerParty: false,
     versionId,
     status: null, // never read-only in preview
+    sourceLanguage: "en",
     submittedAt: null,
     filledPdfPath: null,
     filledBy: "client",

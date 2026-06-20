@@ -8,6 +8,7 @@ import { IconHalo } from "@/frontend/components/brand/icon-tile";
 import { Avatar } from "@/frontend/components/brand/avatar";
 import { GradientBtn } from "@/frontend/components/brand/gradient-btn";
 import { GhostBtn } from "@/frontend/components/brand/ghost-btn";
+import { openTeamChat } from "@/frontend/features/messaging/team-chat-bus";
 
 /**
  * CorregirScreen — `/caso/[caseId]/corregir?req&party&doc` (DOC-51 §17, prototype
@@ -15,7 +16,8 @@ import { GhostBtn } from "@/frontend/components/brand/ghost-btn";
  *
  * AMBER tone, never red (RF-CLI-028 CA1). Shows the reviewer's reason + an
  * optional deadline chip. "Subir de nuevo" → upload flow (re-upload chain);
- * "Preguntarle a mi equipo" → messaging (overlay O1, wired when O1 lands).
+ * "Preguntarle a mi equipo" → opens the case team chat (overlay O1) via the
+ * team-chat bus (the case chrome renders the overlay on this route).
  */
 
 export interface CorregirLabels {
@@ -55,7 +57,7 @@ export function CorregirScreen({
     <div
       style={{
         minHeight: "100dvh",
-        padding: "54px 20px 116px",
+        padding: "54px 20px var(--screen-pb)",
         background:
           "radial-gradient(135% 95% at 100% -8%, var(--blue-soft) 0%, transparent 46%), radial-gradient(120% 80% at -12% 4%, color-mix(in srgb, var(--gold-soft) 80%, transparent) 0%, transparent 42%), var(--bg)",
       }}
@@ -248,7 +250,7 @@ export function CorregirScreen({
         >
           {labels.uploadAgain}
         </GradientBtn>
-        <GhostBtn icon="chat" onClick={() => {}}>
+        <GhostBtn icon="chat" onClick={() => openTeamChat()}>
           {labels.askTeam}
         </GhostBtn>
       </div>

@@ -29,8 +29,10 @@ export type {
   SaveState,
   SaveDraftFn,
   SubmitFormFn,
+  TranslateAnswersFn,
   SaveDraftResult,
   SubmitFormResult,
   AnswersMap,
   FieldErrorCode,
 } from "./types";
+export { translateClientAnswers } from "./answer-translation";

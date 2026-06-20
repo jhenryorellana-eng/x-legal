@@ -10,6 +10,7 @@
  */
 
 import * as React from "react";
+import { getBridge } from "@/frontend/platform-bridge";
 import { Card } from "@/frontend/components/brand/card";
 import { Icon } from "@/frontend/components/brand/icon";
 import { GradientBtn } from "@/frontend/components/brand/gradient-btn";
@@ -47,7 +48,7 @@ export function DocumentosTab({
 
   async function onView(doc: DocumentVM) {
     const res = await actions.getDocumentUrl({ documentId: doc.id });
-    if (res.ok && res.url) window.open(res.url, "_blank", "noopener,noreferrer");
+    if (res.ok && res.url) getBridge().share.openExternal(res.url);
     else toast.error(strings.errorTitle);
   }
 

@@ -79,7 +79,9 @@ export default async function DocumentosPage({
       caseId={caseId}
       labels={{
         title: t("title"),
-        subtitle: t("subtitle"),
+        // "{phase}" placeholder is filled by the screen — t.raw keeps the template
+        // (t() would fail to format the missing var and render the raw key).
+        subtitle: t.raw("subtitle") as string,
         ofWord: t("of"),
         completed: t("completed"),
         tip: t("tip"),

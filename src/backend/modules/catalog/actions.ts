@@ -268,6 +268,48 @@ export async function createRequiredDocumentAction(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Service party roles (DOC-41 — admin catalog editor)
+// ---------------------------------------------------------------------------
+
+/** @api-id API-CAT-31 */
+export async function createServicePartyRoleAction(
+  input: Parameters<typeof svc.createServicePartyRole>[1],
+): Promise<ActionResult<Awaited<ReturnType<typeof svc.createServicePartyRole>>>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.createServicePartyRole(actor, input));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** @api-id API-CAT-32 */
+export async function updateServicePartyRoleAction(
+  id: string,
+  patch: Parameters<typeof svc.updateServicePartyRole>[2],
+): Promise<ActionResult<Awaited<ReturnType<typeof svc.updateServicePartyRole>>>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.updateServicePartyRole(actor, id, patch));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** @api-id API-CAT-33 */
+export async function deleteServicePartyRoleAction(
+  id: string,
+): Promise<ActionResult<{ ok: true }>> {
+  try {
+    const actor = await requireActor();
+    await svc.deleteServicePartyRole(actor, id);
+    return ok({ ok: true } as const);
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 /** @api-id API-CAT-26 */
 export async function updateRequiredDocumentAction(
   id: string,
@@ -463,6 +505,18 @@ export async function unpublishVersionAction(versionId: string): Promise<ActionR
     const actor = await requireActor();
     await svc.unpublishVersion(actor, versionId);
     return ok(undefined);
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** @api-id API-CAT-44 — duplicate an immutable version into an editable draft. */
+export async function duplicateVersionAsDraftAction(
+  versionId: string,
+): Promise<ActionResult<Awaited<ReturnType<typeof svc.duplicateVersionAsDraft>>>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.duplicateVersionAsDraft(actor, versionId));
   } catch (e) {
     return fail(e);
   }

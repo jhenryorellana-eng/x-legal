@@ -47,8 +47,7 @@ import type { Database } from "@/shared/database.types";
 const PUBLIC_PATHS = [
   "/welcome",
   "/no-access",
-  "/email",           // client email entry (DOC-22 §1, replaces /phone June 2026)
-  "/otp",
+  "/entrar",          // client phone-only login (DOC-22 §1, replaces /email + /otp June 2026)
   "/login",           // staff login
   "/reset-password",  // staff password reset (email link lands here)
   "/offline",
@@ -77,8 +76,8 @@ function isPublicPath(pathname: string): boolean {
 // ---------------------------------------------------------------------------
 
 function isClientSurface(pathname: string): boolean {
-  // Routes under (cliente) group: /welcome, /email, /otp, /no-access, /home, etc.
-  // Public paths (welcome, email, otp, no-access) are excluded above.
+  // Routes under (cliente) group: /welcome, /entrar, /no-access, /home, etc.
+  // Public paths (welcome, entrar, no-access) are excluded above.
   const clientPaths = ["/home", "/servicios", "/comunidad", "/avisos", "/pagos", "/config", "/caso"];
   return clientPaths.some((p) => pathname === p || pathname.startsWith(p + "/"));
 }
@@ -118,6 +117,53 @@ function extractCustomClaims(jwtClaims: Record<string, any> | null): CustomClaim
 }
 
 // ---------------------------------------------------------------------------
+// Content-Security-Policy (DOC-27 §6) — nonce-based, per request.
+// Shipped as `Content-Security-Policy-Report-Only` for the rollout window so it
+// never blocks (only reports); flip to enforcing `Content-Security-Policy` once
+// the reports are clean. `script-src` uses a per-request nonce + `strict-dynamic`
+// (Next.js injects the nonce into its own scripts via the forwarded x-nonce).
+// ---------------------------------------------------------------------------
+
+const CSP_HEADER = "Content-Security-Policy-Report-Only";
+
+function buildCsp(nonce: string): string {
+  const supabase = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+  const supabaseWss = supabase.replace(/^https:/, "wss:");
+  return [
+    `default-src 'self'`,
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
+    `style-src 'self' 'unsafe-inline'`,
+    `img-src 'self' blob: data: ${supabase}`,
+    `media-src 'self' blob: ${supabase}`,
+    `font-src 'self'`,
+    `connect-src 'self' ${supabase} ${supabaseWss} https://*.livekit.cloud wss://*.livekit.cloud`,
+    `worker-src 'self' blob:`,
+    `frame-src 'none'`,
+    `frame-ancestors 'none'`,
+    `object-src 'none'`,
+    `base-uri 'self'`,
+    `form-action 'self' https://checkout.stripe.com`,
+    // NB: `upgrade-insecure-requests` is intentionally omitted while the CSP is
+    // Report-Only (browsers ignore it there and log a console error). Add it back
+    // when flipping to enforcing in prod (GO-LIVE.md §5) — on an all-HTTPS site
+    // it is largely redundant anyway.
+  ].join("; ");
+}
+
+/**
+ * Clone the request headers and add the per-request nonce + the CSP. Next.js
+ * reads the `Content-Security-Policy` REQUEST header to inject the nonce into its
+ * own `<script>` tags (so they satisfy `script-src 'nonce-…' 'strict-dynamic'`);
+ * the actual policy SENT to the browser is the Report-Only one set on the response.
+ */
+function reqHeadersWithNonce(request: NextRequest, nonce: string, csp: string): Headers {
+  const h = new Headers(request.headers);
+  h.set("x-nonce", nonce);
+  h.set("content-security-policy", csp);
+  return h;
+}
+
+// ---------------------------------------------------------------------------
 // Middleware
 // ---------------------------------------------------------------------------
 
@@ -133,10 +179,20 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Build a mutable response to forward refreshed cookies
+  // Per-request CSP nonce (DOC-27 §6). `secured()` stamps the Report-Only CSP on
+  // a content response right before it is returned (redirects carry no body, and
+  // the static headers are applied in next.config).
+  const nonce = crypto.randomUUID().replace(/-/g, "");
+  const csp = buildCsp(nonce);
+  const secured = (res: NextResponse): NextResponse => {
+    res.headers.set(CSP_HEADER, csp);
+    return res;
+  };
+
+  // Build a mutable response to forward refreshed cookies + the nonce.
   let response = NextResponse.next({
     request: {
-      headers: request.headers,
+      headers: reqHeadersWithNonce(request, nonce, csp),
     },
   });
 
@@ -153,7 +209,9 @@ export async function middleware(request: NextRequest) {
           for (const { name, value } of cookiesToSet) {
             request.cookies.set(name, value);
           }
-          response = NextResponse.next({ request });
+          response = NextResponse.next({
+            request: { headers: reqHeadersWithNonce(request, nonce, csp) },
+          });
           for (const { name, value, options } of cookiesToSet) {
             response.cookies.set(name, value, options);
           }
@@ -207,7 +265,7 @@ export async function middleware(request: NextRequest) {
 
   // Step 2: If public path, skip guards but still return response with refreshed cookies
   if (isPublicPath(pathname)) {
-    return response;
+    return secured(response);
   }
 
   // Step 3: Root path — redirect to /welcome (client app entry point)
@@ -236,7 +294,7 @@ export async function middleware(request: NextRequest) {
       url.pathname = "/welcome";
       return NextResponse.redirect(url);
     }
-    return response;
+    return secured(response);
   }
 
   if (onClientSurface && claims.user_kind !== "client") {
@@ -269,7 +327,7 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  return response;
+  return secured(response);
 }
 
 // ---------------------------------------------------------------------------

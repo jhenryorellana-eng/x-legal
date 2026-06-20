@@ -67,6 +67,8 @@ export async function submitFormAction(input: {
   caseId: string;
   formDefinitionId: string;
   partyId: string | null;
+  answersTranslated?: Record<string, string>;
+  translationStatus?: "none" | "partial" | "pending_server" | "done";
 }): Promise<SubmitFormResult> {
   try {
     const actor = await requireActor();
@@ -74,6 +76,8 @@ export async function submitFormAction(input: {
       caseId: input.caseId,
       formDefinitionId: input.formDefinitionId,
       partyId: input.partyId,
+      answersTranslated: input.answersTranslated,
+      translationStatus: input.translationStatus,
     });
     return { ok: true, responseId: response.id };
   } catch (err) {

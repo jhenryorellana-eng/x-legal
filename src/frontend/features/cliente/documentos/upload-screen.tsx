@@ -115,6 +115,11 @@ export function UploadScreen({
   const [error, setError] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
+  // TODO(8d): migrate this hidden <input type="file"> + onFile flow to
+  // getBridge().files.pickFile / getBridge().camera.capturePhoto. Left as-is for
+  // now: the swap is invasive (event-driven onFile drives signed-URL upload with
+  // XHR progress via putWithProgress, which needs the File and its re-pick reset)
+  // and this upload path is the verified-working one — not worth the risk in 8d.
   const pickFile = () => {
     setError(null);
     fileInputRef.current?.click();

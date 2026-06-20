@@ -322,7 +322,7 @@ export function AgendarScreen({
     <div
       style={{
         minHeight: "100dvh",
-        padding: "54px 20px 124px",
+        padding: "54px 20px var(--screen-pb)",
         background:
           "radial-gradient(135% 95% at 100% -8%, var(--blue-soft) 0%, transparent 46%), radial-gradient(120% 80% at -12% 4%, color-mix(in srgb, var(--gold-soft) 80%, transparent) 0%, transparent 42%), var(--bg)",
       }}

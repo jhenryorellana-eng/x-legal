@@ -23,6 +23,7 @@ export type ServicePhaseRow = Tables<"service_phases">;
 export type MilestoneRow = Tables<"service_phase_milestones">;
 export type PolicyRow = Tables<"phase_appointment_policies">;
 export type RequiredDocRow = Tables<"required_document_types">;
+export type ServicePartyRoleRow = Tables<"service_party_roles">;
 export type FormDefinitionRow = Tables<"form_definitions">;
 export type AutomationVersionRow = Tables<"form_automation_versions">;
 export type QuestionGroupRow = Tables<"form_question_groups">;
@@ -151,9 +152,13 @@ export async function getPublicCatalogFromDb(orgId: string) {
 export async function getServiceDetailBySlugFromDb(orgId: string, slug: string) {
   const { data, error } = await db()
     .from("services")
+    // Disambiguate the service_phases embed: there are TWO FKs between services
+    // and service_phases (service_phases.service_id → services, and
+    // services.entry_phase_id → service_phases), so an unhinted embed returns
+    // HTTP 300 Multiple Choices. Pin it to the child-phases FK by constraint name.
     .select(`*,
              service_plans(*),
-             service_phases(id, slug, label_i18n, description_i18n, client_explainer_i18n, position,
+             service_phases!service_phases_service_id_fkey(id, slug, label_i18n, description_i18n, client_explainer_i18n, position,
                service_phase_milestones(slug, label_i18n, glossary_i18n, icon, position))`)
     .eq("org_id", orgId)
     .eq("slug", slug)
@@ -226,6 +231,56 @@ export async function updatePhase(
 export async function deletePhase(phaseId: string): Promise<void> {
   const { error } = await db().from("service_phases").delete().eq("id", phaseId);
   if (error) throw error; // caller maps FK violation
+}
+
+// ---------------------------------------------------------------------------
+// Service party roles (the ADDITIONAL case parties a service declares — DOC-41)
+// ---------------------------------------------------------------------------
+
+export async function listServicePartyRoles(serviceId: string): Promise<ServicePartyRoleRow[]> {
+  const { data, error } = await db()
+    .from("service_party_roles")
+    .select("*")
+    .eq("service_id", serviceId)
+    .order("position");
+  if (error) throw new Error(`catalog.repo.listServicePartyRoles: ${error.message}`);
+  return data ?? [];
+}
+
+export async function findServicePartyRoleById(
+  id: string,
+): Promise<ServicePartyRoleRow | null> {
+  const { data } = await db()
+    .from("service_party_roles")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  return data;
+}
+
+export async function insertServicePartyRole(
+  row: TablesInsert<"service_party_roles">,
+): Promise<ServicePartyRoleRow> {
+  const { data, error } = await db().from("service_party_roles").insert(row).select().single();
+  return throwOnError(data, error, "insertServicePartyRole");
+}
+
+export async function updateServicePartyRole(
+  id: string,
+  patch: TablesUpdate<"service_party_roles">,
+): Promise<ServicePartyRoleRow> {
+  const { data, error } = await db()
+    .from("service_party_roles")
+    .update(patch)
+    .eq("id", id)
+    .select()
+    .single();
+  return throwOnError(data, error, "updateServicePartyRole");
+}
+
+export async function deleteServicePartyRole(id: string): Promise<void> {
+  const { error } = await db().from("service_party_roles").delete().eq("id", id);
+  if (error) throw new Error(`catalog.repo.deleteServicePartyRole: ${error.message}`);
 }
 
 export async function phaseSlugExists(serviceId: string, slug: string): Promise<boolean> {
@@ -588,6 +643,14 @@ export async function upsertQuestion(
     .select()
     .single();
   return throwOnError(data, error, "upsertQuestion");
+}
+
+export async function updateQuestionCondition(questionId: string, condition: unknown): Promise<void> {
+  const { error } = await db()
+    .from("form_questions")
+    .update({ condition: condition as TablesInsert<"form_questions">["condition"] })
+    .eq("id", questionId);
+  if (error) throw new Error(`catalog.repo.updateQuestionCondition: ${error.message}`);
 }
 
 export async function deleteQuestion(questionId: string): Promise<void> {

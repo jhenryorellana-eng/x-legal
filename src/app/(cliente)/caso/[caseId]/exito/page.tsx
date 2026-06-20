@@ -33,7 +33,10 @@ export default async function ExitoPage({
       progress={Math.max(0, Math.min(100, Number(progress) || 0))}
       gain={Math.max(0, Number(gain) || 0)}
       labels={{
-        title: t("title"),
+        // The message uses an ICU `{name}` placeholder — it MUST be provided here,
+        // or next-intl fails to format and falls back to the raw key path. The
+        // screen's defensive `.replace("{name}", …)` then becomes a harmless no-op.
+        title: t("title", { name: displayName }),
         body: t("body"),
         phaseProgress: t("phaseProgress"),
         continue: t("continue"),

@@ -83,7 +83,7 @@ function buildPreviewHtml(bodyHtml: string): string {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"></head>
 <body style="margin:0;background:#f8f9fa;font-family:-apple-system,Segoe UI,Roboto,sans-serif">
 <div style="max-width:600px;margin:24px auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden">
-<div style="background:#003366;padding:22px 32px;color:#fff;font-weight:800;font-size:20px;letter-spacing:.5px">USALATINO<span style="color:#FFC629">PRIME</span></div>
+<div style="background:#003366;padding:22px 32px;color:#fff;font-weight:800;font-size:20px;letter-spacing:.5px">X <span style="color:#FFC629">LEGAL</span></div>
 <div style="padding:32px;color:#1a1a2e;font-size:15px;line-height:1.6">${bodyHtml}</div>
 <div style="padding:24px 32px;border-top:1px solid #e5e7eb;color:#6b7280;font-size:12px;line-height:1.6">UsaLatinoPrime — Servicios de inmigración<br/>Recibes este correo porque tienes una cuenta. · <a style="color:#2F6BFF" href="#">Darse de baja</a></div>
 </div></body></html>`;

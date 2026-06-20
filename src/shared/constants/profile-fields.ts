@@ -11,6 +11,7 @@ export const PROFILE_SOURCE_FIELDS = [
   "preferred_name",
   "country_of_origin",
   "address.line1",
+  "address.apartment",
   "address.city",
   "address.state",
   "address.zip",

@@ -339,6 +339,23 @@
 .anim-bubin {
   animation: bubin 0.45s ease-out both;
 }
+/* Centered-modal entrance. A plain bubin keyframe ends at `transform: none`,
+   which (with fill-mode `both`) overrides the dialog's `translate(-50%,-50%)`
+   centering and drops the panel into the bottom-right quadrant. This keeps the
+   centering transform in both keyframe steps. */
+@keyframes modalPop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) translateY(6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
+}
+.anim-modal-pop {
+  animation: modalPop 0.32s ease-out both;
+}
 .anim-fade-in-up {
   animation: fadeInUp 0.5s ease both;
 }

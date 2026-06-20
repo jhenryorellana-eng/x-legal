@@ -217,6 +217,11 @@ function billingUploadUrl(): Ratelimit {
   return (_billingUploadUrl ??= makeLimiter(redis(), 10, "1 m", "rl:billing:uploadUrl"));
 }
 
+let _messagingUploadUrl: Ratelimit | undefined;
+function messagingUploadUrl(): Ratelimit {
+  return (_messagingUploadUrl ??= makeLimiter(redis(), 10, "1 m", "rl:messaging:uploadUrl"));
+}
+
 // ---------------------------------------------------------------------------
 // Public rate-limit helpers
 // ---------------------------------------------------------------------------
@@ -407,6 +412,17 @@ export async function limitBillingUploadUrl(userId: string): Promise<RateLimitRe
     return { allowed: r.success, reset: r.reset };
   } catch (err) {
     logger.warn({ err }, "Rate limiter error (billing:uploadUrl) — allowing (open fail mode)");
+    return { allowed: true, reset: 0 };
+  }
+}
+
+/** Chat attachment signed-URL generation: 10/min per user, fail-open (DOC-46). */
+export async function limitMessagingUploadUrl(userId: string): Promise<RateLimitResult> {
+  try {
+    const r = await messagingUploadUrl().limit(userId);
+    return { allowed: r.success, reset: r.reset };
+  } catch (err) {
+    logger.warn({ err }, "Rate limiter error (messaging:uploadUrl) — allowing (open fail mode)");
     return { allowed: true, reset: 0 };
   }
 }

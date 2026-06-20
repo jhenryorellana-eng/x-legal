@@ -56,7 +56,7 @@ export interface DatasetDetailActions {
   createUploadUrl: (input: { dataset_id: string; filename: string }) => Promise<Res<{ signedUrl: string; path: string }>>;
 }
 
-const SOURCE_LABEL: Record<string, string> = { eoir: "EOIR", uscis: "USCIS", public_court: "Corte pública", manual: "Manual" };
+const SOURCE_LABEL: Record<string, string> = { eoir: "EOIR", uscis: "USCIS", court_public: "Corte pública", manual: "Manual" };
 
 export function DatasetDetailView({
   header,

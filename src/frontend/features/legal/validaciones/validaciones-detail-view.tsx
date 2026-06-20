@@ -15,6 +15,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useTranslations, useLocale } from "next-intl";
 import {
   Card,
   GradientBtn,
@@ -29,6 +30,9 @@ import {
   type TimelineGroup,
 } from "@/frontend/components/brand";
 import { toast } from "@/frontend/components/desktop";
+
+// Shared translator type for module-level helpers (next-intl `t` signature).
+type T = (key: string, values?: Record<string, string | number>) => string;
 // ---------------------------------------------------------------------------
 // Inline types (mirrors backend types — frontend MUST NOT import from @/backend)
 // ---------------------------------------------------------------------------
@@ -105,15 +109,15 @@ export interface ValidacionesDetailViewProps {
 type ValidationStatus = ValidationRowVM["status"];
 type Semaforo = "green" | "amber" | "red" | null;
 
-const STATUS_PILL: Record<ValidationStatus, { kind: StatusKind; label: string }> = {
-  pending:           { kind: "pendiente", label: "Enviando…" },
-  sent:              { kind: "pendiente", label: "Enviando…" },
-  queued:            { kind: "revision",  label: "En cola del abogado" },
-  in_review:         { kind: "revision",  label: "En revisión" },
-  validated:         { kind: "aprobado",  label: "Validado" },
-  needs_corrections: { kind: "corregir",  label: "Devuelto con correcciones" },
-  cancelled:         { kind: "pendiente", label: "Cancelada en el SaaS" },
-  error:             { kind: "corregir",  label: "Error de envío" },
+const STATUS_PILL: Record<ValidationStatus, { kind: StatusKind; labelKey: string }> = {
+  pending:           { kind: "pendiente", labelKey: "statusSending" },
+  sent:              { kind: "pendiente", labelKey: "statusSending" },
+  queued:            { kind: "revision",  labelKey: "statusQueued" },
+  in_review:         { kind: "revision",  labelKey: "statusInReview" },
+  validated:         { kind: "aprobado",  labelKey: "statusValidated" },
+  needs_corrections: { kind: "corregir",  labelKey: "statusNeeds" },
+  cancelled:         { kind: "pendiente", labelKey: "statusCancelled" },
+  error:             { kind: "corregir",  labelKey: "statusError" },
 };
 
 const IN_PROGRESS_STATUSES = new Set<ValidationStatus>([
@@ -124,7 +128,7 @@ const IN_PROGRESS_STATUSES = new Set<ValidationStatus>([
 // Stepper builder
 // ---------------------------------------------------------------------------
 
-function buildStepperSteps(status: ValidationStatus): Step[] {
+function buildStepperSteps(status: ValidationStatus, t: T): Step[] {
   type StepKey = "sent" | "queued" | "in_review" | "verdict";
 
   const order: StepKey[] = ["sent", "queued", "in_review", "verdict"];
@@ -138,10 +142,10 @@ function buildStepperSteps(status: ValidationStatus): Step[] {
   })();
 
   const labels: Record<StepKey, string> = {
-    sent:      "Enviado",
-    queued:    "En cola",
-    in_review: "En revisión",
-    verdict:   "Veredicto",
+    sent:      t("stepSent"),
+    queued:    t("stepQueued"),
+    in_review: t("stepInReview"),
+    verdict:   t("stepVerdict"),
   };
 
   return order.map((key, idx): Step => {
@@ -157,10 +161,10 @@ function buildStepperSteps(status: ValidationStatus): Step[] {
 // Semáforo chip
 // ---------------------------------------------------------------------------
 
-function SemaforoChip({ value }: { value: Semaforo }) {
+function SemaforoChip({ value, t }: { value: Semaforo; t: T }) {
   if (!value) return null;
   const tone = value === "green" ? "green" : value === "amber" ? "amber" : "red";
-  const label = value === "green" ? "Semáforo verde" : value === "amber" ? "Semáforo ámbar" : "Semáforo rojo";
+  const label = value === "green" ? t("semaforoGreen") : value === "amber" ? t("semaforoAmber") : t("semaforoRed");
   const dotColor = value === "green" ? "var(--green)" : value === "amber" ? "var(--gold-deep)" : "var(--red)";
 
   return (
@@ -184,35 +188,42 @@ function SemaforoChip({ value }: { value: Semaforo }) {
 // Error code → friendly message
 // ---------------------------------------------------------------------------
 
-function errorMessage(code: string): string {
+function errorMessage(code: string, t: T): string {
   switch (code) {
-    case "PLAN_NOT_WITH_LAWYER":       return "Este caso no tiene plan con abogado.";
-    case "EXPEDIENTE_NOT_COMPILED":    return "El expediente no está compilado.";
-    case "VALIDATION_ALREADY_ACTIVE":  return "Ya hay una validación activa para este caso.";
-    case "ABOGADOS_API_ERROR":         return "Error al comunicarse con el SaaS. Intenta de nuevo.";
-    case "ABOGADOS_API_UNAUTHORIZED":  return "Error de configuración. Requiere atención del administrador.";
-    case "ABOGADOS_API_BAD_REQUEST":   return "Los datos enviados no son válidos. Revisa el expediente.";
-    case "CASE_NOT_FOUND":             return "Caso no encontrado.";
-    case "EXPEDIENTE_NOT_FOUND":       return "Expediente no encontrado.";
-    case "EXPEDIENTE_NOT_EDITABLE":    return "El expediente ya no es editable.";
-    case "EXPEDIENTE_DRAFT_EXISTS":    return "Ya existe un borrador de corrección.";
-    case "EXPEDIENTE_NOT_APPROVED":    return "El abogado todavía no validó este expediente.";
-    case "EXPEDIENTE_ALREADY_SENT_TO_FINANCE": return "Este expediente ya fue enviado a impresión.";
-    default:                           return "Algo salió mal. Intenta de nuevo.";
+    case "PLAN_NOT_WITH_LAWYER":       return t("errPlanNotWithLawyer");
+    case "EXPEDIENTE_NOT_COMPILED":    return t("errExpedienteNotCompiled");
+    case "VALIDATION_ALREADY_ACTIVE":  return t("errValidationAlreadyActive");
+    case "ABOGADOS_API_ERROR":         return t("errAbogadosApiError");
+    case "ABOGADOS_API_UNAUTHORIZED":  return t("errAbogadosApiUnauthorized");
+    case "ABOGADOS_API_BAD_REQUEST":   return t("errAbogadosApiBadRequest");
+    case "CASE_NOT_FOUND":             return t("errCaseNotFound");
+    case "EXPEDIENTE_NOT_FOUND":       return t("errExpedienteNotFound");
+    case "EXPEDIENTE_NOT_EDITABLE":    return t("errExpedienteNotEditable");
+    case "EXPEDIENTE_DRAFT_EXISTS":    return t("errExpedienteDraftExists");
+    case "EXPEDIENTE_NOT_APPROVED":    return t("errExpedienteNotApproved");
+    case "EXPEDIENTE_ALREADY_SENT_TO_FINANCE": return t("errExpedienteAlreadySentToFinance");
+    default:                           return t("errUnexpected");
   }
 }
 
-function formatDate(iso: string): string {
+function formatDate(iso: string, locale: string): string {
   try {
-    return new Date(iso).toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" });
+    return new Date(iso).toLocaleDateString(locale === "en" ? "en-US" : "es-PE", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
   } catch {
     return iso;
   }
 }
 
-function formatTime(iso: string): string {
+function formatTime(iso: string, locale: string): string {
   try {
-    return new Date(iso).toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit" });
+    return new Date(iso).toLocaleTimeString(locale === "en" ? "en-US" : "es-PE", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   } catch {
     return "";
   }
@@ -224,10 +235,10 @@ function formatTime(iso: string): string {
 
 type FindingSeverity = "critical" | "moderate" | "suggestion" | string;
 
-function severityLabel(s: FindingSeverity): string {
-  if (s === "critical") return "Crítico";
-  if (s === "moderate") return "Moderado";
-  if (s === "suggestion") return "Sugerencia";
+function severityLabel(s: FindingSeverity, t: T): string {
+  if (s === "critical") return t("severityCritical");
+  if (s === "moderate") return t("severityModerate");
+  if (s === "suggestion") return t("severitySuggestion");
   return String(s);
 }
 
@@ -251,21 +262,23 @@ interface FindingCardProps {
   finding: FindingVM;
   index: number;
   caseId: string;
+  t: T;
 }
 
-function FindingCard({ finding, index, caseId }: FindingCardProps) {
+function FindingCard({ finding, index, caseId, t }: FindingCardProps) {
   const [attended, setAttended] = React.useState(false);
 
   const borderColor = severityBorderColor(finding.severity);
   const chipTone = severityChipTone(finding.severity);
 
-  // Contextual shortcut based on category
+  // Contextual shortcut based on category. Category strings are backend data;
+  // only the shortcut label (chrome) is localized.
   const shortcuts: Record<string, { label: string; href: string }> = {
-    "Marcador sin resolver":  { label: "Ir a Cartas", href: "/legal/expediente/" + caseId },
-    "Dato inconsistente":     { label: "Ir a Información", href: "/admin/casos/" + caseId },
-    "Orden de evidencia":     { label: "Abrir PDF del intento", href: "#pdf-" + String(index) },
+    "Marcador sin resolver":  { label: t("goToLetters"), href: "/legal/expediente/" + caseId },
+    "Dato inconsistente":     { label: t("goToInfo"), href: "/admin/casos/" + caseId },
+    "Orden de evidencia":     { label: t("openPdf"), href: "#pdf-" + String(index) },
   };
-  const shortcut = shortcuts[finding.category ?? ""] ?? { label: "Ir a expediente", href: "/legal/expediente/" + caseId };
+  const shortcut = shortcuts[finding.category ?? ""] ?? { label: t("goToExpediente"), href: "/legal/expediente/" + caseId };
 
   return (
     <div
@@ -287,7 +300,7 @@ function FindingCard({ finding, index, caseId }: FindingCardProps) {
       {/* Header row */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <StatusPill kind={chipTone === "red" ? "corregir" : chipTone === "gold" ? "revision" : "pendiente"}>
-          {severityLabel(finding.severity)}
+          {severityLabel(finding.severity, t)}
         </StatusPill>
         {finding.category && (
           <Chip tone={chipTone}>{finding.category}</Chip>
@@ -311,7 +324,7 @@ function FindingCard({ finding, index, caseId }: FindingCardProps) {
               <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" />
               <circle cx="12" cy="9" r="2.5" />
             </svg>
-            {"Ubicación: " + finding.location}
+            {t("locationPrefix") + finding.location}
           </span>
         )}
       </div>
@@ -338,7 +351,7 @@ function FindingCard({ finding, index, caseId }: FindingCardProps) {
             <path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6L12 2z" />
           </svg>
           <p style={{ fontSize: 12.5, color: "var(--accent)", margin: 0, fontWeight: 700, lineHeight: 1.5 }}>
-            <strong style={{ display: "block", marginBottom: 2, color: "var(--ink)" }}>Recomendación</strong>
+            <strong style={{ display: "block", marginBottom: 2, color: "var(--ink)" }}>{t("recommendationLabel")}</strong>
             {finding.recommendation}
           </p>
         </div>
@@ -360,7 +373,7 @@ function FindingCard({ finding, index, caseId }: FindingCardProps) {
             display: "inline-block",
           }}
         >
-          {shortcut.label} →
+          {shortcut.label + " →"}
         </Link>
 
         {/* Attended checkbox */}
@@ -380,9 +393,9 @@ function FindingCard({ finding, index, caseId }: FindingCardProps) {
             checked={attended}
             onChange={(e) => setAttended(e.target.checked)}
             style={{ width: 16, height: 16, accentColor: "var(--green)", cursor: "pointer" }}
-            aria-label="Marcar hallazgo como atendido"
+            aria-label={t("attendedAria")}
           />
-          Atendido
+          {t("attendedLabel")}
         </label>
       </div>
     </div>
@@ -398,9 +411,10 @@ interface CorrectionModalProps {
   onConfirm: () => Promise<void>;
   onClose: () => void;
   busy: boolean;
+  t: T;
 }
 
-function CorrectionModal({ attemptNo, onConfirm, onClose, busy }: CorrectionModalProps) {
+function CorrectionModal({ attemptNo, onConfirm, onClose, busy, t }: CorrectionModalProps) {
   return (
     <div
       role="dialog"
@@ -451,19 +465,18 @@ function CorrectionModal({ attemptNo, onConfirm, onClose, busy }: CorrectionModa
             fontFamily: "var(--font-title)",
           }}
         >
-          Crear intento {String(attemptNo + 1)} de corrección
+          {t("modalTitle", { next: attemptNo + 1 })}
         </h2>
         <p style={{ fontSize: 14, color: "var(--ink-2)", lineHeight: 1.6, marginBottom: 20 }}>
-          Se creará el intento {String(attemptNo + 1)} clonando los ítems del intento {String(attemptNo)}.
-          El intento {String(attemptNo)} queda congelado como historial.
+          {t("modalBody", { next: attemptNo + 1, current: attemptNo })}
         </p>
 
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
           <GhostBtn size="md" full={false} onClick={onClose} disabled={busy}>
-            Cancelar
+            {t("modalCancel")}
           </GhostBtn>
           <GradientBtn size="md" full={false} disabled={busy} onClick={onConfirm}>
-            {busy ? "Creando…" : "Confirmar y continuar"}
+            {busy ? t("creatingBtn") : t("modalConfirm")}
           </GradientBtn>
         </div>
       </div>
@@ -476,6 +489,8 @@ function CorrectionModal({ attemptNo, onConfirm, onClose, busy }: CorrectionModa
 // ---------------------------------------------------------------------------
 
 export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewProps) {
+  const t = useTranslations("staff_validaciones") as unknown as T;
+  const locale = useLocale();
   const [busySend, setBusySend] = React.useState(false);
   const [showCorrectionModal, setShowCorrectionModal] = React.useState(false);
   const [busyCorrection, setBusyCorrection] = React.useState(false);
@@ -489,17 +504,17 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
   // ---- sendToLawyer ----
   async function handleSendToLawyer() {
     if (!compiledExpedienteId) {
-      toast.error("No hay expediente compilado para este caso.");
+      toast.error(t("noCompiledToast"));
       return;
     }
     setBusySend(true);
     const r = await actions.sendToLawyer({ caseId, expedienteId: compiledExpedienteId });
     setBusySend(false);
     if (r.ok) {
-      toast.success("Expediente enviado al abogado.");
+      toast.success(t("sentToLawyerToast"));
       window.location.reload();
     } else {
-      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED"));
+      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED", t));
     }
   }
 
@@ -513,12 +528,12 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
     });
     setBusyCorrection(false);
     if (r.ok) {
-      toast.success("Nuevo intento de corrección creado. Redirigiendo…");
+      toast.success(t("correctionCreatedToast"));
       setShowCorrectionModal(false);
       // Navigate to ensamblador
       window.location.href = "/legal/expediente/" + caseId;
     } else {
-      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED"));
+      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED", t));
     }
   }
 
@@ -532,42 +547,42 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
     });
     setBusyFinance(false);
     if (r.ok) {
-      toast.success("Expediente enviado a impresión (Andrium).");
+      toast.success(t("sentToFinanceToast"));
       window.location.reload();
     } else {
-      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED"));
+      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED", t));
     }
   }
 
   // ---- Gate checks for "Enviar a abogado" button ----
   const canSend = ((): { allowed: boolean; reason: string } => {
     if (!compiledExpedienteId) {
-      return { allowed: false, reason: "Sin expediente compilado" };
+      return { allowed: false, reason: t("reasonNoCompiled") };
     }
     if (current && IN_PROGRESS_STATUSES.has(current.status)) {
-      return { allowed: false, reason: "Ya hay una validación activa" };
+      return { allowed: false, reason: t("reasonActiveValidation") };
     }
     return { allowed: true, reason: "" };
   })();
 
   // ---- Timeline data from all attempts ----
-  const timelineGroups = buildTimelineGroups(validations);
+  const timelineGroups = buildTimelineGroups(validations, t, locale);
 
   // ---- No validations yet ----
   if (!current) {
     return (
       <div>
-        <BackLink />
+        <BackLink t={t} />
         <Card>
           <div style={{ textAlign: "center", padding: "48px 20px" }}>
             <Lex mood="calma" size={110} />
             <h3 style={{ fontSize: 16, fontWeight: 800, color: "var(--ink)", marginTop: 12 }}>
-              Sin validaciones todavía
+              {t("noValidationsTitle")}
             </h3>
             <p style={{ fontSize: 13.5, color: "var(--ink-2)", marginTop: 6, marginBottom: 20 }}>
               {compiledExpedienteId
-                ? "El expediente está compilado y listo para enviar."
-                : "Primero compila el expediente para enviarlo al abogado."}
+                ? t("noValidationsBody")
+                : t("noValidationsBodyNoExp")}
             </p>
             {compiledExpedienteId ? (
               <div style={{ display: "flex", justifyContent: "center" }}>
@@ -577,7 +592,7 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
                   disabled={busySend}
                   onClick={handleSendToLawyer}
                 >
-                  {busySend ? "Enviando…" : "Enviar a abogado"}
+                  {busySend ? t("sendingBtn") : t("sendBtn")}
                 </GradientBtn>
               </div>
             ) : (
@@ -591,7 +606,7 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
                     textDecoration: "underline",
                   }}
                 >
-                  Compila el expediente para enviarlo
+                  {t("compileLinkLabel")}
                 </Link>
               </div>
             )}
@@ -601,8 +616,9 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
     );
   }
 
-  const pill = STATUS_PILL[current.status] ?? { kind: "pendiente" as StatusKind, label: current.status };
-  const steps = buildStepperSteps(current.status);
+  const pill = STATUS_PILL[current.status] ?? { kind: "pendiente" as StatusKind, labelKey: "" };
+  const pillLabel = pill.labelKey ? t(pill.labelKey) : current.status;
+  const steps = buildStepperSteps(current.status, t);
   const inProgress = IN_PROGRESS_STATUSES.has(current.status);
   const isValidated = current.status === "validated";
   const isReturned = current.status === "needs_corrections";
@@ -621,10 +637,11 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
           onConfirm={handleCreateCorrection}
           onClose={() => setShowCorrectionModal(false)}
           busy={busyCorrection}
+          t={t}
         />
       )}
 
-      <BackLink />
+      <BackLink t={t} />
 
       {/* ------------------------------------------------------------------ */}
       {/* ZONA 1 — Active attempt card                                         */}
@@ -650,13 +667,13 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
                     fontFamily: "var(--font-title)",
                   }}
                 >
-                  Validación
+                  {t("validacionTitle")}
                 </span>
-                <Chip tone="blue">{"Intento " + String(current.attempt_no)}</Chip>
-                <StatusPill kind={pill.kind}>{pill.label}</StatusPill>
-                {current.semaforo && <SemaforoChip value={current.semaforo as Semaforo} />}
+                <Chip tone="blue">{t("attemptChip", { n: current.attempt_no })}</Chip>
+                <StatusPill kind={pill.kind}>{pillLabel}</StatusPill>
+                {current.semaforo && <SemaforoChip value={current.semaforo as Semaforo} t={t} />}
                 {current.ai_score !== null && current.ai_score !== undefined && (
-                  <Chip tone="gold">{"IA: " + String(current.ai_score) + "/100"}</Chip>
+                  <Chip tone="gold">{t("aiScore", { score: current.ai_score })}</Chip>
                 )}
               </div>
             </div>
@@ -673,7 +690,7 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
                   onClick={handleSendToLawyer}
                   title={canSend.allowed ? undefined : canSend.reason}
                 >
-                  {busySend ? "Enviando…" : isReturned ? "Reenviar intento corregido" : "Enviar a abogado"}
+                  {busySend ? t("sendingBtn") : isReturned ? t("resendCorrectedBtn") : t("sendBtn")}
                 </GradientBtn>
               </div>
             )}
@@ -685,9 +702,14 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
           {/* Timestamps */}
           {current.sent_at && (
             <p style={{ fontSize: 12, color: "var(--ink-3)", margin: 0 }}>
-              {"Enviado el " + formatDate(current.sent_at) + " a las " + formatTime(current.sent_at)}
+              {t("sentLine", {
+                date: formatDate(current.sent_at, locale),
+                time: formatTime(current.sent_at, locale),
+              })}
               {" · "}
-              <span style={{ color: "var(--ink-2)" }}>Actualizado hace {relativeFromNow(current.verdict_at ?? current.sent_at)}</span>
+              <span style={{ color: "var(--ink-2)" }}>
+                {t("updatedAgo", { rel: relativeFromNow(current.verdict_at ?? current.sent_at, t, locale) })}
+              </span>
             </p>
           )}
 
@@ -705,7 +727,7 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
                 fontWeight: 700,
               }}
             >
-              El expediente no se puede editar durante la validación.
+              {t("bannerNoEdit")}
             </div>
           )}
 
@@ -723,14 +745,14 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
               }}
             >
               <p style={{ fontSize: 14, fontWeight: 800, color: "var(--red)", margin: 0 }}>
-                Error de envío
+                {t("errorTitle")}
               </p>
               <p style={{ fontSize: 13, color: "var(--ink-2)", margin: 0 }}>
-                {current.error ?? "El SaaS devolvió un error. Revisa la configuración."}
+                {current.error ?? t("errorFallback")}
               </p>
               {current.error?.includes("401") ? (
                 <p style={{ fontSize: 12.5, color: "var(--ink-2)", margin: 0, fontStyle: "italic" }}>
-                  Requiere atención del administrador.
+                  {t("adminRequired")}
                 </p>
               ) : (
                 <div>
@@ -740,7 +762,7 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
                     disabled={!canSend.allowed || busySend}
                     onClick={handleSendToLawyer}
                   >
-                    {busySend ? "Reintentando…" : "Reintentar envío"}
+                    {busySend ? t("retryingBtn") : t("retryBtn")}
                   </GhostBtn>
                 </div>
               )}
@@ -751,7 +773,7 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
           {!compiledExpedienteId && !inProgress && !isValidated && !isReturned && !isError && (
             <div style={{ fontSize: 13, color: "var(--ink-2)" }}>
               <Link href={"/legal/expediente/" + caseId} style={{ color: "var(--accent)", fontWeight: 700 }}>
-                Compila el expediente para enviarlo
+                {t("compileLinkLabel")}
               </Link>
             </div>
           )}
@@ -760,7 +782,7 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
           {canSend.allowed && !isValidated && !isReturned && !isError && !inProgress && (
             <div>
               <GradientBtn size="md" full={false} disabled={busySend} onClick={handleSendToLawyer}>
-                {busySend ? "Enviando…" : "Enviar a abogado"}
+                {busySend ? t("sendingBtn") : t("sendBtn")}
               </GradientBtn>
             </div>
           )}
@@ -812,11 +834,11 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
                   fontFamily: "var(--font-title)",
                 }}
               >
-                {"El abogado validó el expediente (intento " + String(current.attempt_no) + ")"}
+                {t("validatedTitle", { n: current.attempt_no })}
               </p>
               {current.verdict_at && (
                 <p style={{ fontSize: 12, color: "var(--ink-2)", margin: 0 }}>
-                  {formatDate(current.verdict_at)}
+                  {formatDate(current.verdict_at, locale)}
                 </p>
               )}
             </div>
@@ -831,9 +853,9 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
           <div>
             {handoffDone ? (
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <StatusPill kind="aprobado">Enviado a impresión</StatusPill>
+                <StatusPill kind="aprobado">{t("sentToPrintPill")}</StatusPill>
                 <span style={{ fontSize: 12.5, color: "var(--ink-2)", fontWeight: 700 }}>
-                  El expediente está en la cola de impresión de Andrium.
+                  {t("sentToPrintNote")}
                 </span>
               </div>
             ) : (
@@ -843,7 +865,7 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
                 disabled={busyFinance}
                 onClick={handleSendToFinance}
               >
-                {busyFinance ? "Enviando…" : "Enviar a Andrium"}
+                {busyFinance ? t("sendingBtn") : t("sendToAndriumBtn")}
               </GradientBtn>
             )}
           </div>
@@ -868,16 +890,13 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
                   flex: 1,
                 }}
               >
-                {"El abogado devolvió el intento " +
-                  String(current.attempt_no) +
-                  " con " +
-                  String(findings.length) +
-                  " hallazgo" +
-                  (findings.length !== 1 ? "s" : "")}
+                {(findings.length === 1
+                  ? t("returnedTitle", { n: current.attempt_no, count: findings.length })
+                  : t("returnedTitlePlural", { n: current.attempt_no, count: findings.length }))}
               </p>
               {current.return_to && (
                 <Chip tone={current.return_to === "client" ? "gold" : "blue"}>
-                  {current.return_to === "client" ? "Requiere al cliente" : "Devuelto al equipo"}
+                  {current.return_to === "client" ? t("returnedToClient") : t("returnedToTeam")}
                 </Chip>
               )}
             </div>
@@ -913,7 +932,7 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
                   fontWeight: 700,
                 }}
               >
-                Parte de la corrección depende del cliente: pide la re-subida (RFE) o los datos por mensaje.
+                {t("clientBanner")}
               </div>
             )}
 
@@ -930,7 +949,7 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
                     margin: 0,
                   }}
                 >
-                  Hallazgos accionables
+                  {t("findingsTitle")}
                 </p>
                 {sortFindings(findings).map((finding, idx) => (
                   <FindingCard
@@ -938,6 +957,7 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
                     finding={finding}
                     index={idx}
                     caseId={caseId}
+                    t={t}
                   />
                 ))}
               </div>
@@ -951,7 +971,7 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
                 onClick={() => setShowCorrectionModal(true)}
                 disabled={busyCorrection}
               >
-                Crear intento de corrección
+                {t("createCorrectionBtn")}
               </GradientBtn>
             </div>
           </div>
@@ -973,7 +993,7 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
                 marginBottom: 16,
               }}
             >
-              Historial de intentos
+              {t("historyTitle")}
             </p>
             <Timeline groups={timelineGroups} />
           </div>
@@ -987,7 +1007,7 @@ export function ValidacionesDetailView({ vm, actions }: ValidacionesDetailViewPr
 // Back link
 // ---------------------------------------------------------------------------
 
-function BackLink() {
+function BackLink({ t }: { t: T }) {
   return (
     <div style={{ marginBottom: 4 }}>
       <Link
@@ -999,7 +1019,7 @@ function BackLink() {
           textDecoration: "none",
         }}
       >
-        {"<- Volver a Validaciones"}
+        {t("backLink")}
       </Link>
     </div>
   );
@@ -1009,14 +1029,17 @@ function BackLink() {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function relativeFromNow(iso: string): string {
+function relativeFromNow(iso: string, _t: T, locale: string): string {
   try {
     const diff = Date.now() - new Date(iso).getTime();
     const mins = Math.floor(diff / 60_000);
     if (mins < 60) return String(mins) + " min";
     const hrs = Math.floor(mins / 60);
     if (hrs < 24) return String(hrs) + " h";
-    return new Date(iso).toLocaleDateString("es-PE", { day: "2-digit", month: "short" });
+    return new Date(iso).toLocaleDateString(locale === "en" ? "en-US" : "es-PE", {
+      day: "2-digit",
+      month: "short",
+    });
   } catch {
     return iso;
   }
@@ -1036,14 +1059,18 @@ function sortFindings(findings: FindingVM[]): FindingVM[] {
   });
 }
 
-function buildTimelineGroups(validations: ValidationRowVM[]): TimelineGroup[] {
+function buildTimelineGroups(validations: ValidationRowVM[], t: T, locale: string): TimelineGroup[] {
   // One group per attempt (ascending), each with 1-2 items (sent + verdict)
   const sorted = [...validations].sort((a, b) => a.attempt_no - b.attempt_no);
 
   return sorted.map((v): TimelineGroup => {
     const verdictPill = STATUS_PILL[v.status];
+    const verdictLabel = verdictPill ? t(verdictPill.labelKey) : v.status;
     const findingsCount = Array.isArray(v.verdict_findings) ? (v.verdict_findings as unknown[]).length : 0;
-    const semLabel = v.semaforo === "green" ? "Verde" : v.semaforo === "amber" ? "Ámbar" : v.semaforo === "red" ? "Rojo" : null;
+    const semLabel =
+      v.semaforo === "green" ? t("semaforoShortGreen") :
+      v.semaforo === "amber" ? t("semaforoShortAmber") :
+      v.semaforo === "red" ? t("semaforoShortRed") : null;
 
     const items = [];
 
@@ -1053,8 +1080,8 @@ function buildTimelineGroups(validations: ValidationRowVM[]): TimelineGroup[] {
         id: v.id + ":sent",
         type: "info" as const,
         icon: "send" as const,
-        title: "Enviado al abogado",
-        meta: formatDate(v.sent_at),
+        title: t("sentLabel"),
+        meta: formatDate(v.sent_at, locale),
       });
     }
 
@@ -1062,16 +1089,22 @@ function buildTimelineGroups(validations: ValidationRowVM[]): TimelineGroup[] {
     if (v.verdict_at) {
       const isOk = v.status === "validated";
       const bodyParts: string[] = [];
-      if (semLabel) bodyParts.push("Semáforo " + semLabel);
-      if (v.ai_score !== null && v.ai_score !== undefined) bodyParts.push("IA: " + String(v.ai_score) + "/100");
-      if (findingsCount > 0) bodyParts.push(String(findingsCount) + " hallazgo" + (findingsCount !== 1 ? "s" : ""));
+      if (semLabel) bodyParts.push(t("semaforoBody", { label: semLabel }));
+      if (v.ai_score !== null && v.ai_score !== undefined) bodyParts.push(t("aiScore", { score: v.ai_score }));
+      if (findingsCount > 0) {
+        bodyParts.push(
+          findingsCount === 1
+            ? t("findingCount", { n: findingsCount })
+            : t("findingCountPlural", { n: findingsCount }),
+        );
+      }
 
       items.push({
         id: v.id + ":verdict",
         type: isOk ? ("success" as const) : ("warning" as const),
         icon: isOk ? ("check" as const) : ("info" as const),
-        title: verdictPill.label,
-        meta: formatDate(v.verdict_at),
+        title: verdictLabel,
+        meta: formatDate(v.verdict_at, locale),
         body: bodyParts.length > 0 ? (
           <span style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             {bodyParts.map((p, i) => (
@@ -1086,13 +1119,13 @@ function buildTimelineGroups(validations: ValidationRowVM[]): TimelineGroup[] {
         id: v.id + ":status",
         type: v.status === "error" ? ("warning" as const) : ("info" as const),
         icon: v.status === "error" ? ("info" as const) : ("clock" as const),
-        title: verdictPill.label,
-        meta: v.sent_at ? formatDate(v.sent_at) : undefined,
+        title: verdictLabel,
+        meta: v.sent_at ? formatDate(v.sent_at, locale) : undefined,
       });
     }
 
     return {
-      label: "Intento " + String(v.attempt_no),
+      label: t("attemptLabel", { n: v.attempt_no }),
       items,
     };
   });

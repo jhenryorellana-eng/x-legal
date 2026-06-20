@@ -8,7 +8,7 @@
 
 import type { StatusKind } from "@/frontend/components/brand/status-pill";
 
-export type CaseTabId = "resumen" | "documentos" | "partes";
+export type CaseTabId = "resumen" | "documentos" | "partes" | "mensajes";
 
 export interface CaseHeaderVM {
   caseId: string;

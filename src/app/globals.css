@@ -8,11 +8,24 @@
 @import "../frontend/design-system/motion.css";
 /* Vanessa sales panel component CSS (DOC-52 replica), scoped under .surface-staff */
 @import "../frontend/design-system/vanessa.css";
+/* Staff shell: content padding + mobile responsive drawer (DOC-50 §1.3) */
+@import "../frontend/design-system/staff-shell.css";
 
 /* shadcn dark-mode variant driven by [data-theme="dark"] instead of `.dark` */
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 @layer base {
+  :root {
+    /* Device safe-area insets — only non-zero with viewport-fit=cover on a
+     * notched/gesture-bar device (DOC-24 §5.5). Fallback 0px keeps every
+     * `calc(... + var(--safe-bottom))` valid on browsers without insets. */
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    /* Bottom clearance a scrollable cliente screen must reserve so its content
+     * never hides behind the fixed bottom nav (+ the device gesture bar). */
+    --screen-pb: calc(120px + var(--safe-bottom));
+  }
+
   * {
     border-color: var(--border);
   }

@@ -3,16 +3,20 @@
 /**
  * "Nuevo caso" — 2-step modal (DOC-53 §3, resolución H-2).
  *
- * Step 1 — Client details: full name + email (login identity, DOC-22 §1) +
- *           optional US phone (contact only).
+ * Step 1 — Client details: full name + email + US phone + full US address
+ *           (street, apartment, city, state, ZIP). All required except apartment.
  * Step 2 — Service + plan + parties → createCase action → shows the signing link
  *          to copy/send.
  *
- * Email-OTP migration (DOC-22 §1, June 2026): clientEmail is now the mandatory
- * login identity. clientPhone is optional contact info (NOT the auth identity).
+ * Phone-only login (DOC-22 §1, June 2026): clientPhone is the client's login
+ * credential (they sign in with just their phone — no OTP yet). clientEmail is
+ * kept as contact info + the internal Supabase Auth identity. The address is
+ * required too — it prefills the I-589 via client_profiles.address
+ * (resolveBySource('profile')).
  */
 
 import * as React from "react";
+import { getBridge } from "@/frontend/platform-bridge";
 import { Modal } from "@/frontend/components/desktop/modal";
 import { GradientBtn } from "@/frontend/components/brand/gradient-btn";
 import { GhostBtn } from "@/frontend/components/brand/ghost-btn";
@@ -29,20 +33,38 @@ export interface NewCasePlan {
   installments: number;
 }
 
+/** An additional case party a service declares (besides the applicant). */
+export interface NewCasePartyRole {
+  roleKey: string;
+  label: string;
+  cardinality: "single" | "multiple";
+  required: boolean;
+}
+
 export interface NewCaseService {
   id: string;
   label: string;
   plans: NewCasePlan[];
   /** Per-plan-kind encoded resolution string the create action decodes. */
   encodedByKind: Record<string, string>;
+  /** Additional case parties this service declares (the applicant is implicit). */
+  partyRoles: NewCasePartyRole[];
 }
 
 export interface NewCaseInput {
   clientName: string;
-  /** Login identity (DOC-22 §1, email auth). */
+  /** Login credential (DOC-22 §1, email auth). */
   clientEmail: string;
-  /** Optional contact phone — NOT the login identity. */
-  clientPhone?: string;
+  /** Login credential (DOC-22 §1) — required: phone + email together. */
+  clientPhone: string;
+  /** Full US mailing address — required (prefills the I-589 via profile). */
+  clientAddress: {
+    line1: string;
+    city: string;
+    state: string;
+    zip: string;
+    apartment?: string;
+  };
   /** Encoded plan resolution string: serviceId|planId|price|down|installments. */
   serviceId: string;
   planKind: "self" | "with_lawyer";
@@ -74,24 +96,61 @@ export function NewCaseModal({
   const [name, setName] = React.useState("");
   const [clientEmail, setClientEmail] = React.useState("");
   const [phone, setPhone] = React.useState("");
+  const [line1, setLine1] = React.useState("");
+  const [apartment, setApartment] = React.useState("");
+  const [city, setCity] = React.useState("");
+  const [stateCode, setStateCode] = React.useState("");
+  const [zip, setZip] = React.useState("");
   const [serviceId, setServiceId] = React.useState("");
   const [planKind, setPlanKind] = React.useState<"self" | "with_lawyer" | "">("");
-  const [parties, setParties] = React.useState<{ name: string; role: string }[]>([
-    { name: "", role: "" },
-  ]);
+  // Additional parties keyed by the service's role_key → list of names. The
+  // applicant is implicit (auto-added by the backend), so it is NOT here.
+  const [partyNames, setPartyNames] = React.useState<Record<string, string[]>>({});
   const [submitting, setSubmitting] = React.useState(false);
   const [signingLink, setSigningLink] = React.useState<string | null>(null);
 
   const service = services.find((s) => s.id === serviceId);
+
+  /** Seeds one empty name slot per additional role of the chosen service. */
+  function selectService(id: string) {
+    setServiceId(id);
+    setPlanKind("");
+    const svc = services.find((s) => s.id === id);
+    const init: Record<string, string[]> = {};
+    for (const r of svc?.partyRoles ?? []) init[r.roleKey] = [""];
+    setPartyNames(init);
+  }
+
+  function setPartyName(roleKey: string, idx: number, value: string) {
+    setPartyNames((prev) => {
+      const list = [...(prev[roleKey] ?? [""])];
+      list[idx] = value;
+      return { ...prev, [roleKey]: list };
+    });
+  }
+  function addPartySlot(roleKey: string) {
+    setPartyNames((prev) => ({ ...prev, [roleKey]: [...(prev[roleKey] ?? []), ""] }));
+  }
+  function removePartySlot(roleKey: string, idx: number) {
+    setPartyNames((prev) => ({
+      ...prev,
+      [roleKey]: (prev[roleKey] ?? []).filter((_, i) => i !== idx),
+    }));
+  }
 
   function reset() {
     setStep(1);
     setName("");
     setClientEmail("");
     setPhone("");
+    setLine1("");
+    setApartment("");
+    setCity("");
+    setStateCode("");
+    setZip("");
     setServiceId("");
     setPlanKind("");
-    setParties([{ name: "", role: "" }]);
+    setPartyNames({});
     setSigningLink(null);
   }
 
@@ -101,23 +160,42 @@ export function NewCaseModal({
   }
 
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail.trim());
-  const step1Valid = name.trim().length > 1 && emailValid;
-  const step2Valid = !!serviceId && !!planKind;
+  // Phone + full US address (apartment optional) are now mandatory — both phone
+  // and email are login credentials, and the address prefills the I-589.
+  const phoneValid = phone.replace(/\D/g, "").length >= 10;
+  const addressValid =
+    line1.trim().length > 2 && city.trim().length > 1 && stateCode.trim().length >= 2 && zip.trim().length >= 5;
+  const step1Valid = name.trim().length > 1 && emailValid && phoneValid && addressValid;
+  // Every REQUIRED additional role must have at least one named party.
+  const rolesValid = (service?.partyRoles ?? []).every(
+    (r) => !r.required || (partyNames[r.roleKey] ?? []).some((n) => n.trim()),
+  );
+  const step2Valid = !!serviceId && !!planKind && rolesValid;
 
   async function submit() {
     if (!step2Valid) return;
     setSubmitting(true);
     const encoded = service?.encodedByKind[planKind] ?? serviceId;
+    // Additional parties only — the applicant is auto-added by the backend.
+    const parties = (service?.partyRoles ?? []).flatMap((r) =>
+      (partyNames[r.roleKey] ?? [])
+        .filter((n) => n.trim())
+        .map((n) => ({ name: n.trim(), role: r.roleKey })),
+    );
     const res = await actions.createCase({
       clientName: name.trim(),
       clientEmail: clientEmail.trim(),
-      // Phone is optional contact info — only pass if the staff entered it.
-      ...(phone.trim() ? { clientPhone: phone } : {}),
+      clientPhone: phone.trim(),
+      clientAddress: {
+        line1: line1.trim(),
+        city: city.trim(),
+        state: stateCode.trim(),
+        zip: zip.trim(),
+        ...(apartment.trim() ? { apartment: apartment.trim() } : {}),
+      },
       serviceId: encoded,
       planKind: planKind as "self" | "with_lawyer",
-      // Only fully-specified parties (name AND role) — a half-filled row is
-      // dropped rather than rejected by the domain (party_role requires ≥1 char).
-      parties: parties.filter((p) => p.name.trim() && p.role.trim()),
+      parties,
     });
     setSubmitting(false);
     if (res.ok && res.signingToken) {
@@ -130,12 +208,9 @@ export function NewCaseModal({
 
   async function copyLink() {
     if (!signingLink) return;
-    try {
-      await navigator.clipboard.writeText(signingLink);
-      toast.success(strings.copied);
-    } catch {
-      toast.error(strings.errorTitle);
-    }
+    const ok = await getBridge().share.copyText(signingLink);
+    if (ok) toast.success(strings.copied);
+    else toast.error(strings.errorTitle);
   }
 
   const title =
@@ -230,6 +305,47 @@ export function NewCaseModal({
               {strings.phoneHint}
             </p>
           </div>
+
+          {/* Full US mailing address — required (prefills the I-589). */}
+          <div>
+            <LabeledInput
+              label={strings.clientAddressLine1}
+              value={line1}
+              onChange={setLine1}
+              placeholder="123 Main St"
+            />
+            <p style={{ margin: "6px 0 0", fontSize: 12.5, color: "var(--ink-3)" }}>
+              {strings.addressHint}
+            </p>
+          </div>
+          <LabeledInput
+            label={strings.clientApartment}
+            value={apartment}
+            onChange={setApartment}
+            placeholder="Apt 4B"
+          />
+          <div style={{ display: "flex", gap: 10 }}>
+            <div style={{ flex: 2 }}>
+              <LabeledInput label={strings.clientCity} value={city} onChange={setCity} placeholder="Miami" />
+            </div>
+            <div style={{ flex: 1 }}>
+              <LabeledInput
+                label={strings.clientState}
+                value={stateCode}
+                onChange={(v) => setStateCode(v.toUpperCase().slice(0, 2))}
+                placeholder="FL"
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <LabeledInput
+                label={strings.clientZip}
+                value={zip}
+                onChange={(v) => setZip(v.replace(/[^\d-]/g, "").slice(0, 10))}
+                inputMode="numeric"
+                placeholder="33101"
+              />
+            </div>
+          </div>
         </div>
       )}
 
@@ -241,10 +357,7 @@ export function NewCaseModal({
             </span>
             <select
               value={serviceId}
-              onChange={(e) => {
-                setServiceId(e.target.value);
-                setPlanKind("");
-              }}
+              onChange={(e) => selectService(e.target.value)}
               style={selectStyle}
             >
               <option value="">{strings.selectService}</option>
@@ -302,64 +415,87 @@ export function NewCaseModal({
             </div>
           )}
 
-          {/* Parties */}
-          <div>
-            <span style={{ fontSize: 12.5, fontWeight: 800, color: "var(--ink-2)" }}>
-              {strings.partiesLabel}
-            </span>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
-              {parties.map((p, i) => (
-                <div key={i} style={{ display: "flex", gap: 8 }}>
-                  <input
-                    value={p.name}
-                    placeholder={strings.partyName}
-                    onChange={(e) =>
-                      setParties((prev) =>
-                        prev.map((pp, j) => (j === i ? { ...pp, name: e.target.value } : pp)),
-                      )
-                    }
-                    style={{ ...inputStyle, flex: 2 }}
-                  />
-                  <input
-                    value={p.role}
-                    placeholder={strings.partyRole}
-                    onChange={(e) =>
-                      setParties((prev) =>
-                        prev.map((pp, j) => (j === i ? { ...pp, role: e.target.value } : pp)),
-                      )
-                    }
-                    style={{ ...inputStyle, flex: 1 }}
-                  />
-                  {parties.length > 1 && (
-                    <button
-                      type="button"
-                      aria-label={strings.removeParty}
-                      onClick={() => setParties((prev) => prev.filter((_, j) => j !== i))}
-                      style={{
-                        width: 40,
-                        borderRadius: 12,
-                        border: "1px solid var(--line)",
-                        background: "var(--card)",
-                        cursor: "pointer",
-                        display: "grid",
-                        placeItems: "center",
-                      }}
-                    >
-                      <Icon name="x" size={16} color="var(--ink-2)" />
-                    </button>
-                  )}
-                </div>
-              ))}
-              <GhostBtn
-                size="md"
-                full={false}
-                icon="plus"
-                onClick={() => setParties((prev) => [...prev, { name: "", role: "" }])}
+          {/* Parties — the applicant is implicit; the service's roles drive the rest */}
+          {service && (
+            <div>
+              <span style={{ fontSize: 12.5, fontWeight: 800, color: "var(--ink-2)" }}>
+                {strings.partiesLabel}
+              </span>
+
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  marginTop: 8,
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  background: "var(--blue-soft)",
+                }}
               >
-                {strings.addParty}
-              </GhostBtn>
+                <Icon name="info" size={15} color="var(--accent)" />
+                <span style={{ fontSize: 13, color: "var(--ink-2)" }}>
+                  {strings.partyApplicant}: <b>{name.trim() || "—"}</b>
+                </span>
+              </div>
+
+              {service.partyRoles.length === 0 && (
+                <p style={{ margin: "10px 0 0", fontSize: 12.5, color: "var(--ink-3)" }}>
+                  {strings.partyOnlyApplicant}
+                </p>
+              )}
+
+              {service.partyRoles.map((r) => {
+                const names = partyNames[r.roleKey] ?? [""];
+                return (
+                  <div key={r.roleKey} style={{ marginTop: 14 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                      <span style={{ fontSize: 12.5, fontWeight: 800, color: "var(--ink-2)" }}>
+                        {r.label}
+                      </span>
+                      {r.cardinality === "multiple" && <Chip tone="blue">{strings.partyMultiple}</Chip>}
+                      {r.required && <span style={{ fontSize: 12, color: "var(--red)" }}>*</span>}
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {names.map((nm, i) => (
+                        <div key={i} style={{ display: "flex", gap: 8 }}>
+                          <input
+                            value={nm}
+                            placeholder={strings.partyName}
+                            onChange={(e) => setPartyName(r.roleKey, i, e.target.value)}
+                            style={{ ...inputStyle, flex: 1 }}
+                          />
+                          {r.cardinality === "multiple" && names.length > 1 && (
+                            <button
+                              type="button"
+                              aria-label={strings.removeParty}
+                              onClick={() => removePartySlot(r.roleKey, i)}
+                              style={{
+                                width: 40,
+                                borderRadius: 12,
+                                border: "1px solid var(--line)",
+                                background: "var(--card)",
+                                cursor: "pointer",
+                                display: "grid",
+                                placeItems: "center",
+                              }}
+                            >
+                              <Icon name="x" size={16} color="var(--ink-2)" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                      {r.cardinality === "multiple" && (
+                        <GhostBtn size="md" full={false} icon="plus" onClick={() => addPartySlot(r.roleKey)}>
+                          {strings.addParty}
+                        </GhostBtn>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-          </div>
+          )}
         </div>
       )}
 

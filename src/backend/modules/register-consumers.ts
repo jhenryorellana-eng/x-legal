@@ -22,6 +22,7 @@ import {
   onExpedientePrinted as onExpedientePrintedKanban,
 } from "@/backend/modules/kanban";
 import { onContractSigned as onContractSignedBilling } from "@/backend/modules/billing";
+import { ensureCaseConversation, postSystemMessage } from "@/backend/modules/messaging";
 import { registerAiEngineConsumers } from "@/backend/modules/ai-engine";
 import { registerIntegrationsConsumers } from "@/backend/modules/integrations";
 // scheduling: no in-process event consumers in V2.0 (DOC-43 §5 — scheduling does
@@ -151,6 +152,30 @@ export function registerConsumers(): void {
     await onDownpaymentConfirmedKanban(payload);
   });
 
+  // -------------------------------------------------------------------------
+  // messaging consumers (F7-Ola7a)
+  // -------------------------------------------------------------------------
+
+  // downpayment.confirmed → ensure the case conversation exists + post the
+  // welcome system message (idempotent; coexists with lazy first-read).
+  appEvents.on("downpayment.confirmed", async (event) => {
+    const payload = event.payload as { caseId: string };
+    if (!payload.caseId) return;
+    logger.info({ caseId: payload.caseId }, "messaging: consuming downpayment.confirmed → ensure conversation");
+    try {
+      await ensureCaseConversation(payload.caseId);
+      await postSystemMessage(payload.caseId, "sys.downpayment_confirmed");
+    } catch (err) {
+      logger.error({ err, caseId: payload.caseId }, "messaging: ensure/system-message failed — conversation is lazily created on first read");
+    }
+  });
+
+  // message.sent → notifications anti-burst (F7-Ola7b §4.2): in-app digest +
+  // push with 5 s grace, suppressed if the recipient reads the thread first.
+  appEvents.on("message.sent", async (event) => {
+    await notifyFromEvent(event);
+  });
+
   // lead.created → notify assigned staff (matrix §4.3)
   appEvents.on("lead.created", async (event) => {
     await notifyFromEvent(event);
@@ -245,5 +270,5 @@ export function registerConsumers(): void {
     await notifyFromEvent(event);
   });
 
-  logger.info({}, "consumers: F2+F3+F4+F5+F5-Ola3+F6-Ola1+F6-Ola2 event consumers registered (kanban + ai-engine + integrations + andrium + billing-reanchor + overdue + printed)");
+  logger.info({}, "consumers: F2+F3+F4+F5+F6+F7-Ola7a/7b event consumers registered (kanban + ai-engine + integrations + andrium + billing-reanchor + overdue + printed + messaging + notifications anti-burst)");
 }

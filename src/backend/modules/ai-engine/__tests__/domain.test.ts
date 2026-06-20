@@ -30,6 +30,7 @@ import {
   assemblePrompt,
   validateGenerationOutput,
   sumUsage,
+  curateInternalFields,
   type GenerationRunStatus,
   type DatasetItem,
   type ConfigSnapshot,
@@ -593,7 +594,8 @@ describe("selectDatasetItems", () => {
 describe("assemblePrompt", () => {
   it("places system_prompt text in system[0]", () => {
     const result = assemblePrompt(BASE_SNAPSHOT, BASE_INPUTS, NO_DATASET);
-    expect(result.system[0].text).toBe(BASE_SNAPSHOT.system_prompt);
+    // system[0] = system_prompt (+ default anti-invention rules, both stable).
+    expect(result.system[0].text).toContain(BASE_SNAPSHOT.system_prompt);
   });
 
   it("sets cacheControl=ephemeral on system[0] when no dataset (only stable block)", () => {
@@ -698,7 +700,7 @@ describe("assemblePrompt", () => {
 
   it("NOTHING variable in system[] — system[0] contains only the system_prompt", () => {
     const result = assemblePrompt(BASE_SNAPSHOT, BASE_INPUTS, NO_DATASET);
-    expect(result.system[0].text).toBe(BASE_SNAPSHOT.system_prompt);
+    expect(result.system[0].text).toContain(BASE_SNAPSHOT.system_prompt);
     // No case-specific data in system blocks
     expect(result.system[0].text).not.toContain("Maria Garcia");
     expect(result.system[0].text).not.toContain("PASSPORT");
@@ -943,5 +945,49 @@ describe("sumUsage", () => {
     expect(chunk3.cacheReadInputTokens).toBe(700);
     // 0.0105 + 0.018 + 0.005 = 0.0335
     expect(chunk3.costUsd).toBe(0.0335);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Form-segmentation propose helpers (Ola 2 — robust full-coverage propose)
+// ---------------------------------------------------------------------------
+
+describe("curateInternalFields", () => {
+  it("drops signature/preparer/interpreter/attorney/barcode/page-number/office-use fields", () => {
+    const fields = [
+      { name: "Pt1Line1_FamilyName", page: 1 },
+      { name: "Pt1_Signature", page: 12 },
+      { name: "Preparer_Name", page: 12 },
+      { name: "Interpreter_Signature", page: 12 },
+      { name: "Attorney_StateBar", page: 12 },
+      { name: "barcode_1", page: 1 },
+      { name: "PageNumber", page: 1 },
+      { name: "ForUSCISUseOnly", page: 1 },
+      { name: "Pt2Line3_City", page: 2 },
+    ];
+    const { kept, dropped } = curateInternalFields(fields);
+    expect(dropped).toBe(7);
+    expect(kept.map((f) => f.name)).toEqual(["Pt1Line1_FamilyName", "Pt2Line3_City"]);
+  });
+
+  it("does not drop real fields that merely contain look-alike substrings", () => {
+    const fields = [
+      { name: "DesignatedRepresentative", page: 1 }, // contains 'sign' but not 'signature'
+      { name: "AssignmentCountry", page: 1 },
+    ];
+    expect(curateInternalFields(fields).dropped).toBe(0);
+  });
+
+  it("keeps the vast majority of a real form's fields (I-589 ~ 460)", () => {
+    // mostly real client fields + a handful of internal ones
+    const fields = [
+      ...Array.from({ length: 50 }, (_, i) => ({ name: `Pt1Line${i}_Data`, page: 1 })),
+      { name: "Pt1_Signature", page: 1 },
+      { name: "Preparer_Name", page: 2 },
+      { name: "PDF417BarCode1", page: 1 },
+    ];
+    const { kept, dropped } = curateInternalFields(fields);
+    expect(dropped).toBe(3);
+    expect(kept).toHaveLength(50);
   });
 });

@@ -70,10 +70,15 @@ vi.mock("@zxcvbn-ts/language-common", () => ({
 
 // platform/ratelimit (not used in employee flows but required by the module)
 vi.mock("@/backend/platform/ratelimit.js", () => ({
-  limitOtpSendEmail: vi.fn(),
+  limitOtpSendPhone: vi.fn(),
   limitOtpSendIp: vi.fn(),
-  limitOtpVerifyEmail: vi.fn(),
   limitStaffLogin: vi.fn(),
+}));
+
+// platform/env — phone-login password derivation reads SUPABASE_SERVICE_ROLE_KEY
+vi.mock("@/backend/platform/env", () => ({
+  env: { SUPABASE_SERVICE_ROLE_KEY: "test-service-key" },
+  providerEnv: vi.fn(),
 }));
 
 // platform/logger
@@ -122,7 +127,7 @@ vi.mock("@/backend/platform/supabase.js", () => ({
 
 // identity/repository
 vi.mock("../repository.js", () => ({
-  checkClientEligibilityByEmail: vi.fn(),
+  checkClientEligibility: vi.fn(),
   checkClientEligibilityById: vi.fn(),
   insertStaffRows: mockInsertStaffRows,
   replaceStaffPermissions: mockReplaceStaffPermissions,

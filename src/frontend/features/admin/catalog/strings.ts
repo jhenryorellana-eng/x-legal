@@ -13,7 +13,12 @@ export function buildCatalogStrings(tt: Translator): Record<string, string> {
     "entryBadge", "menuEdit", "menuClone", "menuActivate", "menuDeactivate", "menuHide",
     "menuShow", "menuArchive", "menuRestore", "menuHistory", "emptyTitle", "emptySub",
     "bannerProd", "archiveConfirmTitle", "archiveConfirmBody", "backToList",
-    "step1", "step2", "step3", "step4", "step5", "step6", "slug", "slugLocked", "category",
+    "step1", "step2", "step3", "step4", "step5", "step6", "step7",
+    "partiesTitle", "partiesSub", "partiesApplicantNote", "partiesAdd", "partiesEmpty",
+    "partyType", "partyLabel", "partyCardinality", "partySingle", "partyMultiple",
+    "partyRequired", "partyRemove", "partyNeedLabel", "partyDup",
+    "docPartyApplicant", "docPartyRolesLabel", "docNeedRoles",
+    "slug", "slugLocked", "category",
     "labelField", "descShort", "descLong", "benefits", "addBenefit", "appearance", "icon",
     "color", "visibility", "isPublic", "entryToggle", "entryNote", "previewMobile",
     "offerPlan", "price", "currency", "installments", "downpayment", "planActive",
@@ -25,6 +30,10 @@ export function buildCatalogStrings(tt: Translator): Record<string, string> {
     "docActiveCol", "docSchema", "formPdf", "formAi", "filledBy", "filledClient",
     "filledStaff", "filledBoth", "formStub", "formStubSub", "publishTitle", "publishReady",
     "activateService", "celebrate", "issueBlocking", "issueWarning", "ackWarning",
+    "formsNeedPhaseTitle", "formsNeedPhaseSub", "formsNeedName", "formsCreated", "formsKind",
+    "formsKindLetter", "formsKindPdf", "formsKindLetterHint", "formsKindPdfHint", "formsLabel",
+    "formsSlug", "formsFilledBy", "formsFilledClient", "formsFilledStaff", "formsFilledBoth",
+    "formsCreate", "formsEmpty", "formsDraft", "formsActive", "formsConfigure",
   ];
   const out: Record<string, string> = {};
   // raw(): several messages carry placeholders ({n}, {email}); calling t()

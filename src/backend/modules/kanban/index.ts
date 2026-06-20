@@ -40,6 +40,7 @@ export {
   markLeadLost,
   createCaseFromLead,
   createLeadCategory,
+  listLeadCategories,
   expressServiceInterest,
   listLeads,
 } from "./service";

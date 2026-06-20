@@ -3,8 +3,8 @@
  *
  * Use cases implemented:
  * F0:
- * - requestClientOtp      (anonymous) — normalize, rate limit, gate, signInWithOtp
- * - verifyClientOtp       (anonymous) — rate limit, verifyOtp, re-gate post-session
+ * - loginClientByPhone    (anonymous) — phone-only login: normalize, rate limit,
+ *                          resolve+gate, signInWithPassword (derived), re-gate
  * - requestStaffPasswordReset (anonymous) — resetPasswordForEmail, uniform response
  * - updateStaffPassword   (authenticated) — zxcvbn score check, updateUser
  *
@@ -29,10 +29,10 @@ import { getActor, requireActor, can, AuthzError } from "@/backend/platform/auth
 import type { Actor } from "@/backend/platform/authz";
 import { createServerClient, createServiceClient, revokeAllSessions } from "@/backend/platform/supabase";
 import { logger } from "@/backend/platform/logger";
+import { env } from "@/backend/platform/env";
 import {
-  limitOtpSendEmail,
+  limitOtpSendPhone,
   limitOtpSendIp,
-  limitOtpVerifyEmail,
 } from "@/backend/platform/ratelimit";
 import { sendTransactional, FROM_TRANSACTIONAL } from "@/backend/platform/resend";
 import { appEvents } from "@/backend/platform/events";
@@ -44,11 +44,11 @@ import { escapeHtml } from "@/shared/html";
 import {
   normalizePhoneE164,
   normalizeEmailStrict,
-  EmailValidationError,
+  derivePhonePassword,
   passwordPolicy,
 } from "./domain";
 import {
-  checkClientEligibilityByEmail,
+  checkClientEligibility,
   checkClientEligibilityById,
   countActiveStaff,
   getStaffProfileById,
@@ -59,11 +59,14 @@ import {
   replaceStaffPermissions,
   setStaffActive,
   findClientByEmail,
+  findClientByPhone,
   insertClientRows,
   insertPersonRecord,
+  updateUserLocale,
   type StaffProfileRow,
   type EmployeePermissionInput,
   type EmployeeRow,
+  type ClientAddressInput,
 } from "./repository";
 
 // Audit module — imported via dynamic require to avoid circular deps at module load
@@ -76,6 +79,27 @@ async function getAudit() {
     _audit = await import("@/backend/modules/audit");
   }
   return _audit;
+}
+
+// ---------------------------------------------------------------------------
+// setUserLocale — persist the actor's own UI language (DOC-24 i18n)
+// ---------------------------------------------------------------------------
+
+const SUPPORTED_LOCALES = ["es", "en"] as const;
+export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
+
+/**
+ * Persists the authenticated user's own UI language to `users.locale`. Any
+ * authenticated user (client or staff) may set their own locale — no `can()`
+ * gate beyond authentication. The caller (action) mirrors it to the `ulp-locale`
+ * cookie so next-intl picks it up on the next request.
+ */
+export async function setUserLocale(actor: Actor, rawLocale: string): Promise<SupportedLocale> {
+  const locale: SupportedLocale = (SUPPORTED_LOCALES as readonly string[]).includes(rawLocale)
+    ? (rawLocale as SupportedLocale)
+    : "es";
+  await updateUserLocale(actor.userId, locale);
+  return locale;
 }
 
 // ---------------------------------------------------------------------------
@@ -100,8 +124,8 @@ function getZxcvbnFactory(): ZxcvbnFactory {
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Minimum latency floor for the OTP send action — anti-timing-analysis (DOC-22 §1.4) */
-const OTP_LATENCY_FLOOR_MS = 800;
+/** Minimum latency floor for the login action — anti-timing-analysis (DOC-22 §1.4) */
+const LOGIN_LATENCY_FLOOR_MS = 800;
 
 const ZXCVBN_MIN_SCORE = 3;
 
@@ -109,12 +133,8 @@ const ZXCVBN_MIN_SCORE = 3;
 // Result types
 // ---------------------------------------------------------------------------
 
-export interface OtpRequestResult {
-  /** Always true — uniform response (DOC-22 §1.4 anti-enumeration) */
-  ok: true;
-}
-
-export interface OtpVerifyResult {
+export interface PhoneLoginResult {
+  /** Always true — failures throw IdentityError (uniform, anti-enumeration). */
   ok: true;
 }
 
@@ -163,8 +183,6 @@ export class IdentityError extends Error {
     public readonly code:
       | "rate_limited"
       | "invalid_phone"
-      | "invalid_email"
-      | "invalid_otp"
       | "password_too_short"
       | "password_too_weak"
       | "unauthenticated"
@@ -180,148 +198,117 @@ export class IdentityError extends Error {
 }
 
 // ---------------------------------------------------------------------------
-// requestClientOtp — anonymous use case (DOC-22 §1.3)
+// loginClientByPhone — anonymous use case (DOC-22 §1, phone-only login)
 // No Actor required: this is a public endpoint. Documented per DOC-22 §7 rule 1.
 // ---------------------------------------------------------------------------
 
 /**
- * Requests an email OTP for a client (DOC-22 §1, SoT 2026-06-13: email auth).
+ * Logs a client in with ONLY their phone number (DOC-22 §1, June 2026).
+ *
+ * No OTP, no SMS, no code — TEMPORARY: SMS-OTP lands on top of this later. The
+ * client types only their phone; we resolve them, derive their deterministic
+ * password (set at provisioning), and sign them in by email (the Supabase Auth
+ * identity they never see). The session cookie is set via the SSR server client,
+ * exactly like signInStaffAction.
+ *
+ * SECURITY: anyone who knows a client's phone can log in (no second factor). A
+ * conscious temporary product decision (Henry). This function is the single
+ * insertion point for the future SMS-OTP verify step.
  *
  * Steps:
- * 1. Normalize + validate email (server-side).
- * 2. Rate limit: email tiers (1/45s, 5/h, 8/d) + IP tiers (10/h, 30/d).
- * 3. GATE (service client): eligibility (kind=client, is_active, activated case).
- * 4. If eligible: supabase.auth.signInWithOtp({ email }) (shouldCreateUser=false).
- * 5. Apply 800ms latency floor (both branches take the same wall time — §1.4).
- * 6. Return { ok: true } ALWAYS — anti-enumeration.
+ * 1. Normalize + validate phone.
+ * 2. Rate limit: phone tiers (1/45s, 5/h, 8/d) + IP tiers (10/h, 30/d).
+ * 3. Resolve client by phone (id + email) + eligibility gate (kind=client,
+ *    is_active, activated case).
+ * 4. signInWithPassword({ email, password: derived }) on the SSR client.
+ *    Legacy resilience: if it fails (client provisioned before passwords were
+ *    set), set the derived password via the admin API and retry ONCE.
+ * 5. Re-gate post-session by id (RF-CLI-006) → signOut on failure.
+ * 6. 800ms latency floor on every branch — anti-enumeration timing parity.
  *
- * No SMS / Twilio: the 6-digit code is delivered by email (Supabase SMTP).
- *
- * @param rawEmail - Client email (the login identity captured at intake).
+ * @param rawPhone - The phone the client typed (their login credential).
  * @param ip       - Request IP for per-IP rate limiting.
  */
-export async function requestClientOtp(
-  rawEmail: string,
+export async function loginClientByPhone(
+  rawPhone: string,
   ip: string,
-): Promise<OtpRequestResult> {
+): Promise<PhoneLoginResult> {
   const start = Date.now();
 
-  // Step 1: Normalize + validate
-  let email: string;
+  // Step 1: Normalize + validate phone
+  let phoneE164: string;
   try {
-    email = normalizeEmailStrict(rawEmail);
-  } catch (err) {
-    if (err instanceof EmailValidationError) {
-      await enforceFloor(start, OTP_LATENCY_FLOOR_MS);
-      logger.info({ err: err.message }, "requestClientOtp: invalid email format");
-      throw new IdentityError("invalid_email", err.message);
-    }
-    throw err;
+    phoneE164 = normalizePhoneE164(rawPhone);
+  } catch {
+    await enforceFloor(start, LOGIN_LATENCY_FLOOR_MS);
+    logger.info({}, "loginClientByPhone: invalid phone format");
+    throw new IdentityError("invalid_phone");
   }
 
-  // Step 2: Rate limit — sequential: email first, IP second (M-1 anti-timing).
-  const emailRL = await limitOtpSendEmail(email);
-  if (!emailRL.allowed) {
-    await enforceFloor(start, OTP_LATENCY_FLOOR_MS);
+  // Step 2: Rate limit — sequential: phone first, IP second (M-1 anti-timing).
+  const phoneRL = await limitOtpSendPhone(phoneE164);
+  if (!phoneRL.allowed) {
+    await enforceFloor(start, LOGIN_LATENCY_FLOOR_MS);
     throw new IdentityError("rate_limited");
   }
-
   const ipRL = await limitOtpSendIp(ip);
   if (!ipRL.allowed) {
-    await enforceFloor(start, OTP_LATENCY_FLOOR_MS);
+    await enforceFloor(start, LOGIN_LATENCY_FLOOR_MS);
     throw new IdentityError("rate_limited");
   }
 
-  // Step 3: Gate — eligibility (always runs; result determines if we send the code)
-  const { eligible } = await checkClientEligibilityByEmail(email);
+  // Step 3: Resolve + gate. A missing client, a phone-less/email-less row, or an
+  // ineligible client all collapse to the SAME uniform failure (anti-enum).
+  const client = await findClientByPhone(phoneE164);
+  const { eligible } = client
+    ? await checkClientEligibility(phoneE164)
+    : { eligible: false };
 
-  if (eligible) {
-    // Step 4: Send email OTP — only when eligible (shouldCreateUser=false mandatory)
-    const supabase = await createServerClient();
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        shouldCreateUser: false, // MANDATORY — never create phantom auth users (§1.3)
-      },
-    });
-
-    if (error) {
-      logger.warn({ err: error.message }, "requestClientOtp: signInWithOtp returned error");
-      // Still return uniform response — the client has no visibility into this failure
-    }
-  } else {
-    // Not eligible: do NOT send the code. Latency floor ensures timing parity.
-    logger.info({}, "requestClientOtp: gate check failed — no code sent (anti-enum)");
-  }
-
-  // Step 5: Enforce 800ms floor (§1.4)
-  await enforceFloor(start, OTP_LATENCY_FLOOR_MS);
-
-  // Step 6: Uniform response
-  return { ok: true };
-}
-
-// ---------------------------------------------------------------------------
-// verifyClientOtp — anonymous use case (DOC-22 §1.3, §1.4 re-gate)
-// ---------------------------------------------------------------------------
-
-/**
- * Verifies an email OTP and establishes a session (DOC-22 §1, email auth).
- *
- * Steps:
- * 1. Normalize + validate email.
- * 2. Rate limit: verify tier (10/h).
- * 3. supabase.auth.verifyOtp({ email, type:'email' }) → session cookies.
- * 4. RE-GATE post-session (§1.4, RF-CLI-006):
- *    If no longer eligible → signOut() + throw (caller redirects to /no-access).
- *
- * @param rawEmail - Client email.
- * @param code     - 6-digit OTP code (delivered by email).
- */
-export async function verifyClientOtp(
-  rawEmail: string,
-  code: string,
-): Promise<OtpVerifyResult> {
-  // Step 1: Normalize + validate
-  let email: string;
-  try {
-    email = normalizeEmailStrict(rawEmail);
-  } catch {
-    throw new IdentityError("invalid_email");
-  }
-
-  // Step 2: Rate limit
-  const rl = await limitOtpVerifyEmail(email);
-  if (!rl.allowed) {
-    throw new IdentityError("rate_limited");
-  }
-
-  // Step 3: Verify OTP
-  const supabase = await createServerClient();
-  const { data, error } = await supabase.auth.verifyOtp({
-    email,
-    token: code,
-    type: "email",
-  });
-
-  if (error || !data.user) {
-    // Uniform error — does not reveal eligibility (§1.4)
-    throw new IdentityError("invalid_otp", "Ese código no coincide");
-  }
-
-  // Step 4: RE-GATE (defensa en profundidad — RF-CLI-006)
-  const { eligible } = await checkClientEligibilityById(data.user.id);
-  if (!eligible) {
-    // Revoke session immediately
-    await supabase.auth.signOut({ scope: "local" });
-    logger.info(
-      { userId: data.user.id },
-      "verifyClientOtp: re-gate failed after verifyOtp — session revoked",
-    );
-    // Caller must redirect to /no-access
+  if (!client || !client.email || !eligible) {
+    await enforceFloor(start, LOGIN_LATENCY_FLOOR_MS);
+    logger.info({}, "loginClientByPhone: gate check failed — no session (anti-enum)");
     throw new IdentityError("wrong_kind", "no_access");
   }
 
+  // Step 4: Sign in by email with the derived password (sets the SSR cookie).
+  const password = derivePhonePassword(phoneE164, env.SUPABASE_SERVICE_ROLE_KEY);
+  const supabase = await createServerClient();
+  let signIn = await supabase.auth.signInWithPassword({ email: client.email, password });
+
+  if (signIn.error || !signIn.data.user) {
+    // Legacy resilience: the client was provisioned before we set passwords (or
+    // the secret rotated). Set the current derived password via the admin API
+    // and retry ONCE. Self-heals without a separate backfill.
+    const admin = createServiceClient();
+    const { error: setErr } = await admin.auth.admin.updateUserById(client.id, { password });
+    if (!setErr) {
+      signIn = await supabase.auth.signInWithPassword({ email: client.email, password });
+    }
+  }
+
+  if (signIn.error || !signIn.data.user) {
+    await enforceFloor(start, LOGIN_LATENCY_FLOOR_MS);
+    logger.warn(
+      { err: signIn.error?.message },
+      "loginClientByPhone: signInWithPassword failed after retry",
+    );
+    throw new IdentityError("wrong_kind", "no_access");
+  }
+
+  // Step 5: RE-GATE post-session (defensa en profundidad — RF-CLI-006)
+  const regate = await checkClientEligibilityById(signIn.data.user.id);
+  if (!regate.eligible) {
+    await supabase.auth.signOut({ scope: "local" });
+    logger.info(
+      { userId: signIn.data.user.id },
+      "loginClientByPhone: re-gate failed after sign-in — session revoked",
+    );
+    await enforceFloor(start, LOGIN_LATENCY_FLOOR_MS);
+    throw new IdentityError("wrong_kind", "no_access");
+  }
+
+  // Step 6: Latency floor (timing parity with the failure branches)
+  await enforceFloor(start, LOGIN_LATENCY_FLOOR_MS);
   return { ok: true };
 }
 
@@ -549,7 +536,7 @@ export async function inviteEmployee(
 
   // Step e: Send staff-invite email via Resend
   // The temp password travels ONLY through this email; no event payload, no logs.
-  const loginLink = `${process.env.NEXT_PUBLIC_APP_URL ?? "https://panel.usalatinoprime.com"}/login`;
+  const loginLink = `${process.env.NEXT_PUBLIC_APP_URL ?? "https://x-legal.usalatinoprime.com"}/login`;
   const emailHtml = buildStaffInviteEmail({
     displayName: input.displayName,
     email: input.email,
@@ -896,10 +883,12 @@ function buildStaffInviteEmail(opts: {
 
 export interface ProvisionClientUserInput {
   fullName: string;
-  /** Login identity (DOC-22 §1, email auth). Captured at case intake. */
+  /** Login credential (DOC-22 §1, email auth). Captured at case intake. */
   email: string;
-  /** Optional contact phone (NOT the login identity). */
+  /** Login credential (DOC-22 §1) — phone + email together. Captured at intake. */
   phoneE164?: string | null;
+  /** Full US mailing address — persisted to client_profiles.address (prefills I-589). */
+  address?: ClientAddressInput | null;
   locale?: string;
   timezone?: string;
 }
@@ -935,7 +924,7 @@ export async function provisionClientUser(
   // Step 1: Authorization — only staff with clients:edit can create client accounts
   can(actor, "clients", "edit");
 
-  const { fullName, locale, timezone } = input;
+  const { fullName, locale, timezone, address } = input;
   const email = normalizeEmailStrict(input.email);
   const phoneE164 = input.phoneE164 ? normalizePhoneE164(input.phoneE164) : null;
 
@@ -954,14 +943,20 @@ export async function provisionClientUser(
     return { userId: existing.id, created: false };
   }
 
-  // Step 4: Create auth user (no password, email_confirm=true — no verification email)
+  // Step 4: Create auth user (email_confirm=true — no verification email). When a
+  // phone is present we also set the deterministic phone-login password so the
+  // client can sign in with just their phone (DOC-22 §1, June 2026). No SMS.
   const serviceClient = createServiceClient();
   const { data: authData, error: authError } = await serviceClient.auth.admin.createUser({
     email,
     email_confirm: true,
-    // Optional contact phone stored on the auth user too (not used for login)
-    ...(phoneE164 ? { phone: phoneE164, phone_confirm: true } : {}),
-    // Intentionally no password — client authenticates via email OTP only
+    ...(phoneE164
+      ? {
+          phone: phoneE164,
+          phone_confirm: true,
+          password: derivePhonePassword(phoneE164, env.SUPABASE_SERVICE_ROLE_KEY),
+        }
+      : {}),
   });
 
   if (authError || !authData?.user) {
@@ -982,6 +977,7 @@ export async function provisionClientUser(
           phoneE164,
           firstName,
           lastName,
+          address,
           locale,
           timezone,
         });
@@ -1007,6 +1003,7 @@ export async function provisionClientUser(
     phoneE164,
     firstName,
     lastName,
+    address,
     locale,
     timezone,
   });

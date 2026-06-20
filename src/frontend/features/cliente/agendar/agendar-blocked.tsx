@@ -26,7 +26,7 @@ export function AgendarBlocked({
     <div
       style={{
         minHeight: "100dvh",
-        padding: "54px 26px 140px",
+        padding: "54px 26px var(--screen-pb)",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",

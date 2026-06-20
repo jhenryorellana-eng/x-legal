@@ -28,6 +28,13 @@ export interface NavItem {
   module: ModuleKey;
   /** Optional red badge counter (DOC-53 §0.2). */
   badge?: NavBadgeKey;
+  /**
+   * Hidden from the ALL-seeing admin nav. Used by the per-department personal
+   * "Configuración" entries: each role reaches its own from its panel, but the
+   * admin already has the org-wide "Configuración" (settings) — otherwise the
+   * admin would see four identical "Configuración" items, one per department.
+   */
+  hiddenForAdmin?: boolean;
 }
 
 export interface NavGroup {
@@ -55,6 +62,7 @@ export const STAFF_NAV: NavGroup[] = [
       { labelKey: "calendar", href: "/ventas/citas", icon: "calendar", module: "calendar" },
       { labelKey: "expedientes", href: "/legal/expediente", icon: "doc", module: "expedientes" },
       { labelKey: "validations", href: "/legal/validaciones", icon: "shield", module: "validations" },
+      { labelKey: "legalConfig", href: "/legal/configuracion", icon: "gear", module: "validations", hiddenForAdmin: true },
       { labelKey: "printing", href: "/finanzas/impresion", icon: "copy", module: "printing" },
     ],
   },
@@ -67,7 +75,7 @@ export const STAFF_NAV: NavGroup[] = [
       { labelKey: "availability", href: "/ventas/disponibilidad", icon: "clock", module: "calendar" },
       { labelKey: "clients", href: "/ventas/clientes", icon: "family", module: "clients", badge: "cases" },
       { labelKey: "salesMetrics", href: "/ventas/metricas", icon: "bolt", module: "metrics" },
-      { labelKey: "salesConfig", href: "/ventas/configuracion", icon: "gear", module: "dashboard" },
+      { labelKey: "salesConfig", href: "/ventas/configuracion", icon: "gear", module: "leads", hiddenForAdmin: true },
     ],
   },
   {
@@ -77,6 +85,7 @@ export const STAFF_NAV: NavGroup[] = [
       { labelKey: "accounting", href: "/finanzas/contabilidad", icon: "wallet", module: "accounting" },
       { labelKey: "aiCosts", href: "/admin/ai-costs", icon: "dollar", module: "metrics" },
       { labelKey: "campaigns", href: "/finanzas/campanas", icon: "megaphone", module: "campaigns" },
+      { labelKey: "financeConfig", href: "/finanzas/configuracion", icon: "gear", module: "accounting", hiddenForAdmin: true },
     ],
   },
   {
@@ -89,9 +98,10 @@ export const STAFF_NAV: NavGroup[] = [
   {
     labelKey: "administration",
     items: [
+      { labelKey: "community", href: "/admin/comunidad", icon: "family", module: "community" },
       { labelKey: "employees", href: "/admin/empleados", icon: "user", module: "employees" },
       { labelKey: "audit", href: "/admin/auditoria", icon: "scale", module: "audit" },
-      { labelKey: "settings", href: "/admin/configuracion", icon: "gear", module: "dashboard" },
+      { labelKey: "settings", href: "/admin/configuracion", icon: "gear", module: "employees" },
     ],
   },
 ];
@@ -102,12 +112,12 @@ export const STAFF_NAV: NavGroup[] = [
  */
 export function filterNav(
   groups: NavGroup[],
-  canView: (module: ModuleKey) => boolean,
+  canView: (item: NavItem) => boolean,
 ): NavGroup[] {
   return groups
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => canView(item.module)),
+      items: group.items.filter((item) => canView(item)),
     }))
     .filter((group) => group.items.length > 0);
 }

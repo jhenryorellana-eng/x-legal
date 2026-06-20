@@ -136,7 +136,9 @@ export function BottomNav({
         maxWidth: absolute ? undefined : 430,
         margin: absolute ? undefined : "0 auto",
         zIndex: 30,
-        paddingBottom: 22,
+        // Reserve the device gesture-bar inset BELOW the tab row so the bar's
+        // fill extends to the screen edge while the icons stay tappable.
+        paddingBottom: "calc(22px + var(--safe-bottom))",
         paddingTop: 9,
         background: "var(--nav-bg)",
         backdropFilter: "blur(16px)",

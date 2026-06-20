@@ -3,8 +3,8 @@
  *
  * Strategy: mock all I/O (Supabase, ratelimit, repository) so tests are pure.
  * Covers:
- * - requestClientOtp: eligible vs not-eligible same response, rate limit, invalid phone
- * - verifyClientOtp: valid code, invalid code, re-gate expulsion
+ * - loginClientByPhone: happy path, not-found/ineligible (uniform), legacy retry,
+ *   re-gate expulsion, rate limit, invalid phone
  * - requestStaffPasswordReset: uniform response
  * - updateStaffPassword: length policy, zxcvbn score
  */
@@ -33,9 +33,14 @@ vi.mock("@zxcvbn-ts/language-common", () => ({ adjacencyGraphs: {}, dictionary: 
 
 // platform/ratelimit
 vi.mock("@/backend/platform/ratelimit.js", () => ({
-  limitOtpSendEmail: vi.fn(),
+  limitOtpSendPhone: vi.fn(),
   limitOtpSendIp: vi.fn(),
-  limitOtpVerifyEmail: vi.fn(),
+}));
+
+// platform/env — phone-login password derivation reads SUPABASE_SERVICE_ROLE_KEY
+vi.mock("@/backend/platform/env", () => ({
+  env: { SUPABASE_SERVICE_ROLE_KEY: "test-service-key" },
+  providerEnv: vi.fn(),
 }));
 
 // platform/logger
@@ -54,8 +59,9 @@ vi.mock("@/backend/platform/authz.js", () => ({
 
 // identity/repository
 vi.mock("../repository.js", () => ({
-  checkClientEligibilityByEmail: vi.fn(),
+  checkClientEligibility: vi.fn(),
   checkClientEligibilityById: vi.fn(),
+  findClientByPhone: vi.fn(),
   insertStaffRows: vi.fn(),
   replaceStaffPermissions: vi.fn(),
   setStaffActive: vi.fn(),
@@ -94,19 +100,18 @@ vi.mock("@/backend/platform/supabase.js", () => ({
 // ---------------------------------------------------------------------------
 
 import {
-  requestClientOtp,
-  verifyClientOtp,
+  loginClientByPhone,
   requestStaffPasswordReset,
   updateStaffPassword,
 } from "../service";
 
 import {
-  limitOtpSendEmail,
+  limitOtpSendPhone,
   limitOtpSendIp,
-  limitOtpVerifyEmail,
 } from "@/backend/platform/ratelimit";
 import { requireActor } from "@/backend/platform/authz";
-import { checkClientEligibilityByEmail, checkClientEligibilityById } from "../repository";
+import { checkClientEligibility, checkClientEligibilityById, findClientByPhone } from "../repository";
+import { derivePhonePassword } from "../domain";
 import { createServerClient, createServiceClient } from "@/backend/platform/supabase";
 
 // ---------------------------------------------------------------------------
@@ -117,6 +122,9 @@ function buildServerClient(overrides: Record<string, ReturnType<typeof vi.fn>> =
   return {
     auth: {
       signInWithOtp: vi.fn().mockResolvedValue({ error: null }),
+      signInWithPassword: vi
+        .fn()
+        .mockResolvedValue({ data: { user: { id: "u-001" } }, error: null }),
       verifyOtp: vi.fn().mockResolvedValue({ data: { user: { id: "u-001" } }, error: null }),
       signOut: vi.fn().mockResolvedValue({ error: null }),
       updateUser: vi.fn().mockResolvedValue({ error: null }),
@@ -138,150 +146,131 @@ function buildServiceClient(overrides: Record<string, unknown> = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// requestClientOtp
+// loginClientByPhone
 // ---------------------------------------------------------------------------
 
-describe("requestClientOtp", () => {
-  const validEmail = "maria@example.com";
+describe("loginClientByPhone", () => {
+  const validPhone = "(305) 555-0100";
+  const normalized = "+13055550100";
+  const email = "maria@example.com";
+  const userId = "u-001";
   const ip = "1.2.3.4";
 
   beforeEach(() => {
-    vi.mocked(limitOtpSendEmail).mockResolvedValue({ allowed: true, reset: 0 });
+    vi.mocked(limitOtpSendPhone).mockResolvedValue({ allowed: true, reset: 0 });
     vi.mocked(limitOtpSendIp).mockResolvedValue({ allowed: true, reset: 0 });
-    const client = buildServerClient();
-    vi.mocked(createServerClient).mockResolvedValue(// eslint-disable-next-line @typescript-eslint/no-explicit-any
-client as any);
-  });
-
-  it("returns { ok: true } when email is eligible", async () => {
-    vi.mocked(checkClientEligibilityByEmail).mockResolvedValue({ eligible: true });
-    const result = await requestClientOtp(validEmail, ip);
-    expect(result).toEqual({ ok: true });
-  }, 2000);
-
-  it("returns { ok: true } when email is NOT eligible (anti-enumeration — same response)", async () => {
-    vi.mocked(checkClientEligibilityByEmail).mockResolvedValue({ eligible: false });
-
-    const client = buildServerClient();
-    vi.mocked(createServerClient).mockResolvedValue(// eslint-disable-next-line @typescript-eslint/no-explicit-any
-client as any);
-
-    const result = await requestClientOtp(validEmail, ip);
-    expect(result).toEqual({ ok: true });
-    // MUST NOT call signInWithOtp for ineligible emails
-    expect(client.auth.signInWithOtp).not.toHaveBeenCalled();
-  }, 2000);
-
-  it("calls signInWithOtp with email + shouldCreateUser=false when eligible", async () => {
-    vi.mocked(checkClientEligibilityByEmail).mockResolvedValue({ eligible: true });
-    const client = buildServerClient();
-    vi.mocked(createServerClient).mockResolvedValue(// eslint-disable-next-line @typescript-eslint/no-explicit-any
-client as any);
-
-    await requestClientOtp(validEmail, ip);
-
-    expect(client.auth.signInWithOtp).toHaveBeenCalledWith(
-      expect.objectContaining({
-        email: "maria@example.com",
-        options: expect.objectContaining({ shouldCreateUser: false }),
-      }),
-    );
-  }, 2000);
-
-  it("throws IdentityError('rate_limited') when email rate limit exceeded", async () => {
-    vi.mocked(limitOtpSendEmail).mockResolvedValue({ allowed: false, reset: Date.now() + 30_000 });
-    await expect(requestClientOtp(validEmail, ip)).rejects.toThrow(
-      expect.objectContaining({ code: "rate_limited" }),
-    );
-  }, 2000);
-
-  it("throws IdentityError('rate_limited') when IP rate limit exceeded", async () => {
-    vi.mocked(limitOtpSendIp).mockResolvedValue({ allowed: false, reset: Date.now() + 30_000 });
-    await expect(requestClientOtp(validEmail, ip)).rejects.toThrow(
-      expect.objectContaining({ code: "rate_limited" }),
-    );
-  }, 2000);
-
-  it("throws IdentityError('invalid_email') for an invalid email", async () => {
-    await expect(requestClientOtp("not-an-email", ip)).rejects.toThrow(
-      expect.objectContaining({ code: "invalid_email" }),
-    );
-  }, 2000);
-});
-
-// ---------------------------------------------------------------------------
-// verifyClientOtp
-// ---------------------------------------------------------------------------
-
-describe("verifyClientOtp", () => {
-  const validEmail = "maria@example.com";
-  const validCode = "123456";
-
-  beforeEach(() => {
-    vi.mocked(limitOtpVerifyEmail).mockResolvedValue({ allowed: true, reset: 0 });
-  });
-
-  it("returns { ok: true } when OTP is valid and re-gate passes", async () => {
-    const userId = "user-uuid-001";
-    const client = buildServerClient({
-      verifyOtp: vi.fn().mockResolvedValue({ data: { user: { id: userId } }, error: null }),
-      signOut: vi.fn().mockResolvedValue({ error: null }),
-    });
-    vi.mocked(createServerClient).mockResolvedValue(// eslint-disable-next-line @typescript-eslint/no-explicit-any
-client as any);
+    vi.mocked(findClientByPhone).mockResolvedValue({ id: userId, email, existed: true });
+    vi.mocked(checkClientEligibility).mockResolvedValue({ eligible: true });
     vi.mocked(checkClientEligibilityById).mockResolvedValue({ eligible: true });
-
-    const result = await verifyClientOtp(validEmail, validCode);
-    expect(result).toEqual({ ok: true });
-    expect(client.auth.signOut).not.toHaveBeenCalled();
-    // verifyOtp called with email + type:'email'
-    expect(client.auth.verifyOtp).toHaveBeenCalledWith(
-      expect.objectContaining({ email: "maria@example.com", token: validCode, type: "email" }),
-    );
+    const client = buildServerClient();
+    vi.mocked(createServerClient).mockResolvedValue(// eslint-disable-next-line @typescript-eslint/no-explicit-any
+client as any);
+    const serviceClient = buildServiceClient();
+    vi.mocked(createServiceClient).mockReturnValue(// eslint-disable-next-line @typescript-eslint/no-explicit-any
+serviceClient as any);
   });
 
-  it("throws IdentityError('invalid_otp') on wrong code", async () => {
-    const client = buildServerClient({
-      verifyOtp: vi.fn().mockResolvedValue({ data: { user: null }, error: { message: "Token has expired or is invalid" } }),
-    });
+  it("signs the client in by email with the derived password (happy path)", async () => {
+    const client = buildServerClient();
     vi.mocked(createServerClient).mockResolvedValue(// eslint-disable-next-line @typescript-eslint/no-explicit-any
 client as any);
 
-    await expect(verifyClientOtp(validEmail, validCode)).rejects.toThrow(
-      expect.objectContaining({ code: "invalid_otp" }),
-    );
-  });
-
-  it("re-gate: signs out and throws when client is no longer eligible after verifyOtp", async () => {
-    const userId = "user-uuid-002";
-    const signOutMock = vi.fn().mockResolvedValue({ error: null });
-    const client = buildServerClient({
-      verifyOtp: vi.fn().mockResolvedValue({ data: { user: { id: userId } }, error: null }),
-      signOut: signOutMock,
+    const result = await loginClientByPhone(validPhone, ip);
+    expect(result).toEqual({ ok: true });
+    // signInWithPassword called with the email + the deterministic password
+    expect(client.auth.signInWithPassword).toHaveBeenCalledWith({
+      email,
+      password: derivePhonePassword(normalized, "test-service-key"),
     });
+    // post-session re-gate ran with the user id
+    expect(checkClientEligibilityById).toHaveBeenCalledWith(userId);
+  }, 2000);
+
+  it("resolves the client by the NORMALIZED phone", async () => {
+    await loginClientByPhone(validPhone, ip);
+    expect(findClientByPhone).toHaveBeenCalledWith(normalized);
+    expect(checkClientEligibility).toHaveBeenCalledWith(normalized);
+  }, 2000);
+
+  it("throws wrong_kind (uniform) when no client has that phone — no sign-in attempt", async () => {
+    vi.mocked(findClientByPhone).mockResolvedValue(null);
+    const client = buildServerClient();
+    vi.mocked(createServerClient).mockResolvedValue(// eslint-disable-next-line @typescript-eslint/no-explicit-any
+client as any);
+
+    await expect(loginClientByPhone(validPhone, ip)).rejects.toThrow(
+      expect.objectContaining({ code: "wrong_kind", message: "no_access" }),
+    );
+    expect(client.auth.signInWithPassword).not.toHaveBeenCalled();
+  }, 2000);
+
+  it("throws wrong_kind (uniform) when the client exists but is NOT eligible", async () => {
+    vi.mocked(checkClientEligibility).mockResolvedValue({ eligible: false });
+    const client = buildServerClient();
+    vi.mocked(createServerClient).mockResolvedValue(// eslint-disable-next-line @typescript-eslint/no-explicit-any
+client as any);
+
+    await expect(loginClientByPhone(validPhone, ip)).rejects.toThrow(
+      expect.objectContaining({ code: "wrong_kind", message: "no_access" }),
+    );
+    expect(client.auth.signInWithPassword).not.toHaveBeenCalled();
+  }, 2000);
+
+  it("legacy: sets the password via admin then retries sign-in once", async () => {
+    // First sign-in fails (no password set on the legacy user), then succeeds.
+    const signInMock = vi
+      .fn()
+      .mockResolvedValueOnce({ data: { user: null }, error: { message: "Invalid login credentials" } })
+      .mockResolvedValueOnce({ data: { user: { id: userId } }, error: null });
+    const client = buildServerClient({ signInWithPassword: signInMock });
+    vi.mocked(createServerClient).mockResolvedValue(// eslint-disable-next-line @typescript-eslint/no-explicit-any
+client as any);
+    const updateByIdMock = vi.fn().mockResolvedValue({ error: null });
+    vi.mocked(createServiceClient).mockReturnValue({
+      auth: { admin: { updateUserById: updateByIdMock } },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+
+    const result = await loginClientByPhone(validPhone, ip);
+    expect(result).toEqual({ ok: true });
+    expect(updateByIdMock).toHaveBeenCalledWith(userId, {
+      password: derivePhonePassword(normalized, "test-service-key"),
+    });
+    expect(signInMock).toHaveBeenCalledTimes(2);
+  }, 2000);
+
+  it("re-gate: signs out and throws when no longer eligible after sign-in", async () => {
+    const signOutMock = vi.fn().mockResolvedValue({ error: null });
+    const client = buildServerClient({ signOut: signOutMock });
     vi.mocked(createServerClient).mockResolvedValue(// eslint-disable-next-line @typescript-eslint/no-explicit-any
 client as any);
     vi.mocked(checkClientEligibilityById).mockResolvedValue({ eligible: false });
 
-    await expect(verifyClientOtp(validEmail, validCode)).rejects.toThrow(
+    await expect(loginClientByPhone(validPhone, ip)).rejects.toThrow(
       expect.objectContaining({ code: "wrong_kind", message: "no_access" }),
     );
     expect(signOutMock).toHaveBeenCalledWith({ scope: "local" });
-  });
+  }, 2000);
 
-  it("throws IdentityError('rate_limited') when verify rate limit exceeded", async () => {
-    vi.mocked(limitOtpVerifyEmail).mockResolvedValue({ allowed: false, reset: Date.now() + 30_000 });
-
-    await expect(verifyClientOtp(validEmail, validCode)).rejects.toThrow(
+  it("throws rate_limited when the phone tier is exceeded", async () => {
+    vi.mocked(limitOtpSendPhone).mockResolvedValue({ allowed: false, reset: Date.now() + 30_000 });
+    await expect(loginClientByPhone(validPhone, ip)).rejects.toThrow(
       expect.objectContaining({ code: "rate_limited" }),
     );
-  });
+  }, 2000);
 
-  it("throws IdentityError('invalid_email') for an invalid email", async () => {
-    await expect(verifyClientOtp("bad", "123456")).rejects.toThrow(
-      expect.objectContaining({ code: "invalid_email" }),
+  it("throws rate_limited when the IP tier is exceeded", async () => {
+    vi.mocked(limitOtpSendIp).mockResolvedValue({ allowed: false, reset: Date.now() + 30_000 });
+    await expect(loginClientByPhone(validPhone, ip)).rejects.toThrow(
+      expect.objectContaining({ code: "rate_limited" }),
     );
-  });
+  }, 2000);
+
+  it("throws invalid_phone for a malformed phone", async () => {
+    await expect(loginClientByPhone("123", ip)).rejects.toThrow(
+      expect.objectContaining({ code: "invalid_phone" }),
+    );
+  }, 2000);
 });
 
 // ---------------------------------------------------------------------------

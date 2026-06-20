@@ -14,9 +14,12 @@
   /* Core surfaces */
   --background: var(--bg);
   --foreground: var(--ink);
-  --card: var(--panel, var(--card-surface, var(--card)));
+  /* Prefer staff `--panel`; fall back to the mobile `--card-surface` base alias.
+   * Must NOT fall back to `var(--card)` — this rule *defines* `--card`, so a
+   * self-reference forms a CSS cycle and resolves to the empty string. */
+  --card: var(--panel, var(--card-surface));
   --card-foreground: var(--ink);
-  --popover: var(--panel, var(--card));
+  --popover: var(--panel, var(--card-surface));
   --popover-foreground: var(--ink);
 
   /* Action / accent — NOTE: shadcn's `--accent` is its subtle hover tint

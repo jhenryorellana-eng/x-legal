@@ -13,6 +13,7 @@ import type {
   SourceDocumentVM,
 } from "./types";
 import type { FormEditorStrings } from "./strings";
+import type { ConditionAction, ConditionOp } from "@/shared/form-logic/conditions";
 
 const PII_FIELDS = new Set(["pii.ssn", "pii.a_number", "pii.passport"]);
 
@@ -40,6 +41,8 @@ export interface QuestionCardProps {
   detectedFields: DetectedFieldVM[];
   sources: { documents: SourceDocumentVM[]; forms: string[]; profileFields: string[] };
   groups: { id: string; label: string }[];
+  /** Other questions in the form (id + label) that a condition may depend on. */
+  siblingQuestions: { id: string; label: string }[];
   strings: FormEditorStrings;
   readOnly: boolean;
   onToggle: () => void;
@@ -57,6 +60,7 @@ export function QuestionCard({
   detectedFields,
   sources,
   groups,
+  siblingQuestions,
   strings,
   readOnly,
   onToggle,
@@ -198,6 +202,9 @@ export function QuestionCard({
             {duplicateMapping && (
               <p style={{ margin: "6px 0 0", fontSize: 12, color: "var(--gold-deep)" }}>{strings.dupFieldWarn}</p>
             )}
+            {!readOnly && (
+              <p style={{ margin: "6px 0 0", fontSize: 11.5, color: "var(--ink-3)" }}>{strings.pdfMappingHint}</p>
+            )}
           </div>
 
           {/* Origin segmented selector */}
@@ -258,6 +265,9 @@ export function QuestionCard({
 
           {/* Validation (advanced) */}
           <ValidationPopover q={q} strings={strings} readOnly={readOnly} onChange={onChange} />
+
+          {/* Conditional / dynamic visibility */}
+          <ConditionEditor q={q} siblings={siblingQuestions} strings={strings} readOnly={readOnly} onChange={onChange} />
 
           {/* Footer actions */}
           {!readOnly && (
@@ -430,6 +440,116 @@ function ValidationPopover({ q, strings, readOnly, onChange }: { q: QuestionVM; 
           <TextInput type="number" value={v.max ?? ""} placeholder="max" disabled={readOnly} aria-label="max" onChange={(e) => onChange({ validation: { ...v, max: e.target.value === "" ? undefined : Number(e.target.value) } })} style={{ height: 36 }} />
         </div>
       )}
+    </div>
+  );
+}
+
+const COND_ACTIONS: { id: "none" | ConditionAction; key: string }[] = [
+  { id: "none", key: "condNone" },
+  { id: "show", key: "condShow" },
+  { id: "lock", key: "condLock" },
+  { id: "require", key: "condRequire" },
+];
+
+const COND_OPS: { id: ConditionOp; key: string }[] = [
+  { id: "equals", key: "condOpEquals" },
+  { id: "not_equals", key: "condOpNotEquals" },
+  { id: "includes", key: "condOpIncludes" },
+  { id: "answered", key: "condOpAnswered" },
+  { id: "gte", key: "condOpGte" },
+  { id: "lte", key: "condOpLte" },
+];
+
+function condValueToText(v: unknown): string {
+  if (Array.isArray(v)) return v.join(", ");
+  if (v == null) return "";
+  return String(v);
+}
+
+/**
+ * Conditional/dynamic visibility editor. Lets the admin make a question
+ * show / lock / require itself depending on another question's answer — the
+ * Sí/No → explanation pattern, or continuation fields (e.g. the 5th child).
+ */
+function ConditionEditor({
+  q,
+  siblings,
+  strings,
+  readOnly,
+  onChange,
+}: {
+  q: QuestionVM;
+  siblings: { id: string; label: string }[];
+  strings: FormEditorStrings;
+  readOnly: boolean;
+  onChange: (patch: Partial<QuestionVM>) => void;
+}) {
+  const c = q.condition ?? null;
+  const action: "none" | ConditionAction = c?.action ?? "none";
+  const noSiblings = siblings.length === 0;
+
+  const setAction = (a: "none" | ConditionAction) => {
+    if (a === "none") return onChange({ condition: null });
+    const when = c?.when ?? { question: siblings[0]?.id ?? "", op: "equals" as ConditionOp, value: "" };
+    onChange({ condition: { when, action: a, lock_message_i18n: c?.lock_message_i18n ?? null } });
+  };
+  const patchWhen = (patch: Partial<NonNullable<QuestionVM["condition"]>["when"]>) => {
+    if (!c) return;
+    onChange({ condition: { ...c, when: { ...c.when, ...patch } } });
+  };
+
+  return (
+    <div>
+      <FieldLabel>{strings.condition}</FieldLabel>
+      <SelectInput
+        value={action}
+        disabled={readOnly || noSiblings}
+        onChange={(e) => setAction(e.target.value as "none" | ConditionAction)}
+        aria-label={strings.condition}
+      >
+        {COND_ACTIONS.map((a) => (
+          <option key={a.id} value={a.id}>{strings[a.key]}</option>
+        ))}
+      </SelectInput>
+
+      {c && !noSiblings && (
+        <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <div>
+              <FieldLabel>{strings.condWhenQuestion}</FieldLabel>
+              <SelectInput value={c.when.question} disabled={readOnly} aria-label={strings.condWhenQuestion} onChange={(e) => patchWhen({ question: e.target.value })}>
+                {siblings.map((s) => (
+                  <option key={s.id} value={s.id}>{s.label}</option>
+                ))}
+              </SelectInput>
+            </div>
+            <div>
+              <FieldLabel>{strings.condOp}</FieldLabel>
+              <SelectInput value={c.when.op} disabled={readOnly} aria-label={strings.condOp} onChange={(e) => patchWhen({ op: e.target.value as ConditionOp })}>
+                {COND_OPS.map((o) => (
+                  <option key={o.id} value={o.id}>{strings[o.key]}</option>
+                ))}
+              </SelectInput>
+            </div>
+          </div>
+          {c.when.op !== "answered" && (
+            <div>
+              <FieldLabel>{strings.condValue}</FieldLabel>
+              <TextInput value={condValueToText(c.when.value)} disabled={readOnly} aria-label={strings.condValue} onChange={(e) => patchWhen({ value: e.target.value })} style={{ height: 36 }} />
+            </div>
+          )}
+          {action === "lock" && (
+            <I18nField
+              label={strings.condLockMessage}
+              value={{ es: c.lock_message_i18n?.es ?? "", en: c.lock_message_i18n?.en ?? "" }}
+              onChange={(val) => onChange({ condition: { ...c, lock_message_i18n: val } })}
+              multiline
+              flagMissingEn={false}
+            />
+          )}
+        </div>
+      )}
+      <p style={{ margin: "6px 0 0", fontSize: 12, color: "var(--ink-3)", lineHeight: 1.4 }}>{strings.condHint}</p>
     </div>
   );
 }

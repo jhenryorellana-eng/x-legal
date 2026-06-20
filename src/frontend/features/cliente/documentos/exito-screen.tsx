@@ -67,7 +67,7 @@ export function ExitoScreen({
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
-          padding: "40px 30px 120px",
+          padding: "40px 30px var(--screen-pb)",
           textAlign: "center",
         }}
       >

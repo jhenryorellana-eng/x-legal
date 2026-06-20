@@ -150,7 +150,7 @@ export function CitaScreen({
         minHeight: "100dvh",
         position: "relative",
         overflow: "hidden",
-        padding: "44px 22px 124px",
+        padding: "44px 22px var(--screen-pb)",
         background:
           "radial-gradient(120% 70% at 50% 0%, var(--card) 0%, var(--bg) 52%, var(--blue-soft) 100%)",
       }}

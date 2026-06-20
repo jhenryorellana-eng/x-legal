@@ -74,10 +74,13 @@ export default async function CaminoPage({
       currentMilestoneLabel={currentMilestoneLabel}
       labels={{
         backCases: t("backCases"),
-        encourageSuffix: t("encourage"),
-        phaseChip: t("phaseChip"),
+        // These carry ICU placeholders ({service}/{x}/{y}/{n}/{phase}) that the
+        // screen fills via string replace — use t.raw so next-intl returns the
+        // template literally instead of failing to format the missing vars.
+        encourageSuffix: t.raw("encourage") as string,
+        phaseChip: t.raw("phaseChip") as string,
         nextStep: t("nextStep"),
-        nextDocsTitle: t("nextDocsTitle"),
+        nextDocsTitle: t.raw("nextDocsTitle") as string,
         nextDocsBody: t("nextDocsBody"),
         nextFormTitle: t("nextFormTitle"),
         nextFormBody: t("nextFormBody"),
@@ -87,9 +90,9 @@ export default async function CaminoPage({
         inProgressSuffix: t("inProgressSuffix"),
         nextMeeting: t("nextMeeting"),
         documents: t("documents"),
-        documentsValue: t("documentsValue"),
+        documentsValue: t.raw("documentsValue") as string,
         forms: t("forms"),
-        formsValue: t("formsValue"),
+        formsValue: t.raw("formsValue") as string,
         noMeeting: t("noMeeting"),
       }}
       tutorialLabels={{

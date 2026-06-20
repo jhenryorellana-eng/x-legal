@@ -49,10 +49,18 @@ import {
   validateGenerationOutput,
   computeAnthropicCost,
   computeGeminiCost,
-  // sumUsage: reserved for multi-chunk runs (F4-2 chunking). Prefixed to suppress unused warning.
+  maskPii,
+  buildWebSearchTool,
+  countWords,
+  lastWords,
+  buildSectionUserMessage,
+  buildExpansionUserMessage,
+  assembleDocument,
+  curateInternalFields,
   sumUsage as _sumUsage,
   type GenerationRequest,
   type ConfigSnapshot,
+  type GenerationSectionSpec,
   // ChunkProgress: used in progress column typing (F4-2). Prefixed to suppress unused warning.
   type ChunkProgress as _ChunkProgress,
   type BudgetCheck,
@@ -86,6 +94,7 @@ import {
   getTranslationSource,
   loadDatasetItems,
   loadResolvedInputs,
+  findGenerationConfig,
   type GenerationRunRow,
   type DocumentExtractionRow as _DocumentExtractionRow,
   type DocumentTranslationRow,
@@ -242,17 +251,26 @@ export async function startGeneration(
   );
   const version = nextVersion(currentMax);
 
-  // Build minimal config_snapshot (catalog provides real config; we stub here
-  // since catalog module integration is F4-2+)
+  // Freeze the real generation config into the run's snapshot (catalog owns
+  // editing; ai-engine reads it here). Each run is reproducible from its snapshot.
+  const cfg = await findGenerationConfig(p.formDefinitionId);
   const configSnapshot: ConfigSnapshot = {
-    system_prompt: "",
-    input_document_slugs: [],
-    input_form_slugs: [],
-    dataset_id: null,
-    model: DEFAULT_GENERATION_MODEL,
-    max_output_tokens: 32000,
-    output_format: "pdf",
-    output_language: "es",
+    system_prompt: cfg?.system_prompt ?? "",
+    input_document_slugs: cfg?.input_document_slugs ?? [],
+    input_form_slugs: cfg?.input_form_slugs ?? [],
+    dataset_id: cfg?.dataset_id ?? null,
+    model: cfg?.model ?? DEFAULT_GENERATION_MODEL,
+    max_output_tokens: cfg?.max_output_tokens ?? 32000,
+    output_format: (cfg?.output_format as ConfigSnapshot["output_format"]) ?? "pdf",
+    output_language: (cfg?.output_language as ConfigSnapshot["output_language"]) ?? "es",
+    web_search_enabled: cfg?.web_search_enabled ?? false,
+    web_search_max_uses: cfg?.web_search_max_uses ?? 5,
+    research_instructions: cfg?.research_instructions ?? null,
+    research_model: cfg?.research_model ?? null,
+    sections: (cfg?.sections as unknown as GenerationSectionSpec[] | undefined) ?? [],
+    rules_enabled: cfg?.rules_enabled ?? true,
+    rules_text: cfg?.rules_text ?? null,
+    assembly: (cfg?.assembly as ConfigSnapshot["assembly"]) ?? null,
     resolved_inputs: { documents: [], forms: [] },
     dataset_injection: null,
   };
@@ -411,49 +429,91 @@ export async function executeGenerationJob(
 
   const prompt = assemblePrompt(snapshot, inputs, selected);
 
-  // Call Anthropic (streaming as transport, DOC-74 §2.5)
+  // Call Anthropic (streaming transport, DOC-74 §2.5). Optional native web_search
+  // tool (live research) + optional sectioned long-form generation (generalizes v1).
   const model = snapshot.model ?? DEFAULT_GENERATION_MODEL;
+  const sections = snapshot.sections ?? [];
+  const tools = snapshot.web_search_enabled
+    ? [buildWebSearchTool(snapshot.web_search_max_uses ?? 5)]
+    : undefined;
   const needsChunking = decideChunking(snapshot.max_output_tokens, 10000);
 
   let outputText: string;
-  let stopReason: string;
-  let usage: AnthropicUsage;
+  let stopReason = "end_turn";
+  let usage: AnthropicUsage = { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 };
   let modelUsed = model;
 
   try {
     const client = getAnthropicClient();
 
-    // Build system blocks for Anthropic API with cache_control
+    // Build system blocks for Anthropic API with cache_control (stable prefix).
     const systemBlocks = prompt.system.map((block) => ({
       type: "text" as const,
       text: block.text,
       ...(block.cacheControl ? { cache_control: { type: "ephemeral" as const } } : {}),
     }));
 
-    // Streaming transport (required for large outputs per DOC-74 §2.5)
-    const stream = client.messages.stream({
-      model,
-      max_tokens: snapshot.max_output_tokens,
-      system: systemBlocks,
-      messages: prompt.messages.map((m) => ({ role: m.role, content: m.content })),
+    // One Anthropic call → normalized result. Streaming required for large outputs.
+    const streamOnce = async (userContent: string, maxTokens: number) => {
+      const stream = client.messages.stream({
+        model,
+        max_tokens: maxTokens,
+        system: systemBlocks,
+        messages: [{ role: "user" as const, content: userContent }],
+        ...(tools ? { tools } : {}),
+      });
+      const message = await stream.finalMessage();
+      const u: AnthropicUsage = {
+        inputTokens: message.usage?.input_tokens ?? 0,
+        outputTokens: message.usage?.output_tokens ?? 0,
+        cacheCreationInputTokens:
+          ((message.usage as unknown) as Record<string, number> | null)?.["cache_creation_input_tokens"] ?? 0,
+        cacheReadInputTokens:
+          ((message.usage as unknown) as Record<string, number> | null)?.["cache_read_input_tokens"] ?? 0,
+      };
+      const text = message.content
+        .filter((b) => b.type === "text")
+        .map((b) => (b as { type: "text"; text: string }).text)
+        .join("");
+      return { text, stopReason: message.stop_reason ?? "end_turn", usage: u, model: message.model ?? model };
+    };
+
+    const addU = (a: AnthropicUsage, b: AnthropicUsage): AnthropicUsage => ({
+      inputTokens: a.inputTokens + b.inputTokens,
+      outputTokens: a.outputTokens + b.outputTokens,
+      cacheCreationInputTokens: a.cacheCreationInputTokens + b.cacheCreationInputTokens,
+      cacheReadInputTokens: a.cacheReadInputTokens + b.cacheReadInputTokens,
     });
 
-    const message = await stream.finalMessage();
-    stopReason = message.stop_reason ?? "end_turn";
-    usage = {
-      inputTokens: message.usage?.input_tokens ?? 0,
-      outputTokens: message.usage?.output_tokens ?? 0,
-      cacheCreationInputTokens:
-        ((message.usage as unknown) as Record<string, number> | null)?.["cache_creation_input_tokens"] ?? 0,
-      cacheReadInputTokens:
-        ((message.usage as unknown) as Record<string, number> | null)?.["cache_read_input_tokens"] ?? 0,
-    };
-    modelUsed = message.model ?? model;
+    const baseUserContent = prompt.messages[0]?.content ?? "";
 
-    outputText = message.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as { type: "text"; text: string }).text)
-      .join("");
+    if (sections.length > 0) {
+      // Sectioned long-form: generate each section in order, enforce the word
+      // floor (one expansion pass below floor), accumulate, then assemble.
+      const parts: string[] = [];
+      let prevTail = "";
+      for (const sec of sections) {
+        if (await isCancelled(run.id)) return "cancelled";
+        const secContent = buildSectionUserMessage(baseUserContent, sec, prevTail, snapshot.research_instructions);
+        let res = await streamOnce(secContent, sec.max_tokens);
+        usage = addU(usage, res.usage);
+        if (sec.min_words > 0 && countWords(res.text) < sec.min_words) {
+          const exp = await streamOnce(buildExpansionUserMessage(secContent, res.text, sec.min_words), sec.max_tokens);
+          usage = addU(usage, exp.usage);
+          if (countWords(exp.text) > countWords(res.text)) res = exp;
+        }
+        parts.push(`## ${sec.heading}\n\n${res.text.trim()}`);
+        prevTail = lastWords(res.text, 1200);
+        modelUsed = res.model;
+      }
+      outputText = assembleDocument(sections, parts, snapshot.assembly ?? null);
+    } else {
+      const res = await streamOnce(baseUserContent, snapshot.max_output_tokens);
+      outputText = res.text;
+      stopReason = res.stopReason;
+      usage = res.usage;
+      modelUsed = res.model;
+    }
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     logger.error({ err, runId: run.id, model }, "run-generation: Anthropic call failed");
@@ -1320,6 +1380,64 @@ export async function translateText(input: {
 }
 
 /**
+ * Translates a free-text client answer for AcroForm filling, masking structured
+ * PII (SSN, A-number, passport) BEFORE it reaches the provider — consistent with
+ * the generation pipeline (domain `maskPii`, DOC-74 §7.1). Structured PII destined
+ * for the official form arrives via `source='profile'` (resolved locally in
+ * pdf-lib, never sent to AI), so masking here only neutralizes PII a client may
+ * have incidentally typed into a narrative text/textarea field.
+ */
+export async function translateAnswerText(input: {
+  text: string;
+  direction: "es-en" | "en-es";
+}): Promise<{ text: string }> {
+  const { text } = await translateText({ text: maskPii(input.text), direction: input.direction });
+  return { text };
+}
+
+/**
+ * OCR/transcribes a stored document to plain text (Gemini multimodal). Used to make
+ * uploaded dataset items (e.g. public won-case PDFs) injectable as reference material
+ * for generation. Best-effort: returns null on failure (item kept without content).
+ */
+export async function extractRawTextFromStorage(input: {
+  bucket: string;
+  path: string;
+  mimeType?: string;
+}): Promise<string | null> {
+  try {
+    const model = process.env.AI_GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL;
+    const geminiModels = getGeminiModels();
+    const { createServiceClient } = await import("@/backend/platform/supabase");
+    const supabase = createServiceClient();
+    const { data: fileData } = await supabase.storage.from(input.bucket).download(input.path);
+    if (!fileData) return null;
+    const fileBytes = new Uint8Array(await fileData.arrayBuffer());
+    const fileBase64 = Buffer.from(fileBytes).toString("base64");
+    const response = await geminiModels.generateContent({
+      model,
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { inlineData: { mimeType: input.mimeType ?? "application/pdf", data: fileBase64 } },
+            {
+              text:
+                "Transcribe ALL text from this document verbatim as plain text. Preserve structure, headings and paragraph order. Do NOT summarize, omit or add commentary.",
+            },
+          ],
+        },
+      ],
+      config: { temperature: 0, maxOutputTokens: 65536 },
+    });
+    const text = response.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    return text.trim() ? text : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Completes a partial i18n object (es or en) using translateText.
  * The result is editable by staff before saving (DOC-42 §3.8).
  */
@@ -1385,6 +1503,8 @@ function stripFencesAndParse<T>(text: string): T | null {
 
 /** A question proposed by the AI (rich shape — options/help/source/validation). */
 export interface ProposedQuestion {
+  /** Stable key the AI assigns so a condition can reference this question. */
+  key?: string;
   question_i18n?: { es: string; en: string };
   help_i18n?: { es: string; en: string } | null;
   field_type?: string;
@@ -1395,6 +1515,16 @@ export interface ProposedQuestion {
   is_required?: boolean;
   position?: number;
   validation?: { regex?: string; min?: number; max?: number } | null;
+  /**
+   * Conditional/dynamic visibility. `when.question` references ANOTHER question's
+   * `key` (the materializer resolves key → question_id). Used for the Sí/No →
+   * explanation pattern and continuation/overflow blocks (e.g. the 5th child).
+   */
+  condition?: {
+    when: { question: string; op: string; value?: string | number | boolean | string[] };
+    action: string;
+    lock_message_i18n?: { es: string; en: string } | null;
+  } | null;
 }
 
 export interface ProposedGroup {
@@ -1428,7 +1558,7 @@ export interface SegmentationProposal {
 export async function proposeFormSegmentation(
   actor: Actor,
   input: {
-    detectedFields: Array<{ name: string; type: string; page: number }>;
+    detectedFields: Array<{ name: string; type: string; page: number; rect?: [number, number, number, number] }>;
     pdfText: string;
     groupScope?: string[];
     /** Form identity so the model can research the right official instructions. */
@@ -1439,6 +1569,8 @@ export async function proposeFormSegmentation(
     serviceContext?: string;
     /** Whitelist of profile fields the model may map source='profile' to. */
     profileFields?: readonly string[];
+    /** Soft hint: which pages of the official form this form focuses on (e.g. Part A = 1-4). */
+    pageRange?: { from: number; to: number };
   },
 ): Promise<SegmentationProposal> {
   can(actor, "catalog", "edit");
@@ -1460,10 +1592,10 @@ export async function proposeFormSegmentation(
       const researchResp = await client.messages.create(
         {
           model: editorModel,
-          max_tokens: 2500,
+          max_tokens: 3200,
           system:
-            "You are an immigration-forms research assistant. Use web_search to find the OFFICIAL filling instructions, then reply with a concise plain-text brief. No JSON, no markdown.",
-          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 4 }],
+            "You are an immigration-forms research assistant. Use web_search to find the OFFICIAL line-by-line filling instructions, then reply with a precise plain-text brief. No JSON, no markdown.",
+          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }],
           messages: [
             {
               role: "user",
@@ -1471,10 +1603,20 @@ export async function proposeFormSegmentation(
                 `Research how to correctly fill the official U.S. immigration form: ${input.formName ?? input.formSlug}${input.formSlug ? ` [${input.formSlug}]` : ""}.`,
                 input.serviceName ? `It is used within the service "${input.serviceName}".` : "",
                 input.serviceContext ? `Service/phase context: ${input.serviceContext}` : "",
-                "Prefer uscis.gov / justice.gov/eoir and reputable legal-aid guides (3-4 searches).",
-                "Produce a concise brief (max ~500 words) covering: the form's Parts/sections in order;",
-                "which fields the applicant must personally provide; any enumerated choices and their",
-                "allowed values; and which fields map to standard identity/contact data. Plain text only.",
+                "Prefer uscis.gov / justice.gov/eoir and reputable legal-aid guides (4-5 searches).",
+                "Produce a precise brief (max ~650 words) covering, IN ORDER:",
+                "- The form's Parts/sections and what each collects.",
+                "- Which fields the applicant must personally provide; enumerated choices + allowed values.",
+                "- STRUCTURED / REPEATING sections (e.g. address history, education history, employment",
+                "  history, list of children/relatives): list the SEPARATE sub-fields each entry uses on the",
+                "  official form (e.g. street, city, state/province, country, from-date, to-date) — these are",
+                "  DISTINCT boxes on the PDF, never one free-text blob. For EACH repeating section give:",
+                "  the EXACT number of rows/slots the form prints, and the LEFT-TO-RIGHT column order.",
+                "- For every field, note whether it is REQUIRED or optional per the official instructions,",
+                "  so the wizard marks is_required correctly (do not over-require optional fields).",
+                "- FAMILY questions the form asks (e.g. mother, father — including whether each is living or",
+                "  deceased and their city/country — and siblings), so none are missed.",
+                "- Which fields map to standard identity/contact data. Plain text only.",
               ]
                 .filter(Boolean)
                 .join("\n"),
@@ -1508,22 +1650,42 @@ export async function proposeFormSegmentation(
     "Your message must be ONLY the JSON object — no prose, no markdown fences.",
   ].join(" ");
 
+  // Curate clearly-internal fields out (signatures, preparer, barcodes, …) so the
+  // OUTPUT budget is spent on real client questions (v1 curated-field-map spirit).
+  // Input size is NOT the bottleneck — the model's context easily holds every field
+  // name. The bottleneck is OUTPUT (a long JSON streams slowly), so we keep help
+  // text short (~40-75 questions) and give the call enough time + tokens to finish.
+  // (Per-page batching was worse: it pushed the model to map more fields per call →
+  // larger, slower output → the 120s timeout fired and the whole proposal failed.)
+  const { kept: curatedFields } = curateInternalFields(input.detectedFields);
+  const fieldsForProposal = curatedFields.length > 0 ? curatedFields : input.detectedFields;
+
+  logger.info(
+    { totalFields: input.detectedFields.length, curated: fieldsForProposal.length, researchLen: researchBrief.length },
+    "ai-engine: proposeFormSegmentation — plan",
+  );
+
   const buildUserPrompt = (feedback?: string): string => {
     const lines = [
       `Official form: ${input.formName ?? "(unknown immigration form)"}${input.formSlug ? ` [${input.formSlug}]` : ""}.`,
       input.serviceName ? `Used within the service: "${input.serviceName}".` : "",
       input.serviceContext ? `Service/phase context: ${input.serviceContext}` : "",
+      input.pageRange
+        ? `This form focuses on pages ${input.pageRange.from}-${input.pageRange.to} of the official form (continuation slots for these entries may live on later pages).`
+        : "",
     ];
     if (researchBrief) {
       lines.push("", "OFFICIAL RESEARCH BRIEF (ground your questions in this):", researchBrief.slice(0, 6000));
     }
     lines.push(
       "",
-      "PROPOSE a FOCUSED client intake wizard. Map the detected AcroForm fields below into",
-      "clear, plain-language questions a client can answer. Rules:",
-      "- Aim for the 20-45 MOST IMPORTANT client-answerable questions. Do NOT try to map",
-      "  every field: SKIP signature, preparer, interpreter, attorney, page-number and",
-      "  purely-internal fields. Quality and correctness over coverage.",
+      "PROPOSE a THOROUGH client intake wizard. From the detected AcroForm fields below,",
+      "map every applicant-answerable field into clear, plain-language questions. Rules:",
+      "- COVERAGE: aim for thorough coverage — a complex form like this typically needs",
+      "  ~40-75 client questions. SKIP only signature, preparer, interpreter, attorney,",
+      "  page-number, barcode and purely-internal/office-use fields. Do NOT drop real applicant",
+      "  fields to save space, but do NOT pad with duplicates. Keep help_i18n SHORT (≤12 words)",
+      "  or null to control length. Your ENTIRE reply must be ONE complete JSON object — never truncate.",
       "- Group questions following the form's official Parts/sections (logical order).",
       "- Write question_i18n {es,en} in plain language; help_i18n {es,en} with a short",
       "  hint grounded in the official instructions (or null).",
@@ -1543,17 +1705,85 @@ export async function proposeFormSegmentation(
       "- pdf_field_name: copy the EXACT detected field name this question fills, or null.",
       "- Do NOT ask SSN / A-Number as free text — prefer the profile source when whitelisted.",
       "- validation: optional {regex?, min?, max?} when clearly warranted (e.g. ZIP regex).",
+      "- key: give EVERY question a short stable key (e.g. \"has_other_nationality\",",
+      "  \"child5_name\"). Conditions reference questions by this key.",
+      "- condition (DYNAMIC FIELDS): when a question only applies depending on another",
+      "  answer, add a `condition` referencing that question's key. Shape:",
+      '  {"when":{"question":"<other key>","op":"equals|not_equals|includes|answered|gte|lte","value":<v>},"action":"show|lock|require","lock_message_i18n":{"es":"...","en":"..."}}.',
+      "  * Sí/No → explanation: the explanation field gets",
+      '    {"when":{"question":"<the yes/no key>","op":"equals","value":"si"},"action":"show"}',
+      "    so it only appears (and is only required) when the client answers Sí. On the",
+      "    official form, a 'No' answer leaves that explanation BLANK — model it this way.",
+      "  * action 'lock' keeps the field visible but disabled with lock_message_i18n;",
+      "    'require' keeps it visible but required only when the condition holds.",
+      "- OVERFLOW / continuation (IMPORTANT): when the form has a FIXED number of slots",
+      "  for repeated entries (e.g. children/relatives on the early pages) PLUS a",
+      "  continuation/supplement area later in the SAME form, do NOT invent new pages.",
+      "  Add a count question (number) and model each extra entry as its own question(s)",
+      "  mapped to the form's OWN continuation slots, gated by a condition op 'gte' on the",
+      "  count. Example: child #5 fields → condition",
+      '  {"when":{"question":"<num_children key>","op":"gte","value":5},"action":"show"} with',
+      "  pdf_field_name set to the continuation slot you identify from the field list + the",
+      "  official instructions. Use the research brief to know where overflow goes.",
+      "- STRUCTURED SECTIONS — NEVER COLLAPSE (IMPORTANT): for address history, education",
+      "  history, employment history, and similar repeating sections, the official form has",
+      "  SEPARATE boxes per sub-field. Create ONE question PER sub-field (e.g. street, city,",
+      "  state/province, country, from-date, to-date, employer, occupation), each with its OWN",
+      "  exact pdf_field_name and correct field_type (date for dates, text for city, etc.).",
+      "  Do NOT lump them into a single textarea pointing at one box — that leaves the other",
+      "  boxes empty and can't be auto-filled. Match the form's field granularity exactly.",
+      "- MAP DISTINCT FIELDS: when one logical item is split across several AcroForm fields",
+      "  (a date in month/day/year boxes, an address in street/city/state/zip boxes), map EACH",
+      "  detected field to its own question — one question per detected box, not per concept.",
+      "- FIELD GEOMETRY — RECONSTRUCT TABLES SPATIALLY (CRITICAL, prevents mis-mapping):",
+      "  each field below shows its page and top-left position @x,y (x grows RIGHT, y grows",
+      "  DOWN — a LARGER y is LOWER on the page). Fields with nearly the SAME y are in the SAME",
+      "  table ROW; fields with nearly the same x are in the SAME COLUMN. To map a repeating",
+      "  table (residences, education, employment, parents/siblings): (1) read its printed",
+      "  column headers left-to-right from the page text, (2) group the row's fields by y, (3)",
+      "  within each row assign fields to columns by ASCENDING x. NEVER assume the bracket index",
+      "  (e.g. [8],[9],[10]) follows visual order — USCIS forms routinely interleave odd/even",
+      "  indices across rows and scramble date-box indices, so INDEX ORDER ≠ POSITION. Map",
+      "  STRICTLY by geometry + headers, never by the numeric index. The fields are listed in",
+      "  reading order (page, then top-to-bottom, then left-to-right) to help you see the rows.",
+      "- ACCOUNT FOR EVERY FIELD: each non-internal detected field below must end up mapped to",
+      "  exactly one question's pdf_field_name (a repeating table's later rows become overflow",
+      "  questions gated by a count). Do not silently drop applicant fields; if a field is truly",
+      "  office-use/internal, omit it but note the category in research_summary.",
+      "- COMPLETENESS — do not skip Parts: capture EVERY field the applicant personally fills.",
+      "  In particular, FAMILY/background: parents (full name + whether LIVING or DECEASED +",
+      "  city/country), SIBLINGS if asked, last residence abroad, education and employment — these",
+      "  are commonly under-collected. Use the research brief to ensure none are missed.",
       "",
-      `Detected AcroForm fields (${input.detectedFields.length}${input.detectedFields.length > 180 ? ", showing the first 180" : ""}):`,
-      input.detectedFields.slice(0, 180).map((f) => `- ${f.name} (${f.type}, page ${f.page})`).join("\n"),
+      `Detected AcroForm fields (${fieldsForProposal.length}, spanning the whole form,`,
+      "listed in reading order — page, then top-to-bottom (y), then left-to-right (x)):",
+      [...fieldsForProposal]
+        .sort((a, b) => a.page - b.page || (a.rect?.[1] ?? 0) - (b.rect?.[1] ?? 0) || (a.rect?.[0] ?? 0) - (b.rect?.[0] ?? 0))
+        .map((f) =>
+          f.rect
+            ? `- ${f.name} (${f.type}, page ${f.page}, @x${Math.round(f.rect[0])},y${Math.round(f.rect[1])})`
+            : `- ${f.name} (${f.type}, page ${f.page})`,
+        )
+        .join("\n"),
     );
     if (input.pdfText) {
-      lines.push("", `Extracted PDF text (truncated): ${input.pdfText.slice(0, 4000)}`);
+      lines.push(
+        "",
+        "PRINTED FORM TEXT BY PAGE — the official form's labels and column headers. The",
+        "AcroForm field names above are often ANONYMOUS (e.g. \"TextField13[39]\"); use this",
+        "text + the field's PAGE to figure out what each field actually is (e.g. the field on",
+        "the page whose text shows an Employment table → map TextField13[39] to 'Employer',",
+        "[40] to 'Occupation', the adjacent date boxes to From/To). Map by MEANING, never by",
+        "the anonymous name. Match the form's exact granularity (one question per box).",
+        "The text is segmented by `=== Page N ===` markers — align each field's PAGE with",
+        "the matching page block; never read a field's columns from a different page's text:",
+        input.pdfText.slice(0, 32000),
+      );
     }
     lines.push(
       "",
       "Return ONLY this JSON object (no fences, no prose):",
-      '{ "research_summary": "...", "groups": [ { "title_i18n": {"es":"...","en":"..."}, "position": 0, "questions": [ { "question_i18n": {"es":"...","en":"..."}, "help_i18n": {"es":"...","en":"..."}, "field_type": "text", "options": null, "pdf_field_name": "...", "source": "client_answer", "source_ref": null, "is_required": true, "validation": null, "position": 0 } ] } ] }',
+      '{ "research_summary": "...", "groups": [ { "title_i18n": {"es":"...","en":"..."}, "position": 0, "questions": [ { "key": "unique_key", "question_i18n": {"es":"...","en":"..."}, "help_i18n": {"es":"...","en":"..."}, "field_type": "text", "options": null, "pdf_field_name": "...", "source": "client_answer", "source_ref": null, "is_required": true, "validation": null, "condition": null, "position": 0 } ] } ] }',
     );
     if (feedback) {
       lines.push("", `CORRECTION REQUIRED — previous response had errors: ${feedback}`, "Fix these issues and return ONLY valid JSON.");
@@ -1561,39 +1791,56 @@ export async function proposeFormSegmentation(
     return lines.filter((l) => l !== "").join("\n");
   };
 
+  // Single JSON-gen call with a resilient retry: a transient failure on the first
+  // attempt (timeout, 5xx, or unparseable/groupless output) feeds an error note
+  // into a second attempt instead of bubbling up and failing the proposal silently.
   let lastError = "response was not valid JSON";
-
   for (let attempt = 0; attempt < 2; attempt++) {
-    const response = await client.messages.create(
-      {
-        model: editorModel,
-        max_tokens: 12000,
-        system: systemPrompt,
-        messages: [{ role: "user", content: buildUserPrompt(attempt > 0 ? lastError : undefined) }],
-      },
-      // maxRetries:1 avoids a multi-minute retry storm on the (rare) timeout.
-      { timeout: 120_000, maxRetries: 1 },
-    );
+    try {
+      // STREAM (not create): a large form needs a big max_tokens, and the SDK
+      // refuses a non-streaming request whose budget could exceed 10 minutes
+      // ("Streaming is required…"). Streaming also avoids mid-JSON truncation.
+      const stream = client.messages.stream(
+        {
+          model: editorModel,
+          max_tokens: 32000,
+          system: systemPrompt,
+          messages: [{ role: "user", content: buildUserPrompt(attempt > 0 ? lastError : undefined) }],
+        },
+        // A big-form generation can run minutes; pin the per-request timeout to the
+        // job route's maxDuration (300s) instead of relying on the SDK default.
+        { timeout: 300_000, maxRetries: 1 },
+      );
+      const message = await stream.finalMessage();
 
-    const text = response.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as { text: string }).text)
-      .join("\n");
+      const text = message.content
+        .filter((b) => b.type === "text")
+        .map((b) => (b as { type: "text"; text: string }).text)
+        .join("\n");
+      const stop = message.stop_reason ?? undefined;
 
-    const parsed = stripFencesAndParse<SegmentationProposal>(text);
-    if (parsed && Array.isArray(parsed.groups)) {
-      if (researchBrief && !parsed.research_summary) {
-        parsed.research_summary = researchBrief.slice(0, 280);
+      const parsed = stripFencesAndParse<SegmentationProposal>(text);
+      if (parsed && Array.isArray(parsed.groups)) {
+        if (researchBrief && !parsed.research_summary) parsed.research_summary = researchBrief.slice(0, 280);
+        const totalQ = parsed.groups.reduce((n, g) => n + (g.questions?.length ?? 0), 0);
+        logger.info({ groups: parsed.groups.length, questions: totalQ, outLen: text.length, stop }, "ai-engine: proposeFormSegmentation — result");
+        return parsed;
       }
-      return parsed;
+      lastError = parsed
+        ? `parsed object has no 'groups' array (got keys: ${Object.keys(parsed as object).join(", ")})`
+        : "response was not valid JSON after stripping code fences";
+      // stop === 'max_tokens' here means the JSON was truncated → a tighter cap is needed.
+      logger.warn({ attempt, lastError, outLen: text.length, stop }, "ai-engine: proposeFormSegmentation — parse failed");
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+      // Auth / bad-request errors won't succeed on retry (same pattern as executeGenerationJob).
+      if (lastError.includes("401") || lastError.includes("403") || lastError.includes("400") || lastError.includes("413")) {
+        break;
+      }
     }
-
-    lastError = parsed
-      ? `parsed object has no 'groups' array (got keys: ${Object.keys(parsed as object).join(", ")})`
-      : "response was not valid JSON after stripping code fences";
-
-    if (attempt === 0) {
-      logger.warn({ attempt, lastError }, "ai-engine: proposeFormSegmentation — retrying with feedback");
+    // Only announce a retry when there IS another attempt left.
+    if (attempt < 1) {
+      logger.warn({ attempt, lastError }, "ai-engine: proposeFormSegmentation — attempt failed, retrying");
     }
   }
 

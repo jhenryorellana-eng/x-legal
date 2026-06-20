@@ -1,11 +1,12 @@
 "use client";
 
 /**
- * EmailScreen — client component for the /email page.
- * Handles email input with live validation, then calls requestClientOtpAction(email)
- * and navigates to /otp?email=<encoded>.
+ * EntrarScreen — client component for the /entrar page (DOC-22 §1, phone-only
+ * login, June 2026). The client types ONLY their phone number and is signed in
+ * directly — no email, no code, no OTP (TEMPORARY: SMS-OTP comes later). On
+ * success the SSR session cookie is set by loginClientByPhoneAction and we
+ * navigate to /home.
  *
- * Design mirrors PhoneScreen exactly (same brand tokens, layout zones, animations).
  * All messages are passed as props (resolved server-side by the RSC wrapper).
  */
 
@@ -14,9 +15,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { GradientBtn } from "@/frontend/components/brand/gradient-btn";
 import { Icon } from "@/frontend/components/brand/icon";
-import { requestClientOtpAction } from "@/backend/modules/identity/actions";
+import { loginClientByPhoneAction } from "@/backend/modules/identity/actions";
 
-interface EmailScreenProps {
+interface EntrarScreenProps {
   messages: {
     eyebrow: string;
     title: string;
@@ -27,28 +28,33 @@ interface EmailScreenProps {
     noAccess: string;
     footerBadge: string;
     errorRateLimit: string;
-    errorInvalidEmail: string;
+    errorInvalidPhone: string;
+    errorNoAccess: string;
     errorGeneric: string;
   };
 }
 
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-function isValidEmail(email: string): boolean {
-  return EMAIL_REGEX.test(email.trim());
+/**
+ * Mirrors the server's normalizePhoneE164 acceptance: exactly 10 digits, or 11
+ * digits starting with "1" (US country code). Keeps the submit button + check
+ * mark from lighting up for digit counts the server would reject.
+ */
+function isValidPhone(phone: string): boolean {
+  const digits = phone.replace(/\D/g, "");
+  return digits.length === 10 || (digits.length === 11 && digits.startsWith("1"));
 }
 
-export function EmailScreen({ messages }: EmailScreenProps) {
+export function EntrarScreen({ messages }: EntrarScreenProps) {
   const router = useRouter();
-  const [email, setEmail] = React.useState("");
+  const [phone, setPhone] = React.useState("");
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
-  const trimmed = email.trim();
-  const isComplete = isValidEmail(trimmed);
+  const trimmed = phone.trim();
+  const isComplete = isValidPhone(trimmed);
 
   function handleInput(e: React.ChangeEvent<HTMLInputElement>) {
-    setEmail(e.target.value);
+    setPhone(e.target.value.replace(/[^\d() +-]/g, ""));
     setError(null);
   }
 
@@ -64,20 +70,21 @@ export function EmailScreen({ messages }: EmailScreenProps) {
     setLoading(true);
     setError(null);
 
-    const result = await requestClientOtpAction(trimmed);
-
-    setLoading(false);
+    const result = await loginClientByPhoneAction(trimmed);
 
     if (!result.ok) {
+      setLoading(false);
       const code = result.error?.code;
       if (code === "rate_limited") setError(messages.errorRateLimit);
-      else if (code === "invalid_email") setError(messages.errorInvalidEmail);
+      else if (code === "invalid_phone") setError(messages.errorInvalidPhone);
+      else if (code === "no_access") setError(messages.errorNoAccess);
       else setError(messages.errorGeneric);
       return;
     }
 
-    // Navigate to OTP screen with email in URL search params
-    router.push(`/otp?email=${encodeURIComponent(trimmed)}`);
+    // Session cookie is set — go straight to the client home (no OTP step).
+    setLoading(false);
+    router.push("/home");
   }
 
   return (
@@ -137,15 +144,15 @@ export function EmailScreen({ messages }: EmailScreenProps) {
         </p>
       </div>
 
-      {/* Zona 3 — Email input */}
+      {/* Zona 3 — Phone input */}
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
         <div style={{ position: "relative" }}>
           <input
-            type="email"
-            inputMode="email"
-            autoComplete="email"
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
             placeholder={messages.placeholder}
-            value={email}
+            value={phone}
             onChange={handleInput}
             autoFocus
             disabled={loading}

@@ -24,6 +24,7 @@ export default async function NewServicePage() {
     <CatalogWizard
       service={null}
       plans={[]}
+      partyRoles={[]}
       phases={[]}
       slugLocked={false}
       messages={buildCatalogStrings(tt)}

@@ -36,6 +36,7 @@ export interface UploadStageProps {
 export function UploadStage({ vm, openVersion, hasVersions, readOnly, strings, actions, onUploaded }: UploadStageProps) {
   const [busy, setBusy] = React.useState(false);
   const [dragOver, setDragOver] = React.useState(false);
+  const [sourceLang, setSourceLang] = React.useState<"en" | "es">("en");
   const inputRef = React.useRef<HTMLInputElement>(null);
 
   async function handleFile(file: File) {
@@ -47,7 +48,7 @@ export function UploadStage({ vm, openVersion, hasVersions, readOnly, strings, a
       const { signedUrl, path } = urlRes.data!;
       const put = await fetch(signedUrl, { method: "PUT", body: file, headers: { "content-type": "application/pdf" } });
       if (!put.ok) throw new Error("upload failed");
-      const ver = await actions.createVersion({ form_definition_id: vm.form.id, uploaded_pdf_path: path });
+      const ver = await actions.createVersion({ form_definition_id: vm.form.id, uploaded_pdf_path: path, source_language: sourceLang });
       if (!ver.success) throw new Error(ver.error?.code);
       toast.success(strings.reading);
       onUploaded();
@@ -113,6 +114,29 @@ export function UploadStage({ vm, openVersion, hasVersions, readOnly, strings, a
     <div>
       {hasVersions && !readOnly && (
         <p style={{ fontSize: 13, color: "var(--ink-2)", marginBottom: 12, background: "var(--blue-soft)", borderRadius: 12, padding: "10px 14px" }}>{strings.newVersionNote}</p>
+      )}
+      {!readOnly && (
+        <div style={{ marginBottom: 14 }}>
+          <p style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase", color: "var(--ink-3)", margin: "0 0 6px" }}>{strings.sourceLanguage}</p>
+          <div role="radiogroup" aria-label={strings.sourceLanguage} style={{ display: "inline-flex", gap: 4, padding: 4, borderRadius: 12, background: "var(--chip)" }}>
+            {(["en", "es"] as const).map((l) => {
+              const on = sourceLang === l;
+              return (
+                <button
+                  key={l}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  onClick={() => setSourceLang(l)}
+                  style={{ height: 34, padding: "0 16px", borderRadius: 9, border: "none", cursor: "pointer", background: on ? "var(--accent-soft)" : "transparent", color: on ? "var(--accent)" : "var(--ink-2)", fontWeight: 800, fontSize: 12.5 }}
+                >
+                  {l === "es" ? strings.langEs : strings.langEn}
+                </button>
+              );
+            })}
+          </div>
+          <p style={{ fontSize: 12, color: "var(--ink-3)", margin: "6px 0 0", maxWidth: 460, lineHeight: 1.4 }}>{strings.sourceLanguageHint}</p>
+        </div>
       )}
       <div
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}

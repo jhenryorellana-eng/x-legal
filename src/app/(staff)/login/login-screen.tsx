@@ -13,6 +13,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { GradientBtn } from "@/frontend/components/brand/gradient-btn";
 import { Icon } from "@/frontend/components/brand/icon";
+import { Logo } from "@/frontend/components/brand/logo";
 import { signInStaffAction } from "@/backend/modules/identity/actions";
 
 interface StaffLoginScreenProps {
@@ -92,44 +93,32 @@ export function StaffLoginScreen({ messages }: StaffLoginScreenProps) {
         }}
       >
         {/* Brand */}
-        <div style={{ textAlign: "center" }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 8,
-              marginBottom: 16,
-            }}
-          >
-            <div style={{ display: "flex", gap: 3 }}>
-              {["var(--navy)", "#fff", "#E4002B"].map((c, i) => (
-                <div
-                  key={i}
-                  style={{ width: 7, height: 22, borderRadius: 2, background: c, border: i === 1 ? "1px solid var(--line)" : "none" }}
-                />
-              ))}
-            </div>
-            <span
-              style={{
-                fontFamily: "var(--font-title)",
-                fontWeight: 800,
-                fontSize: 18,
-                color: "var(--navy)",
-                letterSpacing: "-0.02em",
-              }}
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            textAlign: "center",
+            gap: 16,
+          }}
+        >
+          <Logo
+            size={64}
+            withWordmark
+            direction="column"
+            wordmarkSize={19}
+            elevated
+            label="X Legal"
+          />
+          <div>
+            <h1
+              className="t-black"
+              style={{ fontSize: 24, color: "var(--navy)", marginBottom: 6 }}
             >
-              USALATINO
-              <span style={{ color: "var(--accent)" }}>PRIME</span>
-            </span>
+              {messages.title}
+            </h1>
+            <p style={{ fontSize: 14, color: "var(--ink-3)" }}>{messages.subtitle}</p>
           </div>
-          <h1
-            className="t-black"
-            style={{ fontSize: 24, color: "var(--navy)", marginBottom: 6 }}
-          >
-            {messages.title}
-          </h1>
-          <p style={{ fontSize: 14, color: "var(--ink-3)" }}>{messages.subtitle}</p>
         </div>
 
         {/* Form */}

@@ -138,6 +138,16 @@ export interface DianaKanbanStrings {
   // empty state
   emptyTitle: string;
   emptyBody: string;
+  // inline note placeholder + card chrome
+  notePlaceholder: string;
+  rfeInProgress: string;
+  timeInColumn: string;
+  // column menu
+  colMenuEdit: string;
+  colMenuDelete: string;
+  // accessibility (templates with {title}/{caseNumber})
+  colMenuAria: string;
+  openCaseAria: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -525,6 +535,9 @@ export function DianaKanbanView({
                     onEdit={() => openEdit(col)}
                     onDelete={() => openDelete(col)}
                     delLastLabel={strings.delLastColumn}
+                    editLabel={strings.colMenuEdit}
+                    deleteLabel={strings.colMenuDelete}
+                    ariaLabel={strings.colMenuAria}
                   />
                 </div>
               </div>
@@ -727,7 +740,7 @@ function CaseCard({
     >
       {/* Left amber rail for RFE in progress */}
       {card.alerts.rfeInProgress && !card.alerts.rfeOverdue && (
-        <span className="kcard-uncontacted" title="RFE en curso" />
+        <span className="kcard-uncontacted" title={strings.rfeInProgress} />
       )}
 
       {/* Row 1: service icon + case number + with_lawyer chip */}
@@ -762,7 +775,7 @@ function CaseCard({
         href={`/legal/caso/${card.caseId}`}
         className="kcard-name"
         style={{ display: "block", marginBottom: 6, textDecoration: "none" }}
-        aria-label={`Abrir caso ${card.caseNumber}`}
+        aria-label={strings.openCaseAria.replace("{caseNumber}", card.caseNumber)}
         onClick={(e) => e.stopPropagation()}
       >
         {card.clientName}
@@ -864,7 +877,7 @@ function CaseCard({
           }}
         >
           <MSym name="edit" size={13} />
-          <span style={{ fontStyle: "italic" }}>Nota…</span>
+          <span style={{ fontStyle: "italic" }}>{strings.notePlaceholder}</span>
         </button>
       )}
 
@@ -872,7 +885,7 @@ function CaseCard({
       <div className="kcard-foot">
         <span
           className={`time-badge ${card.ageTier}`}
-          title="Tiempo en esta columna"
+          title={strings.timeInColumn}
         >
           {card.ageLabel}
         </span>
@@ -971,6 +984,9 @@ function ColumnMenu({
   onDelete,
   otherCols: _otherCols,
   delLastLabel,
+  editLabel,
+  deleteLabel,
+  ariaLabel,
 }: {
   col: CaseColumnVM;
   isLast: boolean;
@@ -978,6 +994,9 @@ function ColumnMenu({
   onEdit: () => void;
   onDelete: () => void;
   delLastLabel: string;
+  editLabel: string;
+  deleteLabel: string;
+  ariaLabel: string;
 }) {
   const [open, setOpen] = React.useState(false);
   const ref = React.useRef<HTMLDivElement>(null);
@@ -996,7 +1015,7 @@ function ColumnMenu({
       <button
         type="button"
         className="kcol-menu"
-        aria-label={`Opciones columna ${col.title}`}
+        aria-label={ariaLabel.replace("{title}", col.title)}
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
@@ -1039,7 +1058,7 @@ function ColumnMenu({
             onClick={() => { setOpen(false); onEdit(); }}
           >
             <MSym name="edit" size={16} />
-            Editar
+            {editLabel}
           </button>
           <button
             type="button"
@@ -1063,7 +1082,7 @@ function ColumnMenu({
             onClick={() => { if (!isLast) { setOpen(false); onDelete(); } }}
           >
             <MSym name="delete" size={16} />
-            Eliminar
+            {deleteLabel}
           </button>
         </div>
       )}

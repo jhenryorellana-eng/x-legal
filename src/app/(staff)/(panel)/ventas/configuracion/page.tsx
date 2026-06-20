@@ -8,7 +8,7 @@ import { getLocale, getTranslations } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
 import { ConfiguracionView, LexPrefsProvider } from "@/frontend/features/vanessa";
 import type { Locale } from "@/frontend/lib/datetime";
-import { setLocaleAction } from "../actions";
+import { setUserLocaleAction } from "@/backend/modules/identity/actions";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +30,7 @@ export default async function VentasConfigPage() {
     appearance: t("appearance"),
     darkMode: t("darkMode"),
     darkModeSub: t("darkModeSub"),
+    textSize: t("textSize"),
     accent: t("accent"),
     lexTitle: t("lexTitle"),
     lexBubbles: t("lexBubbles"),
@@ -42,7 +43,7 @@ export default async function VentasConfigPage() {
 
   return (
     <LexPrefsProvider>
-      <ConfiguracionView strings={strings} locale={locale} actions={{ setLocale: setLocaleAction }} />
+      <ConfiguracionView strings={strings} locale={locale} actions={{ setLocale: setUserLocaleAction }} />
     </LexPrefsProvider>
   );
 }

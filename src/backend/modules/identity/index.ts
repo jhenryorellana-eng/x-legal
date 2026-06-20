@@ -27,8 +27,7 @@ export type { ActionResult, TypedActionResult } from "./actions";
 
 // Service result types (for other modules that delegate to identity)
 export type {
-  OtpRequestResult,
-  OtpVerifyResult,
+  PhoneLoginResult,
   PasswordResetResult,
   PasswordUpdateResult,
   IdentityError,
@@ -56,6 +55,9 @@ export { provisionClientUser, upsertPersonRecord } from "./service";
 
 // Party row helper — used by cases module only (DOC-41 §3.1 boundary)
 export { insertCasePartyRow } from "./repository";
+
+// Client address shape (captured at intake; prefills the I-589 — DOC-40 §2.7)
+export type { ClientAddressInput } from "./repository";
 
 // Auth / authorization helpers — re-exported here so app-layer files can
 // import them via module-pub boundary (app → module-pub is allowed per DOC-21).

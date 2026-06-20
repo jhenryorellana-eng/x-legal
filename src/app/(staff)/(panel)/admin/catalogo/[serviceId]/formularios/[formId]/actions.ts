@@ -23,6 +23,7 @@ import {
   generateTestPdfAction,
   publishVersionAction,
   unpublishVersionAction,
+  duplicateVersionAsDraftAction,
   updateGenerationConfigAction,
   testGenerationAction,
 } from "@/backend/modules/catalog/actions";
@@ -45,6 +46,7 @@ export async function createFormPdfUploadUrlUi(input: {
 export async function createAutomationVersionUi(input: {
   form_definition_id: string;
   uploaded_pdf_path: string;
+  source_language?: "en" | "es";
 }): Promise<Res<unknown>> {
   return envelope(await createAutomationVersionAction(input));
 }
@@ -117,6 +119,10 @@ export async function publishVersionUi(input: {
 
 export async function unpublishVersionUi(versionId: string): Promise<Res<unknown>> {
   return envelope(await unpublishVersionAction(versionId));
+}
+
+export async function duplicateVersionUi(versionId: string): Promise<Res<{ id: string }>> {
+  return envelope(await duplicateVersionAsDraftAction(versionId)) as Res<{ id: string }>;
 }
 
 // --- ai_letter mode --------------------------------------------------------

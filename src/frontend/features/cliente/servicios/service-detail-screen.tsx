@@ -7,17 +7,19 @@ import { IconHalo } from "@/frontend/components/brand/icon-tile";
 import { Card } from "@/frontend/components/brand/card";
 import { GradientBtn } from "@/frontend/components/brand/gradient-btn";
 import { GhostBtn } from "@/frontend/components/brand/ghost-btn";
+import { openTeamChat } from "@/frontend/features/messaging/team-chat-bus";
 
 /**
  * ServiceDetailScreen — `/servicios/[slug]` (DOC-51 §7, prototype `screens6.jsx
  * → ServiceDetailScreen`).
  *
  * The "Me interesa, contáctenme" CTA is gated by the `NEXT_PUBLIC_FEATURE_INTERES`
- * flag (nota H-7 / PS-3): the lead action arrives in F3. When the flag is off the
- * button is present but disabled with an explanatory tooltip-less label change
- * (it never silently disappears, per the spec's anti-pattern rule on disabled
- * states). "Preguntar por mensaje" opens the messaging sheet (overlay O1) — wired
- * to the launcher once O1 lands; for now it is a no-op affordance.
+ * flag (nota H-7 / PS-3): the dedicated lead action arrives in F3. When the flag
+ * is off the button is present but disabled with an explanatory tooltip-less label
+ * change (it never silently disappears, per the spec's anti-pattern rule on
+ * disabled states). "Preguntar por mensaje" opens the team chat (overlay O1) via
+ * the team-chat bus — the account chrome renders the overlay for the client's
+ * primary case (a dedicated pre-sales thread is the F3 target).
  */
 
 export interface ServiceDetailLabels {
@@ -58,7 +60,7 @@ export function ServiceDetailScreen({
     <div
       style={{
         minHeight: "100dvh",
-        padding: "26px 20px 120px",
+        padding: "26px 20px var(--screen-pb)",
         background:
           "radial-gradient(135% 95% at 100% -8%, var(--blue-soft) 0%, transparent 46%), radial-gradient(120% 80% at -12% 4%, color-mix(in srgb, var(--gold-soft) 80%, transparent) 0%, transparent 42%), var(--bg)",
       }}
@@ -289,7 +291,7 @@ export function ServiceDetailScreen({
         >
           {interestEnabled ? labels.interested : labels.interestedSoon}
         </GradientBtn>
-        <GhostBtn icon="chat" onClick={() => {}}>
+        <GhostBtn icon="chat" onClick={() => openTeamChat()}>
           {labels.askByMessage}
         </GhostBtn>
       </div>

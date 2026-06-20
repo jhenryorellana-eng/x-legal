@@ -8,6 +8,7 @@
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 import { Lex } from "@/frontend/components/brand/lex";
+import { Logo } from "@/frontend/components/brand/logo";
 import { GradientBtn } from "@/frontend/components/brand/gradient-btn";
 import { GhostBtn } from "@/frontend/components/brand/ghost-btn";
 import { Icon } from "@/frontend/components/brand/icon";
@@ -55,39 +56,7 @@ export default async function WelcomePage() {
       ))}
 
       {/* Zona 1 — BrandBar */}
-      <div style={{ textAlign: "center" }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 8,
-            marginBottom: 4,
-          }}
-        >
-          {/* Tricolor bar */}
-          <div style={{ display: "flex", gap: 2 }}>
-            {["var(--navy)", "#fff", "#E4002B"].map((c, i) => (
-              <div
-                key={i}
-                style={{ width: 6, height: 20, borderRadius: 2, background: c }}
-              />
-            ))}
-          </div>
-          <span
-            style={{
-              fontFamily: "var(--font-title)",
-              fontWeight: 800,
-              fontSize: 16,
-              color: "var(--navy)",
-              letterSpacing: "-0.02em",
-            }}
-          >
-            USALATINO
-            <span style={{ color: "var(--accent)" }}>PRIME</span>
-          </span>
-        </div>
-      </div>
+      <Logo size={30} withWordmark wordmarkSize={16} label="X Legal" />
 
       {/* Zona 2 — Hero central */}
       <div
@@ -140,7 +109,7 @@ export default async function WelcomePage() {
           animationFillMode: "both",
         }}
       >
-        <Link href="/email" style={{ textDecoration: "none" }}>
+        <Link href="/entrar" style={{ textDecoration: "none" }}>
           <GradientBtn icon="lock" size="lg">
             {t("cta")}
           </GradientBtn>

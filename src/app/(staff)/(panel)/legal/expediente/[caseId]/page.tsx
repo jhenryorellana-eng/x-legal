@@ -10,6 +10,7 @@ export const dynamic = "force-dynamic";
 
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { getTranslations } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
 import {
   getCaseExpedientes,
@@ -66,6 +67,8 @@ export default async function EnsambladorPage({
 
   const actor = await getActor();
   if (!actor || actor.kind !== "staff") redirect("/login");
+
+  const t = await getTranslations("staff_ensamblador");
 
   // -------------------------------------------------------------------------
   // Data loading — all errors become friendly empty states (never 500).
@@ -135,7 +138,7 @@ export default async function EnsambladorPage({
             textDecoration: "none",
           }}
         >
-          {"<- Volver al caso"}
+          {t("backLink")}
         </Link>
         <h1
           style={{
@@ -146,10 +149,10 @@ export default async function EnsambladorPage({
             fontFamily: "var(--font-title)",
           }}
         >
-          Ensamblador de expediente
+          {t("pageTitle")}
         </h1>
         <p style={{ fontSize: 14, color: "var(--ink-2)" }}>
-          Agrega material, ordena las piezas, genera la caratula y compila todo en un PDF.
+          {t("pageSubtitle")}
         </p>
       </div>
 

@@ -17,6 +17,14 @@ import {
   getCurrentStaffProfile,
 } from "@/backend/modules/identity";
 import { signOutAction } from "@/backend/modules/identity/actions";
+import { getNotifications, getUnreadCount } from "@/backend/modules/notifications";
+import {
+  listNotificationsAction,
+  markNotificationReadAction,
+  markAllNotificationsReadAction,
+  getUnreadCountAction,
+} from "@/backend/modules/notifications/actions";
+import { mapNotificationRow } from "@/frontend/features/notifications/types";
 import { resolveI18n, type Locale } from "@/shared/i18n";
 import { STAFF_NAV, filterNav } from "@/frontend/lib/nav";
 import {
@@ -55,10 +63,13 @@ export default async function StaffPanelLayout({
   const tNav = tNavRaw as unknown as (key: string) => string;
   const tRoles = tRolesRaw as unknown as (key: string) => string;
 
-  // Filter the nav by permission (admin bypass via the Actor's role).
-  const filtered = filterNav(STAFF_NAV, (module) => {
-    if (actor.role === "admin") return true;
-    const p = actor.permissions.get(module);
+  // Filter the nav by permission (admin bypass via the Actor's role). The admin
+  // sees everything EXCEPT the per-department personal "Configuración" entries
+  // (`hiddenForAdmin`) — it already has the org-wide one (settings), so those
+  // would otherwise show up as four duplicate "Configuración" items.
+  const filtered = filterNav(STAFF_NAV, (item) => {
+    if (actor.role === "admin") return !item.hiddenForAdmin;
+    const p = actor.permissions.get(item.module);
     return Boolean(p && (p.view || p.edit));
   });
 
@@ -88,6 +99,15 @@ export default async function StaffPanelLayout({
     logout: t("shell.logout"),
   };
 
+  // Notification bell: first page + unread badge, resolved server-side.
+  const [notifPage, unread] = await Promise.all([
+    getNotifications(actor, { limit: 20 }),
+    getUnreadCount(actor),
+  ]);
+  const notifInitial = notifPage.items.map((r) =>
+    mapNotificationRow(r as unknown as Record<string, unknown>, locale as "es" | "en"),
+  );
+
   return (
     <>
       {/* Material Symbols Rounded — icon vocabulary of the sales panel (DOC-52 §0.1). */}
@@ -101,6 +121,19 @@ export default async function StaffPanelLayout({
         }}
         messages={messages}
         logoutAction={signOutAction}
+        notifications={{
+          userId: actor.userId,
+          locale: locale as "es" | "en",
+          initial: notifInitial,
+          initialCursor: notifPage.nextCursor,
+          initialUnread: unread.total,
+          raw: {
+            list: listNotificationsAction,
+            markRead: markNotificationReadAction,
+            markAllRead: markAllNotificationsReadAction,
+            getUnreadCount: getUnreadCountAction,
+          },
+        }}
       >
         {children}
       </StaffShell>

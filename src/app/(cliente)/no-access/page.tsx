@@ -11,6 +11,11 @@ import { getTranslations } from "next-intl/server";
 import { Lex } from "@/frontend/components/brand/lex";
 import { GradientBtn } from "@/frontend/components/brand/gradient-btn";
 import { Icon } from "@/frontend/components/brand/icon";
+import {
+  SUPPORT_WHATSAPP_URL,
+  SUPPORT_TEL_URL,
+  SUPPORT_PHONE_DISPLAY,
+} from "@/shared/constants/contact";
 
 export default async function NoAccessPage() {
   const t = await getTranslations("cliente.noAccess");
@@ -80,7 +85,7 @@ export default async function NoAccessPage() {
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {/* WhatsApp */}
         <a
-          href="https://wa.me/13055550100"
+          href={SUPPORT_WHATSAPP_URL}
           target="_blank"
           rel="noopener noreferrer"
           data-interactive
@@ -130,7 +135,7 @@ export default async function NoAccessPage() {
 
         {/* Phone */}
         <a
-          href="tel:+13055550100"
+          href={SUPPORT_TEL_URL}
           data-interactive
           style={{
             display: "flex",
@@ -170,7 +175,7 @@ export default async function NoAccessPage() {
               {t("phone.title")}
             </div>
             <div style={{ fontSize: 13.5, color: "var(--ink-3)" }}>
-              {t("phone.sub")}
+              {SUPPORT_PHONE_DISPLAY}
             </div>
           </div>
           <Icon name="chevR" size={18} color="var(--ink-3)" />

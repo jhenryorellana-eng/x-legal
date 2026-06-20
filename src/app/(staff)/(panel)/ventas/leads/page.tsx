@@ -11,8 +11,8 @@
 import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
-import { getBoard, listLeads } from "@/backend/modules/kanban";
-import { listContractableServices } from "@/backend/modules/catalog";
+import { getBoard, listLeads, listLeadCategories } from "@/backend/modules/kanban";
+import { listContractableServices, listContractableServicePlans, listServicePartyRoles } from "@/backend/modules/catalog";
 import { resolveI18n } from "@/shared/i18n";
 import { buildCasosStrings } from "@/frontend/features/shared-case";
 import type { NewCaseService } from "@/frontend/features/admin/casos/new-case-modal";
@@ -126,13 +126,54 @@ export default async function VentasLeadsPage() {
   // Catalog services for the modals (Nuevo lead + Nuevo caso).
   const catalogServices = await listContractableServices(actor.orgId).catch(() => []);
   const services = catalogServices.map((s) => ({ id: s.id, label: resolveI18n(s.label_i18n, locale) }));
-  const casosStrings = buildCasosStrings(locale === "en" ? "en" : "es");
-  const newCaseServices: NewCaseService[] = catalogServices.map((s) => ({
-    id: s.id,
-    label: resolveI18n(s.label_i18n, locale),
-    plans: [],
-    encodedByKind: {},
+
+  // Real lead categories (their UUIDs are what `createLead` stores — the modal
+  // must NOT use hardcoded slug ids, or `leads.category_id` fails the uuid cast).
+  const categories = (await listLeadCategories(actor).catch(() => [])).map((c) => ({
+    id: c.id,
+    label: c.label,
+    color: c.color,
   }));
+  const casosStrings = buildCasosStrings(locale === "en" ? "en" : "es");
+  // Real plans + encoded plan data per service for the "Nuevo caso" modal — same
+  // build as /admin/casos. Previously hardcoded to `plans: []`, which left the
+  // plan picker empty so "Crear caso y contrato" was permanently disabled (a
+  // sales rep could never win a lead into a contract from the board).
+  const newCaseServices: NewCaseService[] = await Promise.all(
+    catalogServices.map(async (s): Promise<NewCaseService> => {
+      // listContractableServicePlans is sales-accessible (getServiceEditorTree
+      // requires catalog.view, which the sales role lacks).
+      const [plans, roles] = await Promise.all([
+        listContractableServicePlans(s.id).catch(() => []),
+        listServicePartyRoles(s.id).catch(() => []),
+      ]);
+      const encodedByKind: Record<string, string> = {};
+      for (const p of plans) {
+        const down = p.default_downpayment_cents ?? Math.round(p.price_cents * 0.2);
+        const inst = p.default_installments ?? 1;
+        // serviceId|planId|priceCents|downCents|installments (decoded by createCaseAction)
+        encodedByKind[p.kind] = `${s.id}|${p.id}|${p.price_cents}|${down}|${inst}`;
+      }
+      return {
+        id: s.id,
+        label: resolveI18n(s.label_i18n, locale),
+        plans: plans.map((p) => ({
+          kind: (p.kind === "with_lawyer" ? "with_lawyer" : "self") as "self" | "with_lawyer",
+          label: p.kind === "with_lawyer" ? casosStrings.planWith : casosStrings.planSelf,
+          priceCents: p.price_cents,
+          downpaymentCents: p.default_downpayment_cents ?? null,
+          installments: p.default_installments ?? 1,
+        })),
+        encodedByKind,
+        partyRoles: roles.map((r) => ({
+          roleKey: r.role_key,
+          label: resolveI18n(r.label_i18n, locale),
+          cardinality: r.cardinality,
+          required: r.is_required,
+        })),
+      };
+    }),
+  );
 
   const sources: SourceOption[] = [
     { value: "tiktok", label: "TikTok" },
@@ -150,6 +191,7 @@ export default async function VentasLeadsPage() {
       newLeadStrings={newLeadStrings}
       sources={sources}
       services={services}
+      categories={categories}
       newCaseServices={newCaseServices}
       casosStrings={casosStrings}
       signingBaseUrl={process.env.NEXT_PUBLIC_APP_URL ?? ""}

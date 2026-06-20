@@ -20,6 +20,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { getBridge } from "@/frontend/platform-bridge";
 import {
   Card,
   GradientBtn,
@@ -273,7 +274,7 @@ function StripeSuccessModal({
   const [copied, setCopied] = React.useState(false);
 
   async function handleCopy() {
-    await navigator.clipboard.writeText(url);
+    await getBridge().share.copyText(url);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }

@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { Icon } from "@/frontend/components/brand";
+import { toast } from "@/frontend/components/desktop";
 import { UploadStage } from "./upload-stage";
 import { StructureEditor } from "./structure-editor";
 import { PreviewStage } from "./preview-stage";
@@ -43,6 +44,20 @@ export function PdfMode({ vm, strings, actions, activeVersionId, onSelectVersion
   const [groups, setGroups] = React.useState<QuestionGroupVM[]>(open?.groups ?? []);
   const [lang, setLang] = React.useState<"es" | "en">("es");
   const [pdfUrl, setPdfUrl] = React.useState<string | null>(null);
+  const [duplicating, setDuplicating] = React.useState(false);
+
+  async function handleDuplicate() {
+    if (!open) return;
+    setDuplicating(true);
+    const r = await actions.duplicateVersion(open.version.id);
+    if (r.success && r.data) {
+      // Jump to the fresh editable draft (copies questions; published stays intact).
+      window.location.href = `${window.location.pathname}?v=${r.data.id}`;
+    } else {
+      setDuplicating(false);
+      toast.error(r.error?.code ?? "Error");
+    }
+  }
 
   // Fetch the signed PDF URL for the viewer when the open version changes.
   React.useEffect(() => {
@@ -69,11 +84,19 @@ export function PdfMode({ vm, strings, actions, activeVersionId, onSelectVersion
       {/* Version chips */}
       <VersionChips versions={vm.versions} activeId={activeVersionId} onSelect={onSelectVersion} strings={strings} />
 
-      {/* Immutability banner */}
+      {/* Immutability banner + "make editable" action */}
       {readOnly && (
-        <div style={{ marginTop: 12, marginBottom: 4, display: "flex", alignItems: "center", gap: 8, background: "var(--gold-soft)", border: "1px solid var(--gold-deep)", borderRadius: 12, padding: "10px 14px" }}>
+        <div style={{ marginTop: 12, marginBottom: 4, display: "flex", alignItems: "center", gap: 10, background: "var(--gold-soft)", border: "1px solid var(--gold-deep)", borderRadius: 12, padding: "10px 14px" }}>
           <Icon name="lock" size={15} />
-          <span style={{ fontSize: 13, color: "var(--gold-deep)", fontWeight: 600 }}>{strings.immutableBanner}</span>
+          <span style={{ flex: 1, fontSize: 13, color: "var(--gold-deep)", fontWeight: 600 }}>{strings.immutableBanner}</span>
+          <button
+            type="button"
+            onClick={handleDuplicate}
+            disabled={duplicating}
+            style={{ flexShrink: 0, height: 32, padding: "0 14px", borderRadius: 999, border: "none", background: "var(--gold-deep)", color: "#fff", fontSize: 12.5, fontWeight: 800, cursor: duplicating ? "default" : "pointer", opacity: duplicating ? 0.6 : 1, display: "inline-flex", alignItems: "center", gap: 6 }}
+          >
+            <Icon name="copy" size={13} color="#fff" /> {duplicating ? strings.saving : strings.editableCopy}
+          </button>
         </div>
       )}
 

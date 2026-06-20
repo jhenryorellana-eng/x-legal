@@ -23,6 +23,20 @@ export interface ClientEligibilityResult {
   eligible: boolean;
 }
 
+/**
+ * Full US mailing address captured at case intake (DOC-40 §2.7). Stored as the
+ * `client_profiles.address` JSONB so resolveBySource('profile') can prefill the
+ * I-589 address sub-fields (address.line1/city/state/zip/apartment).
+ */
+export interface ClientAddressInput {
+  line1: string;
+  city: string;
+  state: string;
+  zip: string;
+  /** Apartment / unit / suite — optional. */
+  apartment?: string | null;
+}
+
 export interface StaffProfileRow {
   displayName: string;
   role: string;
@@ -130,44 +144,6 @@ export async function checkClientEligibility(
     return { eligible: true };
   } catch {
     // Never leak error details to callers (anti-enumeration)
-    return { eligible: false };
-  }
-}
-
-/**
- * Email variant of the eligibility gate (DOC-22 §1, client auth by email).
- * Same predicate as checkClientEligibility but keyed on the EMAIL identity:
- * kind=client, is_active, and at least one activated case (opened_at IS NOT NULL).
- * Always returns { eligible: false } on any error (anti-enumeration).
- */
-export async function checkClientEligibilityByEmail(
-  email: string,
-): Promise<ClientEligibilityResult> {
-  try {
-    const supabase = createServiceClient();
-    const { data, error } = await supabase
-      .from("users")
-      .select(
-        `
-        id,
-        is_active,
-        kind,
-        case_members!inner(
-          case_id,
-          cases!inner(opened_at)
-        )
-      `,
-      )
-      .eq("email", email)
-      .eq("kind", "client")
-      .eq("is_active", true)
-      .not("case_members.cases.opened_at", "is", null)
-      .limit(1)
-      .single();
-
-    if (error || !data) return { eligible: false };
-    return { eligible: true };
-  } catch {
     return { eligible: false };
   }
 }
@@ -436,21 +412,23 @@ export async function setStaffActive(
 // ---------------------------------------------------------------------------
 
 /**
- * Looks up a client user by phone_e164. Returns { id, existed:true } when found,
- * null when not found. Service-client (bypass RLS).
+ * Looks up a client user by phone_e164. Returns { id, email, existed:true } when
+ * found, null when not found. Service-client (bypass RLS). The email is the
+ * Supabase Auth identity used to sign the client in during phone-only login
+ * (DOC-22 §1, June 2026) — the client never types it.
  */
 export async function findClientByPhone(
   phoneE164: string,
-): Promise<{ id: string; existed: true } | null> {
+): Promise<{ id: string; email: string | null; existed: true } | null> {
   const supabase = createServiceClient();
   const { data } = await supabase
     .from("users")
-    .select("id")
+    .select("id, email")
     .eq("phone_e164", phoneE164)
     .eq("kind", "client")
     .maybeSingle();
   if (!data) return null;
-  return { id: data.id, existed: true };
+  return { id: data.id, email: data.email, existed: true };
 }
 
 /**
@@ -482,10 +460,12 @@ export async function insertClientRows(input: {
   orgId: string;
   /** Login identity (DOC-22 §1, client auth by email). */
   email: string;
-  /** Contact phone (optional; NOT the login identity anymore). */
+  /** Contact phone (also a login credential alongside email — DOC-22 §1). */
   phoneE164?: string | null;
   firstName: string;
   lastName: string;
+  /** Full US mailing address — persisted to client_profiles.address (JSONB). */
+  address?: ClientAddressInput | null;
   locale?: string;
   timezone?: string;
 }): Promise<void> {
@@ -510,7 +490,21 @@ export async function insertClientRows(input: {
 
   if (usersError) throw new Error(`insertClientRows.users: ${usersError.message}`);
 
-  // Upsert client_profiles (user_id UNIQUE)
+  // Build the address JSONB only when an address was captured. Keys mirror the
+  // address.* whitelist in PROFILE_SOURCE_FIELDS so resolveBySource can prefill.
+  const addressJson: Json | undefined = input.address
+    ? {
+        line1: input.address.line1,
+        city: input.address.city,
+        state: input.address.state,
+        zip: input.address.zip,
+        // null (not "") when absent — resolveBySource returns null → PDF stays blank.
+        apartment: input.address.apartment ?? null,
+      }
+    : undefined;
+
+  // Upsert client_profiles (user_id UNIQUE). Only set `address` when provided,
+  // so re-provisioning without an address doesn't wipe an existing one.
   const { error: profileError } = await supabase
     .from("client_profiles")
     .upsert(
@@ -518,11 +512,27 @@ export async function insertClientRows(input: {
         user_id: input.userId,
         first_name: input.firstName,
         last_name: input.lastName,
+        ...(addressJson !== undefined ? { address: addressJson } : {}),
       },
       { onConflict: "user_id" },
     );
 
   if (profileError) throw new Error(`insertClientRows.client_profiles: ${profileError.message}`);
+}
+
+// ---------------------------------------------------------------------------
+// updateUserLocale — persist the user's UI language (DOC-24 i18n / DOC-47 §5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Updates `users.locale` for a single user. Source of truth for the language of
+ * transactional emails + push (read server-side from users.locale); the
+ * `ulp-locale` cookie is its operational mirror, set alongside by the action.
+ */
+export async function updateUserLocale(userId: string, locale: string): Promise<void> {
+  const supabase = createServiceClient();
+  const { error } = await supabase.from("users").update({ locale }).eq("id", userId);
+  if (error) throw new Error(`updateUserLocale: ${error.message}`);
 }
 
 // ---------------------------------------------------------------------------

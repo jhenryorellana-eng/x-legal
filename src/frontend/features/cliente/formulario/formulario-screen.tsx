@@ -9,6 +9,7 @@ import type {
   Locale,
   SaveDraftFn,
   SubmitFormFn,
+  TranslateAnswersFn,
 } from "@/frontend/features/form-wizard";
 
 /**
@@ -27,6 +28,8 @@ export interface FormularioScreenProps {
   labels: WizardLabels;
   saveDraft: SaveDraftFn;
   submitForm: SubmitFormFn;
+  /** Server-side translator fallback (Gemini) for the answer-translation flow. */
+  translateAnswers?: TranslateAnswersFn;
   /** Where "back" from step 0 lands (Camino or the forms list). */
   exitHref: string;
 }
@@ -40,6 +43,7 @@ export function FormularioScreen({
   labels,
   saveDraft,
   submitForm,
+  translateAnswers,
   exitHref,
 }: FormularioScreenProps) {
   const router = useRouter();
@@ -53,6 +57,7 @@ export function FormularioScreen({
       labels={labels}
       saveDraft={saveDraft}
       submitForm={submitForm}
+      translateAnswers={translateAnswers}
       onSubmitted={() => router.replace(`/caso/${caseId}/exito?from=formulario`)}
       onExit={() => router.push(exitHref)}
     />
