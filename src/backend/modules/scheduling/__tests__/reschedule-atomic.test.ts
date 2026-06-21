@@ -99,9 +99,13 @@ const NEW_APPT_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const STAFF_ID    = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const CLIENT_ID   = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 
-const OLD_STARTS = new Date("2026-06-20T14:00:00Z");
-const OLD_ENDS   = new Date("2026-06-20T14:30:00Z");
-const NEW_STARTS = new Date("2026-06-21T14:00:00Z");
+// Relative to "now" so the appointment is always in the future (within the
+// 90-day advance window) — a hardcoded absolute date becomes a time-bomb that
+// trips the APPT_ALREADY_STARTED guard once the wall clock passes it.
+const _DAY_MS = 24 * 60 * 60 * 1000;
+const OLD_STARTS = new Date(Date.now() + 2 * _DAY_MS);
+const OLD_ENDS   = new Date(OLD_STARTS.getTime() + 30 * 60 * 1000);
+const NEW_STARTS = new Date(Date.now() + 3 * _DAY_MS);
 
 function makeOldAppt(overrides: Record<string, unknown> = {}) {
   return {
