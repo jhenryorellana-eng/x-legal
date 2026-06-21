@@ -1155,6 +1155,62 @@ export interface SaveRulesInput {
  *
  * @api-id API-SCH-09
  */
+/** Serializable availability config for the staff editor (read path). */
+export interface AvailabilityConfigResult {
+  rules: Array<{ weekday: number; startLocal: string; endLocal: string; isActive: boolean }>;
+  exceptions: Array<{ id: string; reason: string | null; startsAt: string; endsAt: string }>;
+  minNoticeHours: number;
+  rebookingPenaltyDays: number;
+  staffTimezone: string;
+}
+
+/**
+ * Reads a staff member's own availability configuration for the editor: weekly
+ * rules + upcoming exceptions + the scheduling settings the editor surfaces.
+ *
+ * The editor page previously rendered hardcoded defaults (all days off), so the
+ * weekly schedule a rep saved never reappeared on reload (RF-VAN-032 read path).
+ *
+ * @api-id API-SCH-09-READ
+ */
+export async function getAvailabilityConfig(
+  actor: Actor,
+  input?: { staffId?: string },
+): Promise<AvailabilityConfigResult> {
+  can(actor, "availability", "edit");
+  const staffId = input?.staffId ?? actor.userId;
+
+  if (staffId !== actor.userId && actor.role !== "admin") {
+    throw new AuthzError("forbidden_module");
+  }
+
+  const [rules, settings, exceptions, staffTimezone] = await Promise.all([
+    repo.getAllRules(staffId),
+    repo.getSettings(staffId),
+    repo.listExceptions(staffId, now()),
+    getUserTimezone(staffId),
+  ]);
+
+  return {
+    rules: rules.map((r) => ({
+      weekday: r.weekday,
+      // Stored as "HH:MM:SS" (time column) — the editor works in "HH:MM".
+      startLocal: r.start_local.slice(0, 5),
+      endLocal: r.end_local.slice(0, 5),
+      isActive: r.is_active,
+    })),
+    exceptions: exceptions.map((e) => ({
+      id: e.id,
+      reason: e.reason,
+      startsAt: e.starts_at,
+      endsAt: e.ends_at,
+    })),
+    minNoticeHours: settings.minNoticeHours,
+    rebookingPenaltyDays: settings.rebookingPenaltyDays,
+    staffTimezone,
+  };
+}
+
 export async function saveAvailabilityRules(
   actor: Actor,
   input: SaveRulesInput,

@@ -9,7 +9,9 @@
 
 import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
+import { formatInTimeZone } from "date-fns-tz";
 import { getActor } from "@/backend/modules/identity";
+import { getAvailabilityConfig } from "@/backend/modules/scheduling";
 import { DisponibilidadView, LexPrefsProvider } from "@/frontend/features/vanessa";
 import type { DayRule } from "@/frontend/features/vanessa";
 import {
@@ -38,12 +40,44 @@ export default async function VentasDisponibilidadPage() {
 
   const t = await getTranslations("staff.ventas.disponibilidad");
 
-  const days: DayRule[] = DAY_NAMES_ORDER.map((d) => ({
-    weekday: d.weekday,
-    dayName: d.key,
-    active: false,
-    ranges: [],
+  // Read the rep's saved availability (weekly rules + exceptions + settings).
+  // Falls back to empty defaults if the read fails (e.g. missing permission) so
+  // the editor still renders rather than crashing the panel.
+  const config = await getAvailabilityConfig(actor).catch(() => null);
+  const staffTz = config?.staffTimezone ?? "America/New_York";
+
+  // Group the flat active rules into per-weekday ranges for the editor.
+  const rangesByWeekday = new Map<number, { start: string; end: string }[]>();
+  for (const r of config?.rules ?? []) {
+    if (!r.isActive) continue;
+    const list = rangesByWeekday.get(r.weekday) ?? [];
+    list.push({ start: r.startLocal, end: r.endLocal });
+    rangesByWeekday.set(r.weekday, list);
+  }
+
+  const days: DayRule[] = DAY_NAMES_ORDER.map((d) => {
+    const ranges = rangesByWeekday.get(d.weekday) ?? [];
+    return {
+      weekday: d.weekday,
+      dayName: d.key,
+      active: ranges.length > 0,
+      ranges,
+    };
+  });
+
+  const exceptions = (config?.exceptions ?? []).map((e) => ({
+    id: e.id,
+    label: e.reason ?? t("blockReason"),
+    rangeLabel: `${formatInTimeZone(new Date(e.startsAt), staffTz, "d/MM HH:mm")} – ${formatInTimeZone(
+      new Date(e.endsAt),
+      staffTz,
+      "d/MM HH:mm",
+    )}`,
+    affectedCount: 0,
   }));
+
+  const minNotice = config?.minNoticeHours ?? 24;
+  const noShowPenaltyDays = config?.rebookingPenaltyDays ?? 7;
 
   const strings = {
     title: t("title"),
@@ -85,11 +119,11 @@ export default async function VentasDisponibilidadPage() {
     <LexPrefsProvider>
       <DisponibilidadView
         days={days}
-        exceptions={[]}
+        exceptions={exceptions}
         defaultDuration={45}
-        minNotice={24}
+        minNotice={minNotice}
         remindersEnabled
-        noShowPenaltyDays={7}
+        noShowPenaltyDays={noShowPenaltyDays}
         videoLink=""
         blockedClient={null}
         strings={strings}

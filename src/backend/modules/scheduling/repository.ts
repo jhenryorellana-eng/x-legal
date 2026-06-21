@@ -582,6 +582,29 @@ export async function deleteException(exceptionId: string): Promise<void> {
   }
 }
 
+/**
+ * Lists upcoming exceptions (full rows) for the availability editor — anything
+ * that has not fully elapsed yet (ends in the future). Ordered by start.
+ */
+export async function listExceptions(
+  staffId: string,
+  fromUtc: Date,
+): Promise<AvailabilityExceptionRow[]> {
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("availability_exceptions")
+    .select("*")
+    .eq("staff_id", staffId)
+    .gt("ends_at", fromUtc.toISOString())
+    .order("starts_at");
+
+  if (error) {
+    logger.error({ err: error }, "scheduling.repo: listExceptions error");
+    return [];
+  }
+  return data ?? [];
+}
+
 /** Finds scheduled appointments that overlap the given range (exception check). */
 export async function findScheduledInRange(
   staffId: string,

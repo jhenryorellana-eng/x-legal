@@ -47,9 +47,25 @@ function tt(locale: "es" | "en", es: string, en: string) {
   return locale === "es" ? es : en;
 }
 
-function fmtWhen(iso: string, locale: "es" | "en") {
+/**
+ * Relative timestamp. The relative label depends on `Date.now()` and the
+ * ambient timezone, so computing it during render makes the server (UTC) and
+ * client (staff TZ) disagree — a text-node mismatch that fires React #418 on
+ * every staff page (the bell's NotificationCenter stays mounted in SSR). To
+ * stay hydration-safe it returns a deterministic UTC-fixed absolute date until
+ * `mounted` is true; only after mount does the live "ahora / 5 min / 2 h" label
+ * take over (a post-hydration re-render, which React allows).
+ */
+function fmtWhen(iso: string, locale: "es" | "en", mounted: boolean) {
   try {
     const d = new Date(iso);
+    if (!mounted) {
+      return d.toLocaleDateString(locale === "es" ? "es-US" : "en-US", {
+        day: "numeric",
+        month: "short",
+        timeZone: "UTC",
+      });
+    }
     const diff = Date.now() - d.getTime();
     const min = Math.floor(diff / 60000);
     if (min < 1) return tt(locale, "ahora", "now");
@@ -78,6 +94,9 @@ export function NotificationCenter({
   const [items, setItems] = React.useState<NotificationVM[]>(initial);
   const [cursor, setCursor] = React.useState<string | null>(initialCursor);
   const [loadingMore, setLoadingMore] = React.useState(false);
+  // Gate Date.now()/local-TZ time formatting until after hydration (see fmtWhen).
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => { setMounted(true); }, []);
   const idsRef = React.useRef<Set<string>>(new Set(initial.map((n) => n.id)));
 
   const unread = items.filter((n) => !n.read).length;
@@ -165,7 +184,7 @@ export function NotificationCenter({
                 {!n.read && <span style={{ width: 7, height: 7, borderRadius: 999, background: "var(--accent)", flexShrink: 0 }} />}
               </span>
               {n.body && <span style={{ display: "block", fontSize: 12.5, color: "var(--ink-2)", marginTop: 2, lineHeight: 1.35 }}>{n.body}</span>}
-              <span style={{ display: "block", fontSize: 10.5, color: "var(--ink-3)", marginTop: 3 }}>{fmtWhen(n.createdAt, locale)}</span>
+              <span style={{ display: "block", fontSize: 10.5, color: "var(--ink-3)", marginTop: 3 }}>{fmtWhen(n.createdAt, locale, mounted)}</span>
             </span>
           </button>
         ))}
