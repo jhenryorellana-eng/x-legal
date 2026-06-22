@@ -77,7 +77,7 @@ export function StaffShell({
   }
 
   return (
-    <div style={{ display: "flex", minHeight: "100dvh" }}>
+    <div style={{ display: "flex", minHeight: "calc(100dvh / var(--text-scale, 1))" }}>
       {navOpen ? (
         <div
           className="staff-shell-scrim"

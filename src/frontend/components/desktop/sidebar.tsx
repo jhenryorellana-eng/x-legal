@@ -83,7 +83,10 @@ export function Sidebar({ panelLabel, groups, user, footerSlot, open }: SidebarP
       style={{
         width: "var(--sb-w)",
         flexShrink: 0,
-        height: "100dvh",
+        // `/ var(--text-scale)` compensates the ancestor `.surface-staff` zoom so
+        // the rail still spans exactly one viewport at every text size (no gap at
+        // sm, no overflow at lg). See the note on `.surface-staff` in globals.css.
+        height: "calc(100dvh / var(--text-scale, 1))",
         position: "sticky",
         top: 0,
         display: "flex",

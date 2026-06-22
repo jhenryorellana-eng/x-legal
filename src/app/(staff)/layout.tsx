@@ -16,7 +16,7 @@ export default function StaffLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="surface-staff" style={{ minHeight: "100dvh", background: "var(--bg)" }}>
+    <div className="surface-staff" style={{ background: "var(--bg)" }}>
       {children}
     </div>
   );
