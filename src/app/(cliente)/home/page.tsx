@@ -19,6 +19,7 @@ import {
   type CaseWorkspaceDto,
 } from "@/backend/modules/cases";
 import { getNotifications } from "@/backend/modules/notifications";
+import { getUnreadCountAction } from "@/backend/modules/notifications/actions";
 import { pickLocale, coerceIcon, type Locale } from "@/frontend/features/cliente/shared/i18n";
 import {
   DashboardScreen,
@@ -103,6 +104,9 @@ export default async function HomePage() {
       avatarInitial={avatarInitial}
       cases={cases}
       unreadCount={unreadCount}
+      userId={actor.userId}
+      locale={locale}
+      refetchUnread={getUnreadCountAction}
       labels={{
         greetingEyebrow: t("greetingEyebrow"),
         greeting: t.raw("greeting") as string, // "Hola, {name}" — interpolated in DashboardScreen

@@ -19,6 +19,9 @@ export const homeMock: DashboardScreenProps = {
   displayName: "María",
   avatarInitial: "M",
   unreadCount: 2,
+  userId: "00000000-0000-0000-0000-000000000301",
+  locale: "es",
+  refetchUnread: async () => ({ success: true, data: { total: 2 } }),
   cases: [
     {
       caseId: "demo",

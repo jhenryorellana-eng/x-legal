@@ -4,6 +4,7 @@ import { Icon, type IconName } from "@/frontend/components/brand/icon";
 import { IconTile } from "@/frontend/components/brand/icon-tile";
 import { StatusPill } from "@/frontend/components/brand/status-pill";
 import { Logo } from "@/frontend/components/brand/logo";
+import { HomeBell, type RefetchUnread } from "./home-bell";
 
 /**
  * DashboardScreen — `/home` (DOC-51 §5, prototype `screens6.jsx → DashboardScreen`).
@@ -62,6 +63,11 @@ export interface DashboardScreenProps {
   cases: DashboardCase[];
   unreadCount: number;
   labels: DashboardLabels;
+  /** Auth uid — drives the live realtime bell badge (HomeBell). */
+  userId: string;
+  locale: "es" | "en";
+  /** Server action (injected by the page) for the bell's poll re-sync. */
+  refetchUnread: RefetchUnread;
 }
 
 const BRAND_NAVY = "var(--brand-navy)";
@@ -72,6 +78,9 @@ export function DashboardScreen({
   cases,
   unreadCount,
   labels,
+  userId,
+  locale,
+  refetchUnread,
 }: DashboardScreenProps) {
   const highlighted = cases.find((c) => c.highlighted);
   const others = cases.filter((c) => !c.highlighted);
@@ -111,48 +120,13 @@ export function DashboardScreen({
           </h1>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <Link
-            href="/avisos"
-            aria-label={labels.bellAria}
-            className="mp-pop"
-            style={{
-              position: "relative",
-              width: 48,
-              height: 48,
-              borderRadius: 999,
-              background: "var(--card)",
-              boxShadow: "var(--shadow-soft)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: "pointer",
-            }}
-          >
-            <Icon name="bell" size={24} color="var(--navy)" />
-            {unreadCount > 0 && (
-              <span
-                style={{
-                  position: "absolute",
-                  top: 6,
-                  right: 7,
-                  minWidth: 18,
-                  height: 18,
-                  padding: "0 4px",
-                  borderRadius: 999,
-                  background: "var(--red)",
-                  color: "#fff",
-                  fontSize: 11,
-                  fontWeight: 800,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  boxShadow: "0 0 0 2px var(--card)",
-                }}
-              >
-                {unreadCount}
-              </span>
-            )}
-          </Link>
+          <HomeBell
+            userId={userId}
+            locale={locale}
+            initialUnread={unreadCount}
+            ariaLabel={labels.bellAria}
+            refetchUnread={refetchUnread}
+          />
           <Link
             href="/config"
             aria-label={labels.avatarAria}
