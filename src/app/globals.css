@@ -47,6 +47,10 @@
   .surface-staff {
     background: var(--bg-grad, var(--bg));
     background-attachment: fixed;
+    /* User text scale (sm | md | lg). The staff UI uses pixel font sizes, so the
+       root `html { font-size }` scale has no visible effect here — scale the whole
+       surface with `zoom` instead so the text-size control in Configuración works. */
+    zoom: var(--text-scale, 1);
   }
 
   /* Display type helpers (DOC-01 §2) */

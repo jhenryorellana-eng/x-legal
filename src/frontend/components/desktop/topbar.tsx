@@ -132,10 +132,10 @@ export function Topbar({ messages, onLogout, bellSlot, onMenuClick, menuLabel }:
 
       <div style={{ flex: 1 }} />
 
-      {/* Theme + text-size — hidden ≤860px (moved to Configuración) to avoid
-          topbar overflow / horizontal scroll on mobile. */}
+      {/* Theme switch only — the text-size control lives in Configuración (it is
+          unusual in a topbar). Hidden ≤860px to avoid topbar overflow on mobile. */}
       <span className="staff-topbar-appearance" style={{ display: "inline-flex" }}>
-        <ThemeToggle />
+        <ThemeToggle showTextScale={false} />
       </span>
 
       {/* Notifications — live bell (NotificationBell) or an inert fallback. */}

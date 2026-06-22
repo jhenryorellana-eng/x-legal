@@ -18,11 +18,15 @@ const SCALE_OPTIONS: { value: TextScale; label: string }[] = [
 ];
 
 /**
- * Theme + text-scale control (DOC-01 §4, §8.5).
- * Reads the current values from the DOM/localStorage after mount to stay in
- * sync with the no-flash bootstrap script.
+ * Theme + (optional) text-scale control (DOC-01 §4, §8.5). Reads the current
+ * values from the DOM/localStorage after mount to stay in sync with the no-flash
+ * bootstrap script.
+ *
+ * `showTextScale` is false in the staff topbar (the text-size control belongs in
+ * Configuración, which is the conventional place for it) and true in the
+ * Configuración appearance card.
  */
-export function ThemeToggle() {
+export function ThemeToggle({ showTextScale = true }: { showTextScale?: boolean }) {
   const [theme, setTheme] = React.useState<Theme>("light");
   const [scale, setScale] = React.useState<TextScale>("md");
 
@@ -42,44 +46,46 @@ export function ThemeToggle() {
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-      {/* Text scale */}
-      <div
-        role="group"
-        aria-label="Tamaño de texto"
-        style={{
-          display: "inline-flex",
-          background: "var(--card-alt)",
-          borderRadius: 999,
-          padding: 3,
-          gap: 2,
-        }}
-      >
-        {SCALE_OPTIONS.map((opt) => {
-          const active = scale === opt.value;
-          return (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => onScale(opt.value)}
-              aria-pressed={active}
-              style={{
-                minWidth: 34,
-                height: 30,
-                borderRadius: 999,
-                border: "none",
-                cursor: "pointer",
-                background: active ? "var(--accent)" : "transparent",
-                color: active ? "var(--on-accent)" : "var(--ink-2)",
-                fontFamily: "var(--font-title)",
-                fontWeight: 800,
-                fontSize: 13,
-              }}
-            >
-              {opt.label}
-            </button>
-          );
-        })}
-      </div>
+      {/* Text scale (Configuración only — hidden in the topbar) */}
+      {showTextScale && (
+        <div
+          role="group"
+          aria-label="Tamaño de texto"
+          style={{
+            display: "inline-flex",
+            background: "var(--card-alt)",
+            borderRadius: 999,
+            padding: 3,
+            gap: 2,
+          }}
+        >
+          {SCALE_OPTIONS.map((opt) => {
+            const active = scale === opt.value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => onScale(opt.value)}
+                aria-pressed={active}
+                style={{
+                  minWidth: 34,
+                  height: 30,
+                  borderRadius: 999,
+                  border: "none",
+                  cursor: "pointer",
+                  background: active ? "var(--accent)" : "transparent",
+                  color: active ? "var(--on-accent)" : "var(--ink-2)",
+                  fontFamily: "var(--font-title)",
+                  fontWeight: 800,
+                  fontSize: 13,
+                }}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Theme switch */}
       <button
@@ -103,11 +109,7 @@ export function ThemeToggle() {
           fontSize: 14,
         }}
       >
-        <Icon
-          name={theme === "dark" ? "sun" : "moon"}
-          size={20}
-          color="var(--accent)"
-        />
+        <Icon name={theme === "dark" ? "sun" : "moon"} size={20} color="var(--accent)" />
         {theme === "dark" ? "Claro" : "Oscuro"}
       </button>
     </div>
