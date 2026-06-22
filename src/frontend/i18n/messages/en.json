@@ -607,7 +607,7 @@
     "roles": {
       "admin": "Administrator",
       "sales": "Sales advisor",
-      "paralegal": "Paralegal",
+      "paralegal": "Case Processor",
       "finance": "Finance",
       "staff": "Team"
     },
@@ -872,7 +872,7 @@
         "colPermissions": "Permissions",
         "roleAdmin": "Admin",
         "roleSales": "Sales",
-        "roleParalegal": "Paralegal",
+        "roleParalegal": "Case Processor",
         "roleFinance": "Finance",
         "statusActive": "Active",
         "statusInactive": "Inactive",

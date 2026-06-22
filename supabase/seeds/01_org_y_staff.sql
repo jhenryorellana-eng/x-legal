@@ -178,7 +178,7 @@ from auth.users where email = 'vanessa@usalatinoprime.com'
 on conflict (user_id) do nothing;
 
 insert into public.staff_profiles (user_id, role, display_name, title_i18n)
-select id, 'paralegal', 'Diana', '{"es":"Paralegal","en":"Paralegal"}'::jsonb
+select id, 'paralegal', 'Diana', '{"es":"Gestora Documental","en":"Case Processor"}'::jsonb
 from auth.users where email = 'diana@usalatinoprime.com'
 on conflict (user_id) do nothing;
 

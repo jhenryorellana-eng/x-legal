@@ -607,7 +607,7 @@
     "roles": {
       "admin": "Administrador",
       "sales": "Asesora de ventas",
-      "paralegal": "Paralegal",
+      "paralegal": "Gestora Documental",
       "finance": "Finanzas",
       "staff": "Equipo"
     },
@@ -872,7 +872,7 @@
         "colPermissions": "Permisos",
         "roleAdmin": "Admin",
         "roleSales": "Ventas",
-        "roleParalegal": "Paralegal",
+        "roleParalegal": "Gestora Documental",
         "roleFinance": "Finanzas",
         "statusActive": "Activo",
         "statusInactive": "Inactivo",

@@ -84,7 +84,7 @@ export const employeesMessages: EmployeesMessages = {
     filterRole: "Rol", filterStatus: "Estado", filterSearch: "Buscar por nombre o email…",
     colEmployee: "Empleado", colEmail: "Email", colRole: "Rol", colStatus: "Estado",
     colLastSeen: "Última conexión", colPermissions: "Permisos",
-    roleAdmin: "Admin", roleSales: "Ventas", roleParalegal: "Paralegal", roleFinance: "Finanzas",
+    roleAdmin: "Admin", roleSales: "Ventas", roleParalegal: "Gestora Documental", roleFinance: "Finanzas",
     statusActive: "Activo", statusInactive: "Inactivo", invitePending: "Invitación pendiente",
     permSummary: "{n} de 20 módulos", menuEdit: "Editar", menuPermissions: "Permisos",
     menuResend: "Reenviar invitación", menuDeactivate: "Desactivar", menuReactivate: "Reactivar",
