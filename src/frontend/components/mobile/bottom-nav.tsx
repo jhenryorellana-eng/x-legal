@@ -10,7 +10,8 @@ import { Icon, type IconName } from "@/frontend/components/brand/icon";
  * (DOC-01 §5.2, DOC-51 §0.1). Ported from the prototype
  * `V2/UI Cliente/app/ui.jsx → NavBar / CaseNav / AccountNav`.
  *
- * - variant "cuenta": Servicios · Mis casos · Comunidad · Avisos · Pagos
+ * - variant "cuenta": Servicios · Comunidad · Mis casos · Avisos · Pagos
+ *   ("Mis casos" sits in the center as a raised, featured hub button.)
  * - variant "caso":   Inicio · Citas · Documentos · Formularios · Más
  *
  * Fixed to the bottom, `--nav-bg` fill + 16px backdrop blur, top border `--line`.
@@ -31,6 +32,13 @@ interface NavItem {
   badge?: number;
   /** Extra path prefixes that should mark this tab active. */
   match?: string[];
+  /**
+   * Center "hub" tab: rendered as a raised, shadowed circular puck instead of
+   * the flat pill. The elevation is the "featured" cue; the accent fill stays
+   * reserved for the active state, so the prominent center never reads as
+   * "you are here" on its own.
+   */
+  featured?: boolean;
 }
 
 export interface BottomNavLabels {
@@ -56,8 +64,8 @@ export interface BottomNavProps {
 function buildAccountItems(labels: BottomNavLabels, notifCount?: number): NavItem[] {
   return [
     { id: "servicios", label: labels.servicios, icon: "grid", href: "/servicios" },
-    { id: "casos", label: labels.casos, icon: "briefcase", href: "/home" },
     { id: "comunidad", label: labels.comunidad, icon: "family", href: "/comunidad" },
+    { id: "casos", label: labels.casos, icon: "briefcase", href: "/home", featured: true },
     { id: "avisos", label: labels.avisos, icon: "bell", href: "/avisos", badge: notifCount },
     { id: "pagos", label: labels.pagos, icon: "wallet", href: "/pagos" },
   ];
@@ -155,6 +163,72 @@ export function BottomNav({
           ? activeOverride === item.id
           : isActive(pathname, item);
         const color = on ? "var(--accent)" : "var(--ink-3)";
+
+        // Featured center tab ("Mis casos" — the client's home/primary hub): a
+        // raised circular puck that floats above the bar with a shadow. The
+        // SHAPE (raised + shadow) signals "featured hub"; the FILL (accent
+        // gradient + white icon) signals the
+        // active state — two independent cues, so it never gets confused with
+        // the flat blue-soft pill the other tabs use when selected.
+        if (item.featured) {
+          return (
+            <Link
+              key={item.id}
+              href={item.href}
+              aria-current={on ? "page" : undefined}
+              style={{
+                textDecoration: "none",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 4,
+                padding: "4px",
+                minWidth: 56,
+                color,
+                position: "relative",
+                cursor: "pointer",
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  display: "grid",
+                  placeItems: "center",
+                  width: 54,
+                  height: 54,
+                  marginTop: -20,
+                  borderRadius: 999,
+                  background: on
+                    ? "linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--brand-navy) 70%, var(--accent)))"
+                    : "var(--card)",
+                  border: on ? "none" : "1.5px solid var(--line)",
+                  boxShadow: on
+                    ? "0 10px 24px color-mix(in srgb, var(--accent) 42%, transparent)"
+                    : "0 8px 20px rgba(11,27,51,0.20)",
+                  transition:
+                    "background 0.2s var(--ease), box-shadow 0.2s var(--ease)",
+                }}
+              >
+                <Icon
+                  name={item.icon}
+                  size={26}
+                  color={on ? "#fff" : "var(--accent)"}
+                  stroke={on ? 2.6 : 2.3}
+                />
+              </span>
+              <span
+                style={{
+                  fontSize: 11.5,
+                  fontWeight: on ? 800 : 700,
+                  fontFamily: "var(--font-title)",
+                }}
+              >
+                {item.label}
+              </span>
+            </Link>
+          );
+        }
+
         return (
           <Link
             key={item.id}
