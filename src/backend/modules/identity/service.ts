@@ -63,6 +63,8 @@ import {
   insertClientRows,
   insertPersonRecord,
   updateUserLocale,
+  findUserUiPrefs,
+  updateUserUiPrefs,
   type StaffProfileRow,
   type EmployeePermissionInput,
   type EmployeeRow,
@@ -100,6 +102,53 @@ export async function setUserLocale(actor: Actor, rawLocale: string): Promise<Su
     : "es";
   await updateUserLocale(actor.userId, locale);
   return locale;
+}
+
+// ---------------------------------------------------------------------------
+// setUserUiPrefs / getCurrentUserUiPrefs — per-user appearance (DOC-01 §4/§8.5)
+//
+// theme ("light"|"dark") and text scale ("sm"|"md"|"lg" ↔ 0.92|1|1.12) live on
+// `users.theme` / `users.text_scale`, so each role's appearance is independent
+// and persists across devices. Any authenticated user may set their own.
+// ---------------------------------------------------------------------------
+
+export type UiTheme = "light" | "dark";
+export type UiTextScale = "sm" | "md" | "lg";
+
+const SCALE_KEY_TO_NUM: Record<UiTextScale, number> = { sm: 0.92, md: 1, lg: 1.12 };
+
+function scaleNumToKey(n: number): UiTextScale {
+  if (n <= 0.96) return "sm";
+  if (n >= 1.06) return "lg";
+  return "md";
+}
+
+/** Persists the authenticated user's own theme and/or text scale. */
+export async function setUserUiPrefs(
+  actor: Actor,
+  input: { theme?: string; textScale?: string },
+): Promise<void> {
+  const patch: { theme?: string; text_scale?: number } = {};
+  if (input.theme === "light" || input.theme === "dark") patch.theme = input.theme;
+  if (input.textScale === "sm" || input.textScale === "md" || input.textScale === "lg") {
+    patch.text_scale = SCALE_KEY_TO_NUM[input.textScale];
+  }
+  await updateUserUiPrefs(actor.userId, patch);
+}
+
+/**
+ * Resolves the current actor's appearance for SSR (root layout) so each user's
+ * theme + text size renders with no flash. Anonymous → light/md defaults.
+ */
+export async function getCurrentUserUiPrefs(): Promise<{ theme: UiTheme; textScale: UiTextScale }> {
+  const actor = await getActor();
+  if (!actor) return { theme: "light", textScale: "md" };
+  const row = await findUserUiPrefs(actor.userId);
+  if (!row) return { theme: "light", textScale: "md" };
+  return {
+    theme: row.theme === "dark" ? "dark" : "light",
+    textScale: scaleNumToKey(typeof row.text_scale === "number" ? row.text_scale : 1),
+  };
 }
 
 // ---------------------------------------------------------------------------

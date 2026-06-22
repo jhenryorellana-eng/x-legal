@@ -538,6 +538,35 @@ export async function updateUserLocale(userId: string, locale: string): Promise<
 }
 
 // ---------------------------------------------------------------------------
+// User UI prefs (theme + text scale) — DOC-01 §4/§8.5, per-user persistence
+// ---------------------------------------------------------------------------
+
+/** Reads the user's stored theme + text scale (per-user appearance). */
+export async function findUserUiPrefs(
+  userId: string,
+): Promise<{ theme: string; text_scale: number } | null> {
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("users")
+    .select("theme, text_scale")
+    .eq("id", userId)
+    .maybeSingle();
+  if (error) return null;
+  return data ?? null;
+}
+
+/** Persists the user's theme and/or text scale (each role is independent). */
+export async function updateUserUiPrefs(
+  userId: string,
+  patch: { theme?: string; text_scale?: number },
+): Promise<void> {
+  if (Object.keys(patch).length === 0) return;
+  const supabase = createServiceClient();
+  const { error } = await supabase.from("users").update(patch).eq("id", userId);
+  if (error) throw new Error(`updateUserUiPrefs: ${error.message}`);
+}
+
+// ---------------------------------------------------------------------------
 // upsertPersonRecord repo helper (DOC-41 §3.1 — party provisioning)
 // ---------------------------------------------------------------------------
 

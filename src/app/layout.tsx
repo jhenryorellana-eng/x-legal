@@ -3,7 +3,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { getLocale } from "next-intl/server";
 import "./globals.css";
 import { plusJakartaSans } from "@/frontend/design-system/fonts";
-import { THEME_INIT_SCRIPT } from "@/frontend/lib/theme";
+import { getCurrentUserUiPrefs } from "@/backend/modules/identity";
 
 export const metadata: Metadata = {
   title: "X Legal",
@@ -38,6 +38,10 @@ export default async function RootLayout({
 }>) {
   // Resolved by src/frontend/i18n/request.ts (cookie mirror of users.locale).
   const locale = await getLocale();
+  // Per-user appearance (theme + text scale) read from the user's `users` row so
+  // each role sees their OWN settings with no flash (DOC-01 §4/§8.5). Anonymous
+  // requests get the light/md defaults.
+  const { theme, textScale } = await getCurrentUserUiPrefs();
 
   return (
     <html
@@ -47,17 +51,10 @@ export default async function RootLayout({
       // so the variable has to be in that same scope or it resolves to invalid and
       // every element falls back to system-ui (DOC-01 §2).
       className={plusJakartaSans.variable}
-      data-theme="light"
-      data-text-scale="md"
+      data-theme={theme}
+      data-text-scale={textScale}
       suppressHydrationWarning
     >
-      <head>
-        {/* No-flash theme bootstrap: runs before hydration, reads localStorage.
-         * The CSP nonce is injected by Next.js automatically (it reads the CSP
-         * request header set by middleware.ts) — DON'T set it manually here or
-         * React clears it on the client and the hydration mismatches. */}
-        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
-      </head>
       <body className="antialiased">
         {/* Inherits locale/messages/timeZone from i18n/request.ts (next-intl v4) */}
         <NextIntlClientProvider>{children}</NextIntlClientProvider>

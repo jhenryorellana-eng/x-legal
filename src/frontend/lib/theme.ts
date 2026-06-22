@@ -1,8 +1,12 @@
 /**
  * Theme + text-scale helpers (DOC-01 §4, §8.5).
+ *
  * The active theme lives on <html data-theme> and the text scale on
- * <html data-text-scale>, both persisted to localStorage and applied before
- * hydration by an inline script (see THEME_INIT_SCRIPT) so there is no flash.
+ * <html data-text-scale>. Both are rendered SERVER-SIDE from the user's
+ * `users.theme` / `users.text_scale` (per-user, independent per role), so a
+ * logged-in user always sees their own appearance with no flash. Changing a
+ * value applies it to the DOM instantly and persists it via POST /api/ui-prefs;
+ * localStorage is kept only as a same-device hint.
  */
 
 export type Theme = "light" | "dark";
@@ -21,30 +25,63 @@ export const TEXT_SCALE_VALUES: Record<TextScale, number> = {
   lg: 1.12,
 };
 
+/**
+ * Reads the active theme — prefers the SSR-applied `<html data-theme>` (the
+ * user's DB value) over localStorage so controls reflect the real per-user state.
+ */
 export function getStoredTheme(): Theme {
-  if (typeof window === "undefined") return DEFAULT_THEME;
-  const value = window.localStorage.getItem(THEME_STORAGE_KEY);
-  return value === "dark" || value === "light" ? value : DEFAULT_THEME;
+  if (typeof document !== "undefined") {
+    const attr = document.documentElement.getAttribute("data-theme");
+    if (attr === "dark" || attr === "light") return attr;
+    const ls = window.localStorage.getItem(THEME_STORAGE_KEY);
+    if (ls === "dark" || ls === "light") return ls;
+  }
+  return DEFAULT_THEME;
 }
 
 export function getStoredTextScale(): TextScale {
-  if (typeof window === "undefined") return DEFAULT_TEXT_SCALE;
-  const value = window.localStorage.getItem(TEXT_SCALE_STORAGE_KEY);
-  return value === "sm" || value === "md" || value === "lg"
-    ? value
-    : DEFAULT_TEXT_SCALE;
+  if (typeof document !== "undefined") {
+    const attr = document.documentElement.getAttribute("data-text-scale");
+    if (attr === "sm" || attr === "md" || attr === "lg") return attr;
+    const ls = window.localStorage.getItem(TEXT_SCALE_STORAGE_KEY);
+    if (ls === "sm" || ls === "md" || ls === "lg") return ls;
+  }
+  return DEFAULT_TEXT_SCALE;
+}
+
+/** Fire-and-forget persistence of the appearance to the current user's row. */
+function persistUiPrefs(prefs: { theme?: Theme; textScale?: TextScale }): void {
+  if (typeof fetch === "undefined") return;
+  void fetch("/api/ui-prefs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(prefs),
+    keepalive: true,
+  }).catch(() => {
+    /* best-effort — the DOM already updated; the next load reconciles from DB */
+  });
 }
 
 export function applyTheme(theme: Theme): void {
   if (typeof document === "undefined") return;
   document.documentElement.setAttribute("data-theme", theme);
-  window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  try {
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch {
+    /* private mode / storage disabled */
+  }
+  persistUiPrefs({ theme });
 }
 
 export function applyTextScale(scale: TextScale): void {
   if (typeof document === "undefined") return;
   document.documentElement.setAttribute("data-text-scale", scale);
-  window.localStorage.setItem(TEXT_SCALE_STORAGE_KEY, scale);
+  try {
+    window.localStorage.setItem(TEXT_SCALE_STORAGE_KEY, scale);
+  } catch {
+    /* private mode / storage disabled */
+  }
+  persistUiPrefs({ textScale: scale });
 }
 
 export function toggleTheme(): Theme {
@@ -52,10 +89,3 @@ export function toggleTheme(): Theme {
   applyTheme(next);
   return next;
 }
-
-/**
- * Inline script injected before hydration to set data-theme / data-text-scale
- * from localStorage (with system-preference fallback for theme), preventing a
- * flash of the wrong theme. Kept dependency-free and minified-friendly.
- */
-export const THEME_INIT_SCRIPT = `(function(){try{var t=localStorage.getItem('${THEME_STORAGE_KEY}');if(t!=='dark'&&t!=='light'){t=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);var s=localStorage.getItem('${TEXT_SCALE_STORAGE_KEY}');if(s!=='sm'&&s!=='md'&&s!=='lg'){s='md';}document.documentElement.setAttribute('data-text-scale',s);}catch(e){document.documentElement.setAttribute('data-theme','light');document.documentElement.setAttribute('data-text-scale','md');}})();`;

@@ -50,6 +50,9 @@ export { getCurrentStaffProfile } from "./service";
 // Read-only employee count for the admin dashboard KPI (DOC-53 §1.1)
 export { countActiveEmployees } from "./service";
 
+// Per-user appearance (theme + text scale) — DOC-01 §4/§8.5
+export { setUserUiPrefs, getCurrentUserUiPrefs } from "./service";
+
 // Client provisioning — used by cases.createCaseFromContract (DOC-22 §1.2)
 export { provisionClientUser, upsertPersonRecord } from "./service";
 
