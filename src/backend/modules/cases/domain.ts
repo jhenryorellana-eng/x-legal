@@ -190,6 +190,22 @@ export function computePhaseProgress(input: PhaseProgressInput): number {
 }
 
 // ---------------------------------------------------------------------------
+// Cronograma — estimated dates from the case anchor (cases.opened_at)
+// ---------------------------------------------------------------------------
+
+/**
+ * Adds `weeks * 7` days to an ISO anchor, returning an ISO string — or null when
+ * there is no anchor yet (case not active / opened_at null) or the anchor is
+ * unparseable. Pure; used for the client-facing cronograma + estimated delivery.
+ */
+export function addWeeksToAnchorIso(anchorIso: string | null, weeks: number): string | null {
+  if (!anchorIso) return null;
+  const d = new Date(anchorIso);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Date(d.getTime() + weeks * 7 * 24 * 60 * 60 * 1000).toISOString();
+}
+
+// ---------------------------------------------------------------------------
 // FormResponse state machine
 // ---------------------------------------------------------------------------
 

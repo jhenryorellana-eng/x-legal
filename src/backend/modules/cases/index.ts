@@ -22,6 +22,7 @@ export {
   getTimeline,
   // Client-surface enriched reads (F2 — read-only DTOs, DOC-51)
   getCaseWorkspace,
+  getCaseTimeline,
   getDocumentsMatrix,
   getCaseMilestones,
   getClientDisplayName,
@@ -67,6 +68,8 @@ export type {
 export type {
   CaseWorkspaceDto,
   CaseWorkspaceParty,
+  CaseTimelineDto,
+  CaseTimelineCita,
   DocumentsMatrixDto,
   DocumentMatrixItem,
   CaseMilestonesDto,

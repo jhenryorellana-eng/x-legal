@@ -315,6 +315,7 @@ export async function updateSchedulingSettingsAction(input: {
     const actor = await requireActor();
     await updateSchedulingSettings(actor, {
       minNoticeHours: input.minNoticeHours,
+      defaultDurationMinutes: input.defaultDurationMinutes,
     });
     return { ok: true };
   } catch (err) {

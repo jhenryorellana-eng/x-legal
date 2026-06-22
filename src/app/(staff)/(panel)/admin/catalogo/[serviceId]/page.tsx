@@ -86,6 +86,13 @@ export default async function ServiceDetailPage({
     appointment_count: ph.appointment_policy?.appointment_count ?? 1,
     duration_minutes: ph.appointment_policy?.duration_minutes ?? 30,
     kind: (ph.appointment_policy?.kind ?? "video") as WizardPhase["kind"],
+    schedule: ph.appointment_schedule.map((s) => ({
+      sequence_number: s.sequence_number,
+      duration_minutes: s.duration_minutes,
+      kind: s.kind as WizardPhase["kind"],
+      week_offset: s.week_offset,
+    })),
+    processing_weeks: ph.processing_weeks,
     milestoneCount: ph.milestones.length,
     docs: ph.documents.map((d) => ({
       id: d.id,

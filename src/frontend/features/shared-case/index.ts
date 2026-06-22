@@ -17,5 +17,11 @@ export type {
   PartyVM,
   InstallmentVM,
   TimelineEventVM,
+  DocMatrixVM,
+  FormVM,
+  GenerationVM,
+  ValidationVM,
+  ExpedienteVM,
+  StaffRoleVM,
   CaseTabId,
 } from "./types";

@@ -30,6 +30,10 @@ export {
   createServicePartyRole,
   updateServicePartyRole,
   deleteServicePartyRole,
+  // Appointment schedule / cronograma (admin catalog editor)
+  upsertAppointmentSchedule,
+  // Cronograma runtime read (client-facing timeline source)
+  getServiceCronograma,
   // Form editor + datasets reads (DOC-53 §5 / §6 — page-initial RSC reads)
   getFormEditorData,
   getVersionPdfUrl,
@@ -42,6 +46,8 @@ export type {
   AdminServiceSummary,
   ServiceEditorTree,
   ServiceEditorPhase,
+  ServiceCronograma,
+  ServiceCronogramaCita,
   FormEditorData,
   EditorVersionTree,
   FormEditorSourceOption,
@@ -71,4 +77,6 @@ export type {
   ResolvedForm,
   ServicePartyRole,
   UpsertServicePartyRoleDto,
+  ServiceAppointmentScheduleItem,
+  UpsertAppointmentScheduleDto,
 } from "./domain";

@@ -31,6 +31,8 @@ import {
 import {
   createCaseFromContract,
   reviewDocument,
+  startDocumentUpload,
+  confirmDocumentUpload,
   getCaseDocumentDownloadUrl,
   CaseError,
 } from "@/backend/modules/cases";
@@ -230,6 +232,18 @@ export async function resendSigningLinkAction(input: {
   }
 }
 
+export async function sendContractAction(input: {
+  contractId: string;
+}): Promise<{ ok: boolean; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    await sendContractForSigning(actor, input.contractId);
+    return { ok: true };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
 export async function getDocumentUrlAction(input: {
   documentId: string;
 }): Promise<{ ok: boolean; url?: string; error?: { code: string } }> {
@@ -237,6 +251,45 @@ export async function getDocumentUrlAction(input: {
     const actor = await requireActor();
     const url = await getCaseDocumentDownloadUrl(actor, input.documentId);
     return { ok: true, url };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Staff document upload (RF-ADM-008) — admin/sales upload on the client's behalf
+// from the case workspace. Thin wrappers over the cases module-pub use cases;
+// authorization is `requireCaseAccess` inside the service (staff allowed).
+// ---------------------------------------------------------------------------
+
+export async function startDocumentUploadAction(input: {
+  caseId: string;
+  requirementId: string | null;
+  partyId: string | null;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+}): Promise<{ ok: boolean; signedUrl?: string; uploadRef?: string; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    const { signedUrl, uploadRef } = await startDocumentUpload(actor, input);
+    return { ok: true, signedUrl, uploadRef };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+export async function confirmDocumentUploadAction(input: {
+  caseId: string;
+  uploadRef: string;
+  requirementId: string | null;
+  partyId: string | null;
+  originalFilename: string;
+}): Promise<{ ok: boolean; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    await confirmDocumentUpload(actor, input);
+    return { ok: true };
   } catch (err) {
     return mapErr(err);
   }

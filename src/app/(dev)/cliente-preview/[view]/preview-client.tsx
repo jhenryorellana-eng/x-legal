@@ -39,7 +39,13 @@ export function ClientePreview({ view }: { view: string }) {
   if (view === "home") {
     content = <DashboardScreen {...homeMock} />;
   } else if (view === "camino") {
-    content = <CaminoScreen {...caminoMock} />;
+    content = (
+      <CaminoScreen
+        {...caminoMock}
+        deliveryLabel="18 jul 2026"
+        labels={{ ...caminoMock.labels, deliveryEstimate: "Entrega estimada" }}
+      />
+    );
   } else if (view === "documentos") {
     content = <DocumentosScreen {...documentosMock} />;
   } else if (view === "disclaimer") {
@@ -50,7 +56,26 @@ export function ClientePreview({ view }: { view: string }) {
       />
     );
   } else if (view === "proceso") {
-    content = <ProcesoScreen {...procesoMock} />;
+    content = (
+      <ProcesoScreen
+        {...procesoMock}
+        cronograma={{
+          citas: [
+            { label: "Evaluación inicial", weekLabel: "Sem. 1", dateLabel: "27 jun 2026" },
+            { label: "Cita 2", weekLabel: "Sem. 2", dateLabel: "4 jul 2026" },
+          ],
+          started: true,
+          deliveryLabel: "18 jul 2026",
+          totalWeeksLabel: "~4 semanas",
+        }}
+        labels={{
+          ...procesoMock.labels,
+          cronogramaTitle: "Cronograma estimado",
+          deliveryEstimate: "Entrega estimada del expediente",
+          cronogramaNotStarted: "Comienza al activar tu caso",
+        }}
+      />
+    );
   } else if (view === "agendar") {
     content = <AgendarScreen {...agendarMock} />;
   } else if (view === "cita") {

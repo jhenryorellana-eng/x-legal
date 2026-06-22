@@ -78,6 +78,7 @@ export default async function VentasDisponibilidadPage() {
 
   const minNotice = config?.minNoticeHours ?? 24;
   const noShowPenaltyDays = config?.rebookingPenaltyDays ?? 7;
+  const prospectDuration = config?.prospectDurationMinutes ?? 45;
 
   const strings = {
     title: t("title"),
@@ -120,7 +121,7 @@ export default async function VentasDisponibilidadPage() {
       <DisponibilidadView
         days={days}
         exceptions={exceptions}
-        defaultDuration={45}
+        defaultDuration={prospectDuration}
         minNotice={minNotice}
         remindersEnabled
         noShowPenaltyDays={noShowPenaltyDays}

@@ -38,16 +38,34 @@ export interface ProcesoLabels {
   gotIt: string;
   whatsNext: string;
   whatsNextBody: string;
+  cronogramaTitle: string;
+  deliveryEstimate: string; // "Entrega estimada del expediente"
+  cronogramaNotStarted: string; // "Comienza al activar tu caso"
+}
+
+export interface ProcesoCita {
+  label: string;
+  weekLabel: string;
+  dateLabel: string | null;
+}
+
+export interface ProcesoCronograma {
+  citas: ProcesoCita[];
+  started: boolean;
+  deliveryLabel: string | null;
+  totalWeeksLabel: string;
 }
 
 export function ProcesoScreen({
   caseId,
   milestones,
   labels,
+  cronograma,
 }: {
   caseId: string;
   milestones: ProcesoMilestone[];
   labels: ProcesoLabels;
+  cronograma?: ProcesoCronograma | null;
 }) {
   const [glossary, setGlossary] = React.useState<{ term: string; body: string } | null>(null);
 
@@ -86,6 +104,75 @@ export function ProcesoScreen({
       <p style={{ margin: "0 0 18px", fontSize: 15.5, color: "var(--ink-2)", fontWeight: 600 }}>
         {labels.subtitle}
       </p>
+
+      {cronograma && cronograma.citas.length > 0 && (
+        <div
+          style={{
+            marginBottom: 20,
+            background: "var(--card)",
+            borderRadius: 20,
+            padding: 18,
+            boxShadow: "var(--shadow-soft)",
+            border: "2px solid transparent",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 12 }}>
+            <Icon name="calendar" size={20} color="var(--accent)" />
+            <div className="t-title" style={{ fontSize: 16, color: "var(--navy)", fontWeight: 800 }}>
+              {labels.cronogramaTitle}
+            </div>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {cronograma.citas.map((c, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span
+                  style={{
+                    fontSize: 11.5,
+                    fontWeight: 800,
+                    color: "var(--accent)",
+                    background: "var(--blue-soft)",
+                    borderRadius: 999,
+                    padding: "3px 10px",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {c.weekLabel}
+                </span>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 14.5, fontWeight: 700, color: "var(--navy)" }}>
+                  {c.label}
+                </span>
+                {c.dateLabel && (
+                  <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-2)", whiteSpace: "nowrap" }}>
+                    {c.dateLabel}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+          <div
+            style={{
+              marginTop: 14,
+              paddingTop: 14,
+              borderTop: "1px solid var(--line)",
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+            }}
+          >
+            <Icon name="trophy" size={20} color="var(--gold-deep)" />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-2)" }}>
+                {labels.deliveryEstimate}
+              </div>
+              <div className="t-title" style={{ fontSize: 16.5, fontWeight: 800, color: "var(--gold-deep)" }}>
+                {cronograma.started && cronograma.deliveryLabel
+                  ? cronograma.deliveryLabel
+                  : `${labels.cronogramaNotStarted} · ${cronograma.totalWeeksLabel}`}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={{ position: "relative" }}>
         <div

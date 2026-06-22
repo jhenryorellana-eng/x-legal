@@ -34,6 +34,7 @@ import {
   CreateMilestoneDtoSchema,
   CreateRequiredDocDtoSchema,
   UpsertServicePartyRoleDtoSchema,
+  UpsertAppointmentScheduleDtoSchema,
   CreateFormDtoSchema,
   QuestionSchema,
   validateServicePublication,
@@ -87,11 +88,12 @@ import type {
   CreateRequiredDocDto,
   ServicePartyRole,
   UpsertServicePartyRoleDto,
+  UpsertAppointmentScheduleDto,
   CreateFormDto,
 } from "./domain";
 
 import * as repo from "./repository";
-import type { PolicyRow, FormDefinitionRow, RequiredDocRow } from "./repository";
+import type { PolicyRow, AppointmentScheduleRow, FormDefinitionRow, RequiredDocRow } from "./repository";
 
 // ---------------------------------------------------------------------------
 // Type helpers (convert DB rows to domain objects)
@@ -2137,6 +2139,10 @@ export interface ServiceEditorPhase {
   position: number;
   milestones: Milestone[];
   appointment_policy: PolicyRow | null;
+  /** Per-cita cronograma rows (each with own duration + week_offset). Supersede the policy when present. */
+  appointment_schedule: AppointmentScheduleRow[];
+  /** Trailing "trámite" weeks this phase contributes to the client cronograma. */
+  processing_weeks: number;
   documents: RequiredDocRow[];
   forms: (FormDefinitionRow & { published_version: number | null })[];
 }
@@ -2173,9 +2179,10 @@ export async function getServiceEditorTree(
 
   const phases: ServiceEditorPhase[] = await Promise.all(
     phaseRows.map(async (ph) => {
-      const [milestones, policy, documents, forms] = await Promise.all([
+      const [milestones, policy, schedule, documents, forms] = await Promise.all([
         repo.listMilestones(ph.id),
         repo.findPhasePolicy(ph.id),
+        repo.listAppointmentSchedule(ph.id),
         repo.listRequiredDocs(ph.id),
         repo.listFormDefinitions(ph.id),
       ]);
@@ -2197,6 +2204,8 @@ export async function getServiceEditorTree(
         position: ph.position,
         milestones: milestones as unknown as Milestone[],
         appointment_policy: policy,
+        appointment_schedule: schedule,
+        processing_weeks: ph.processing_weeks ?? 0,
         documents: documents,
         forms: formsWithVersion,
       };
@@ -2308,6 +2317,107 @@ export async function deleteServicePartyRole(actor: Actor, id: string): Promise<
   await writeAudit(actor, "catalog.service_party_role.deleted", "service_party_roles", id, {
     before: { id, service_id: existing.service_id, role_key: existing.role_key },
   });
+}
+
+// ---------------------------------------------------------------------------
+// Appointment schedule (cronograma) — admin catalog editor
+// ---------------------------------------------------------------------------
+
+/**
+ * Replaces the per-appointment schedule (cronograma) of a phase plus its
+ * trailing "trámite" weeks. Each cita carries its own duration + week_offset;
+ * the schedule supersedes phase_appointment_policies when present. The
+ * cronograma is informational (client-facing); it does not constrain booking.
+ *
+ * @api-id API-CAT-34
+ */
+export async function upsertAppointmentSchedule(
+  actor: Actor,
+  input: UpsertAppointmentScheduleDto,
+): Promise<AppointmentScheduleRow[]> {
+  can(actor, "catalog", "edit");
+  const dto = UpsertAppointmentScheduleDtoSchema.parse(input);
+  // Org ownership: phase → service → org (service client bypasses RLS).
+  const phase = await repo.findPhaseById(dto.service_phase_id);
+  if (!phase) throw catalogError("CATALOG_PHASE_NOT_FOUND");
+  await assertServiceInOrg(actor, phase.service_id);
+
+  await repo.replaceAppointmentSchedule(
+    dto.service_phase_id,
+    dto.items.map((it, idx) => ({
+      service_phase_id: dto.service_phase_id,
+      sequence_number: it.sequence_number,
+      duration_minutes: it.duration_minutes,
+      kind: it.kind,
+      week_offset: it.week_offset,
+      label_i18n: (it.label_i18n ?? null) as import("@/shared/database.types").Json,
+      position: idx,
+    })),
+  );
+  await repo.setPhaseProcessingWeeks(dto.service_phase_id, dto.processing_weeks);
+
+  await writeAudit(
+    actor,
+    "catalog.appointment_schedule.updated",
+    "service_appointment_schedule",
+    dto.service_phase_id,
+    { after: { count: dto.items.length, processing_weeks: dto.processing_weeks } },
+  );
+
+  return repo.listAppointmentSchedule(dto.service_phase_id);
+}
+
+export interface ServiceCronogramaCita {
+  phaseId: string;
+  phaseLabelI18n: import("./domain").I18nTextDraft;
+  sequenceNumber: number;
+  durationMinutes: number;
+  kind: string;
+  weekOffset: number;
+  labelI18n: import("./domain").I18nTextDraft | null;
+}
+
+export interface ServiceCronograma {
+  citas: ServiceCronogramaCita[];
+  /** Total trailing "trámite" weeks across all phases. */
+  processingWeeks: number;
+  /** Week of the last cita (0 when there are no citas). */
+  lastWeek: number;
+  /** lastWeek + processingWeeks — estimated total span in weeks. */
+  totalWeeks: number;
+}
+
+/**
+ * Returns the per-service cronograma — all phases' appointment schedule rows
+ * (each cita's duration + week offset) plus their trailing processing weeks,
+ * ordered by week then sequence. No gate: runtime client-facing config (like
+ * listServicePartyRoles). The case layer anchors it on cases.opened_at to
+ * compute concrete dates (cases.getCaseTimeline).
+ *
+ * @api-id API-CAT-35
+ */
+export async function getServiceCronograma(serviceId: string): Promise<ServiceCronograma> {
+  const phases = await repo.listPhases(serviceId);
+  const citas: ServiceCronogramaCita[] = [];
+  let processingWeeks = 0;
+  for (const ph of phases) {
+    processingWeeks += ph.processing_weeks ?? 0;
+    const rows = await repo.listAppointmentSchedule(ph.id);
+    for (const r of rows) {
+      citas.push({
+        phaseId: ph.id,
+        phaseLabelI18n: (ph.label_i18n ?? {}) as import("./domain").I18nTextDraft,
+        sequenceNumber: r.sequence_number,
+        durationMinutes: r.duration_minutes,
+        kind: r.kind,
+        weekOffset: r.week_offset,
+        labelI18n: (r.label_i18n ?? null) as import("./domain").I18nTextDraft | null,
+      });
+    }
+  }
+  citas.sort((a, b) => a.weekOffset - b.weekOffset || a.sequenceNumber - b.sequenceNumber);
+  const lastWeek = citas.reduce((m, c) => Math.max(m, c.weekOffset), 0);
+  return { citas, processingWeeks, lastWeek, totalWeeks: lastWeek + processingWeeks };
 }
 
 /**

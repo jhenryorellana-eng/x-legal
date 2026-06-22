@@ -26,8 +26,9 @@ import {
   canClientReschedule,
   hasStarted,
   effectivePolicy,
-  remainingAppointments,
   nextSequenceNumber,
+  effectiveAppointmentCount,
+  scheduleEntryForSequence,
   computeRebookingBlockedUntil,
   isRebookingBlocked,
   validateRuleSet,
@@ -294,9 +295,10 @@ export async function getAvailableSlots(
     });
   }
 
-  const [phasePolicy, caseOverride] = await Promise.all([
+  const [phasePolicy, caseOverride, schedule] = await Promise.all([
     repo.getPhasePolicy(c.currentPhaseId),
     repo.getCaseOverride(input.caseId, c.currentPhaseId),
+    repo.getAppointmentSchedule(c.currentPhaseId),
   ]);
   const policy = effectivePolicy(phasePolicy, caseOverride);
 
@@ -305,9 +307,12 @@ export async function getAvailableSlots(
     c.currentPhaseId,
     ["scheduled", "completed"],
   );
-  if (remainingAppointments(policy, consumed) <= 0) {
+  // When a per-cita schedule exists it defines the count (one row per cita);
+  // otherwise fall back to the uniform phase-policy count.
+  const totalAppointments = effectiveAppointmentCount(policy, schedule);
+  if (totalAppointments - consumed <= 0) {
     throw new SchedulingError("NO_APPOINTMENTS_LEFT", {
-      count: policy.appointmentCount,
+      count: totalAppointments,
     });
   }
 
@@ -315,6 +320,17 @@ export async function getAvailableSlots(
   if (!staffId) {
     throw new SchedulingError("NO_STAFF_ASSIGNED");
   }
+
+  // Resolve the NEXT cita's duration/kind from the cronograma (schedule row for
+  // its sequence number), falling back to the uniform phase policy.
+  const seqNumbers = await repo.getPhaseSequenceNumbers(
+    input.caseId,
+    c.currentPhaseId,
+  );
+  const sequenceNumber = nextSequenceNumber(seqNumbers);
+  const entry = scheduleEntryForSequence(schedule, sequenceNumber);
+  const durationMin = entry?.durationMinutes ?? policy.durationMinutes;
+  const kind = entry?.kind ?? policy.kind;
 
   const [rules, settings, exceptions, booked] = await Promise.all([
     repo.getActiveRules(staffId),
@@ -330,21 +346,16 @@ export async function getAvailableSlots(
     booked,
     windowFromUtc: input.windowFromUtc,
     windowToUtc: input.windowToUtc,
-    durationMin: policy.durationMinutes,
+    durationMin,
     nowUtc: now(),
   });
 
-  const seqNumbers = await repo.getPhaseSequenceNumbers(
-    input.caseId,
-    c.currentPhaseId,
-  );
-  const sequenceNumber = nextSequenceNumber(seqNumbers);
   const staffTimezone = await getUserTimezone(staffId);
 
   return {
     slots,
-    durationMinutes: policy.durationMinutes,
-    kind: policy.kind,
+    durationMinutes: durationMin,
+    kind,
     sequenceNumber,
     staffId,
     staffTimezone,
@@ -401,14 +412,23 @@ export async function bookAppointment(
   }
 
   const phaseId = c.currentPhaseId;
-  const [phasePolicy, caseOverride] = await Promise.all([
+  const [phasePolicy, caseOverride, schedule] = await Promise.all([
     repo.getPhasePolicy(phaseId),
     repo.getCaseOverride(p.caseId, phaseId),
+    repo.getAppointmentSchedule(phaseId),
   ]);
   const policy = effectivePolicy(phasePolicy, caseOverride);
 
+  // Sequence number first, so the cita's own duration/kind (from the cronograma
+  // schedule row) can be resolved. Staff-supplied values still win.
+  const sequenceNumber = nextSequenceNumber(
+    await repo.getPhaseSequenceNumbers(p.caseId, phaseId),
+  );
+  const entry = scheduleEntryForSequence(schedule, sequenceNumber);
+
   const startsAt = p.startsAtUtc;
-  const duration = p.durationMinutes ?? policy.durationMinutes;
+  const duration = p.durationMinutes ?? entry?.durationMinutes ?? policy.durationMinutes;
+  const apptKind = p.kind ?? entry?.kind ?? policy.kind;
   const endsAt = addMinutes(startsAt, duration);
 
   // Gate: quota
@@ -416,7 +436,7 @@ export async function bookAppointment(
     "scheduled",
     "completed",
   ]);
-  if (remainingAppointments(policy, consumed) <= 0) {
+  if (effectiveAppointmentCount(policy, schedule) - consumed <= 0) {
     throw new SchedulingError("NO_APPOINTMENTS_LEFT");
   }
 
@@ -452,7 +472,7 @@ export async function bookAppointment(
       booked,
       windowFromUtc: windowFrom,
       windowToUtc: windowTo,
-      durationMin: policy.durationMinutes,
+      durationMin: duration,
       nowUtc: now(),
     });
     if (!isSlotInSet({ startUtc: startsAt, endUtc: endsAt }, slots)) {
@@ -478,11 +498,9 @@ export async function bookAppointment(
       clientUserId: c.primaryClientId,
       startsAt,
       endsAt,
-      kind: p.kind ?? policy.kind,
+      kind: apptKind,
       status: "scheduled",
-      sequenceNumber: nextSequenceNumber(
-        await repo.getPhaseSequenceNumbers(p.caseId, phaseId),
-      ),
+      sequenceNumber,
       reminder1d: p.reminder1d,
       reminder1h: p.reminder1h,
       notes: p.notes ?? null,
@@ -1161,6 +1179,8 @@ export interface AvailabilityConfigResult {
   exceptions: Array<{ id: string; reason: string | null; startsAt: string; endsAt: string }>;
   minNoticeHours: number;
   rebookingPenaltyDays: number;
+  /** Default duration (min) for prospect/initial-evaluation appointments. */
+  prospectDurationMinutes: number;
   staffTimezone: string;
 }
 
@@ -1207,6 +1227,7 @@ export async function getAvailabilityConfig(
     })),
     minNoticeHours: settings.minNoticeHours,
     rebookingPenaltyDays: settings.rebookingPenaltyDays,
+    prospectDurationMinutes: settings.prospectDurationMinutes,
     staffTimezone,
   };
 }
@@ -1335,6 +1356,9 @@ const SettingsSchema = z.object({
   bufferMinutes: z.number().min(0).optional(),
   cancellationWindowHours: z.number().min(0).optional(),
   rebookingPenaltyDays: z.number().min(0).optional(),
+  // Prospect/initial-evaluation cita duration (Mi disponibilidad). The view
+  // sends it as `defaultDurationMinutes`; persisted to prospect_duration_minutes.
+  defaultDurationMinutes: z.number().min(5).optional(),
 });
 
 export type SettingsInput = z.input<typeof SettingsSchema>;
@@ -1359,6 +1383,7 @@ export async function updateSchedulingSettings(
     bufferMinutes: p.bufferMinutes,
     cancellationWindowHours: p.cancellationWindowHours,
     rebookingPenaltyDays: p.rebookingPenaltyDays,
+    prospectDurationMinutes: p.defaultDurationMinutes,
   });
 
   await writeAudit(

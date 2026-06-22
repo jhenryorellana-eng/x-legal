@@ -22,6 +22,7 @@ export type ServicePlanRow = Tables<"service_plans">;
 export type ServicePhaseRow = Tables<"service_phases">;
 export type MilestoneRow = Tables<"service_phase_milestones">;
 export type PolicyRow = Tables<"phase_appointment_policies">;
+export type AppointmentScheduleRow = Tables<"service_appointment_schedule">;
 export type RequiredDocRow = Tables<"required_document_types">;
 export type ServicePartyRoleRow = Tables<"service_party_roles">;
 export type FormDefinitionRow = Tables<"form_definitions">;
@@ -380,6 +381,53 @@ export async function findPhasePolicy(phaseId: string): Promise<PolicyRow | null
     .eq("service_phase_id", phaseId)
     .maybeSingle();
   return data;
+}
+
+// ---------------------------------------------------------------------------
+// Per-appointment schedule (cronograma) — each cita's own duration + week offset
+// ---------------------------------------------------------------------------
+
+export async function listAppointmentSchedule(
+  phaseId: string,
+): Promise<AppointmentScheduleRow[]> {
+  const { data, error } = await db()
+    .from("service_appointment_schedule")
+    .select("*")
+    .eq("service_phase_id", phaseId)
+    .order("sequence_number");
+  if (error) throw new Error(`catalog.repo.listAppointmentSchedule: ${error.message}`);
+  return data ?? [];
+}
+
+/**
+ * Replaces all schedule rows of a phase (delete → insert), mirroring
+ * scheduling.replaceRules. Non-atomic across the two calls, acceptable for an
+ * admin config editor (same trade-off as the availability rules editor).
+ */
+export async function replaceAppointmentSchedule(
+  phaseId: string,
+  items: TablesInsert<"service_appointment_schedule">[],
+): Promise<void> {
+  const del = await db()
+    .from("service_appointment_schedule")
+    .delete()
+    .eq("service_phase_id", phaseId);
+  if (del.error) {
+    throw new Error(`catalog.repo.replaceAppointmentSchedule(delete): ${del.error.message}`);
+  }
+  if (items.length === 0) return;
+  const ins = await db().from("service_appointment_schedule").insert(items);
+  if (ins.error) {
+    throw new Error(`catalog.repo.replaceAppointmentSchedule(insert): ${ins.error.message}`);
+  }
+}
+
+export async function setPhaseProcessingWeeks(phaseId: string, weeks: number): Promise<void> {
+  const { error } = await db()
+    .from("service_phases")
+    .update({ processing_weeks: weeks })
+    .eq("id", phaseId);
+  if (error) throw new Error(`catalog.repo.setPhaseProcessingWeeks: ${error.message}`);
 }
 
 // ---------------------------------------------------------------------------

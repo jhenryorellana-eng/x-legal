@@ -1,17 +1,12 @@
 "use client";
 
 /**
- * SharedCaseView — the single staff case workspace (DOC-50 §4, DOC-53 §3).
+ * SharedCaseView — the single staff case workspace (DOC-50 §4, DOC-52/53).
+ * Shared by Vanessa (/ventas/clientes/[caseId]) and Henry (/admin/casos/[caseId]).
  *
- * First real consumer of `features/shared-case`. Renders:
- *  - Header: ← back, case number, StatusPill, client · service · plan chip.
- *  - Admin-mode bar (gold-soft, shield) — exclusive to the admin role (RF-ADM-007).
- *  - Contextual banners (payment_pending / no phase).
- *  - Data-driven tab bar (Resumen · Documentos · Partes for F2-W2-b) with badges.
- *  - The active tab content.
- *
- * Tabs are materialized by `buildTabs` (config, not forks). Future tabs slot in
- * via the registry without touching this component.
+ * Rebuilt to the UI Vanessa design: header (← back, case number, StatusPill,
+ * client · service · plan), admin-mode bar (RF-ADM-007), contextual banners,
+ * the `.subtabs` tab bar (role-aware via buildTabs) and the active tab content.
  */
 
 import * as React from "react";
@@ -21,8 +16,16 @@ import { Chip } from "@/frontend/components/brand/chip";
 import { StatusPill } from "@/frontend/components/brand/status-pill";
 import { buildTabs } from "./build-tabs";
 import { ResumenTab } from "./tabs/resumen-tab";
+import { ContratoTab } from "./tabs/contrato-tab";
+import { CitasTab } from "./tabs/citas-tab";
 import { DocumentosTab } from "./tabs/documentos-tab";
-import { PartesTab } from "./tabs/partes-tab";
+import { InformacionTab } from "./tabs/informacion-tab";
+import { TraspasoTab } from "./tabs/traspaso-tab";
+import { HistorialTab } from "./tabs/historial-tab";
+import { PagosTab } from "./tabs/pagos-tab";
+import { GeneracionesTab } from "./tabs/generaciones-tab";
+import { ValidacionTab } from "./tabs/validacion-tab";
+import { ExpedienteTab } from "./tabs/expediente-tab";
 import { MensajesTab } from "./tabs/mensajes-tab";
 import { buildChatActions, type RawChatActions } from "@/frontend/features/messaging/build-chat-actions";
 import type { CaseWorkspaceVM, CaseDetailActions, CaseTabId } from "./types";
@@ -33,7 +36,7 @@ export interface SharedCaseViewProps {
   actions: CaseDetailActions;
   strings: CasosStrings;
   locale: "es" | "en";
-  /** Back link to the casos list (admin: /admin/casos). */
+  /** Back link to the casos list. */
   backHref: string;
   /** Admin-mode bar visible only for the admin role. */
   isAdmin: boolean;
@@ -51,6 +54,7 @@ export function SharedCaseView({
   chatRaw,
 }: SharedCaseViewProps) {
   const t = strings.detail;
+  const tb = t.tabs;
   const h = vm.header;
   const documentsToReview = vm.documents.filter((d) => d.status === "uploaded").length;
 
@@ -60,36 +64,46 @@ export function SharedCaseView({
   );
 
   const tabs = buildTabs({
-    labels: {
-      resumen: t.tabSummary,
-      documentos: t.tabDocuments,
-      partes: t.tabParties,
-      mensajes: locale === "es" ? "Mensajes" : "Messages",
-    },
+    strings,
+    isAdmin,
     documentsToReview,
-  }).filter((tab) => tab.id !== "mensajes" || !!chat);
+    hasChat: !!chat,
+    requiresLawyerValidation: vm.requiresLawyerValidation,
+  });
   const [active, setActive] = React.useState<CaseTabId>("resumen");
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
       {/* Header */}
       <div style={{ padding: "4px 0 16px" }}>
-        <Link
-          href={backHref}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 6,
-            color: "var(--ink-2)",
-            fontSize: 13.5,
-            fontWeight: 700,
-            textDecoration: "none",
-            marginBottom: 12,
-          }}
-        >
-          <Icon name="chevL" size={16} color="var(--ink-2)" />
-          {t.back}
-        </Link>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+          <Link
+            href={backHref}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              color: "var(--ink-2)",
+              fontSize: 13.5,
+              fontWeight: 700,
+              textDecoration: "none",
+            }}
+          >
+            <Icon name="chevL" size={16} color="var(--ink-2)" />
+            {t.back}
+          </Link>
+
+          {isAdmin && (
+            <div style={{ display: "flex", gap: 8 }}>
+              <HeaderLink href={`/admin/casos/${h.caseId}/formularios`} icon="form">
+                {tb.formularios}
+              </HeaderLink>
+              <HeaderLink href="/admin/auditoria" icon="scale">
+                {t.auditLink}
+              </HeaderLink>
+            </div>
+          )}
+        </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <h1
@@ -140,9 +154,7 @@ export function SharedCaseView({
           }}
         >
           <Icon name="shield" size={18} color="var(--gold-deep)" />
-          <span style={{ fontSize: 13, fontWeight: 700, color: "var(--gold-deep)" }}>
-            {t.adminBar}
-          </span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: "var(--gold-deep)" }}>{t.adminBar}</span>
         </div>
       )}
 
@@ -158,16 +170,8 @@ export function SharedCaseView({
         </Banner>
       )}
 
-      {/* Tab bar */}
-      <div
-        role="tablist"
-        style={{
-          display: "flex",
-          gap: 8,
-          marginBottom: 18,
-          flexWrap: "wrap",
-        }}
-      >
+      {/* Tab bar (.subtabs design) */}
+      <div className="subtabs" role="tablist">
         {tabs.map((tab) => {
           const on = active === tab.id;
           return (
@@ -176,44 +180,11 @@ export function SharedCaseView({
               role="tab"
               aria-selected={on}
               type="button"
+              className={`subtab ${on ? "on" : ""}`}
               onClick={() => setActive(tab.id)}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 7,
-                height: 38,
-                padding: "0 16px",
-                borderRadius: 999,
-                border: "none",
-                cursor: "pointer",
-                background: on ? "var(--accent-soft, var(--blue-soft))" : "transparent",
-                color: on ? "var(--accent)" : "var(--ink-2)",
-                fontFamily: "var(--font-title)",
-                fontWeight: 800,
-                fontSize: 14,
-                transition: "background-color .14s var(--ease, ease)",
-              }}
             >
               {tab.label}
-              {!!tab.badge && tab.badge > 0 && (
-                <span
-                  aria-hidden="true"
-                  style={{
-                    minWidth: 20,
-                    height: 20,
-                    padding: "0 6px",
-                    borderRadius: 999,
-                    background: "var(--red)",
-                    color: "#fff",
-                    fontSize: 11.5,
-                    fontWeight: 800,
-                    display: "grid",
-                    placeItems: "center",
-                  }}
-                >
-                  {tab.badge}
-                </span>
-              )}
+              {!!tab.badge && tab.badge > 0 && <span className="subtab-badge">{tab.badge}</span>}
             </button>
           );
         })}
@@ -221,13 +192,18 @@ export function SharedCaseView({
 
       {/* Active tab */}
       <div role="tabpanel">
-        {active === "resumen" && (
-          <ResumenTab vm={vm} actions={actions} strings={strings} locale={locale} />
-        )}
-        {active === "documentos" && (
-          <DocumentosTab vm={vm} actions={actions} strings={strings} />
-        )}
-        {active === "partes" && <PartesTab vm={vm} strings={strings} />}
+        {active === "resumen" && <ResumenTab vm={vm} actions={actions} strings={strings} locale={locale} />}
+        {active === "contrato" && <ContratoTab vm={vm} actions={actions} strings={strings} locale={locale} />}
+        {active === "citas" && <CitasTab vm={vm} strings={strings} />}
+        {active === "documentos" && <DocumentosTab vm={vm} actions={actions} strings={strings} />}
+        {active === "formularios" && <InformacionTab vm={vm} strings={strings} />}
+        {active === "cartas" && <GeneracionesTab vm={vm} strings={strings} locale={locale} title={tb.cartas} />}
+        {active === "generaciones" && <GeneracionesTab vm={vm} strings={strings} locale={locale} title={tb.generaciones} />}
+        {active === "traspaso" && <TraspasoTab vm={vm} strings={strings} />}
+        {active === "pagos" && <PagosTab vm={vm} actions={actions} strings={strings} locale={locale} />}
+        {active === "expediente" && <ExpedienteTab vm={vm} strings={strings} title={tb.expediente} />}
+        {active === "validacion" && <ValidacionTab vm={vm} strings={strings} title={tb.validacion} />}
+        {active === "historial" && <HistorialTab vm={vm} strings={strings} locale={locale} />}
         {active === "mensajes" && chat && (
           <MensajesTab loadThread={chat.loadThread} actions={chat.actions} locale={locale} />
         )}
@@ -262,5 +238,37 @@ function Banner({
       <Icon name={icon} size={18} color={fg} />
       <span style={{ fontSize: 13.5, fontWeight: 700, color: fg }}>{children}</span>
     </div>
+  );
+}
+
+function HeaderLink({
+  href,
+  icon,
+  children,
+}: {
+  href: string;
+  icon: "form" | "scale";
+  children: React.ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        fontSize: 13,
+        fontWeight: 700,
+        color: "var(--accent)",
+        textDecoration: "none",
+        border: "1px solid var(--line)",
+        borderRadius: 999,
+        padding: "6px 14px",
+        background: "var(--card, #fff)",
+      }}
+    >
+      <Icon name={icon} size={15} color="var(--accent)" />
+      {children}
+    </Link>
   );
 }

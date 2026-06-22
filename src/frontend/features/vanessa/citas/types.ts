@@ -57,6 +57,8 @@ export interface NuevaCitaModalProps {
   clientResults: ClientSearchResult[];
   prospectResults: ProspectSearchResult[];
   apptTypeOptions: { value: ApptKind; label: string }[];
+  /** Default duration (min) for prospect/evaluation citas (Mi disponibilidad). */
+  prospectDuration?: number;
   strings: NuevaCitaStrings;
   actions: NuevaCitaActions;
 }

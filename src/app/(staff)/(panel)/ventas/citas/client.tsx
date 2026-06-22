@@ -28,6 +28,7 @@ export interface CitasClientProps {
   locale: "es" | "en";
   strings: CitasStrings;
   nuevaCitaStrings: NuevaCitaStrings;
+  prospectDuration?: number;
   actions: {
     book: NuevaCitaActions["bookAppointment"];
     prospect: NuevaCitaActions["createProspectAppointment"];
@@ -46,6 +47,7 @@ export function CitasClient({
   locale,
   strings,
   nuevaCitaStrings,
+  prospectDuration,
   actions,
 }: CitasClientProps) {
   return (
@@ -69,6 +71,7 @@ export function CitasClient({
             { value: "c2", label: strings.legend.c2 + " · Verificación" },
             { value: "c3", label: strings.legend.c3 + " · Validación" },
           ],
+          prospectDuration,
           strings: nuevaCitaStrings,
           actions: { bookAppointment: actions.book, createProspectAppointment: actions.prospect },
         }}
