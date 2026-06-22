@@ -50,15 +50,15 @@
     /* User text scale (sm | md | lg). The staff UI uses pixel font sizes, so the
        root `html { font-size }` scale has no visible effect here — scale the whole
        surface with `zoom` instead so the text-size control in Configuración works.
-       NOTE: `zoom` scales the *rendered* size, but viewport-relative dimensions
-       (`100dvh`, the `100%` fill width) resolve against the real viewport and are
-       THEN scaled — so an un-compensated surface renders 112%/92% of the screen
-       (horizontal overflow at lg, a gap under the sidebar at sm). Divide every
-       viewport-relative dimension by the same factor so that, after the zoom, the
-       surface maps back to exactly one viewport. Descendants that use `100dvh`
-       (the shell root + the sidebar) carry the same `/ var(--text-scale)` guard. */
+       NOTE on `zoom` + sizing: percentage / `auto` widths self-compensate — the
+       containing block is measured in the element's zoomed coordinate space, so the
+       default `width:100%` fill already renders as exactly one viewport at any zoom.
+       VIEWPORT units do NOT: `100dvh` resolves against the real viewport and is THEN
+       scaled, so an un-compensated surface renders 112%/92% tall (vertical overflow
+       at lg, a gap under the sidebar at sm). Compensate ONLY the viewport-unit
+       heights with `/ var(--text-scale)`; leave the width alone. Descendants that use
+       `100dvh` (the shell root + the sidebar) carry the same guard. */
     zoom: var(--text-scale, 1);
-    width: calc(100% / var(--text-scale, 1));
     min-height: calc(100dvh / var(--text-scale, 1));
   }
 
