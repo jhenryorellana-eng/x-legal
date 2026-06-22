@@ -14,6 +14,7 @@ import {
   getCaseWorkspace,
   getDocumentsMatrix,
   getCaseMilestones,
+  getCaseTimeline,
 } from "@/backend/modules/cases";
 import { pickLocale, type Locale } from "@/frontend/features/cliente/shared/i18n";
 import { CaminoScreen } from "@/frontend/features/cliente/camino/camino-screen";
@@ -54,6 +55,24 @@ export default async function CaminoPage({
     ? pickLocale(currentMilestone.labelI18n, locale)
     : null;
 
+  // Estimated expediente delivery date (cronograma — informational).
+  const timeline = await getCaseTimeline(actor, caseId).catch(() => null);
+  const deliveryLabel =
+    timeline && timeline.started && timeline.estimatedDeliveryDate
+      ? (() => {
+          try {
+            return new Intl.DateTimeFormat(locale === "en" ? "en-US" : "es-ES", {
+              day: "numeric",
+              month: "short",
+              year: "numeric",
+              timeZone: "UTC",
+            }).format(new Date(timeline.estimatedDeliveryDate));
+          } catch {
+            return null;
+          }
+        })()
+      : null;
+
   return (
     <CaminoScreen
       caseId={caseId}
@@ -72,8 +91,10 @@ export default async function CaminoPage({
       docsComplete={docsComplete}
       firstVisit={onboarded === "1"}
       currentMilestoneLabel={currentMilestoneLabel}
+      deliveryLabel={deliveryLabel}
       labels={{
         backCases: t("backCases"),
+        deliveryEstimate: t("deliveryEstimate"),
         // These carry ICU placeholders ({service}/{x}/{y}/{n}/{phase}) that the
         // screen fills via string replace — use t.raw so next-intl returns the
         // template literally instead of failing to format the missing vars.

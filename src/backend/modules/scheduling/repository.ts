@@ -18,6 +18,7 @@ import type {
   SchedulingSettings,
   PhasePolicy,
   CaseOverride,
+  AppointmentScheduleEntry,
 } from "./domain";
 
 // ---------------------------------------------------------------------------
@@ -41,6 +42,7 @@ const DEFAULT_SETTINGS: SchedulingSettings = {
   bufferMinutes: 0,
   cancellationWindowHours: 24,
   rebookingPenaltyDays: 7,
+  prospectDurationMinutes: 45,
 };
 
 function rowToSettings(row: StaffSchedulingSettingsRow): SchedulingSettings {
@@ -50,6 +52,7 @@ function rowToSettings(row: StaffSchedulingSettingsRow): SchedulingSettings {
     bufferMinutes: row.buffer_minutes,
     cancellationWindowHours: row.cancellation_window_hours,
     rebookingPenaltyDays: row.rebooking_penalty_days,
+    prospectDurationMinutes: row.prospect_duration_minutes,
   };
 }
 
@@ -676,6 +679,7 @@ export interface SettingsPatch {
   bufferMinutes?: number;
   cancellationWindowHours?: number;
   rebookingPenaltyDays?: number;
+  prospectDurationMinutes?: number;
 }
 
 export async function upsertSettings(
@@ -692,6 +696,8 @@ export async function upsertSettings(
       patch.cancellationWindowHours ?? DEFAULT_SETTINGS.cancellationWindowHours,
     rebooking_penalty_days:
       patch.rebookingPenaltyDays ?? DEFAULT_SETTINGS.rebookingPenaltyDays,
+    prospect_duration_minutes:
+      patch.prospectDurationMinutes ?? DEFAULT_SETTINGS.prospectDurationMinutes,
   };
 
   const { error } = await supabase
@@ -725,6 +731,33 @@ export async function getPhasePolicy(
     durationMinutes: data.duration_minutes,
     kind: data.kind as "video" | "phone" | "presencial",
   };
+}
+
+/**
+ * Returns the per-appointment schedule (cronograma) of a phase, ordered by
+ * sequence. Empty when the service uses the legacy uniform policy only.
+ * (catalog-owned table read directly, mirroring getPhasePolicy.)
+ */
+export async function getAppointmentSchedule(
+  servicePhaseId: string,
+): Promise<AppointmentScheduleEntry[]> {
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("service_appointment_schedule")
+    .select("sequence_number, duration_minutes, kind, week_offset")
+    .eq("service_phase_id", servicePhaseId)
+    .order("sequence_number");
+
+  if (error) {
+    logger.error({ err: error }, "scheduling.repo: getAppointmentSchedule error");
+    return [];
+  }
+  return (data ?? []).map((r) => ({
+    sequenceNumber: r.sequence_number,
+    durationMinutes: r.duration_minutes,
+    kind: r.kind as "video" | "phone" | "presencial",
+    weekOffset: r.week_offset,
+  }));
 }
 
 export interface PhasePolicyPatch {

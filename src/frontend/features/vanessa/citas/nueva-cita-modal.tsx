@@ -30,6 +30,7 @@ export function NuevaCitaModal({
   clientResults,
   prospectResults,
   apptTypeOptions,
+  prospectDuration,
   strings,
   actions,
 }: NuevaCitaModalProps) {
@@ -41,7 +42,7 @@ export function NuevaCitaModal({
   const [apptType, setApptType] = React.useState<ApptKind>(apptTypeOptions[0]?.value ?? "c1");
   const [day, setDay] = React.useState(daysOptions[0]?.value ?? "");
   const [slot, setSlot] = React.useState(slots[0] ?? "");
-  const [duration, setDuration] = React.useState(45);
+  const [duration, setDuration] = React.useState(prospectDuration ?? 45);
   const [modality, setModality] = React.useState<"video" | "phone">("video");
   const [r1d, setR1d] = React.useState(true);
   const [r1h, setR1h] = React.useState(true);

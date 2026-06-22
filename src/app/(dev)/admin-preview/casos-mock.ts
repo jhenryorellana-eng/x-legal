@@ -129,12 +129,25 @@ export const caseWorkspaceVmMock: CaseWorkspaceVM = {
     hasPhase: false,
     contractStatus: "sent",
     contractId: "ctr-1",
+    phaseLabel: null,
+    phaseIndex: 0,
+    phaseCount: 4,
+    phaseProgress: 0,
   },
+  role: "admin",
+  isAdmin: true,
+  requiresLawyerValidation: true,
   documents: [
     { id: "d1", filename: "Pasaporte de María.pdf", status: "uploaded", partyName: "María González", createdAt: new Date().toISOString() },
     { id: "d2", filename: "Acta de nacimiento.pdf", status: "rejected", partyName: null, createdAt: new Date().toISOString() },
     { id: "d3", filename: "Comprobante de domicilio.pdf", status: "approved", partyName: null, createdAt: new Date().toISOString() },
   ],
+  requirements: [
+    { key: "r1", requirementId: "req-1", partyId: null, partyName: null, label: "Pasaporte", category: "Identidad", isRequired: true, status: "revision", documentId: "d1", rejectionReason: null },
+    { key: "r2", requirementId: "req-2", partyId: null, partyName: null, label: "Comprobante de domicilio", category: "Identidad", isRequired: false, status: "pendiente", documentId: null, rejectionReason: null },
+  ],
+  docsApproved: 1,
+  docsTotal: 3,
   parties: [
     { id: "p1", name: "María González", role: "Titular" },
     { id: "p2", name: "Diego González", role: "Cónyuge" },
@@ -151,5 +164,21 @@ export const caseWorkspaceVmMock: CaseWorkspaceVM = {
   timeline: [
     { id: "t1", title: "Contrato enviado para firma", occurredAt: new Date().toISOString(), actorKind: "team", icon: "file-signature" },
     { id: "t2", title: "Caso creado", occurredAt: new Date().toISOString(), actorKind: "team", icon: "file-plus" },
+  ],
+  forms: [
+    { id: "f1", label: "Datos del solicitante", status: "approved", partyName: "María González" },
+    { id: "f2", label: "Relato de asilo", status: "draft", partyName: null },
+  ],
+  formsDone: 1,
+  formsTotal: 2,
+  generations: [
+    { id: "g1", formLabel: "Memorándum de asilo", status: "completed", version: 2, costUsd: 0.42, isCurrent: true, partyName: null, createdAt: new Date().toISOString() },
+    { id: "g2", formLabel: "Carta de testigo", status: "running", version: 1, costUsd: null, isCurrent: false, partyName: "María González", createdAt: new Date().toISOString() },
+  ],
+  validations: [
+    { id: "v1", attemptNo: 1, status: "needs_corrections", semaforo: "amber", aiScore: 78, verdict: "needs_corrections", createdAt: new Date().toISOString() },
+  ],
+  expedientes: [
+    { id: "e1", attemptNo: 1, status: "compiled", pageCount: 42, createdAt: new Date().toISOString() },
   ],
 };

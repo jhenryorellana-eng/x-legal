@@ -34,6 +34,7 @@ export interface CaminoLabels {
   view: string;
   inProgressSuffix: string; // "· en curso"
   nextMeeting: string;
+  deliveryEstimate: string; // "Entrega estimada"
   documents: string;
   documentsValue: string; // "{x} de {y} completados"
   forms: string;
@@ -73,6 +74,8 @@ export interface CaminoScreenProps {
   /** First-visit (just accepted disclaimer) → fire the tutorial. */
   firstVisit: boolean;
   currentMilestoneLabel: string | null;
+  /** Estimated expediente delivery date (already formatted), or null. */
+  deliveryLabel?: string | null;
   labels: CaminoLabels;
   tutorialLabels: CaminoTutorialLabels;
 }
@@ -95,6 +98,7 @@ export function CaminoScreen(props: CaminoScreenProps) {
     docsComplete,
     firstVisit,
     currentMilestoneLabel,
+    deliveryLabel,
     labels,
     tutorialLabels,
   } = props;
@@ -471,6 +475,17 @@ export function CaminoScreen(props: CaminoScreenProps) {
             label: labels.forms,
             value: labels.formsValue.replace("{n}", "1"),
           },
+          ...(deliveryLabel
+            ? [
+                {
+                  href: `/caso/${caseId}/proceso`,
+                  icon: "trophy" as const,
+                  color: "var(--gold-deep)",
+                  label: labels.deliveryEstimate,
+                  value: deliveryLabel,
+                },
+              ]
+            : []),
         ].map((r) => (
           <Link
             key={r.href}

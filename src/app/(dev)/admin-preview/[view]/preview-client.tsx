@@ -122,6 +122,7 @@ export function PreviewClient({ view }: { view: string }) {
             updatePhase: noopRes,
             deletePhase: noopRes,
             upsertPolicy: noopRes,
+            upsertSchedule: noopRes,
             createRequiredDoc: async () => ({ success: true, data: { id: "mock-doc" } }),
             createPartyRole: async () => ({ success: true, data: { id: "mock-role" } }),
             updatePartyRole: noopRes,
@@ -171,7 +172,10 @@ export function PreviewClient({ view }: { view: string }) {
               reviewDocument: noopOkRes,
               registerPayment: noopOkRes,
               resendSigningLink: noopOkRes,
+              sendContract: noopOkRes,
               getDocumentUrl: async () => ({ ok: true, url: "#" }),
+              startUpload: async () => ({ ok: true, signedUrl: "#", uploadRef: "x" }),
+              confirmUpload: noopOkRes,
             }}
             strings={casosStringsMock}
             locale="es"

@@ -199,6 +199,37 @@ export const PhaseAppointmentPolicySchema = z.object({
 export type PhaseAppointmentPolicy = z.infer<typeof PhaseAppointmentPolicySchema>;
 
 // ---------------------------------------------------------------------------
+// Service Appointment Schedule — per-appointment config within a phase (the
+// "cronograma"). Each cita carries its OWN duration + week offset (week from
+// the case anchor, cases.opened_at). A phase with no appointments can still
+// contribute trailing "trámite" weeks via service_phases.processing_weeks.
+// When schedule rows exist they supersede PhaseAppointmentPolicy (kept as the
+// legacy fallback + source of `kind`). Informational cronograma only — it does
+// not constrain the booking engine.
+// ---------------------------------------------------------------------------
+
+export const ServiceAppointmentScheduleItemSchema = z.object({
+  sequence_number: z.number().int().min(1),
+  duration_minutes: z.number().int().min(5),
+  kind: AppointmentKindSchema.default("video"),
+  week_offset: z.number().int().min(1),
+  label_i18n: I18nTextDraftSchema.nullable().optional(),
+});
+export type ServiceAppointmentScheduleItem = z.infer<typeof ServiceAppointmentScheduleItemSchema>;
+
+export const UpsertAppointmentScheduleDtoSchema = z.object({
+  service_phase_id: z.string().uuid(),
+  processing_weeks: z.number().int().min(0).default(0),
+  items: z
+    .array(ServiceAppointmentScheduleItemSchema)
+    .refine(
+      (items) => new Set(items.map((i) => i.sequence_number)).size === items.length,
+      { message: "DUPLICATE_SEQUENCE" },
+    ),
+});
+export type UpsertAppointmentScheduleDto = z.infer<typeof UpsertAppointmentScheduleDtoSchema>;
+
+// ---------------------------------------------------------------------------
 // Service Party Role — the ADDITIONAL case parties a service declares
 // (besides the implicit applicant). DOC-41. role_key mirrors the
 // case_parties.party_role CHECK; cardinality single|multiple.

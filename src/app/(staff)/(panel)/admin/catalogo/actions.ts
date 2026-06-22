@@ -20,6 +20,7 @@ import {
   updatePhaseAction,
   deletePhaseAction,
   upsertPhasePolicyAction,
+  upsertAppointmentScheduleAction,
   createRequiredDocumentAction,
   createServicePartyRoleAction,
   updateServicePartyRoleAction,
@@ -93,6 +94,13 @@ export async function createRequiredDocUi(
 
 export async function upsertPolicyUi(input: Record<string, unknown>): Promise<Res<unknown>> {
   const r = await upsertPhasePolicyAction(input as Parameters<typeof upsertPhasePolicyAction>[0]);
+  return r.success ? { success: true, data: r.data } : { success: false, error: r.error };
+}
+
+export async function upsertScheduleUi(input: Record<string, unknown>): Promise<Res<unknown>> {
+  const r = await upsertAppointmentScheduleAction(
+    input as Parameters<typeof upsertAppointmentScheduleAction>[0],
+  );
   return r.success ? { success: true, data: r.data } : { success: false, error: r.error };
 }
 

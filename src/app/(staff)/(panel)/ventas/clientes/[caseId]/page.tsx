@@ -15,11 +15,14 @@ import { getActor } from "@/backend/modules/identity";
 import {
   getCaseWorkspace,
   getCaseDocuments,
+  getDocumentsMatrix,
+  getClientFormsForCase,
   getTimeline,
   CaseError,
 } from "@/backend/modules/cases";
 import { getPaymentPlanForCase } from "@/backend/modules/billing";
 import { getContractForCase } from "@/backend/modules/contracts";
+import { getRunsForCase } from "@/backend/modules/ai-engine";
 import { resolveI18n, type Locale } from "@/shared/i18n";
 import { SharedCaseView, buildCasosStrings } from "@/frontend/features/shared-case";
 import {
@@ -39,7 +42,10 @@ import {
   reviewDocumentAction,
   registerPaymentAction,
   resendSigningLinkAction,
+  sendContractAction,
   getDocumentUrlAction,
+  startDocumentUploadAction,
+  confirmDocumentUploadAction,
 } from "../../../admin/casos/actions";
 
 export const dynamic = "force-dynamic";
@@ -65,12 +71,28 @@ export default async function VentasCasoDetailPage({
     throw err;
   }
 
-  const [documents, plan, contract, timeline] = await Promise.all([
+  const [documents, plan, contract, timeline, forms, runs, matrix] = await Promise.all([
     getCaseDocuments(actor, caseId).catch(() => []),
     getPaymentPlanForCase(actor, caseId).catch(() => null),
     getContractForCase(actor, caseId).catch(() => null),
     getTimeline(actor, caseId, { limit: 8 }).catch(() => ({ items: [], nextCursor: null })),
+    getClientFormsForCase(actor, caseId).catch(() => []),
+    getRunsForCase(actor, caseId).catch(() => []),
+    getDocumentsMatrix(actor, caseId).catch(() => null),
   ]);
+
+  const requirements = (matrix?.items ?? []).map((d) => ({
+    key: d.key,
+    requirementId: d.requirementId,
+    partyId: d.partyId,
+    partyName: d.partyName,
+    label: resolveI18n(d.labelI18n, locale),
+    category: d.categoryI18n ? resolveI18n(d.categoryI18n, locale) : null,
+    isRequired: d.isRequired,
+    status: d.status,
+    documentId: d.documentId,
+    rejectionReason: d.rejectionReasonI18n ? resolveI18n(d.rejectionReasonI18n, locale) : null,
+  }));
 
   const pill = mapStatusToPill(workspace.status);
   const installments = (plan?.installments ?? []).map((i) => ({
@@ -90,6 +112,28 @@ export default async function VentasCasoDetailPage({
   const contractPlanKind: "self" | "with_lawyer" =
     snapshotKind === "with_lawyer" ? "with_lawyer" : "self";
 
+  const formsVm = forms.map((f) => ({
+    id: f.formDefinitionId,
+    label: resolveI18n(f.labelI18n, locale),
+    status: f.status,
+    partyName: f.partyName,
+  }));
+  const formsDone = formsVm.filter((f) => f.status === "submitted" || f.status === "approved").length;
+
+  const formLabelById = new Map(formsVm.map((f) => [f.id, f.label]));
+  const generations = runs
+    .filter((r) => !r.is_test)
+    .map((r) => ({
+      id: r.id,
+      formLabel: formLabelById.get(r.form_definition_id) ?? "—",
+      status: r.status,
+      version: r.version,
+      costUsd: r.cost_usd,
+      isCurrent: r.isCurrent,
+      partyName: null,
+      createdAt: r.created_at,
+    }));
+
   const vm: CaseWorkspaceVM = {
     header: {
       caseId,
@@ -102,9 +146,16 @@ export default async function VentasCasoDetailPage({
       statusLabel: strings.status[workspace.status as keyof typeof strings.status] ?? workspace.status,
       isPaymentPending: workspace.status === "payment_pending",
       hasPhase: workspace.phase !== null,
+      phaseLabel: workspace.phase ? resolveI18n(workspace.phase.labelI18n, locale) : null,
+      phaseIndex: workspace.phaseIndex,
+      phaseCount: workspace.phaseCount,
+      phaseProgress: workspace.phaseProgress,
       contractStatus: contract?.status ?? null,
       contractId: contract?.id ?? null,
     },
+    role: (actor.role as "sales" | "paralegal" | "finance" | "admin") ?? "sales",
+    isAdmin: false,
+    requiresLawyerValidation: contractPlanKind === "with_lawyer",
     documents: documents.map((d) => ({
       id: d.id,
       filename: d.original_filename,
@@ -112,6 +163,9 @@ export default async function VentasCasoDetailPage({
       partyName: null,
       createdAt: d.created_at,
     })),
+    requirements,
+    docsApproved: workspace.doneDocuments,
+    docsTotal: workspace.totalDocuments,
     parties,
     installments,
     downpaymentInstallmentId: downpayment?.id ?? null,
@@ -126,6 +180,12 @@ export default async function VentasCasoDetailPage({
       actorKind: ev.actor_kind,
       icon: ev.icon ?? "info",
     })),
+    forms: formsVm,
+    formsDone,
+    formsTotal: formsVm.length,
+    generations,
+    validations: [],
+    expedientes: [],
   };
 
   return (
@@ -135,7 +195,10 @@ export default async function VentasCasoDetailPage({
         reviewDocument: reviewDocumentAction,
         registerPayment: registerPaymentAction,
         resendSigningLink: resendSigningLinkAction,
+        sendContract: sendContractAction,
         getDocumentUrl: getDocumentUrlAction,
+        startUpload: startDocumentUploadAction,
+        confirmUpload: confirmDocumentUploadAction,
       }}
       strings={strings}
       locale={lc}

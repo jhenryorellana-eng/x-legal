@@ -17,7 +17,7 @@ import { formatInTimeZone, toZonedTime } from "date-fns-tz";
 import { startOfISOWeek, addDays, format } from "date-fns";
 import { es as esLocale, enUS } from "date-fns/locale";
 import { getActor } from "@/backend/modules/identity";
-import { getWeekAgenda } from "@/backend/modules/scheduling";
+import { getWeekAgenda, getAvailabilityConfig } from "@/backend/modules/scheduling";
 import type { WeekAgendaResult } from "@/backend/modules/scheduling";
 import { CitasClient } from "./client";
 import type { CalDay, CitaEvent, CitaDetail } from "@/frontend/features/vanessa";
@@ -117,6 +117,10 @@ export default async function VentasCitasPage({
   }
 
   const { appointments, staffTimezone } = agendaResult;
+
+  // Default duration for the "Nueva cita" prospect modal (Mi disponibilidad).
+  const availCfg = await getAvailabilityConfig(actor).catch(() => null);
+  const prospectDuration = availCfg?.prospectDurationMinutes ?? 45;
 
   // --------------------------------------------------------------------------
   // 3. Recalculate weekStart with the real staffTimezone (handles race where
@@ -317,6 +321,7 @@ export default async function VentasCitasPage({
       locale={locale}
       strings={strings}
       nuevaCitaStrings={nuevaCitaStrings}
+      prospectDuration={prospectDuration}
       actions={{
         book: bookAppointmentAction,
         prospect: createProspectApptAction,

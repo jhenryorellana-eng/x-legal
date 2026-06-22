@@ -1,41 +1,65 @@
 /**
- * buildTabs — data-driven tab materialization (DOC-50 §4.1).
+ * buildTabs — role-aware, data-driven tab materialization (DOC-52 §5 / DOC-53 §3).
  *
- * Pure function (testable). For F2-W2-b only the first three tabs of the
- * canonical order are implemented (Resumen · Documentos · Partes); the rest of
- * the workspace (Generaciones, Citas, Expediente, Validación, Pagos, Contrato,
- * Mensajes, Bitácora) arrive in future phases. The registry below is the seam:
- * adding a future tab is a config entry, not a fork.
- *
- * Future filtering hooks (kept as comments to mirror RF-TRX-025 CA2):
- * - Validación only if the plan requires lawyer validation.
- * - Citas only if a phase defines an appointment policy.
- * - per-actor `canUi(permissions, module, 'view')`.
+ * Vanessa (sales + paralegal/finance) sees the asesora set; Henry (admin) sees
+ * the full admin set + Bitácora. Validación only shows for with_lawyer plans.
+ * Mensajes only shows when chat actions are wired. Adding/reordering a tab is a
+ * config change here — the shell renders whatever this returns.
  */
 
 import type { CaseTabId } from "./types";
+import type { CasosStrings } from "./strings";
 
 export interface TabConfig {
   id: CaseTabId;
   label: string;
-  /** badge count (e.g. documents to review), 0 = hidden. */
+  /** badge count (e.g. documents to review), 0/undefined = hidden. */
   badge?: number;
 }
 
 export interface BuildTabsInput {
-  labels: { resumen: string; documentos: string; partes: string; mensajes: string };
+  strings: CasosStrings;
+  isAdmin: boolean;
   documentsToReview: number;
+  hasChat: boolean;
+  requiresLawyerValidation: boolean;
 }
 
 export function buildTabs(input: BuildTabsInput): TabConfig[] {
-  return [
-    { id: "resumen", label: input.labels.resumen },
-    {
-      id: "documentos",
-      label: input.labels.documentos,
-      badge: input.documentsToReview,
-    },
-    { id: "partes", label: input.labels.partes },
-    { id: "mensajes", label: input.labels.mensajes },
-  ];
+  const tb = input.strings.detail.tabs;
+  const tabs: TabConfig[] = [];
+
+  if (input.isAdmin) {
+    // Henry (admin) — DOC-53 §3 canonical order.
+    tabs.push(
+      { id: "resumen", label: tb.resumen },
+      { id: "documentos", label: tb.documentos, badge: input.documentsToReview },
+      { id: "formularios", label: tb.formularios },
+      { id: "generaciones", label: tb.generaciones },
+      { id: "citas", label: tb.citas },
+      { id: "expediente", label: tb.expediente },
+    );
+    if (input.requiresLawyerValidation) tabs.push({ id: "validacion", label: tb.validacion });
+    tabs.push(
+      { id: "pagos", label: tb.pagos },
+      { id: "contrato", label: tb.contrato },
+    );
+    if (input.hasChat) tabs.push({ id: "mensajes", label: tb.mensajes });
+    tabs.push({ id: "historial", label: tb.bitacora });
+    return tabs;
+  }
+
+  // Vanessa (sales) — DOC-52 §5 canonical order.
+  tabs.push(
+    { id: "resumen", label: tb.resumen },
+    { id: "contrato", label: tb.contrato },
+    { id: "citas", label: tb.citasRoute },
+    { id: "documentos", label: tb.documentos, badge: input.documentsToReview },
+    { id: "formularios", label: tb.informacion },
+    { id: "cartas", label: tb.cartas },
+    { id: "traspaso", label: tb.traspaso },
+    { id: "historial", label: tb.historial },
+  );
+  if (input.hasChat) tabs.push({ id: "mensajes", label: tb.mensajes });
+  return tabs;
 }

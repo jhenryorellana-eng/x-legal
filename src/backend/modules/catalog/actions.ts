@@ -212,6 +212,23 @@ export async function upsertPhasePolicyAction(
   }
 }
 
+/**
+ * Replaces the per-appointment schedule (cronograma) of a phase + its trailing
+ * processing weeks. Each cita carries its own duration + week offset.
+ *
+ * @api-id API-CAT-34
+ */
+export async function upsertAppointmentScheduleAction(
+  input: Parameters<typeof svc.upsertAppointmentSchedule>[1],
+): Promise<ActionResult<Awaited<ReturnType<typeof svc.upsertAppointmentSchedule>>>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.upsertAppointmentSchedule(actor, input));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Milestones
 // ---------------------------------------------------------------------------

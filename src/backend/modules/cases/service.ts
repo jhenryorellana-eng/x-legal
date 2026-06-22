@@ -34,6 +34,7 @@ import {
   canTransitionCase,
   canTransitionDocument,
   computePhaseProgress,
+  addWeeksToAnchorIso,
   validateAnswerTypes,
   PRODUCTION_STATUSES,
   type CaseStatus,
@@ -1402,6 +1403,79 @@ export interface DocumentMatrixItem {
   documentId: string | null;
   rejectionReasonI18n: I18nValue | null;
   correctionDueAt: string | null;
+}
+
+export interface CaseTimelineCita {
+  sequenceNumber: number;
+  durationMinutes: number;
+  kind: string;
+  weekOffset: number;
+  phaseLabelI18n: I18nValue | null;
+  citaLabelI18n: I18nValue | null;
+  /** Estimated date (ISO) for this cita, or null when the case has not started. */
+  estDate: string | null;
+}
+
+export interface CaseTimelineDto {
+  /** True once the case is active (opened_at set) — otherwise dates are null. */
+  started: boolean;
+  anchorDate: string | null;
+  citas: CaseTimelineCita[];
+  processingWeeks: number;
+  totalWeeks: number;
+  /** Estimated delivery date of the final expediente (ISO), or null if not started. */
+  estimatedDeliveryDate: string | null;
+}
+
+/**
+ * Client-facing cronograma + estimated expediente delivery date. Reads the
+ * service's appointment schedule (catalog.getServicecronograma) and anchors it
+ * on cases.opened_at (set when the case becomes active / downpayment confirmed).
+ * Purely informational — dates are estimates, never a commitment, and recompute
+ * from opened_at. Returns null dates while the case is still payment_pending.
+ *
+ * @api-id API-CASE-25 (cronograma)
+ */
+export async function getCaseTimeline(
+  actor: Actor,
+  caseId: string,
+): Promise<CaseTimelineDto> {
+  await requireCaseAccess(actor, caseId);
+  const caseRow = await findCaseById(caseId);
+  if (!caseRow) throw new CaseError("CASE_NOT_FOUND");
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const catalog = (await import("@/backend/modules/catalog")) as any;
+  const cron = await catalog.getServiceCronograma(caseRow.service_id);
+
+  const anchorIso: string | null = caseRow.opened_at ?? null;
+  const citas: CaseTimelineCita[] = (cron.citas ?? []).map(
+    (c: {
+      sequenceNumber: number;
+      durationMinutes: number;
+      kind: string;
+      weekOffset: number;
+      phaseLabelI18n: unknown;
+      labelI18n: unknown;
+    }) => ({
+      sequenceNumber: c.sequenceNumber,
+      durationMinutes: c.durationMinutes,
+      kind: c.kind,
+      weekOffset: c.weekOffset,
+      phaseLabelI18n: asI18n(c.phaseLabelI18n),
+      citaLabelI18n: asI18n(c.labelI18n),
+      estDate: addWeeksToAnchorIso(anchorIso, c.weekOffset),
+    }),
+  );
+
+  return {
+    started: anchorIso != null,
+    anchorDate: anchorIso,
+    citas,
+    processingWeeks: cron.processingWeeks ?? 0,
+    totalWeeks: cron.totalWeeks ?? 0,
+    estimatedDeliveryDate: addWeeksToAnchorIso(anchorIso, cron.totalWeeks ?? 0),
+  };
 }
 
 /**

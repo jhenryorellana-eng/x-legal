@@ -82,6 +82,7 @@ export const caminoMock: CaminoScreenProps = {
   currentMilestoneLabel: "Orden de custodia",
   labels: {
     backCases: "Mis casos",
+    deliveryEstimate: "Entrega estimada",
     encourageSuffix: "Tu proceso de {service} va por buen camino.",
     phaseChip: "Fase {x} de {y}",
     nextStep: "Tu siguiente paso",

@@ -61,6 +61,7 @@ const DEFAULT_SETTINGS: SchedulingSettings = {
   bufferMinutes: 0,
   cancellationWindowHours: 24,
   rebookingPenaltyDays: 7,
+  prospectDurationMinutes: 45,
 };
 
 function makeRule(

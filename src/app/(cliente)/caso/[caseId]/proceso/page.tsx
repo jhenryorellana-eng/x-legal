@@ -9,11 +9,12 @@
 import { notFound, redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
-import { getCaseMilestones, getClientDisplayName } from "@/backend/modules/cases";
+import { getCaseMilestones, getClientDisplayName, getCaseTimeline } from "@/backend/modules/cases";
 import { pickLocale, coerceIcon, type Locale } from "@/frontend/features/cliente/shared/i18n";
 import {
   ProcesoScreen,
   type ProcesoMilestone,
+  type ProcesoCronograma,
 } from "@/frontend/features/cliente/proceso/proceso-screen";
 
 export default async function ProcesoPage({
@@ -36,6 +37,35 @@ export default async function ProcesoPage({
   }
   const name = (await getClientDisplayName(actor)) ?? t("fallbackName");
 
+  // Cronograma + estimated delivery (informational; anchored on opened_at).
+  const timeline = await getCaseTimeline(actor, caseId).catch(() => null);
+  const fmtDate = (iso: string | null): string | null => {
+    if (!iso) return null;
+    try {
+      return new Intl.DateTimeFormat(locale === "en" ? "en-US" : "es-ES", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+        timeZone: "UTC",
+      }).format(new Date(iso));
+    } catch {
+      return null;
+    }
+  };
+  const cronograma: ProcesoCronograma | null =
+    timeline && timeline.citas.length > 0
+      ? {
+          citas: timeline.citas.map((c) => ({
+            label: pickLocale(c.citaLabelI18n, locale) || t("citaN", { n: c.sequenceNumber }),
+            weekLabel: t("weekN", { n: c.weekOffset }),
+            dateLabel: fmtDate(c.estDate),
+          })),
+          started: timeline.started,
+          deliveryLabel: fmtDate(timeline.estimatedDeliveryDate),
+          totalWeeksLabel: t("totalWeeks", { n: timeline.totalWeeks }),
+        }
+      : null;
+
   const milestones: ProcesoMilestone[] = dto.milestones.map((m) => {
     const glossaryBody = pickLocale(m.glossaryI18n, locale);
     return {
@@ -55,6 +85,7 @@ export default async function ProcesoPage({
     <ProcesoScreen
       caseId={caseId}
       milestones={milestones}
+      cronograma={cronograma}
       labels={{
         back: t("back"),
         title: t("title", { name }),
@@ -67,6 +98,9 @@ export default async function ProcesoPage({
         gotIt: t("gotIt"),
         whatsNext: t("whatsNext"),
         whatsNextBody: t("whatsNextBody"),
+        cronogramaTitle: t("cronogramaTitle"),
+        deliveryEstimate: t("deliveryEstimate"),
+        cronogramaNotStarted: t("cronogramaNotStarted"),
       }}
     />
   );

@@ -68,15 +68,27 @@ export interface WizardForm {
   published_version: number | null;
 }
 
+export interface WizardScheduleItem {
+  sequence_number: number;
+  duration_minutes: number;
+  kind: "video" | "phone" | "presencial";
+  week_offset: number;
+}
+
 export interface WizardPhase {
   id: string;
   slug: string;
   label: I18nValue;
   description: I18nValue;
   client_explainer: I18nValue;
+  /** Legacy uniform policy (kept as fallback + kind source; derived from schedule on save). */
   appointment_count: number;
   duration_minutes: number;
   kind: "video" | "phone" | "presencial";
+  /** Per-cita cronograma: each cita's own duration + week offset. */
+  schedule: WizardScheduleItem[];
+  /** Trailing "trámite" weeks this phase contributes to the cronograma. */
+  processing_weeks: number;
   milestoneCount: number;
   docs: WizardDoc[];
   forms: WizardForm[];
@@ -117,6 +129,7 @@ export interface CatalogWizardProps {
     updatePhase: (id: string, patch: Record<string, unknown>) => Promise<ActionRes<unknown>>;
     deletePhase: (id: string) => Promise<ActionRes<unknown>>;
     upsertPolicy: (input: Record<string, unknown>) => Promise<ActionRes<unknown>>;
+    upsertSchedule: (input: Record<string, unknown>) => Promise<ActionRes<unknown>>;
     createRequiredDoc: (input: Record<string, unknown>) => Promise<ActionRes<{ id: string }>>;
     createPartyRole: (input: Record<string, unknown>) => Promise<ActionRes<{ id: string }>>;
     updatePartyRole: (id: string, patch: Record<string, unknown>) => Promise<ActionRes<unknown>>;
@@ -625,7 +638,7 @@ function PhasesStep({
     if (r.success && r.data) {
       setPhases((prev) => [
         ...prev,
-        { id: r.data!.id, slug, label: { es: "", en: "" }, description: { es: "", en: "" }, client_explainer: { es: "", en: "" }, appointment_count: 1, duration_minutes: 30, kind: "video", milestoneCount: 0, docs: [], forms: [] },
+        { id: r.data!.id, slug, label: { es: "", en: "" }, description: { es: "", en: "" }, client_explainer: { es: "", en: "" }, appointment_count: 1, duration_minutes: 30, kind: "video", schedule: [], processing_weeks: 0, milestoneCount: 0, docs: [], forms: [] },
       ]);
       setActiveIdx(phases.length);
     } else toast.error(r.error?.message ?? "Error");
@@ -639,11 +652,25 @@ function PhasesStep({
       description_i18n: { es: ph.description.es ?? "", en: ph.description.en ?? "" },
       client_explainer_i18n: { es: ph.client_explainer.es ?? "", en: ph.client_explainer.en ?? "" },
     });
+    // Keep the legacy phase policy in sync (fallback + kind source for cases
+    // without a schedule). Count/duration/kind derive from the cronograma.
+    const first = ph.schedule[0];
     await actions.upsertPolicy({
       service_phase_id: ph.id,
-      appointment_count: ph.appointment_count,
-      duration_minutes: ph.duration_minutes,
-      kind: ph.kind,
+      appointment_count: ph.schedule.length > 0 ? ph.schedule.length : ph.appointment_count,
+      duration_minutes: first?.duration_minutes ?? ph.duration_minutes,
+      kind: first?.kind ?? ph.kind,
+    });
+    // Persist the per-cita cronograma + trailing processing weeks.
+    await actions.upsertSchedule({
+      service_phase_id: ph.id,
+      processing_weeks: ph.processing_weeks,
+      items: ph.schedule.map((s, i) => ({
+        sequence_number: i + 1,
+        duration_minutes: s.duration_minutes,
+        kind: s.kind,
+        week_offset: s.week_offset,
+      })),
     });
     setSavingPhase(false);
     toast.success(t.saved);
@@ -663,6 +690,26 @@ function PhasesStep({
   }
 
   const active = phases[activeIdx];
+
+  function updateCita(ci: number, patch: Partial<WizardScheduleItem>) {
+    update(activeIdx, {
+      schedule: active.schedule.map((s, i) => (i === ci ? { ...s, ...patch } : s)),
+    });
+  }
+  function removeCita(ci: number) {
+    update(activeIdx, { schedule: active.schedule.filter((_, i) => i !== ci) });
+  }
+  function addCita() {
+    const nextWeek = active.schedule.reduce((m, s) => Math.max(m, s.week_offset), 0) + 1;
+    update(activeIdx, {
+      schedule: [
+        ...active.schedule,
+        { sequence_number: active.schedule.length + 1, duration_minutes: 45, kind: "video", week_offset: nextWeek },
+      ],
+    });
+  }
+  const cronoLastWeek = (active?.schedule ?? []).reduce((m, s) => Math.max(m, s.week_offset), 0);
+  const cronoTotalWeeks = cronoLastWeek + (active?.processing_weeks ?? 0);
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", gap: 22 }}>
@@ -714,24 +761,56 @@ function PhasesStep({
           <I18nField label={t.clientExplainer} value={active.client_explainer} onChange={(v) => update(activeIdx, { client_explainer: v })} multiline />
 
           <div>
-            <FieldLabel>{t.apptPolicy}</FieldLabel>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1.4fr", gap: 10 }}>
-              <div>
-                <span style={subLabel}>{t.apptCount}</span>
-                <TextInput type="number" value={String(active.appointment_count)} onChange={(e) => update(activeIdx, { appointment_count: Math.max(1, Number(e.target.value)) })} />
-              </div>
-              <div>
-                <span style={subLabel}>{t.apptDuration}</span>
-                <TextInput type="number" value={String(active.duration_minutes)} onChange={(e) => update(activeIdx, { duration_minutes: Number(e.target.value) })} />
-              </div>
-              <div>
-                <span style={subLabel}>{t.apptKind}</span>
-                <SelectInput value={active.kind} onChange={(e) => update(activeIdx, { kind: e.target.value as WizardPhase["kind"] })}>
-                  <option value="video">{t.apptVideo}</option>
-                  <option value="phone">{t.apptPhone}</option>
-                  <option value="presencial">{t.apptPresencial}</option>
-                </SelectInput>
-              </div>
+            <FieldLabel>{t.apptScheduleTitle}</FieldLabel>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {active.schedule.map((s, ci) => (
+                <div key={ci} style={{ display: "grid", gridTemplateColumns: "54px 1fr 1fr 1.3fr 32px", gap: 8, alignItems: "end" }}>
+                  <span style={{ ...subLabel, alignSelf: "center", margin: 0 }}>{t.citaN.replace("{n}", String(ci + 1))}</span>
+                  <div>
+                    <span style={subLabel}>{t.apptDuration}</span>
+                    <TextInput type="number" value={String(s.duration_minutes)} onChange={(e) => updateCita(ci, { duration_minutes: Math.max(5, Number(e.target.value)) })} />
+                  </div>
+                  <div>
+                    <span style={subLabel}>{t.citaWeek}</span>
+                    <TextInput type="number" value={String(s.week_offset)} onChange={(e) => updateCita(ci, { week_offset: Math.max(1, Number(e.target.value)) })} />
+                  </div>
+                  <div>
+                    <span style={subLabel}>{t.apptKind}</span>
+                    <SelectInput value={s.kind} onChange={(e) => updateCita(ci, { kind: e.target.value as WizardScheduleItem["kind"] })}>
+                      <option value="video">{t.apptVideo}</option>
+                      <option value="phone">{t.apptPhone}</option>
+                      <option value="presencial">{t.apptPresencial}</option>
+                    </SelectInput>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label={t.delete}
+                    onClick={() => removeCita(ci)}
+                    style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid var(--line)", background: "var(--panel-2, var(--card-alt))", cursor: "pointer", display: "grid", placeItems: "center" }}
+                  >
+                    <Icon name="x" size={14} color="var(--ink-3)" />
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={addCita}
+                aria-label={t.addCita}
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 10, cursor: "pointer", border: "1.5px dashed var(--line)", background: "transparent", color: "var(--accent)", fontWeight: 700, fontSize: 13 }}
+              >
+                <Icon name="plus" size={14} color="var(--accent)" /> {t.addCita}
+              </button>
+            </div>
+
+            <div style={{ marginTop: 12, maxWidth: 220 }}>
+              <span style={subLabel}>{t.processingWeeks}</span>
+              <TextInput type="number" value={String(active.processing_weeks)} onChange={(e) => update(activeIdx, { processing_weeks: Math.max(0, Number(e.target.value)) })} />
+            </div>
+
+            <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 10, background: "var(--accent-soft)", fontSize: 12.5, color: "var(--ink-2)", fontWeight: 700, lineHeight: 1.5 }}>
+              {active.schedule.length === 0 && active.processing_weeks === 0
+                ? t.cronogramaEmpty
+                : t.cronogramaTotal.replace("{n}", String(cronoTotalWeeks))}
             </div>
             <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--ink-3)" }}>{t.apptNote}</p>
           </div>

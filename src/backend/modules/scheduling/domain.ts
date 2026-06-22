@@ -156,6 +156,39 @@ export function nextSequenceNumber(
 }
 
 // ---------------------------------------------------------------------------
+// Per-appointment schedule (cronograma) — each cita's own duration + week
+// ---------------------------------------------------------------------------
+
+export interface AppointmentScheduleEntry {
+  sequenceNumber: number;
+  durationMinutes: number;
+  kind: "video" | "phone" | "presencial";
+  weekOffset: number;
+}
+
+/**
+ * Effective appointment count: when a per-cita schedule exists it is the source
+ * of truth (one row per cita); otherwise fall back to the phase policy count.
+ */
+export function effectiveAppointmentCount(
+  policy: PhasePolicy,
+  schedule: AppointmentScheduleEntry[],
+): number {
+  return schedule.length > 0 ? schedule.length : policy.appointmentCount;
+}
+
+/**
+ * The schedule entry for a given sequence number, or null — in which case the
+ * caller falls back to the uniform phase-policy duration/kind.
+ */
+export function scheduleEntryForSequence(
+  schedule: AppointmentScheduleEntry[],
+  sequenceNumber: number,
+): AppointmentScheduleEntry | null {
+  return schedule.find((e) => e.sequenceNumber === sequenceNumber) ?? null;
+}
+
+// ---------------------------------------------------------------------------
 // Rebooking penalty — DOC-43 §2.4
 // ---------------------------------------------------------------------------
 
@@ -324,6 +357,7 @@ export interface SchedulingSettings {
   bufferMinutes: number; // buffer_minutes
   cancellationWindowHours: number; // cancellation_window_hours
   rebookingPenaltyDays: number; // rebooking_penalty_days
+  prospectDurationMinutes: number; // prospect_duration_minutes (lead/eval cita default)
 }
 
 export interface MaterializeSlotsInput {

@@ -3404,46 +3404,46 @@ export type Database = {
           },
         ]
       }
-      service_phase_milestones: {
+      service_appointment_schedule: {
         Row: {
           created_at: string
-          description_i18n: Json | null
-          glossary_i18n: Json | null
-          icon: string
+          duration_minutes: number
           id: string
-          label_i18n: Json
+          kind: string
+          label_i18n: Json | null
           position: number
+          sequence_number: number
           service_phase_id: string
-          slug: string
           updated_at: string
+          week_offset: number
         }
         Insert: {
           created_at?: string
-          description_i18n?: Json | null
-          glossary_i18n?: Json | null
-          icon?: string
+          duration_minutes: number
           id?: string
-          label_i18n: Json
-          position: number
+          kind?: string
+          label_i18n?: Json | null
+          position?: number
+          sequence_number: number
           service_phase_id: string
-          slug: string
           updated_at?: string
+          week_offset: number
         }
         Update: {
           created_at?: string
-          description_i18n?: Json | null
-          glossary_i18n?: Json | null
-          icon?: string
+          duration_minutes?: number
           id?: string
-          label_i18n?: Json
+          kind?: string
+          label_i18n?: Json | null
           position?: number
+          sequence_number?: number
           service_phase_id?: string
-          slug?: string
           updated_at?: string
+          week_offset?: number
         }
         Relationships: [
           {
-            foreignKeyName: "service_phase_milestones_service_phase_id_fkey"
+            foreignKeyName: "service_appointment_schedule_service_phase_id_fkey"
             columns: ["service_phase_id"]
             isOneToOne: false
             referencedRelation: "service_phases"
@@ -3495,6 +3495,53 @@ export type Database = {
           },
         ]
       }
+      service_phase_milestones: {
+        Row: {
+          created_at: string
+          description_i18n: Json | null
+          glossary_i18n: Json | null
+          icon: string
+          id: string
+          label_i18n: Json
+          position: number
+          service_phase_id: string
+          slug: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          description_i18n?: Json | null
+          glossary_i18n?: Json | null
+          icon?: string
+          id?: string
+          label_i18n: Json
+          position: number
+          service_phase_id: string
+          slug: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          description_i18n?: Json | null
+          glossary_i18n?: Json | null
+          icon?: string
+          id?: string
+          label_i18n?: Json
+          position?: number
+          service_phase_id?: string
+          slug?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "service_phase_milestones_service_phase_id_fkey"
+            columns: ["service_phase_id"]
+            isOneToOne: false
+            referencedRelation: "service_phases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       service_phases: {
         Row: {
           client_explainer_i18n: Json | null
@@ -3503,6 +3550,7 @@ export type Database = {
           id: string
           label_i18n: Json
           position: number
+          processing_weeks: number
           service_id: string
           slug: string
           updated_at: string
@@ -3514,6 +3562,7 @@ export type Database = {
           id?: string
           label_i18n: Json
           position: number
+          processing_weeks?: number
           service_id: string
           slug: string
           updated_at?: string
@@ -3525,6 +3574,7 @@ export type Database = {
           id?: string
           label_i18n?: Json
           position?: number
+          processing_weeks?: number
           service_id?: string
           slug?: string
           updated_at?: string
@@ -3719,6 +3769,7 @@ export type Database = {
           created_at: string
           max_advance_days: number
           min_notice_hours: number
+          prospect_duration_minutes: number
           rebooking_penalty_days: number
           staff_id: string
           updated_at: string
@@ -3729,6 +3780,7 @@ export type Database = {
           created_at?: string
           max_advance_days?: number
           min_notice_hours?: number
+          prospect_duration_minutes?: number
           rebooking_penalty_days?: number
           staff_id: string
           updated_at?: string
@@ -3739,6 +3791,7 @@ export type Database = {
           created_at?: string
           max_advance_days?: number
           min_notice_hours?: number
+          prospect_duration_minutes?: number
           rebooking_penalty_days?: number
           staff_id?: string
           updated_at?: string
@@ -4002,6 +4055,10 @@ export type Database = {
       is_client: { Args: never; Returns: boolean }
       is_conversation_participant: { Args: { conv: string }; Returns: boolean }
       is_staff: { Args: never; Returns: boolean }
+      merge_form_answers: {
+        Args: { p_patch: Json; p_response_id: string }
+        Returns: undefined
+      }
       next_case_number: { Args: { org: string }; Returns: string }
       normalize_phone: { Args: { raw: string }; Returns: string }
       show_limit: { Args: never; Returns: number }
