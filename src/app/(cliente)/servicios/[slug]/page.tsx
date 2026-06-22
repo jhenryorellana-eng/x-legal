@@ -12,15 +12,16 @@ import { notFound, redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
 import { getServiceDetailBySlug, getServiceCronograma } from "@/backend/modules/catalog";
-import { pickLocale, coerceIcon, type Locale } from "@/frontend/features/cliente/shared/i18n";
+import { pickLocale, coerceIcon, coerceColor, type Locale } from "@/frontend/features/cliente/shared/i18n";
 import {
   ServiceDetailScreen,
   type ServiceDetailPlanVM,
   type ServiceDetailPhaseVM,
 } from "@/frontend/features/cliente/servicios/service-detail-screen";
 
-/** Sales line for the "comunícate" CTA — pre-filled WhatsApp message. */
-const SALES_WHATSAPP = "1402824817";
+/** Sales line for the "comunícate" CTA — pre-filled WhatsApp message.
+ *  +1 (402) 824-8171 → digits only for the wa.me link. */
+const SALES_WHATSAPP = "14028248171";
 
 const PLAN_ORDER: Record<string, number> = { self: 0, with_lawyer: 1 };
 
@@ -137,7 +138,7 @@ export default async function ServiceDetailPage({
       shortDescription={shortDescription ? `${shortDescription}.` : ""}
       longDescription={longDescription}
       icon={coerceIcon(service.icon, "shield")}
-      color={service.color || "var(--accent)"}
+      color={coerceColor(service.color)}
       plans={plans}
       phases={phases}
       durationLabel={durationLabel}

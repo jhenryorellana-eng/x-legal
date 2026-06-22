@@ -11,7 +11,7 @@ import { getLocale, getTranslations } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
 import { getPublicCatalog } from "@/backend/modules/catalog";
 import { getCasesForClient } from "@/backend/modules/cases";
-import { pickLocale, coerceIcon, type Locale } from "@/frontend/features/cliente/shared/i18n";
+import { pickLocale, coerceIcon, coerceColor, type Locale } from "@/frontend/features/cliente/shared/i18n";
 import {
   ServicesScreen,
   type ServiceCard,
@@ -77,7 +77,7 @@ export default async function ServiciosPage() {
       locale,
     ),
     icon: coerceIcon(s.icon, "shield"),
-    color: s.color || "var(--accent)",
+    color: coerceColor(s.color),
     owned: ownedServiceIds.has(s.id),
     priceLabel: fromPriceLabel(s.service_plans),
   }));

@@ -30,3 +30,24 @@ export function coerceIcon(name: string | null | undefined, fallback: IconName =
   if (name && ICON_SET.has(name)) return name as IconName;
   return fallback;
 }
+
+/**
+ * Catalog color token → CSS value. The admin editor stores a token name
+ * (`accent`, `gold`, …, see admin catalog SERVICE_COLOR); the brand icon
+ * components need a real CSS color (`var(--accent)`), so resolve it here. A
+ * value that already looks like CSS (`var(...)` / `#hex`) passes through.
+ */
+const SERVICE_COLOR: Record<string, string> = {
+  accent: "var(--accent)",
+  gold: "var(--gold-deep)",
+  green: "var(--green)",
+  red: "var(--red)",
+  navy: "var(--brand-navy)",
+  purple: "var(--purple)",
+};
+
+export function coerceColor(color: string | null | undefined): string {
+  if (!color) return "var(--accent)";
+  if (color.startsWith("var(") || color.startsWith("#")) return color;
+  return SERVICE_COLOR[color] ?? "var(--accent)";
+}
