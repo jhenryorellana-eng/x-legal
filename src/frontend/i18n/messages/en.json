@@ -188,7 +188,7 @@
       "durationWeeks": "≈ {weeks} weeks",
       "durationVaries": "Varies by case",
       "whatsappCta": "Message us on WhatsApp",
-      "whatsappMessage": "Hi 👋, I saw the «{service}» service in the X Legal app and I'd like more info to get started.",
+      "whatsappMessage": "Hi, I saw the «{service}» service in the X Legal app and I'd like more info to get started.",
       "askByMessage": "Ask by message"
     },
     "disclaimer": {
