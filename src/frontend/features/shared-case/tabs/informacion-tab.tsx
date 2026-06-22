@@ -38,7 +38,16 @@ export function InformacionTab({
 }) {
   const t = strings.detail;
   const router = useRouter();
-  const formsHref = `/admin/casos/${vm.header.caseId}/formularios`;
+  const base = vm.isAdmin
+    ? `/admin/casos/${vm.header.caseId}`
+    : `/ventas/clientes/${vm.header.caseId}`;
+  function formHref(f: FormVM): string {
+    const q = new URLSearchParams();
+    if (f.partyId) q.set("party", f.partyId);
+    if (f.partyName) q.set("name", f.partyName);
+    const qs = q.toString();
+    return `${base}/formulario/${f.id}${qs ? `?${qs}` : ""}`;
+  }
   return (
     <Card>
       <SectionLabel icon="form">{t.formsTitle}</SectionLabel>
@@ -64,13 +73,7 @@ export function InformacionTab({
                 <Chip tone={m.tone} dot>
                   {m.label}
                 </Chip>
-                <GhostBtn
-                  size="md"
-                  full={false}
-                  icon="chevR"
-                  disabled={!vm.isAdmin}
-                  onClick={vm.isAdmin ? () => router.push(formsHref) : undefined}
-                >
+                <GhostBtn size="md" full={false} icon="chevR" onClick={() => router.push(formHref(f))}>
                   {t.reviewForm}
                 </GhostBtn>
               </div>

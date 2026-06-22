@@ -116,6 +116,7 @@ export default async function VentasCasoDetailPage({
     id: f.formDefinitionId,
     label: resolveI18n(f.labelI18n, locale),
     status: f.status,
+    partyId: f.partyId,
     partyName: f.partyName,
   }));
   const formsDone = formsVm.filter((f) => f.status === "submitted" || f.status === "approved").length;

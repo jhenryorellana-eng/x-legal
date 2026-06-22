@@ -33,9 +33,12 @@ import {
   reviewDocument,
   startDocumentUpload,
   confirmDocumentUpload,
+  saveFormDraft,
+  submitFormResponse,
   getCaseDocumentDownloadUrl,
   CaseError,
 } from "@/backend/modules/cases";
+import { translateAnswerText } from "@/backend/modules/ai-engine";
 
 type Ok<T> = { ok: true } & T;
 type Err = { ok: false; error: { code: string; message?: string } };
@@ -292,5 +295,83 @@ export async function confirmDocumentUploadAction(input: {
     return { ok: true };
   } catch (err) {
     return mapErr(err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Staff form fill (RF-ADM-010) — admin/sales fill the same wizard the client
+// sees. The cases use cases authorize by requireCaseAccess (staff allowed; only
+// CLIENTS are blocked from staff-only forms). Signatures mirror the client
+// wizard fn types so FormWizard consumes them unchanged.
+// ---------------------------------------------------------------------------
+
+export async function saveFormDraftAction(input: {
+  caseId: string;
+  formDefinitionId: string;
+  partyId: string | null;
+  patch: Record<string, unknown>;
+}): Promise<{ ok: boolean; responseId?: string; error?: { code: string; details?: Record<string, unknown> } }> {
+  try {
+    const actor = await requireActor();
+    const response = await saveFormDraft(actor, {
+      caseId: input.caseId,
+      formDefinitionId: input.formDefinitionId,
+      partyId: input.partyId,
+      patch: input.patch,
+    });
+    return { ok: true, responseId: response.id };
+  } catch (err) {
+    if (err instanceof CaseError) return { ok: false, error: { code: err.code, details: err.details } };
+    return { ok: false, error: { code: "UNEXPECTED" } };
+  }
+}
+
+export async function submitFormResponseAction(input: {
+  caseId: string;
+  formDefinitionId: string;
+  partyId: string | null;
+  answersTranslated?: Record<string, string>;
+  translationStatus?: "none" | "partial" | "pending_server" | "done";
+}): Promise<{ ok: boolean; responseId?: string; error?: { code: string; details?: Record<string, unknown> } }> {
+  try {
+    const actor = await requireActor();
+    const response = await submitFormResponse(actor, {
+      caseId: input.caseId,
+      formDefinitionId: input.formDefinitionId,
+      partyId: input.partyId,
+      answersTranslated: input.answersTranslated,
+      translationStatus: input.translationStatus,
+    });
+    return { ok: true, responseId: response.id };
+  } catch (err) {
+    if (err instanceof CaseError) return { ok: false, error: { code: err.code, details: err.details } };
+    return { ok: false, error: { code: "UNEXPECTED" } };
+  }
+}
+
+export async function translateFormAnswersAction(input: {
+  items: Array<{ id: string; text: string }>;
+  from: "en" | "es";
+  to: "en" | "es";
+}): Promise<{ ok: boolean; translations?: Record<string, string>; error?: { code: string } }> {
+  try {
+    await requireActor();
+    if (input.from === input.to) {
+      return { ok: true, translations: Object.fromEntries(input.items.map((i) => [i.id, i.text])) };
+    }
+    const direction = `${input.from}-${input.to}` as "es-en" | "en-es";
+    const translations: Record<string, string> = {};
+    for (const item of input.items) {
+      if (!item.text.trim()) continue;
+      try {
+        const r = await translateAnswerText({ text: item.text, direction });
+        if (r.text.trim()) translations[item.id] = r.text;
+      } catch {
+        // best-effort — skip this item
+      }
+    }
+    return { ok: true, translations };
+  } catch {
+    return { ok: false, error: { code: "TRANSLATE_FAILED" } };
   }
 }

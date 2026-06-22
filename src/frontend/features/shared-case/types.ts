@@ -103,6 +103,7 @@ export interface FormVM {
   label: string;
   /** null = not started yet. */
   status: string | null;
+  partyId: string | null;
   partyName: string | null;
 }
 
