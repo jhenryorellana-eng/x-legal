@@ -20,6 +20,8 @@ export interface ServiceCard {
   icon: IconName;
   color: string;
   owned: boolean;
+  /** Formatted "from" price (lowest active plan), e.g. "$1,500". Null when none. */
+  priceLabel: string | null;
 }
 
 export interface ServicesLabels {
@@ -28,6 +30,7 @@ export interface ServicesLabels {
   searchPlaceholder: string;
   owned: string;
   emptyTitle: string;
+  priceFrom: string;
 }
 
 export function ServicesScreen({
@@ -195,6 +198,27 @@ export function ServicesScreen({
                   {s.description}
                 </div>
               </div>
+              {s.priceLabel ? (
+                <div
+                  style={{
+                    marginTop: "auto",
+                    display: "flex",
+                    alignItems: "baseline",
+                    gap: 5,
+                    paddingTop: 6,
+                  }}
+                >
+                  <span style={{ fontSize: 11, color: "var(--ink-3)", fontWeight: 700 }}>
+                    {labels.priceFrom}
+                  </span>
+                  <span
+                    className="t-black"
+                    style={{ fontSize: 17, color: "var(--navy)", fontWeight: 800, lineHeight: 1 }}
+                  >
+                    {s.priceLabel}
+                  </span>
+                </div>
+              ) : null}
             </button>
           ))}
         </div>

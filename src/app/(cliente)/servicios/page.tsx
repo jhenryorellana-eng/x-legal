@@ -17,6 +17,32 @@ import {
   type ServiceCard,
 } from "@/frontend/features/cliente/servicios/services-screen";
 
+interface CatalogPlan {
+  price_cents: number | null;
+  currency: string | null;
+  is_active: boolean | null;
+}
+
+function formatPrice(cents: number, currency: string): string {
+  const whole = cents % 100 === 0;
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: currency || "USD",
+    minimumFractionDigits: whole ? 0 : 2,
+    maximumFractionDigits: whole ? 0 : 2,
+  }).format(cents / 100);
+}
+
+/** Lowest active plan price → the ecommerce "from" price. */
+function fromPriceLabel(plans: CatalogPlan[] | undefined): string | null {
+  const priced = (plans ?? []).filter(
+    (p) => p.is_active !== false && typeof p.price_cents === "number" && p.price_cents > 0,
+  );
+  if (priced.length === 0) return null;
+  const min = priced.reduce((a, b) => (a.price_cents! <= b.price_cents! ? a : b));
+  return formatPrice(min.price_cents!, min.currency ?? "USD");
+}
+
 export default async function ServiciosPage() {
   const actor = await getActor();
   if (!actor || actor.kind !== "client") redirect("/welcome");
@@ -31,6 +57,7 @@ export default async function ServiciosPage() {
     description_i18n: unknown;
     icon: string;
     color: string;
+    service_plans?: CatalogPlan[];
   }>;
 
   // Which services the client already has a case for (RLS-scoped list).
@@ -52,6 +79,7 @@ export default async function ServiciosPage() {
     icon: coerceIcon(s.icon, "shield"),
     color: s.color || "var(--accent)",
     owned: ownedServiceIds.has(s.id),
+    priceLabel: fromPriceLabel(s.service_plans),
   }));
 
   return (
@@ -63,6 +91,7 @@ export default async function ServiciosPage() {
         searchPlaceholder: t("searchPlaceholder"),
         owned: t("owned"),
         emptyTitle: t("empty"),
+        priceFrom: t("priceFrom"),
       }}
     />
   );

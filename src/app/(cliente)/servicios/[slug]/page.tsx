@@ -2,17 +2,62 @@
  * Detalle de servicio — `/servicios/[slug]` · nivel CUENTA — DOC-51 §7.
  *
  * Server component. Reads the service detail (catalog module): name + short
- * description + `long_description_i18n` ("¿Qué es?") + `benefits_i18n`. Prices are
- * NEVER shown (RF-CLI-069 CA2). The "Me interesa" CTA is feature-flagged with
- * `NEXT_PUBLIC_FEATURE_INTERES` (nota H-7 / PS-3 — lead action arrives in F3).
+ * description + `long_description_i18n` ("¿Qué es?") + its PLANS (self /
+ * with-lawyer prices) + its PHASES (process stages, with the client explainer)
+ * + the cronograma's estimated total weeks (duration). The submit CTA is a
+ * pre-filled WhatsApp message to the sales line.
  */
 
 import { notFound, redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
-import { getServiceDetailBySlug } from "@/backend/modules/catalog";
+import { getServiceDetailBySlug, getServiceCronograma } from "@/backend/modules/catalog";
 import { pickLocale, coerceIcon, type Locale } from "@/frontend/features/cliente/shared/i18n";
-import { ServiceDetailScreen } from "@/frontend/features/cliente/servicios/service-detail-screen";
+import {
+  ServiceDetailScreen,
+  type ServiceDetailPlanVM,
+  type ServiceDetailPhaseVM,
+} from "@/frontend/features/cliente/servicios/service-detail-screen";
+
+/** Sales line for the "comunícate" CTA — pre-filled WhatsApp message. */
+const SALES_WHATSAPP = "1402824817";
+
+const PLAN_ORDER: Record<string, number> = { self: 0, with_lawyer: 1 };
+
+function formatPrice(cents: number, currency: string): string {
+  const whole = cents % 100 === 0;
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: currency || "USD",
+    minimumFractionDigits: whole ? 0 : 2,
+    maximumFractionDigits: whole ? 0 : 2,
+  }).format(cents / 100);
+}
+
+interface PlanRow {
+  kind: "self" | "with_lawyer";
+  price_cents: number | null;
+  currency: string | null;
+  is_active: boolean | null;
+}
+interface PhaseRow {
+  label_i18n: unknown;
+  description_i18n: unknown;
+  client_explainer_i18n: unknown;
+  position: number | null;
+}
+interface ServiceDetailRow {
+  id: string;
+  label_i18n: unknown;
+  description_i18n: unknown;
+  long_description_i18n: unknown;
+  icon: string;
+  color: string;
+  is_public?: boolean;
+  is_active?: boolean;
+  service_plans?: PlanRow[];
+  service_phases?: PhaseRow[];
+}
 
 export default async function ServiceDetailPage({
   params,
@@ -26,16 +71,6 @@ export default async function ServiceDetailPage({
   const locale = (await getLocale()) as Locale;
   const t = await getTranslations("cliente.servicioDetalle");
 
-  interface ServiceDetailRow {
-    label_i18n: unknown;
-    description_i18n: unknown;
-    long_description_i18n: unknown;
-    benefits_i18n: unknown;
-    icon: string;
-    color: string;
-    is_public?: boolean;
-    is_active?: boolean;
-  }
   let service: ServiceDetailRow | null = null;
   try {
     service = (await getServiceDetailBySlug(actor.orgId, slug)) as unknown as ServiceDetailRow;
@@ -54,40 +89,71 @@ export default async function ServiceDetailPage({
 
   const name = pickLocale(toI18n(service.label_i18n), locale);
   const shortDescription = pickLocale(toI18n(service.description_i18n), locale);
-  // "¿Qué es?": real long description, falling back to the normative prototype copy.
   const longDescription =
     pickLocale(toI18n(service.long_description_i18n), locale) || t("whatIsFallback");
 
-  // Benefits: real list when present, else the prototype's three normative rows.
-  const benefitsRaw = service.benefits_i18n;
-  let benefits: string[] = [];
-  if (Array.isArray(benefitsRaw)) {
-    benefits = (benefitsRaw as unknown[])
-      .map((b) => pickLocale(toI18n(b), locale))
-      .filter(Boolean);
-  }
-  if (benefits.length === 0) {
-    benefits = [t("benefit1"), t("benefit2"), t("benefit3")];
-  }
+  // Plans → priced options (self first, then with-lawyer). With-lawyer is the
+  // emphasized "upgrade" tile.
+  const plans: ServiceDetailPlanVM[] = (service.service_plans ?? [])
+    .filter((p) => p.is_active !== false && (p.kind === "self" || p.kind === "with_lawyer"))
+    .sort((a, b) => (PLAN_ORDER[a.kind] ?? 9) - (PLAN_ORDER[b.kind] ?? 9))
+    .map((p) => ({
+      kind: p.kind,
+      title: p.kind === "with_lawyer" ? t("planWithLawyer") : t("planSelf"),
+      priceLabel: p.price_cents ? formatPrice(p.price_cents, p.currency ?? "USD") : null,
+      note: p.kind === "with_lawyer" ? t("planWithLawyerNote") : t("planSelfNote"),
+      emphasized: p.kind === "with_lawyer",
+    }));
 
-  const interestEnabled = process.env.NEXT_PUBLIC_FEATURE_INTERES === "true";
+  // Phases → process stages (the client explainer is the "what it consists of").
+  const phases: ServiceDetailPhaseVM[] = (service.service_phases ?? [])
+    .slice()
+    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+    .map((ph) => ({
+      label: pickLocale(toI18n(ph.label_i18n), locale),
+      explainer:
+        pickLocale(toI18n(ph.client_explainer_i18n), locale) ||
+        pickLocale(toI18n(ph.description_i18n), locale) ||
+        "",
+    }))
+    .filter((ph) => ph.label);
+
+  // Estimated duration from the cronograma (degrades to "varies by case").
+  let totalWeeks = 0;
+  try {
+    totalWeeks = (await getServiceCronograma(service.id)).totalWeeks;
+  } catch {
+    totalWeeks = 0;
+  }
+  const durationLabel = totalWeeks > 0 ? t("durationWeeks", { weeks: totalWeeks }) : t("durationVaries");
+
+  // Pre-filled WhatsApp message to the sales line.
+  const waMessage = t("whatsappMessage", { service: name });
+  const whatsappUrl = `https://wa.me/${SALES_WHATSAPP}?text=${encodeURIComponent(waMessage)}`;
 
   return (
     <ServiceDetailScreen
       name={name}
       shortDescription={shortDescription ? `${shortDescription}.` : ""}
       longDescription={longDescription}
-      benefits={benefits}
       icon={coerceIcon(service.icon, "shield")}
       color={service.color || "var(--accent)"}
-      interestEnabled={interestEnabled}
+      plans={plans}
+      phases={phases}
+      durationLabel={durationLabel}
+      whatsappUrl={whatsappUrl}
       labels={{
         eyebrow: t("eyebrow"),
         whatIs: t("whatIs"),
-        howWeHelp: t("howWeHelp"),
-        costsNote: t("costsNote"),
-        interested: t("interested"),
-        interestedSoon: t("interestedSoon"),
+        pricingTitle: t("pricingTitle"),
+        priceOneTime: t("priceOneTime"),
+        priceSoon: t("priceSoon"),
+        howTitle: t("howTitle"),
+        howIntro: t("howIntro"),
+        how: [t("how1"), t("how2"), t("how3")],
+        stagesTitle: t("stagesTitle"),
+        durationTitle: t("durationTitle"),
+        whatsappCta: t("whatsappCta"),
         askByMessage: t("askByMessage"),
       }}
     />
