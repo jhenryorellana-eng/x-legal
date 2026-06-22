@@ -29,7 +29,12 @@ const mockRepo = vi.hoisted(() => ({
   findCaseOrgId: vi.fn(),
 }));
 
-const mockEvents = vi.hoisted(() => ({ appEvents: { emit: vi.fn() } }));
+const mockEvents = vi.hoisted(() => {
+  // emit + emitAndWait share one spy so assertions on `.emit` still observe the
+  // converted (awaited) emit path for message.sent.
+  const emit = vi.fn();
+  return { appEvents: { emit, emitAndWait: emit } };
+});
 const mockAudit = vi.hoisted(() => ({ writeAudit: vi.fn().mockResolvedValue(undefined) }));
 const mockAi = vi.hoisted(() => ({ translateText: vi.fn() }));
 

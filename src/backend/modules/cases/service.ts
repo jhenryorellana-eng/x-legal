@@ -539,14 +539,14 @@ export async function createCaseFromContract(
   }
 
   // Step 5: Emit domain events + audit
-  appEvents.emit({
+  await appEvents.emitAndWait({
     type: "case.created",
     payload: { caseId: caseRow.id },
     occurredAt: new Date(),
   });
 
   if (caseRow.assigned_paralegal_id) {
-    appEvents.emit({
+    await appEvents.emitAndWait({
       type: "case.assigned",
       payload: { caseId: caseRow.id, paralegalId: caseRow.assigned_paralegal_id },
       occurredAt: new Date(),
@@ -891,7 +891,7 @@ export async function reviewDocument(
       reviewed_at: new Date().toISOString(),
     });
 
-    appEvents.emit({
+    await appEvents.emitAndWait({
       type: "document.approved",
       payload: { caseId: doc.case_id, documentId: doc.id },
       occurredAt: new Date(),
@@ -927,7 +927,7 @@ export async function reviewDocument(
       correction_due_at: parsed.correctionDueAt ?? null,
     });
 
-    appEvents.emit({
+    await appEvents.emitAndWait({
       type: "document.rejected",
       payload: { caseId: doc.case_id, documentId: doc.id },
       occurredAt: new Date(),

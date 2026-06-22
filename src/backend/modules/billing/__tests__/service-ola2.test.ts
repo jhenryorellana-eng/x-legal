@@ -43,7 +43,10 @@ const mockRepo = vi.hoisted(() => ({
   findOrgIdForCase: vi.fn(),
 }));
 
-const mockAppEvents = vi.hoisted(() => ({ emit: vi.fn() }));
+const mockAppEvents = vi.hoisted(() => {
+  const emit = vi.fn();
+  return { emit, emitAndWait: emit };
+});
 const mockAudit = vi.hoisted(() => ({
   writeAudit: vi.fn().mockResolvedValue(undefined),
   appendCaseTimeline: vi.fn().mockResolvedValue(undefined),

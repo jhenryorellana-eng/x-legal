@@ -167,7 +167,7 @@ export async function sendContractForSigning(
     signing_expires_at: expiresAt.toISOString(),
   });
 
-  appEvents.emit({
+  await appEvents.emitAndWait({
     type: "contract.sent",
     payload: { contractId, caseId: contract.case_id, signingToken: token },
     occurredAt: new Date(),
@@ -254,7 +254,7 @@ export async function resendSigningLink(
     signing_expires_at: expiresAt.toISOString(),
   });
 
-  appEvents.emit({
+  await appEvents.emitAndWait({
     type: "contract.sent",
     payload: { contractId, caseId: contract.case_id, signingToken: newToken },
     occurredAt: new Date(),
@@ -351,7 +351,7 @@ export async function signContract(
     signing_token: null,  // single-use invalidation
   });
 
-  appEvents.emit({
+  await appEvents.emitAndWait({
     type: "contract.signed",
     payload: { contractId: contract.id, caseId: contract.case_id },
     occurredAt: new Date(),

@@ -67,7 +67,7 @@ vi.mock("@/backend/platform/authz", () => ({
 }));
 
 vi.mock("@/backend/platform/events", () => ({
-  appEvents: { emit: vi.fn() },
+  appEvents: { emit: vi.fn(), emitAndWait: vi.fn() },
 }));
 
 // normalizePhoneE164 is dynamically imported inside updateLead and expressServiceInterest

@@ -744,7 +744,7 @@ export async function createLead(
   });
 
   // Emit domain event
-  appEvents.emit({
+  await appEvents.emitAndWait({
     type: "lead.created",
     payload: {
       leadId: lead.id,
@@ -1187,7 +1187,7 @@ export async function expressServiceInterest(
     position: maxPos + 1,
   });
 
-  appEvents.emit({
+  await appEvents.emitAndWait({
     type: "lead.created",
     payload: {
       leadId: lead.id,

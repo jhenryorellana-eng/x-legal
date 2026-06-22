@@ -179,9 +179,14 @@ function durationMinutes(a: AppointmentRow): number {
   return Math.round((end - start) / 60_000);
 }
 
-/** Emits a domain event. */
-function emit(event: { type: string; payload: unknown }): void {
-  appEvents.emit({
+/**
+ * Emits a domain event and AWAITS its consumers. Awaiting is required inside a
+ * Vercel serverless request: the function is frozen once the response is sent,
+ * which would drop a fire-and-forget consumer's notification insert / QStash
+ * enqueue (DOC-20 §5 — heavy work still goes to QStash inside the consumer).
+ */
+async function emit(event: { type: string; payload: unknown }): Promise<void> {
+  await appEvents.emitAndWait({
     type: event.type,
     payload: event.payload,
     occurredAt: new Date(),
@@ -519,7 +524,7 @@ export async function bookAppointment(
     });
   }
 
-  emit({
+  await emit({
     type: "appointment.booked",
     payload: {
       appointmentId: appt.id,
@@ -610,7 +615,7 @@ export async function cancelAppointment(
     }
   }
 
-  emit({
+  await emit({
     type: "appointment.cancelled",
     payload: {
       appointmentId: a.id,
@@ -771,7 +776,7 @@ export async function rescheduleAppointment(
     await repo.updateAppointment(fresh.id, { livekitRoomId: `appt:${fresh.id}` });
   }
 
-  emit({
+  await emit({
     type: "appointment.rescheduled",
     payload: {
       oldAppointmentId: a.id,
@@ -834,7 +839,7 @@ export async function completeAppointment(
     notes: mergeNotes(a.notes, input.notes),
   });
 
-  emit({
+  await emit({
     type: "appointment.completed",
     payload: {
       appointmentId: a.id,
@@ -991,7 +996,7 @@ export async function createProspectAppointment(
     await repo.updateAppointment(appt.id, { livekitRoomId: `appt:${appt.id}` });
   }
 
-  emit({
+  await emit({
     type: "appointment.booked",
     payload: {
       appointmentId: appt.id,

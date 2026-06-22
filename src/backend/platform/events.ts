@@ -42,6 +42,19 @@ export type EventConsumer<TPayload = unknown> = (
 export interface EventBus {
   on(eventType: string, consumer: EventConsumer): void;
   emit(event: DomainEvent): void;
+  /**
+   * Like {@link emit}, but AWAITS every consumer to completion before resolving.
+   *
+   * Required for any emit made inside a Vercel serverless request (server
+   * actions, route handlers): the Lambda is frozen the instant the response is
+   * sent, which drops a fire-and-forget consumer's in-flight DB insert / QStash
+   * enqueue (so in-app + push notifications silently never persist). Awaiting the
+   * emit keeps those side-effects on the request's critical path. Heavy work
+   * (push/email send, AI) still goes to QStash inside the consumer, so this only
+   * waits on the light insert + enqueue. Same per-consumer fault isolation as
+   * emit (one failure is logged and never blocks the others or the caller).
+   */
+  emitAndWait(event: DomainEvent): Promise<void>;
 }
 
 export function createEventBus(): EventBus {
@@ -86,6 +99,29 @@ export function createEventBus(): EventBus {
           );
         }
       }
+    },
+
+    async emitAndWait(event: DomainEvent): Promise<void> {
+      const handlers = consumers.get(event.type) ?? [];
+      // Run every consumer concurrently and await all of them. Per-consumer
+      // fault isolation: a thrown/rejected consumer is logged and never blocks
+      // the others (Promise.all over already-caught promises never rejects).
+      await Promise.all(
+        handlers.map(async (handler) => {
+          try {
+            await handler(event);
+          } catch (err) {
+            logger.error(
+              {
+                err,
+                eventType: event.type,
+                handler: handler.name || "(anonymous)",
+              },
+              "EventBus: consumer failed (emitAndWait) — continuing with remaining consumers",
+            );
+          }
+        }),
+      );
     },
   };
 }

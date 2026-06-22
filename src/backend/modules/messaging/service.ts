@@ -210,7 +210,7 @@ export async function sendMessage(actor: Actor, input: SendMessageInput): Promis
   });
 
   const recipientIds = (await listParticipantIds(conv.id)).filter((id) => id !== actor.userId);
-  appEvents.emit({
+  await appEvents.emitAndWait({
     type: "message.sent",
     payload: {
       messageId: msg.id,

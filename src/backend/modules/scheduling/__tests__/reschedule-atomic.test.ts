@@ -67,7 +67,7 @@ vi.mock("@/backend/platform/supabase", () => ({
 }));
 
 vi.mock("@/backend/platform/events", () => ({
-  appEvents: { emit: vi.fn() },
+  appEvents: { emit: vi.fn(), emitAndWait: vi.fn() },
 }));
 
 vi.mock("@/backend/platform/logger", () => ({

@@ -45,9 +45,12 @@ const mockRepo = vi.hoisted(() => ({
   listInstallmentsForPlan: vi.fn(),
 }));
 
-const mockAppEvents = vi.hoisted(() => ({
-  emit: vi.fn(),
-}));
+const mockAppEvents = vi.hoisted(() => {
+  // emit + emitAndWait share one spy so assertions on `.emit` still observe the
+  // converted (awaited) emit path (downpayment/installment/payment events).
+  const emit = vi.fn();
+  return { emit, emitAndWait: emit };
+});
 
 const mockStripe = vi.hoisted(() => ({
   checkout: {

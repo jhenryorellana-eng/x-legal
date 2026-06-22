@@ -255,7 +255,7 @@ async function applyPaymentSuccess(
 
   // Emit domain event
   if (installment.is_downpayment) {
-    appEvents.emit({
+    await appEvents.emitAndWait({
       type: "downpayment.confirmed",
       payload: {
         caseId,
@@ -267,7 +267,7 @@ async function applyPaymentSuccess(
       occurredAt: new Date(),
     });
   } else {
-    appEvents.emit({
+    await appEvents.emitAndWait({
       type: "installment.paid",
       payload: {
         caseId,
@@ -354,7 +354,7 @@ async function applyRefund(
 
   if (!caseId) return;
 
-  appEvents.emit({
+  await appEvents.emitAndWait({
     type: "payment.refunded",
     payload: {
       caseId,
@@ -894,7 +894,7 @@ export async function submitZelleProof(
 
   await updateInstallment(installment.id, { status: "processing" });
 
-  appEvents.emit({
+  await appEvents.emitAndWait({
     type: "payment.proof_submitted",
     payload: {
       caseId: caseId ?? "",
@@ -1338,7 +1338,7 @@ export async function markOverdues(
 
   for (const inst of due) {
     await updateInstallment(inst.id, { status: "overdue" });
-    appEvents.emit({
+    await appEvents.emitAndWait({
       type: "installment.overdue",
       payload: {
         caseId: inst.caseId,
