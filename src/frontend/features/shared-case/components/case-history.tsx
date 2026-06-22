@@ -27,7 +27,13 @@ function look(dbIcon: string): { icon: IconName; color: string } {
 function fmt(iso: string, locale: "es" | "en", opts: Intl.DateTimeFormatOptions): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  return new Intl.DateTimeFormat(locale === "en" ? "en-US" : "es-ES", opts).format(d);
+  // Pin the timezone (org default, ET) so the server and client render the SAME
+  // text — otherwise the per-runtime default timezone differs and React throws a
+  // hydration mismatch (#418) on the timeline.
+  return new Intl.DateTimeFormat(locale === "en" ? "en-US" : "es-ES", {
+    ...opts,
+    timeZone: "America/New_York",
+  }).format(d);
 }
 
 export function CaseHistory({
