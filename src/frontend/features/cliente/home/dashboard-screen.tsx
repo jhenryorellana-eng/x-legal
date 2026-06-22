@@ -16,6 +16,8 @@ import { Logo } from "@/frontend/components/brand/logo";
 
 export interface DashboardCase {
   caseId: string;
+  /** Destination for the card (camino for active cases, /pagos when payment is pending). */
+  href: string;
   /** Service + party title, e.g. "Visa Juvenil — Mateo". */
   title: string;
   /** "Fase 1 de 3 · Custodia" — already localized by the page. */
@@ -26,6 +28,8 @@ export interface DashboardCase {
   pendingDocuments: number;
   /** When false, the card renders as a compact secondary row. */
   highlighted: boolean;
+  /** Onboarding gate: case is `payment_pending` → the client must pay the initial fee. */
+  paymentPending: boolean;
   /** Status text for compact cards (e.g. "En revisión"). */
   statusText?: string;
   statusKind?: "revision" | "aprobado" | "pendiente";
@@ -37,6 +41,8 @@ export interface DashboardLabels {
   yourCases: string;
   documentsLeft: string; // "{n} documents left" → uses {n}
   openCase: string;
+  paymentPending: string; // "Pago inicial pendiente"
+  payNow: string; // "Pagar ahora" — CTA on a payment_pending case
   quickAccess: string;
   qServices: string;
   qServicesSub: string;
@@ -194,7 +200,7 @@ export function DashboardScreen({
       {/* Highlighted case */}
       {highlighted && (
         <Link
-          href={`/caso/${highlighted.caseId}`}
+          href={highlighted.href}
           className="mp-lift"
           style={{
             position: "relative",
@@ -305,20 +311,26 @@ export function DashboardScreen({
                 fontWeight: 700,
               }}
             >
-              <span
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: 999,
-                  background: "var(--gold)",
-                  boxShadow:
-                    "0 0 0 4px color-mix(in srgb, var(--gold) 20%, transparent)",
-                }}
-              />
-              {labels.documentsLeft.replace(
-                "{n}",
-                String(highlighted.pendingDocuments),
+              {highlighted.paymentPending ? (
+                <Icon name="wallet" size={17} color="var(--gold)" />
+              ) : (
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: 999,
+                    background: "var(--gold)",
+                    boxShadow:
+                      "0 0 0 4px color-mix(in srgb, var(--gold) 20%, transparent)",
+                  }}
+                />
               )}
+              {highlighted.paymentPending
+                ? labels.paymentPending
+                : labels.documentsLeft.replace(
+                    "{n}",
+                    String(highlighted.pendingDocuments),
+                  )}
             </div>
             <span
               className="t-title"
@@ -334,7 +346,7 @@ export function DashboardScreen({
                 fontWeight: 800,
               }}
             >
-              {labels.openCase}{" "}
+              {highlighted.paymentPending ? labels.payNow : labels.openCase}{" "}
               <Icon name="chevR" size={17} color="var(--accent)" />
             </span>
           </div>
@@ -345,7 +357,7 @@ export function DashboardScreen({
       {others.map((c) => (
         <Link
           key={c.caseId}
-          href={`/caso/${c.caseId}`}
+          href={c.href}
           className="mp-lift"
           style={{
             display: "flex",
@@ -374,7 +386,7 @@ export function DashboardScreen({
             >
               {c.title}
             </div>
-            {c.statusText && (
+            {(c.paymentPending || c.statusText) && (
               <div
                 style={{
                   fontSize: 13.5,
@@ -383,12 +395,15 @@ export function DashboardScreen({
                   marginTop: 1,
                 }}
               >
-                {c.statusText}
+                {c.paymentPending ? labels.paymentPending : c.statusText}
               </div>
             )}
           </div>
-          {c.statusKind && c.statusText && (
-            <StatusPill kind={c.statusKind}>{c.statusText}</StatusPill>
+          {c.paymentPending ? (
+            <StatusPill kind="revision">{labels.payNow}</StatusPill>
+          ) : (
+            c.statusKind &&
+            c.statusText && <StatusPill kind={c.statusKind}>{c.statusText}</StatusPill>
           )}
         </Link>
       ))}

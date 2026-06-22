@@ -12,11 +12,16 @@ import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
 import { setUserLocaleAction } from "@/backend/modules/identity/actions";
+import {
+  registerPushSubscriptionAction,
+  removePushSubscriptionAction,
+} from "@/backend/modules/notifications/actions";
 import { getOrgConfig, listCoverTemplates, getTermsOverview } from "@/backend/modules/org";
 import { resolveI18n, type Locale } from "@/shared/i18n";
 import { ConfigView } from "@/frontend/features/admin/config/config-view";
 import { StaffLanguageCard } from "@/frontend/components/desktop/staff-language-card";
 import { StaffAppearanceCard } from "@/frontend/components/desktop/staff-appearance-card";
+import { StaffPushCard } from "@/frontend/components/desktop/staff-push-card";
 import { saveOrgSettings, setCoverActive, createTerms, publishTerms } from "./actions";
 
 /** Common US/Latam IANA timezones (the form offers a curated list). */
@@ -79,6 +84,20 @@ export default async function ConfigPage() {
             subtitle: tCfg("languageSub"),
             spanish: tCfg("spanish"),
             english: tCfg("english"),
+          }}
+        />
+        <StaffPushCard
+          vapidPublicKey={process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY}
+          registerAction={registerPushSubscriptionAction}
+          removeAction={removePushSubscriptionAction}
+          strings={{
+            title: tCfg("pushTitle"),
+            subtitle: tCfg("pushSub"),
+            enable: tCfg("pushEnable"),
+            disable: tCfg("pushDisable"),
+            enabled: tCfg("pushEnabled"),
+            unsupported: tCfg("pushUnsupported"),
+            denied: tCfg("pushDenied"),
           }}
         />
       </div>

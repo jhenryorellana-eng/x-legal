@@ -127,8 +127,8 @@ describe("notifyFromEvent('contract.signed')", () => {
       occurredAt: new Date(),
     });
 
-    // Should have called insertNotificationIdempotent for finance + sales
-    expect(mockInsertNotificationIdempotent).toHaveBeenCalledTimes(2);
+    // Should have called insertNotificationIdempotent for finance + sales + client
+    expect(mockInsertNotificationIdempotent).toHaveBeenCalledTimes(3);
 
     // Finance gets email channel
     const financeCalls = mockInsertNotificationIdempotent.mock.calls.filter(
@@ -143,6 +143,18 @@ describe("notifyFromEvent('contract.signed')", () => {
     );
     expect(salesCalls).toHaveLength(1);
     expect(salesCalls[0][0].type).toBe("contract.signed");
+
+    // Client gets the "make your initial payment" variant (onboarding flow)
+    const clientCalls = mockInsertNotificationIdempotent.mock.calls.filter(
+      ([input]) => input.userId === CLIENT_USER_ID,
+    );
+    expect(clientCalls).toHaveLength(1);
+    expect(clientCalls[0][0].type).toBe("contract.signed.client");
+    // Client deep-links to the account-level payments screen (/pagos exists; there
+    // is no /caso/{id}/pagos route).
+    expect(clientCalls[0][0].actionUrl).toBe("/pagos");
+    // Finance deep-links to its own payments view (not /admin/cobranza, which 404s).
+    expect(financeCalls[0][0].actionUrl).toBe(`/finanzas/pagos?caseId=${CASE_ID}`);
   });
 
   it("enqueues email deliver-notification for finance with correct template key", async () => {
@@ -296,15 +308,15 @@ describe("notifyFromEvent('document.rejected')", () => {
 // ---------------------------------------------------------------------------
 
 describe("notifyFromEvent('downpayment.confirmed')", () => {
-  it("notifies sales (①②③), paralegal (①), and client (③)", async () => {
+  it("notifies sales (①②③), paralegal (①), client (③), and finance (①②)", async () => {
     await notifyFromEvent({
       type: "downpayment.confirmed",
       payload: { caseId: CASE_ID, installmentId: "inst-1" },
       occurredAt: new Date(),
     });
 
-    // Should have called for sales + paralegal + client = 3 recipients
-    expect(mockInsertNotificationIdempotent).toHaveBeenCalledTimes(3);
+    // sales + paralegal + client + finance = 4 recipients (finance added per onboarding flow)
+    expect(mockInsertNotificationIdempotent).toHaveBeenCalledTimes(4);
 
     const userIds = mockInsertNotificationIdempotent.mock.calls.map(
       ([input]) => input.userId,
@@ -312,6 +324,16 @@ describe("notifyFromEvent('downpayment.confirmed')", () => {
     expect(userIds).toContain(SALES_USER_ID);
     expect(userIds).toContain(PARALEGAL_USER_ID);
     expect(userIds).toContain(CLIENT_USER_ID);
+    expect(userIds).toContain(FINANCE_USER_ID);
+
+    // Deep links resolve to real routes per recipient (no bare /caso/{id} or
+    // /legal/caso/ 404s).
+    const byUser = (uid: string) =>
+      mockInsertNotificationIdempotent.mock.calls.find(([i]) => i.userId === uid)![0];
+    expect(byUser(CLIENT_USER_ID).actionUrl).toBe(`/caso/${CASE_ID}/camino`);
+    expect(byUser(PARALEGAL_USER_ID).actionUrl).toBe(`/legal/expediente/${CASE_ID}`);
+    expect(byUser(FINANCE_USER_ID).actionUrl).toBe(`/finanzas/pagos?caseId=${CASE_ID}`);
+    expect(byUser(SALES_USER_ID).actionUrl).toBe(`/ventas/clientes/${CASE_ID}`);
   });
 
   it("sends downpayment-confirmed-sales email to sales", async () => {
@@ -363,7 +385,7 @@ describe("notifyFromEvent('downpayment.confirmed')", () => {
 
   it("no-ops for unknown event types", async () => {
     await notifyFromEvent({
-      type: "case.created",
+      type: "some.unmapped.event",
       payload: { caseId: CASE_ID },
       occurredAt: new Date(),
     });
@@ -515,5 +537,49 @@ describe("notifyFromEvent — message.sent anti-burst (F7-Ola7b)", () => {
     await notifyFromEvent(burst);
     expect(mockInsertNotificationIdempotent).not.toHaveBeenCalled();
     expect(mockBumpMessageDigest).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Onboarding flow additions (Henry's flow)
+// ---------------------------------------------------------------------------
+
+describe("notifyFromEvent — onboarding flow", () => {
+  it("case.created → notifies the case's asesora (sales)", async () => {
+    await notifyFromEvent({
+      type: "case.created",
+      payload: { caseId: CASE_ID },
+      occurredAt: new Date(),
+    });
+    expect(mockInsertNotificationIdempotent).toHaveBeenCalledTimes(1);
+    const [input] = mockInsertNotificationIdempotent.mock.calls[0];
+    expect(input.userId).toBe(SALES_USER_ID);
+    expect(input.type).toBe("case.created");
+    // Deep link must hit the real ventas case route (/ventas/clientes/, not /ventas/casos/).
+    expect(input.actionUrl).toBe(`/ventas/clientes/${CASE_ID}`);
+  });
+
+  it("contract.sent → in-app + contract-ready email to the client with /firma/{token}", async () => {
+    mockFindUserById.mockResolvedValue({
+      id: CLIENT_USER_ID,
+      email: "client@example.com",
+      emailBouncedAt: null,
+      locale: "es",
+      kind: "client",
+    });
+    await notifyFromEvent({
+      type: "contract.sent",
+      payload: { contractId: CONTRACT_ID, caseId: CASE_ID, signingToken: "tok-abc" },
+      occurredAt: new Date(),
+    });
+    const [input] = mockInsertNotificationIdempotent.mock.calls[0];
+    expect(input.userId).toBe(CLIENT_USER_ID);
+    expect(input.actionUrl).toBe("/firma/tok-abc");
+    // Find the email job by channel only, then assert its template + recipient so
+    // the assertion is not tautological (a find-by-templateKey would always match).
+    const emailJob = mockEnqueueJob.mock.calls.find(([p]) => p.channel === "email");
+    expect(emailJob).toBeDefined();
+    expect(emailJob![0].templateKey).toBe("contract-ready");
+    expect(emailJob![0].recipientEmail).toBe("client@example.com");
   });
 });

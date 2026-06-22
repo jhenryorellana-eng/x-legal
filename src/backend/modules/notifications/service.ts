@@ -1,11 +1,17 @@
 /**
- * Notifications module — service layer (F2 + F3).
+ * Notifications module — service layer (F2 + F3 + onboarding).
+ *
+ * Onboarding flow rows (Henry's flow — overrides DOC-47 recipients per request):
+ *   contract.sent         → Client ①◆ email (contract-ready) — signing link /firma/{token}
+ *   case.created          → Sales (asesora) ①② push — confirmation of the new case
+ *   contract.signed       → + Client ①② push (contract.signed.client) "pay your initial"
+ *   downpayment.confirmed → + Finance (Andrium) ①② push (downpayment.confirmed.finance)
  *
  * F2 matrix rows (DOC-47 §4.3):
  *   contract.signed    → Finance ①②③ (contract-signed-finance) + Sales ①
  *   document.approved  → Client ①②③ (document-approved)
  *   document.rejected  → Client ①②③ (document-rejected)
- *   downpayment.confirmed → Sales ①②③ (downpayment-confirmed-sales) + Paralegal ① + Client ③④◆ (welcome + downpayment-confirmed)
+ *   downpayment.confirmed → Sales ①②③ (downpayment-confirmed-sales) + Paralegal ① + Client ③◆ (downpayment-confirmed / welcome)
  *
  * F3 matrix rows added (DOC-47 §4.3):
  *   appointment.booked      → Client ①②③ (appointment-booked) + Staff ①
@@ -14,7 +20,8 @@
  *   appointment.completed   → no-op (timeline + metrics only, per matrix)
  *   lead.created            → Assigned staff (asesora) ①② (no email per matrix)
  *
- * Push (channel ④) is F7 — only in-app + email implemented here.
+ * Channels: ① in-app (always, base channel) · ② push (web-push/VAPID, F7) ·
+ * ③ email (Resend) · ◆ unsuppressible (ignores preference toggles).
  *
  * @module notifications/service
  */
@@ -82,6 +89,31 @@ interface MatrixRule {
 // Canonical matrix (DOC-47 §4.3). F2 + F3 + F7 rows in one map (extending).
 // Each rule carries its preference `category` (gates suppressible rules).
 const F2_MATRIX: Record<string, MatrixRule[]> = {
+  // contract.sent → the client (signer) gets the signing link (email primary +
+  // in-app). Unsuppressible (◆): the link must reach them regardless of prefs.
+  "contract.sent": [
+    {
+      type: "contract.sent",
+      recipients: [{ resolverKey: "clients_of_case" }],
+      channels: { push: false, email: true },
+      category: "case_updates",
+      emailTemplateKey: "contract-ready",
+      unsuppressible: true,
+      deepLinkTemplate: "/firma/{signingToken}",
+    },
+  ],
+  // Onboarding flow (Henry's flow — overrides DOC-47 recipients per request):
+  // case created → the case's asesora (Vanessa). Note: notifyFromEvent does NOT
+  // suppress self-notify, so the creator (= the asesora) gets it as a confirmation.
+  "case.created": [
+    {
+      type: "case.created",
+      recipients: [{ resolverKey: "sales_of_case" }],
+      channels: { push: true, email: false }, // ①② in-app + push
+      category: "case_updates",
+      deepLinkTemplate: "/ventas/clientes/{caseId}",
+    },
+  ],
   "contract.signed": [
     {
       type: "contract.signed",
@@ -89,14 +121,25 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
       channels: { push: true, email: true },
       category: "case_updates",
       emailTemplateKey: "contract-signed-finance",
-      deepLinkTemplate: "/admin/cobranza/{caseId}",
+      deepLinkTemplate: "/finanzas/pagos?caseId={caseId}",
     },
     {
       type: "contract.signed",
       recipients: [{ resolverKey: "sales_of_case" }],
       channels: { push: false, email: false }, // sales only gets in-app ①
       category: "case_updates",
-      deepLinkTemplate: "/ventas/casos/{caseId}",
+      deepLinkTemplate: "/ventas/clientes/{caseId}",
+    },
+    {
+      // Client variant (Henry's flow): on sign, tell the client to pay the
+      // downpayment. Distinct rule.type → client-specific content (not the
+      // finance "collect" copy). Deep link to the account-level payments screen
+      // (`/pagos` — there is no per-case `/caso/{id}/pagos` route).
+      type: "contract.signed.client",
+      recipients: [{ resolverKey: "clients_of_case" }],
+      channels: { push: true, email: false }, // ①② in-app + push
+      category: "case_updates",
+      deepLinkTemplate: "/pagos",
     },
   ],
   "document.approved": [
@@ -126,14 +169,14 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
       channels: { push: true, email: true },
       category: "case_updates",
       emailTemplateKey: "downpayment-confirmed-sales",
-      deepLinkTemplate: "/ventas/casos/{caseId}",
+      deepLinkTemplate: "/ventas/clientes/{caseId}",
     },
     {
       type: "downpayment.confirmed",
       recipients: [{ resolverKey: "paralegal_of_case" }],
       channels: { push: false, email: false }, // paralegal only in-app ①
       category: "case_updates",
-      deepLinkTemplate: "/legal/caso/{caseId}?tab=resumen",
+      deepLinkTemplate: "/legal/expediente/{caseId}",
     },
     {
       type: "downpayment.confirmed",
@@ -142,7 +185,16 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
       category: "case_updates",
       emailTemplateKey: "downpayment-confirmed",
       unsuppressible: true, // ◆ (cliente — bienvenida)
-      deepLinkTemplate: "/caso/{caseId}",
+      deepLinkTemplate: "/caso/{caseId}/camino",
+    },
+    {
+      // Finance (Andrium) — Henry's flow: notify on payment confirmed too.
+      // Distinct rule.type → finance-specific copy. In-app + push.
+      type: "downpayment.confirmed.finance",
+      recipients: [{ resolverKey: "finance" }],
+      channels: { push: true, email: false },
+      category: "case_updates",
+      deepLinkTemplate: "/finanzas/pagos?caseId={caseId}",
     },
   ],
 
@@ -413,9 +465,27 @@ function renderContent(
 ): { titleI18n: { en: string; es: string }; bodyI18n: { en: string; es: string } | null; icon: string; color: string } {
   // F2 content map — extend as more event types are added
   const contentMap: Record<string, { titleI18n: { en: string; es: string }; bodyI18n: { en: string; es: string } | null; icon: string; color: string }> = {
+    "contract.sent": {
+      titleI18n: { en: "Your contract is ready to sign", es: "Tu contrato está listo para firmar" },
+      bodyI18n: { en: "Review and sign your contract to continue.", es: "Revisa y firma tu contrato para continuar." },
+      icon: "file-check",
+      color: "accent",
+    },
+    "case.created": {
+      titleI18n: { en: "New case created", es: "Nuevo caso creado" },
+      bodyI18n: { en: "A new case was created for your client.", es: "Se creó un nuevo caso para tu cliente." },
+      icon: "file-check",
+      color: "accent",
+    },
     "contract.signed": {
       titleI18n: { en: "Contract signed", es: "Contrato firmado" },
       bodyI18n: { en: "A contract has been signed — collect the down payment.", es: "Se ha firmado un contrato — cobrar el pago inicial." },
+      icon: "file-check",
+      color: "green",
+    },
+    "contract.signed.client": {
+      titleI18n: { en: "Contract signed — make your initial payment", es: "Contrato firmado — realiza tu pago inicial" },
+      bodyI18n: { en: "Your contract is signed. Make the initial payment to start your case.", es: "Tu contrato está firmado. Realiza el pago inicial para iniciar tu caso." },
       icon: "file-check",
       color: "green",
     },
@@ -434,6 +504,12 @@ function renderContent(
     "downpayment.confirmed": {
       titleI18n: { en: "Down payment confirmed", es: "Pago inicial confirmado" },
       bodyI18n: { en: "The initial payment has been received. Your case is now active.", es: "El pago inicial fue recibido. Tu caso está activo." },
+      icon: "dollar-sign",
+      color: "green",
+    },
+    "downpayment.confirmed.finance": {
+      titleI18n: { en: "Initial payment confirmed", es: "Pago inicial confirmado" },
+      bodyI18n: { en: "The initial payment was confirmed and the case is now active.", es: "Se confirmó el pago inicial y el caso quedó activo." },
       icon: "dollar-sign",
       color: "green",
     },
@@ -629,6 +705,16 @@ export async function notifyFromEvent(event: DomainEvent): Promise<void> {
   for (const rule of rules) {
     for (const recipientDef of rule.recipients) {
       const userIds = await resolveRecipients(recipientDef.resolverKey, payload);
+
+      // An unsuppressible rule (e.g. contract.sent signing link, downpayment
+      // welcome) that resolves to zero recipients silently drops a must-deliver
+      // message — most often a contract sent before its case exists (caseId null).
+      if (userIds.length === 0 && rule.unsuppressible) {
+        logger.warn(
+          { eventType: event.type, ruleType: rule.type, resolverKey: recipientDef.resolverKey },
+          "notifications: unsuppressible rule resolved 0 recipients — deep-link/email may be lost",
+        );
+      }
 
       for (const userId of userIds) {
         const prefs = await repoGetPreferences(userId);

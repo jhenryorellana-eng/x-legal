@@ -61,7 +61,17 @@ export function registerConsumers(): void {
   // notifications consumers (F2 matrix)
   // -------------------------------------------------------------------------
 
-  // contract.signed → notify finance + sales
+  // contract.sent → email the client the signing link (onboarding flow)
+  appEvents.on("contract.sent", async (event) => {
+    await notifyFromEvent(event);
+  });
+
+  // case.created → notify the case's asesora (onboarding flow)
+  appEvents.on("case.created", async (event) => {
+    await notifyFromEvent(event);
+  });
+
+  // contract.signed → notify finance + sales + client
   appEvents.on("contract.signed", async (event) => {
     await notifyFromEvent(event);
   });

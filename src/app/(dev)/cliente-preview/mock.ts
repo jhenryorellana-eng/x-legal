@@ -22,6 +22,7 @@ export const homeMock: DashboardScreenProps = {
   cases: [
     {
       caseId: "demo",
+      href: "/caso/demo/camino",
       title: "Visa Juvenil — Mateo",
       phaseLabel: "Fase 1 de 3 · Custodia",
       serviceIcon: "shield",
@@ -29,9 +30,11 @@ export const homeMock: DashboardScreenProps = {
       progress: 46,
       pendingDocuments: 3,
       highlighted: true,
+      paymentPending: false,
     },
     {
       caseId: "demo2",
+      href: "/pagos",
       title: "Taxes 2025",
       phaseLabel: null,
       serviceIcon: "doc",
@@ -39,8 +42,7 @@ export const homeMock: DashboardScreenProps = {
       progress: 0,
       pendingDocuments: 0,
       highlighted: false,
-      statusText: "En revisión",
-      statusKind: "revision",
+      paymentPending: true,
     },
   ],
   labels: {
@@ -49,6 +51,8 @@ export const homeMock: DashboardScreenProps = {
     yourCases: "Tus casos",
     documentsLeft: "Te faltan {n} documentos",
     openCase: "Abrir caso",
+    paymentPending: "Pago inicial pendiente",
+    payNow: "Pagar ahora",
     quickAccess: "Accesos rápidos",
     qServices: "Servicios",
     qServicesSub: "Ver catálogo",

@@ -9,6 +9,10 @@ import { getActor } from "@/backend/modules/identity";
 import { ConfiguracionView, LexPrefsProvider } from "@/frontend/features/vanessa";
 import type { Locale } from "@/frontend/lib/datetime";
 import { setUserLocaleAction } from "@/backend/modules/identity/actions";
+import {
+  registerPushSubscriptionAction,
+  removePushSubscriptionAction,
+} from "@/backend/modules/notifications/actions";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +22,7 @@ export default async function VentasConfigPage() {
 
   const locale = (await getLocale()) as Locale;
   const t = await getTranslations("staff.ventas.config");
+  const tCfg = await getTranslations("staff.config");
 
   const strings = {
     title: t("title"),
@@ -39,11 +44,25 @@ export default async function VentasConfigPage() {
     spanish: t("spanish"),
     english: t("english"),
     saved: t("saved"),
+    pushTitle: tCfg("pushTitle"),
+    pushSub: tCfg("pushSub"),
+    pushEnabled: tCfg("pushEnabled"),
+    pushUnsupported: tCfg("pushUnsupported"),
+    pushDenied: tCfg("pushDenied"),
   };
 
   return (
     <LexPrefsProvider>
-      <ConfiguracionView strings={strings} locale={locale} actions={{ setLocale: setUserLocaleAction }} />
+      <ConfiguracionView
+        strings={strings}
+        locale={locale}
+        actions={{ setLocale: setUserLocaleAction }}
+        push={{
+          vapidPublicKey: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
+          registerAction: registerPushSubscriptionAction,
+          removeAction: removePushSubscriptionAction,
+        }}
+      />
     </LexPrefsProvider>
   );
 }

@@ -14,6 +14,8 @@ export interface ContractSentEvent {
   payload: {
     contractId: string;
     caseId: string | null;
+    /** Single-use signing token → /firma/{signingToken} (client's signing link). */
+    signingToken: string;
   };
   occurredAt: Date;
 }

@@ -339,6 +339,11 @@ function ConfiguracionPreview() {
     <ConfiguracionView
       locale="es"
       actions={{ setLocale: ok }}
+      push={{
+        vapidPublicKey: undefined,
+        registerAction: async () => ({ success: true }),
+        removeAction: async () => ({ success: true }),
+      }}
       strings={{
         title: "Configuración",
         sub: "Tu cuenta, tema y preferencias del panel.",
@@ -359,6 +364,11 @@ function ConfiguracionPreview() {
         spanish: "Español",
         english: "English",
         saved: "✓ Cambios guardados",
+        pushTitle: "Notificaciones push",
+        pushSub: "Recibe avisos en este dispositivo",
+        pushEnabled: "Activadas en este dispositivo",
+        pushUnsupported: "Este navegador no soporta notificaciones push",
+        pushDenied: "Permiso bloqueado en el navegador",
       }}
     />
   );

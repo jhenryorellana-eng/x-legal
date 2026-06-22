@@ -76,8 +76,13 @@ export default async function HomePage() {
           .replace("{phase}", phaseName)
       : null;
     const isInReview = ws.status === "in_validation";
+    // Onboarding gate (Henry's flow): a `payment_pending` case has not started —
+    // the client must pay the initial fee first. Surface it on the dashboard and
+    // route the card straight to the payments screen.
+    const paymentPending = ws.status === "payment_pending";
     return {
       caseId: ws.caseId,
+      href: paymentPending ? "/pagos" : `/caso/${ws.caseId}/camino`,
       title,
       phaseLabel,
       serviceIcon: coerceIcon(ws.service?.icon, "shield"),
@@ -86,6 +91,7 @@ export default async function HomePage() {
       pendingDocuments: ws.pendingDocuments,
       // The first/most-recent active case is the highlighted hero card.
       highlighted: idx === 0,
+      paymentPending,
       statusText: isInReview ? reviewLabel : undefined,
       statusKind: isInReview ? ("revision" as const) : undefined,
     };
@@ -103,6 +109,8 @@ export default async function HomePage() {
         yourCases: t("yourCases"),
         documentsLeft: t.raw("documentsLeft") as string, // "Te faltan {n} documentos" — {n} per card
         openCase: t("openCase"),
+        paymentPending: t("paymentPending"),
+        payNow: t("payNow"),
         quickAccess: t("quickAccess"),
         qServices: tNav("servicios"),
         qServicesSub: t("qServicesSub"),

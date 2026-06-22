@@ -169,7 +169,7 @@ export async function sendContractForSigning(
 
   appEvents.emit({
     type: "contract.sent",
-    payload: { contractId, caseId: contract.case_id },
+    payload: { contractId, caseId: contract.case_id, signingToken: token },
     occurredAt: new Date(),
   });
 
@@ -256,7 +256,7 @@ export async function resendSigningLink(
 
   appEvents.emit({
     type: "contract.sent",
-    payload: { contractId, caseId: contract.case_id },
+    payload: { contractId, caseId: contract.case_id, signingToken: newToken },
     occurredAt: new Date(),
   });
 

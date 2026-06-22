@@ -115,6 +115,8 @@
       "qSettingsSub": "Idioma, tema",
       "phaseShort": "Fase {x} de {y} · {phase}",
       "inReview": "En revisión",
+      "paymentPending": "Pago inicial pendiente",
+      "payNow": "Pagar ahora",
       "bellAria": "Ver notificaciones",
       "avatarAria": "Ir a configuración"
     },
@@ -663,7 +665,14 @@
       "language": "Idioma",
       "languageSub": "Elige el idioma del panel",
       "spanish": "Español",
-      "english": "English"
+      "english": "English",
+      "pushTitle": "Notificaciones push",
+      "pushSub": "Recibe avisos en este dispositivo",
+      "pushEnable": "Activar",
+      "pushDisable": "Desactivar",
+      "pushEnabled": "Activadas en este dispositivo",
+      "pushUnsupported": "Este navegador no soporta notificaciones push",
+      "pushDenied": "Permiso bloqueado en el navegador"
     },
     "dashboard": {
       "greeting": "Buen día",

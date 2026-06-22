@@ -9,8 +9,13 @@ import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
 import { setUserLocaleAction } from "@/backend/modules/identity/actions";
+import {
+  registerPushSubscriptionAction,
+  removePushSubscriptionAction,
+} from "@/backend/modules/notifications/actions";
 import { StaffLanguageCard } from "@/frontend/components/desktop/staff-language-card";
 import { StaffAppearanceCard } from "@/frontend/components/desktop/staff-appearance-card";
+import { StaffPushCard } from "@/frontend/components/desktop/staff-push-card";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +40,20 @@ export default async function LegalConfigPage() {
           current={locale}
           setLocale={setUserLocaleAction}
           strings={{ title: t("language"), subtitle: t("languageSub"), spanish: t("spanish"), english: t("english") }}
+        />
+        <StaffPushCard
+          vapidPublicKey={process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY}
+          registerAction={registerPushSubscriptionAction}
+          removeAction={removePushSubscriptionAction}
+          strings={{
+            title: t("pushTitle"),
+            subtitle: t("pushSub"),
+            enable: t("pushEnable"),
+            disable: t("pushDisable"),
+            enabled: t("pushEnabled"),
+            unsupported: t("pushUnsupported"),
+            denied: t("pushDenied"),
+          }}
         />
       </div>
     </div>

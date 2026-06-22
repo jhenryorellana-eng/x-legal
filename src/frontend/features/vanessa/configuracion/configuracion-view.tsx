@@ -22,8 +22,12 @@ import {
 } from "@/frontend/lib/theme";
 import { useLexPrefs } from "../shared/lex-prefs";
 import { useToast } from "../shared/toast-bridge";
+import { usePushNotifications } from "@/frontend/features/notifications/use-push-notifications";
+import type { BrowserPushSubscription } from "@/frontend/features/notifications/push-helpers";
 
 const ACCENTS = ["#2F6BFF", "#E4002B", "#FFC629", "#1BB673", "#8B5CF6", "#002855"];
+
+type PushAR = { success: true } | { success: false; error: { code: string; message: string } };
 
 export interface ConfigStrings {
   title: string;
@@ -45,24 +49,50 @@ export interface ConfigStrings {
   spanish: string;
   english: string;
   saved: string;
+  pushTitle: string;
+  pushSub: string;
+  pushEnabled: string;
+  pushUnsupported: string;
+  pushDenied: string;
 }
 
 export interface ConfigActions {
   setLocale: (locale: "es" | "en") => Promise<{ ok: boolean }>;
 }
 
+export interface ConfigPush {
+  vapidPublicKey: string | undefined;
+  registerAction: (input: BrowserPushSubscription & { platform?: string }) => Promise<PushAR>;
+  removeAction: (endpoint: string) => Promise<PushAR>;
+}
+
 export interface ConfiguracionViewProps {
   strings: ConfigStrings;
   locale: "es" | "en";
   actions: ConfigActions;
+  push: ConfigPush;
 }
 
-export function ConfiguracionView({ strings, locale, actions }: ConfiguracionViewProps) {
+export function ConfiguracionView({ strings, locale, actions, push }: ConfiguracionViewProps) {
   const toast = useToast();
   const [dark, setDark] = React.useState(false);
   const [scale, setScale] = React.useState<TextScale>("md");
   const [accent, setAccent] = React.useState(ACCENTS[0]);
   const { bubbles, setBubbles } = useLexPrefs();
+  const pushState = usePushNotifications({
+    vapidPublicKey: push.vapidPublicKey,
+    registerAction: push.registerAction,
+    removeAction: push.removeAction,
+  });
+  const pushBlocked = pushState.status === "unsupported" || pushState.status === "denied";
+  const pushStatusLine =
+    pushState.status === "unsupported"
+      ? strings.pushUnsupported
+      : pushState.status === "denied"
+        ? strings.pushDenied
+        : pushState.subscribed
+          ? strings.pushEnabled
+          : strings.pushSub;
 
   React.useEffect(() => {
     setDark(getStoredTheme() === "dark");
@@ -208,6 +238,30 @@ export function ConfiguracionView({ strings, locale, actions }: ConfiguracionVie
             <div style={{ fontSize: 12, color: "var(--ink-2)", fontWeight: 700 }}>{strings.lexBubblesSub}</div>
           </div>
           <Switch checked={bubbles} onCheckedChange={setBubbles} aria-label={strings.lexBubbles} />
+        </div>
+      </div>
+
+      {/* Notifications (Web Push device opt-in — DOC-24 / DOC-47 §5.3) */}
+      <div className="vcard vcard-pad" style={{ marginBottom: 16 }}>
+        <div className="vcard-title" style={{ marginBottom: 16 }}>
+          <MSym name="notifications" size={20} />
+          {strings.pushTitle}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 800, fontSize: 13.5, color: "var(--ink)" }}>{strings.pushTitle}</div>
+            <div style={{ fontSize: 12, color: "var(--ink-2)", fontWeight: 700 }}>{pushStatusLine}</div>
+          </div>
+          <Switch
+            checked={pushState.subscribed}
+            disabled={pushState.busy || pushBlocked}
+            onCheckedChange={() => {
+              if (pushState.busy || pushBlocked) return;
+              if (pushState.subscribed) void pushState.unsubscribe();
+              else void pushState.subscribe();
+            }}
+            aria-label={strings.pushTitle}
+          />
         </div>
       </div>
 

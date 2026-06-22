@@ -45,6 +45,10 @@ export function footerCopy(locale: Locale): {
  */
 export const SUBJECTS: Record<string, { es: string; en: string }> = {
   // F2 — contracts / documents / downpayment
+  "contract-ready": {
+    es: "Tu contrato está listo para firmar",
+    en: "Your contract is ready to sign",
+  },
   "contract-signed-finance": {
     es: "Nuevo contrato firmado — cobrar cuota inicial",
     en: "New contract signed — collect down payment",
