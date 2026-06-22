@@ -34,10 +34,18 @@ export default async function CaseLayout({
   }
 
   // Membership enforcement (RLS is_case_member). Unknown/foreign case → 404.
+  let ws;
   try {
-    await getCaseWorkspace(actor, caseId);
+    ws = await getCaseWorkspace(actor, caseId);
   } catch {
     notFound();
+  }
+
+  // Payment gate: a client may sign in to their platform before paying, but the
+  // case workspace stays locked until the downpayment is confirmed (cases.opened_at
+  // is set → status leaves payment_pending). Send them to the payments screen.
+  if (ws.status === "payment_pending") {
+    redirect("/pagos");
   }
 
   const tNav = await getTranslations("cliente.nav");

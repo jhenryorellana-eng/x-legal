@@ -91,20 +91,23 @@ export async function getStaffProfileById(
 }
 
 // ---------------------------------------------------------------------------
-// Gate: "solo teléfonos con contrato" — DOC-22 §1.4
+// Gate: "solo teléfonos con caso" — DOC-22 §1.4
 //
-// A client is eligible to receive an OTP if:
+// A client is eligible to sign in if:
 //   - users.phone_e164 = <phone> AND users.kind = 'client' AND users.is_active = true
-//   - AND EXISTS at least 1 case_members row joining a case with opened_at IS NOT NULL
-//     (i.e., the case has been activated — opened_at set on payment confirmed + case activation)
+//   - AND EXISTS at least 1 case_members row (the case may be payment_pending —
+//     a client must reach their platform to PAY the initial fee; the case
+//     workspace itself stays locked until the downpayment is confirmed, gated in
+//     the case shell layout, not here).
 //
 // This query runs with the SERVICE CLIENT to bypass RLS (DOC-22 §1.4).
 // ---------------------------------------------------------------------------
 
 /**
  * Checks whether a phone number belongs to an eligible client.
- * A client is eligible if they have kind='client', is_active=true,
- * and at least one activated case (cases.opened_at IS NOT NULL).
+ * A client is eligible if they have kind='client', is_active=true, and are a
+ * member of at least one case (paid or not — the case workspace is gated
+ * separately until payment).
  *
  * Anti-enumeration: always returns { eligible: false } on any error —
  * errors are logged server-side but NOT surfaced to callers.
@@ -115,8 +118,11 @@ export async function checkClientEligibility(
   try {
     const supabase = createServiceClient();
 
-    // Single query: users + existence of an activated case_member
-    // We use a join approach with .select() + .limit(1) for efficiency.
+    // Single query: client user that is a member of AT LEAST ONE case (paid or
+    // not). The case need NOT be activated (opened_at) — a client with a
+    // payment_pending case must be able to sign in to their platform precisely
+    // SO THEY CAN PAY. Access to the case workspace itself stays gated until the
+    // downpayment is confirmed (enforced in the case shell, not here).
     const { data, error } = await supabase
       .from("users")
       .select(
@@ -124,16 +130,12 @@ export async function checkClientEligibility(
         id,
         is_active,
         kind,
-        case_members!inner(
-          case_id,
-          cases!inner(opened_at)
-        )
+        case_members!inner(case_id)
       `,
       )
       .eq("phone_e164", phoneE164)
       .eq("kind", "client")
       .eq("is_active", true)
-      .not("case_members.cases.opened_at", "is", null)
       .limit(1)
       .single();
 
@@ -617,16 +619,12 @@ export async function checkClientEligibilityById(
         id,
         is_active,
         kind,
-        case_members!inner(
-          case_id,
-          cases!inner(opened_at)
-        )
+        case_members!inner(case_id)
       `,
       )
       .eq("id", userId)
       .eq("kind", "client")
       .eq("is_active", true)
-      .not("case_members.cases.opened_at", "is", null)
       .limit(1)
       .single();
 
