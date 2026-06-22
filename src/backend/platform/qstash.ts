@@ -70,11 +70,29 @@ function getClient(): Client {
  * Also sets `Upstash-Deduplication-Id` to `payload.dedupeId` so QStash
  * drops duplicate publishes within its dedup window (DOC-26 §1.2).
  */
+/**
+ * Public base URL that QStash must call back. QStash can ONLY deliver to a public
+ * URL — if `NEXT_PUBLIC_APP_URL` is missing or points at localhost (a common env
+ * misconfig that makes EVERY job — push/email/AI/reminders — silently fail to
+ * publish), fall back to the Vercel-injected production domain so jobs still get
+ * delivered. Outside Vercel (local dev) the configured value is used as-is.
+ */
+function jobCallbackBaseUrl(): string {
+  const configured = env.NEXT_PUBLIC_APP_URL;
+  const bad = !configured || /localhost|127\.0\.0\.1/.test(configured);
+  if (bad) {
+    const vercelHost =
+      process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL;
+    if (vercelHost) return `https://${vercelHost}`;
+  }
+  return configured;
+}
+
 export async function enqueueJob(
   payload: JobEnvelope,
   options: EnqueueOptions = {},
 ): Promise<{ messageId: string }> {
-  const url = `${env.NEXT_PUBLIC_APP_URL}/api/webhooks/qstash/${payload.jobKey}`;
+  const url = `${jobCallbackBaseUrl()}/api/webhooks/qstash/${payload.jobKey}`;
   const client = getClient();
 
   const result = await client.publishJSON({
