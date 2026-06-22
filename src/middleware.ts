@@ -263,20 +263,38 @@ export async function middleware(request: NextRequest) {
     hasSession = false;
   }
 
+  // Extract custom claims (needed both for the authed-landing redirect and the
+  // surface guards below).
+  const claims = extractCustomClaims(jwtClaims);
+
+  // Authenticated users who land on an auth/landing page go straight to their
+  // home. Without this, reopening the installed PWA (manifest start_url "/" →
+  // /welcome) always shows the login screen even though the session cookie is
+  // still valid — which looks exactly like "the session was lost on close".
+  if (hasSession && claims.user_kind !== "unprovisioned") {
+    const onAuthLanding =
+      pathname === "/" ||
+      pathname === "/welcome" ||
+      pathname === "/entrar" ||
+      pathname === "/login";
+    if (onAuthLanding) {
+      const url = request.nextUrl.clone();
+      url.pathname = claims.user_kind === "client" ? "/home" : "/admin";
+      return NextResponse.redirect(url);
+    }
+  }
+
   // Step 2: If public path, skip guards but still return response with refreshed cookies
   if (isPublicPath(pathname)) {
     return secured(response);
   }
 
-  // Step 3: Root path — redirect to /welcome (client app entry point)
+  // Step 3: Root path — redirect to /welcome (unauthenticated entry point)
   if (pathname === "/") {
     const url = request.nextUrl.clone();
     url.pathname = "/welcome";
     return NextResponse.redirect(url);
   }
-
-  // Step 4: Extract custom claims
-  const claims = extractCustomClaims(jwtClaims);
 
   // Step 5: Surface guards
   const onClientSurface = isClientSurface(pathname);
