@@ -385,10 +385,28 @@ async function applyRefund(
 // ---------------------------------------------------------------------------
 
 async function resolveStripeCustomer(userId: string): Promise<string> {
+  const stripe = getStripe();
   const existing = await findStripeCustomer(userId);
-  if (existing) return existing.stripe_customer_id;
+  if (existing) {
+    // Validate the stored customer still exists under the CURRENT Stripe keys.
+    // A test-mode customer id is invalid once live keys are in use (and vice-versa),
+    // and a customer can be deleted in the Dashboard. In those cases recreate it
+    // transparently so the checkout never fails with "No such customer" — this makes
+    // the test↔live switch (and Dashboard cleanups) safe without any manual DB surgery.
+    try {
+      const c = await stripe.customers.retrieve(existing.stripe_customer_id);
+      if (!c.deleted) return existing.stripe_customer_id;
+    } catch (err) {
+      logger.warn(
+        { userId, customerId: existing.stripe_customer_id, err },
+        "billing: stored Stripe customer not usable under current keys — recreating",
+      );
+    }
+    // fall through → create a fresh customer; upsert overwrites the stale mapping
+    // (stripe_customers.user_id is the PK, so this UPDATEs the existing row).
+  }
 
-  // Fetch user info to populate customer
+  // Fetch user info to populate the customer
   const supabase = createServiceClient();
   const { data: user } = await supabase
     .from("users")
@@ -396,7 +414,6 @@ async function resolveStripeCustomer(userId: string): Promise<string> {
     .eq("id", userId)
     .maybeSingle();
 
-  const stripe = getStripe();
   const customer = await stripe.customers.create({
     metadata: { user_id: userId },
     ...(user?.email ? { email: user.email } : {}),
