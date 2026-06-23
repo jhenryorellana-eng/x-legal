@@ -430,6 +430,7 @@
       "statusDue": "Por pagar",
       "statusScheduled": "Programada",
       "statusProcessing": "En verificación",
+      "statusProcessingCard": "Procesando pago",
       "statusWaived": "Condonada",
       "statusOverdue": "Vencida",
       "howToPayTitle": "¿Cómo quieres pagar?",
@@ -453,9 +454,12 @@
       "stripeError": "No pudimos procesar el pago. Inténtalo de nuevo.",
       "confirmingTitle": "Confirmando tu pago…",
       "confirmingBody": "Espera un momento mientras verificamos tu pago con Stripe.",
+      "confirmedTitle": "¡Pago confirmado!",
+      "confirmedBody": "Tu pago se registró correctamente. Te llevamos a tus pagos…",
       "offlineBanner": "Estás sin conexión. Los pagos están disponibles solo en línea.",
       "downpaymentLabel": "Cuota inicial",
-      "zelleDestinationTodo": "Pendiente configuración"
+      "zelleDestinationTodo": "Pendiente configuración",
+      "caseSelectorLabel": "Elige un caso"
     },
     "agendar": {
       "title": "Agendar tu cita",

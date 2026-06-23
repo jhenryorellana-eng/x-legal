@@ -28,6 +28,7 @@ import {
   rejectZelleProofAction,
   registerZellePaymentAction,
   getZelleProofUploadUrlAction,
+  getZelleProofViewUrlAction,
   rescheduleInstallmentAction,
   waiveInstallmentAction,
 } from "./actions";
@@ -126,6 +127,7 @@ export default async function PagosCasoPage({
           rejectZelleProof: rejectZelleProofAction,
           registerZellePayment: registerZellePaymentAction,
           getZelleProofUploadUrl: getZelleProofUploadUrlAction,
+          getZelleProofViewUrl: getZelleProofViewUrlAction,
           rescheduleInstallment: rescheduleInstallmentAction,
           waiveInstallment: waiveInstallmentAction,
         }}

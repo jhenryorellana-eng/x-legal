@@ -430,6 +430,7 @@
       "statusDue": "Due",
       "statusScheduled": "Scheduled",
       "statusProcessing": "In review",
+      "statusProcessingCard": "Processing payment",
       "statusWaived": "Waived",
       "statusOverdue": "Overdue",
       "howToPayTitle": "How do you want to pay?",
@@ -453,9 +454,12 @@
       "stripeError": "We could not process the payment. Please try again.",
       "confirmingTitle": "Confirming your payment…",
       "confirmingBody": "Please wait while we verify your payment with Stripe.",
+      "confirmedTitle": "Payment confirmed!",
+      "confirmedBody": "Your payment was recorded successfully. Taking you to your payments…",
       "offlineBanner": "You're offline. Payments are only available online.",
       "downpaymentLabel": "Down payment",
-      "zelleDestinationTodo": "Pending configuration"
+      "zelleDestinationTodo": "Pending configuration",
+      "caseSelectorLabel": "Choose a case"
     },
     "agendar": {
       "title": "Schedule your appointment",

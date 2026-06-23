@@ -3,16 +3,14 @@
 /**
  * ConfirmacionView — `/pagos/confirmacion`
  *
- * Shows a "Confirmando tu pago…" spinner while polling for payment status.
- * Redirects to `redirectTo` once confirmed or after a timeout.
+ * Polls the server-side reconcile action (which asks Stripe directly whether the
+ * Checkout Session is paid) until the payment settles, then routes to `/pagos`.
  *
- * TODO BIL-CONF-1: Swap polling loop for Supabase Realtime subscription
- * to `installments` table once client-surface Realtime is wired.
- *
- * TODO BIL-CONF-2: Pass the `session_id` query param from the URL and call
- * GET /api/v1/installments/[id]/payment-status (API-BIL-03) to actively poll.
- * Currently we redirect after a fixed delay as a graceful fallback (the webhook
- * WH-01 will have finalized the payment server-side before the user lands here).
+ * The server is authoritative (DOC-51 §8): this view only triggers the reconcile
+ * and reflects its result — it never decides "paid" on its own. If the payment
+ * has not settled within the poll budget, it routes to `/pagos` anyway (the
+ * webhook / reconcile cron are the backstops; the payments screen will show the
+ * cuota as "Procesando" until one of them lands).
  */
 
 import * as React from "react";
@@ -22,23 +20,73 @@ import { Lex } from "@/frontend/components/brand/lex";
 export interface ConfirmacionLabels {
   title: string;
   body: string;
+  confirmedTitle: string;
+  confirmedBody: string;
 }
 
+type ReconcileResult =
+  | { ok: true; settled: boolean; installmentStatus: string }
+  | { ok: false; error: string };
+
+const POLL_INTERVAL_MS = 1500;
+const MAX_ATTEMPTS = 8; // ≈ 12 s of polling before graceful fallback
+
 export function ConfirmacionView({
+  sessionId,
   redirectTo,
+  onReconcile,
   labels,
 }: {
+  sessionId: string | null;
   redirectTo: string;
+  onReconcile: (sessionId: string) => Promise<ReconcileResult>;
   labels: ConfirmacionLabels;
 }) {
   const router = useRouter();
+  const [confirmed, setConfirmed] = React.useState(false);
 
   React.useEffect(() => {
-    // Redirect after 4 s — the webhook will have settled the payment by then.
-    // TODO BIL-CONF-2: Replace with active polling of API-BIL-03.
-    const t = setTimeout(() => router.replace(redirectTo), 4000);
-    return () => clearTimeout(t);
-  }, [router, redirectTo]);
+    // No session id (direct hit / cancelled): nothing to reconcile — just leave.
+    if (!sessionId) {
+      const t = setTimeout(() => router.replace(redirectTo), 2000);
+      return () => clearTimeout(t);
+    }
+
+    let cancelled = false;
+    let attempts = 0;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+
+    const finish = (delay: number) => {
+      timers.push(setTimeout(() => router.replace(redirectTo), delay));
+    };
+
+    const tick = async () => {
+      if (cancelled) return;
+      attempts += 1;
+      try {
+        const res = await onReconcile(sessionId);
+        if (cancelled) return;
+        if (res.ok && (res.settled || res.installmentStatus === "paid")) {
+          setConfirmed(true);
+          finish(1300); // let the user see the confirmed state briefly
+          return;
+        }
+      } catch {
+        // ignore — fall through to retry / timeout
+      }
+      if (attempts >= MAX_ATTEMPTS) {
+        finish(0); // graceful fallback — backstops will settle it
+        return;
+      }
+      timers.push(setTimeout(tick, POLL_INTERVAL_MS));
+    };
+
+    void tick();
+    return () => {
+      cancelled = true;
+      timers.forEach(clearTimeout);
+    };
+  }, [sessionId, redirectTo, onReconcile, router]);
 
   return (
     <div
@@ -62,7 +110,7 @@ export function ConfirmacionView({
           className="t-black"
           style={{ margin: "0 0 10px", fontSize: 26, color: "var(--navy)" }}
         >
-          {labels.title}
+          {confirmed ? labels.confirmedTitle : labels.title}
         </h1>
         <p
           style={{
@@ -73,25 +121,45 @@ export function ConfirmacionView({
             maxWidth: 300,
           }}
         >
-          {labels.body}
+          {confirmed ? labels.confirmedBody : labels.body}
         </p>
       </div>
 
-      {/* Animated dots */}
-      <div style={{ display: "flex", gap: 8 }}>
-        {[0, 1, 2].map((i) => (
-          <div
-            key={i}
-            style={{
-              width: 10,
-              height: 10,
-              borderRadius: 999,
-              background: "var(--accent)",
-              animation: `pulse 1.4s ease-in-out ${i * 0.2}s infinite`,
-            }}
-          />
-        ))}
-      </div>
+      {confirmed ? (
+        // Success check
+        <div
+          aria-hidden="true"
+          style={{
+            width: 56,
+            height: 56,
+            borderRadius: 999,
+            display: "grid",
+            placeItems: "center",
+            background: "color-mix(in srgb, var(--accent) 14%, transparent)",
+            color: "var(--accent)",
+            fontSize: 30,
+            fontWeight: 800,
+          }}
+        >
+          ✓
+        </div>
+      ) : (
+        // Animated dots while reconciling
+        <div style={{ display: "flex", gap: 8 }}>
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: 999,
+                background: "var(--accent)",
+                animation: `pulse 1.4s ease-in-out ${i * 0.2}s infinite`,
+              }}
+            />
+          ))}
+        </div>
+      )}
 
       <style>{`
         @keyframes pulse {

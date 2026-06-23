@@ -32,6 +32,8 @@ const mockRepo = vi.hoisted(() => ({
   findPendingZellePayment: vi.fn(),
   findInstallmentCaseId: vi.fn(),
   findActiveStripePayment: vi.fn(),
+  findOrphanStripePaymentForInstallment: vi.fn().mockResolvedValue(null),
+  listOrphanStripePayments: vi.fn().mockResolvedValue([]),
   findPaymentByIntentId: vi.fn(),
   findPaymentBySessionId: vi.fn(),
   findStripeCustomer: vi.fn(),

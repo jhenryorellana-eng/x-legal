@@ -112,6 +112,9 @@ export interface PagosCasoActions {
     filename: string;
     contentType: string;
   }) => Promise<BillingResult<{ signedUrl: string; path: string }>>;
+  getZelleProofViewUrl: (
+    paymentId: string,
+  ) => Promise<BillingResult<{ url: string; kind: "image" | "pdf" }>>;
   rescheduleInstallment: (input: {
     installmentId: string;
     newDueDate: string;
@@ -354,24 +357,53 @@ function ZelleVerifyPanel({
   payment,
   onApprove,
   onReject,
+  onLoadProof,
 }: {
   open: boolean;
   onClose: () => void;
   payment: PaymentVM | null;
   onApprove: (paymentId: string) => Promise<void>;
   onReject: (paymentId: string, reason: string) => Promise<void>;
+  onLoadProof: (
+    paymentId: string,
+  ) => Promise<{ url: string; kind: "image" | "pdf" } | null>;
 }) {
   const [rejectMode, setRejectMode] = React.useState(false);
   const [reason, setReason] = React.useState("");
   const [busyApprove, setBusyApprove] = React.useState(false);
   const [busyReject, setBusyReject] = React.useState(false);
+  const [proof, setProof] = React.useState<{ url: string; kind: "image" | "pdf" } | null>(null);
+  const [proofLoading, setProofLoading] = React.useState(false);
+  const [proofError, setProofError] = React.useState(false);
+
+  const paymentId = payment?.id ?? null;
 
   React.useEffect(() => {
     if (!open) {
       setRejectMode(false);
       setReason("");
+      setProof(null);
+      setProofError(false);
     }
   }, [open]);
+
+  // Load the uploaded proof (signed URL from bucket payment-proofs) when opened.
+  React.useEffect(() => {
+    if (!open || !paymentId) return;
+    let cancelled = false;
+    setProof(null);
+    setProofError(false);
+    setProofLoading(true);
+    onLoadProof(paymentId)
+      .then((res) => {
+        if (cancelled) return;
+        if (res) setProof(res);
+        else setProofError(true);
+      })
+      .catch(() => { if (!cancelled) setProofError(true); })
+      .finally(() => { if (!cancelled) setProofLoading(false); });
+    return () => { cancelled = true; };
+  }, [open, paymentId, onLoadProof]);
 
   if (!payment) return null;
 
@@ -437,27 +469,49 @@ function ZelleVerifyPanel({
       }
     >
       <div style={{ padding: "4px 0", display: "flex", flexDirection: "column", gap: 16 }}>
-        {/* Comprobante placeholder (visor — signed URL requires backend; show metadata) */}
+        {/* Comprobante (signed URL — bucket payment-proofs, RF-AND-011) */}
         <div
           style={{
             background: "var(--hover, rgba(47,107,255,0.04))",
             borderRadius: 12,
-            minHeight: 160,
+            minHeight: 200,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             border: "1.5px dashed var(--line)",
+            overflow: "hidden",
           }}
         >
-          <div style={{ textAlign: "center" }}>
-            <Icon name="doc" size={36} color="var(--ink-3)" />
-            <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--ink-3)" }}>
-              Visor de comprobante
-            </p>
-            <p style={{ margin: 4, fontSize: 11, color: "var(--ink-3)" }}>
-              (carga desde signed URL del bucket payment-proofs)
-            </p>
-          </div>
+          {proofLoading ? (
+            <p style={{ fontSize: 12, color: "var(--ink-3)" }}>Cargando comprobante…</p>
+          ) : proofError ? (
+            <div style={{ textAlign: "center" }}>
+              <Icon name="doc" size={36} color="var(--ink-3)" />
+              <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--ink-3)" }}>
+                No se pudo cargar el comprobante
+              </p>
+            </div>
+          ) : proof && proof.kind === "image" ? (
+            // eslint-disable-next-line @next/next/no-img-element -- short-lived signed URL from private bucket; next/image remotePatterns not configured for storage
+            <img
+              src={proof.url}
+              alt="Comprobante de pago Zelle"
+              style={{ width: "100%", maxHeight: 360, objectFit: "contain", display: "block" }}
+            />
+          ) : proof && proof.kind === "pdf" ? (
+            <iframe
+              src={proof.url}
+              title="Comprobante de pago Zelle"
+              style={{ width: "100%", height: 360, border: "none" }}
+            />
+          ) : (
+            <div style={{ textAlign: "center" }}>
+              <Icon name="doc" size={36} color="var(--ink-3)" />
+              <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--ink-3)" }}>
+                Sin comprobante
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Metadata */}
@@ -1579,6 +1633,10 @@ export function PagosCasoView({ vm, actions }: PagosCasoViewProps) {
         }
         onApprove={handleZelleApprove}
         onReject={handleZelleReject}
+        onLoadProof={async (paymentId) => {
+          const res = await actions.getZelleProofViewUrl(paymentId);
+          return res.ok && res.data ? res.data : null;
+        }}
       />
 
       {/* Zelle register modal */}
