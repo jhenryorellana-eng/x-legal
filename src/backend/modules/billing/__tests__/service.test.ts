@@ -62,6 +62,7 @@ const mockStripe = vi.hoisted(() => ({
   },
   customers: {
     create: vi.fn(),
+    retrieve: vi.fn(),
   },
 }));
 
@@ -209,6 +210,9 @@ beforeEach(() => {
   mockRepo.findActiveStripePayment.mockResolvedValue(null);
   mockRepo.findPendingZellePayment.mockResolvedValue(null);
   mockRepo.findStripeCustomer.mockResolvedValue({ user_id: USER_ID, stripe_customer_id: "cus_123", created_at: "", updated_at: "" });
+  // Stored customer is valid under current keys by default (not deleted).
+  mockStripe.customers.retrieve.mockResolvedValue({ id: "cus_123" });
+  mockStripe.customers.create.mockResolvedValue({ id: "cus_new" });
   mockStorage.validateUploadedObject.mockResolvedValue({ ok: true });
 
   // supabase chain for findOrgIdForCase / findCaseNumber / etc.
@@ -250,6 +254,42 @@ describe("createCheckoutSessionForInstallment", () => {
       expect.objectContaining({ stripe_checkout_session_id: "cs_test_123" }),
     );
     expect(mockRepo.updateInstallment).toHaveBeenCalledWith(INSTALLMENT_ID, { status: "processing" });
+  });
+
+  it("reuses the stored Stripe customer when it still exists under current keys", async () => {
+    mockRepo.findInstallmentById.mockResolvedValue(makePendingInstallment());
+    mockRepo.findStripeCustomer.mockResolvedValue({ user_id: USER_ID, stripe_customer_id: "cus_123", created_at: "", updated_at: "" });
+    mockStripe.customers.retrieve.mockResolvedValue({ id: "cus_123" }); // exists, not deleted
+    mockStripe.checkout.sessions.create.mockResolvedValue({ id: "cs_1", url: "https://checkout.stripe.com/pay/cs_1" });
+
+    await createCheckoutSessionForInstallment(makeActor("client"), INSTALLMENT_ID);
+
+    expect(mockStripe.customers.create).not.toHaveBeenCalled();
+    expect(mockStripe.checkout.sessions.create).toHaveBeenCalledWith(
+      expect.objectContaining({ customer: "cus_123" }),
+    );
+  });
+
+  it("recreates the Stripe customer when the stored one is invalid under current keys (test→live switch)", async () => {
+    mockRepo.findInstallmentById.mockResolvedValue(makePendingInstallment());
+    // Stored id is a stale test-mode customer — retrieve fails under live keys.
+    mockRepo.findStripeCustomer.mockResolvedValue({ user_id: USER_ID, stripe_customer_id: "cus_test_stale", created_at: "", updated_at: "" });
+    mockStripe.customers.retrieve.mockRejectedValue(
+      Object.assign(new Error("No such customer: cus_test_stale"), { code: "resource_missing" }),
+    );
+    mockStripe.customers.create.mockResolvedValue({ id: "cus_live_new" });
+    mockStripe.checkout.sessions.create.mockResolvedValue({ id: "cs_live_1", url: "https://checkout.stripe.com/pay/cs_live_1" });
+
+    const result = await createCheckoutSessionForInstallment(makeActor("client"), INSTALLMENT_ID);
+
+    expect(result).toEqual({ url: "https://checkout.stripe.com/pay/cs_live_1" });
+    // recreated a fresh customer and overwrote the stale mapping
+    expect(mockStripe.customers.create).toHaveBeenCalled();
+    expect(mockRepo.upsertStripeCustomer).toHaveBeenCalledWith(USER_ID, "cus_live_new");
+    // checkout used the NEW customer, never the stale one
+    expect(mockStripe.checkout.sessions.create).toHaveBeenCalledWith(
+      expect.objectContaining({ customer: "cus_live_new" }),
+    );
   });
 
   it("throws INSTALLMENT_NOT_FOUND when installment doesn't exist", async () => {
