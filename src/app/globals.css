@@ -64,6 +64,17 @@
     min-height: calc(100dvh / var(--text-scale, 1));
   }
 
+  /* Cliente mobile surface — same story as `.surface-staff`. The cliente PWA also
+     uses pixel font sizes, so the root `html { font-size }` rem scale has no
+     visible effect; scale the whole surface with `zoom` so the text-size control
+     in /config actually changes the rendered size. The shell still spans exactly
+     one viewport at any scale via the `/ var(--text-scale)` guard on its
+     `100dvh` height (set inline on the layout wrapper) — see the `.surface-staff`
+     note above for why viewport-unit heights need compensating under `zoom`. */
+  .surface-cliente {
+    zoom: var(--text-scale, 1);
+  }
+
   /* Display type helpers (DOC-01 §2) */
   .t-title {
     font-family: var(--font-title);

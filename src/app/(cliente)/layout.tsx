@@ -53,10 +53,14 @@ export default async function ClienteLayout({
 
   return (
     <div
+      className="surface-cliente"
       style={{
         maxWidth: 430,
         margin: "0 auto",
-        minHeight: "100dvh",
+        // `/ var(--text-scale)` compensates the `.surface-cliente` zoom so the
+        // shell spans exactly one viewport at every text size (no overflow at lg,
+        // no gap at sm). See the note on `.surface-staff` in globals.css.
+        minHeight: "calc(100dvh / var(--text-scale, 1))",
         position: "relative",
         background: "var(--bg)",
         overflow: "hidden",
