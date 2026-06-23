@@ -298,11 +298,31 @@ describe("reconcilePendingStripePayments (L3 — cron safety net)", () => {
 
     const res = await reconcilePendingStripePayments(SYSTEM_ACTOR);
 
-    expect(res).toEqual({ reconciled: 1, settled: 1, expired: 0 });
+    expect(res).toEqual({ reconciled: 1, settled: 1, alreadySettled: 0, expired: 0 });
     expect(mockRepo.updateInstallment).toHaveBeenCalledWith(
       "inst-1",
       expect.objectContaining({ status: "paid" }),
     );
+  });
+
+  it("counts a session already settled by the webhook as alreadySettled (no re-credit)", async () => {
+    mockRepo.listPendingStripeSessionsToReconcile.mockResolvedValue([makePayment()]);
+    mockRepo.findPaymentBySessionId.mockResolvedValue(makePayment({ status: "succeeded" }));
+    // Installment was already settled by an earlier layer (webhook / L2).
+    mockRepo.findInstallmentById.mockResolvedValue(makeInstallment({ status: "paid" }));
+    retrieveMock.mockResolvedValue({
+      id: "cs_1",
+      payment_status: "paid",
+      payment_intent: "pi_1",
+      status: "complete",
+    });
+
+    const res = await reconcilePendingStripePayments(SYSTEM_ACTOR);
+
+    expect(res).toEqual({ reconciled: 1, settled: 0, alreadySettled: 1, expired: 0 });
+    // No re-credit: must NOT mark the installment paid again or re-link the intent.
+    expect(mockRepo.updateInstallment).not.toHaveBeenCalled();
+    expect(mockRepo.updatePayment).not.toHaveBeenCalled();
   });
 
   it("expires an EXPIRED session (installment reverted, counted as expired)", async () => {
@@ -317,7 +337,7 @@ describe("reconcilePendingStripePayments (L3 — cron safety net)", () => {
 
     const res = await reconcilePendingStripePayments(SYSTEM_ACTOR);
 
-    expect(res).toEqual({ reconciled: 1, settled: 0, expired: 1 });
+    expect(res).toEqual({ reconciled: 1, settled: 0, alreadySettled: 0, expired: 1 });
     expect(mockRepo.updatePayment).toHaveBeenCalledWith(
       "pay-1",
       expect.objectContaining({ status: "failed" }),

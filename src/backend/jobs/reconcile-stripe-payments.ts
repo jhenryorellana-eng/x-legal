@@ -30,7 +30,7 @@ const ReconcileStripePaymentsPayloadSchema = z.object({
   jobKey: z.literal("reconcile-stripe-payments"),
   entityId: z.null().optional(),
   attempt: z.number().int().positive().default(1),
-  dedupeId: z.string(),
+  dedupeId: z.string().min(1),
   /** Override the default 3-min cutoff (mainly for tests). */
   olderThanMinutes: z.number().int().positive().optional(),
 });
@@ -67,6 +67,7 @@ export async function handleReconcileStripePayments(
         job: "reconcile-stripe-payments",
         examined: result.reconciled,
         settled: result.settled,
+        alreadySettled: result.alreadySettled,
         expired: result.expired,
       },
       "reconcile-stripe-payments: done",

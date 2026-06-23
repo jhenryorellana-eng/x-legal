@@ -29,7 +29,7 @@ const ExpireStaleCheckoutsPayloadSchema = z.object({
   jobKey: z.literal("expire-stale-checkouts"),
   entityId: z.null().optional(),
   attempt: z.number().int().positive().default(1),
-  dedupeId: z.string(),
+  dedupeId: z.string().min(1),
   /** Override the default 60-min cutoff (mainly for tests). */
   olderThanMinutes: z.number().int().positive().optional(),
 });

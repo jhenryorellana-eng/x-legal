@@ -721,32 +721,43 @@ export async function createCheckoutSessionForInstallment(
  * which is idempotent, so calling this repeatedly / from several layers is safe.
  *
  * Returns:
- *  - "settled"    payment confirmed now (or already was — applyPaymentSuccess no-op)
- *  - "not_paid"   session.payment_status !== "paid" — nothing to do yet
- *  - "no_payment" no local payment / installment found for the session
+ *  - "settled_now"     payment confirmed by THIS call
+ *  - "already_settled" installment was already paid by another layer — no-op
+ *  - "not_paid"        session.payment_status !== "paid" — nothing to do yet
+ *  - "no_payment"      no local payment / installment found for the session
  */
 async function settlePaidCheckoutSession(
   session: import("stripe").Stripe.Checkout.Session,
-): Promise<"settled" | "not_paid" | "no_payment"> {
+): Promise<"settled_now" | "already_settled" | "not_paid" | "no_payment"> {
   if (session.payment_status !== "paid") return "not_paid";
 
   const payment = await resolvePaymentForSession(session);
   if (!payment) return "no_payment";
 
-  // Link payment → intent if now known (mirrors the webhook behaviour)
+  const installment = await findInstallmentById(payment.installment_id);
+  if (!installment) return "no_payment";
+
+  // Already settled by another layer (webhook / earlier reconcile) → true no-op.
+  // We skip even the intent-link write: the intent was linked when the payment
+  // was first settled. Reported distinctly so the cron telemetry does not count
+  // already-confirmed rows as "settled this run".
+  if (installment.status === "paid") return "already_settled";
+
+  // Link payment → intent INSIDE the not-yet-paid guard (consistent with the
+  // applyPaymentSuccess crash-safety contract — no writes once paid).
   if (session.payment_intent && typeof session.payment_intent === "string") {
     await updatePayment(payment.id, { stripe_payment_intent_id: session.payment_intent });
   }
-
-  const installment = await findInstallmentById(payment.installment_id);
-  if (!installment) return "no_payment";
 
   const caseId = await findInstallmentCaseId(installment.id);
   // MED-3: orgId ALWAYS from BD — never from Stripe metadata (user-controlled)
   const orgId = await findOrgIdForCase(caseId);
 
+  // applyPaymentSuccess keeps its OWN idempotency guard + insertLedgerIfAbsent
+  // (23505) race protection — the early return above is an optimisation and
+  // accurate telemetry, NOT the safety mechanism against concurrent layers.
   await applyPaymentSuccess(payment, installment, caseId, orgId);
-  return "settled";
+  return "settled_now";
 }
 
 // ---------------------------------------------------------------------------
@@ -922,7 +933,7 @@ export async function reconcileCheckoutSession(
 
   // Authoritative check: ask Stripe directly. Tolerate transient Stripe errors
   // (the webhook / cron are the backstops) — surface the current DB status.
-  let outcome: "settled" | "not_paid" | "no_payment" = "not_paid";
+  let outcome: Awaited<ReturnType<typeof settlePaidCheckoutSession>> = "not_paid";
   try {
     const stripe = getStripe();
     const session = await stripe.checkout.sessions.retrieve(sessionId);
@@ -940,7 +951,10 @@ export async function reconcileCheckoutSession(
   return {
     installmentStatus: installment?.status ?? "unknown",
     paymentStatus: latest?.status ?? null,
-    settled: outcome === "settled" || installment?.status === "paid",
+    settled:
+      outcome === "settled_now" ||
+      outcome === "already_settled" ||
+      installment?.status === "paid",
   };
 }
 
@@ -951,8 +965,10 @@ export async function reconcileCheckoutSession(
 export interface ReconcilePendingResult {
   /** rows examined */
   reconciled: number;
-  /** confirmed as paid */
+  /** newly confirmed by THIS sweep */
   settled: number;
+  /** already confirmed by an earlier layer (webhook / L2) before the sweep ran */
+  alreadySettled: number;
   /** marked failed (session expired) */
   expired: number;
 }
@@ -979,6 +995,7 @@ export async function reconcilePendingStripePayments(
 
   const pending = await listPendingStripeSessionsToReconcile(cutoffIso);
   let settled = 0;
+  let alreadySettled = 0;
   let expired = 0;
 
   const stripe = getStripe();
@@ -989,8 +1006,10 @@ export async function reconcilePendingStripePayments(
         payment.stripe_checkout_session_id,
       );
       const outcome = await settlePaidCheckoutSession(session);
-      if (outcome === "settled") {
+      if (outcome === "settled_now") {
         settled += 1;
+      } else if (outcome === "already_settled") {
+        alreadySettled += 1;
       } else if (session.status === "expired") {
         // Session can no longer be paid → free the lock + revert the installment.
         const installment = await findInstallmentById(payment.installment_id);
@@ -1007,14 +1026,14 @@ export async function reconcilePendingStripePayments(
     }
   }
 
-  if (settled > 0 || expired > 0) {
+  if (settled > 0 || expired > 0 || alreadySettled > 0) {
     logger.info(
-      { job: "reconcile-stripe-payments", examined: pending.length, settled, expired },
+      { job: "reconcile-stripe-payments", examined: pending.length, settled, alreadySettled, expired },
       "billing: reconciled pending stripe payments",
     );
   }
 
-  return { reconciled: pending.length, settled, expired };
+  return { reconciled: pending.length, settled, alreadySettled, expired };
 }
 
 // ---------------------------------------------------------------------------
