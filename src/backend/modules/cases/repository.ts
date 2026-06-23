@@ -168,6 +168,84 @@ export async function upsertCaseMember(
 }
 
 // ---------------------------------------------------------------------------
+// Atomic case creation (migration 0026 — create_case_atomic RPC)
+//
+// Inserts case + member + parties + contract + payment_plan + installments in a
+// single transaction. Replaces the previous sequential inserts that could leave
+// an orphaned case (payment_pending with no contract/plan) on partial failure.
+// ---------------------------------------------------------------------------
+
+export interface CreateCaseAtomicPayload {
+  case: {
+    org_id: string;
+    case_number: string;
+    service_id: string;
+    service_plan_id: string;
+    current_phase_id: string | null;
+    status: string;
+    primary_client_id: string;
+    assigned_paralegal_id: string | null;
+    assigned_sales_id: string | null;
+  };
+  member: { user_id: string; access_role: string };
+  parties: Array<{
+    person_record_id: string | null;
+    user_id: string | null;
+    party_role: string;
+    position: number;
+  }>;
+  contract: {
+    org_id: string;
+    lead_id: string | null;
+    service_id: string;
+    service_plan_id: string;
+    status: string;
+    plan_snapshot: unknown;
+    parties_snapshot: unknown;
+    created_by: string | null;
+    terms_version: string | null;
+    signing_token: string | null;
+    signing_expires_at: string | null;
+  };
+  plan: {
+    total_cents: number;
+    downpayment_cents: number;
+    installment_count: number;
+    notes: string | null;
+  };
+  installments: Array<{
+    number: number;
+    is_downpayment: boolean;
+    amount_cents: number;
+    due_date: string;
+    status: string;
+  }>;
+}
+
+export async function createCaseAtomic(
+  payload: CreateCaseAtomicPayload,
+): Promise<{ caseId: string; contractId: string; planId: string }> {
+  const supabase = createServiceClient();
+  // The create_case_atomic RPC is added by migration 0026 and is not yet in the
+  // generated Database types — cast through unknown to call it untyped.
+  const { data, error } = await (
+    supabase.rpc as unknown as (
+      fn: string,
+      args: Record<string, unknown>,
+    ) => Promise<{ data: unknown; error: { message: string } | null }>
+  )("create_case_atomic", { p: payload });
+
+  if (error) {
+    throw new Error(`cases.repository: createCaseAtomic failed — ${error.message}`);
+  }
+  const r = (data ?? {}) as { case_id?: string; contract_id?: string; plan_id?: string };
+  if (!r.case_id || !r.contract_id || !r.plan_id) {
+    throw new Error("cases.repository: createCaseAtomic returned an incomplete result");
+  }
+  return { caseId: r.case_id, contractId: r.contract_id, planId: r.plan_id };
+}
+
+// ---------------------------------------------------------------------------
 // Phase history
 // ---------------------------------------------------------------------------
 
