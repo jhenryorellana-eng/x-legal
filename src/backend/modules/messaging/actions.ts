@@ -16,6 +16,7 @@ import type {
   ConversationThreadDto,
   ConversationListDto,
   StaffDirectoryEntry,
+  ClientCaseChatDto,
   SendMessageInput,
 } from "./service";
 import type { AttachmentRef, MessageRow } from "./index";
@@ -125,6 +126,15 @@ export async function listStaffDirectoryAction(): Promise<ActionResult<StaffDire
   try {
     const actor = await requireActor();
     return ok(await svc.listStaffDirectory(actor));
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+export async function listClientCaseChatsAction(): Promise<ActionResult<ClientCaseChatDto[]>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.listClientCaseChats(actor));
   } catch (err) {
     return fail(err);
   }

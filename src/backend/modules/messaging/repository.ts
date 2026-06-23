@@ -587,6 +587,45 @@ async function countUnreadForConversation(
   return count ?? 0;
 }
 
+/** Service display info (name/color/icon) for the client case-chat list rows. */
+export async function getServicesInfo(
+  serviceIds: string[],
+): Promise<Map<string, { name: string | null; color: string | null; icon: string | null }>> {
+  const map = new Map<string, { name: string | null; color: string | null; icon: string | null }>();
+  const ids = [...new Set(serviceIds.filter(Boolean))];
+  if (ids.length === 0) return map;
+  const supabase = createServiceClient();
+  const { data, error } = await supabase.from("services").select("id, label_i18n, color, icon").in("id", ids);
+  if (error) throw new Error(`messaging.repository: getServicesInfo failed — ${error.message}`);
+  for (const s of data ?? []) map.set(s.id, { name: pickI18n(s.label_i18n), color: s.color, icon: s.icon });
+  return map;
+}
+
+/**
+ * Conversation preview for one case (last message + unread for the viewer).
+ * Returns conversationId=null when the case conversation does not exist yet —
+ * it is created lazily when the chat is first opened (ensureCaseConversation).
+ */
+export async function getCaseChatPreview(
+  caseId: string,
+  userId: string,
+): Promise<{
+  conversationId: string | null;
+  lastMessage: ConversationSummaryRaw["lastMessage"];
+  unread: number;
+  lastMessageAt: string | null;
+}> {
+  const conv = await findCaseConversation(caseId);
+  if (!conv) return { conversationId: null, lastMessage: null, unread: 0, lastMessageAt: null };
+  const supabase = createServiceClient();
+  const part = await getParticipant(conv.id, userId);
+  const [last, unread] = await Promise.all([
+    resolveLastMessage(supabase, conv.id),
+    countUnreadForConversation(supabase, conv.id, userId, part?.last_read_at ?? null),
+  ]);
+  return { conversationId: conv.id, lastMessage: last, unread, lastMessageAt: conv.last_message_at };
+}
+
 /**
  * The viewer's conversations with everything the inbox list needs (peer label,
  * service chip, last-message preview, unread count), newest first.

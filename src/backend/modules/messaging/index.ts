@@ -19,6 +19,7 @@ export {
   getUnreadBadge,
   listConversations,
   listStaffDirectory,
+  listClientCaseChats,
   ensureTeamConversation,
   ensureStaffDirectConversation,
   translateMessage,
@@ -36,6 +37,7 @@ export type {
   ConversationListDto,
   ParticipantProfile,
   StaffDirectoryEntry,
+  ClientCaseChatDto,
   SendMessageInput,
 } from "./service";
 export type {

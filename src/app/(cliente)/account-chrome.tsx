@@ -5,10 +5,15 @@ import { usePathname } from "next/navigation";
 import { useLocale } from "next-intl";
 import {
   BottomNav,
+  BottomSheet,
   MessagingLauncher,
   type BottomNavLabels,
 } from "@/frontend/components/mobile";
 import { ChatSheet } from "@/frontend/features/messaging/chat-sheet";
+import {
+  ClientCaseChatList,
+  type ClientCaseChatVM,
+} from "@/frontend/features/messaging/client-case-list";
 import { buildChatActions } from "@/frontend/features/messaging/build-chat-actions";
 import { onOpenTeamChat } from "@/frontend/features/messaging/team-chat-bus";
 import {
@@ -21,115 +26,145 @@ import {
   getAttachmentUploadUrlAction,
   confirmAttachmentAction,
   getAttachmentDownloadUrlAction,
+  listClientCaseChatsAction,
 } from "@/backend/modules/messaging/actions";
 import { PwaInstallPrompt } from "./pwa-install-prompt";
 
 /**
- * AccountChrome — client wrapper that renders the CUENTA chrome
- * (AccountNav variant "cuenta" + "Tu equipo" launcher) ONLY on account-level
- * routes (DOC-51 §0.1).
+ * AccountChrome — client CUENTA chrome (AccountNav + "Tu equipo" launcher),
+ * shown ONLY on account routes (DOC-51 §0.1).
  *
- * The "Tu equipo" launcher opens the team chat for the client's PRIMARY case
- * (the same overlay O1 the case shell uses) — `caseId` is resolved server-side
- * in the (cliente) layout. When the client has no case yet, the launcher is
- * hidden (there is no team to message).
- *
- *   - shown on: /home, /servicios, /servicios/[slug], /comunidad, /avisos,
- *               /pagos, /config
- *   - hidden on: /welcome, /email, /otp, /no-access (ACCESO) and /caso/*
- *     (the case shell renders its own CaseNav + launcher).
+ * Messaging is now **one chat per case** (concordant with the staff panel):
+ * at the account level the launcher opens a LIST of the client's case chats;
+ * selecting one opens that case's thread (with a back arrow to the list). Inside
+ * a case (`/caso/[caseId]`), `CaseChrome` opens that case's chat directly. The
+ * `caseId` prop is only a "has ≥1 case" signal (gates the launcher); the list is
+ * loaded lazily client-side.
  */
 
-const ACCOUNT_PREFIXES = [
-  "/home",
-  "/servicios",
-  "/comunidad",
-  "/avisos",
-  "/pagos",
-  "/config",
-];
+const ACCOUNT_PREFIXES = ["/home", "/servicios", "/comunidad", "/avisos", "/pagos", "/config"];
 
 function isAccountRoute(pathname: string): boolean {
-  return ACCOUNT_PREFIXES.some(
-    (p) => pathname === p || pathname.startsWith(p + "/"),
-  );
+  return ACCOUNT_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"));
 }
+
+/** Static raw messaging actions (stable server-action references). */
+const RAW = {
+  getCaseThread: getCaseThreadAction,
+  send: sendMessageAction,
+  loadMore: loadMoreMessagesAction,
+  listSince: listSinceAction,
+  markRead: markReadAction,
+  translate: translateMessageAction,
+  getUploadUrl: getAttachmentUploadUrlAction,
+  confirmAttachment: confirmAttachmentAction,
+  getDownloadUrl: getAttachmentDownloadUrlAction,
+};
 
 export interface AccountChromeProps {
   navLabels: BottomNavLabels;
   teamLabel: string;
   unreadCount?: number;
-  /** Primary active case id — wires the "Tu equipo" launcher to its team chat. */
+  /** Truthy when the client has ≥1 case — gates the launcher. */
   caseId?: string | null;
 }
 
-export function AccountChrome({
-  navLabels,
-  teamLabel,
-  unreadCount = 0,
-  caseId,
-}: AccountChromeProps) {
+export function AccountChrome({ navLabels, teamLabel, unreadCount = 0, caseId }: AccountChromeProps) {
   const pathname = usePathname() ?? "";
   const locale = (useLocale() === "en" ? "en" : "es") as "es" | "en";
-  const [chatOpen, setChatOpen] = React.useState(false);
+  const tt = (es: string, en: string) => (locale === "es" ? es : en);
 
-  // Adapt the messaging server actions into the shared ChatSheet's VM (only when
-  // there is a primary case to chat about). Hook runs unconditionally.
-  const chat = React.useMemo(
-    () =>
-      caseId
-        ? buildChatActions(
-            {
-              getCaseThread: getCaseThreadAction,
-              send: sendMessageAction,
-              loadMore: loadMoreMessagesAction,
-              listSince: listSinceAction,
-              markRead: markReadAction,
-              translate: translateMessageAction,
-              getUploadUrl: getAttachmentUploadUrlAction,
-              confirmAttachment: confirmAttachmentAction,
-              getDownloadUrl: getAttachmentDownloadUrlAction,
-            },
-            caseId,
-          )
-        : null,
-    [caseId],
-  );
+  const [view, setView] = React.useState<"closed" | "list" | "thread">("closed");
+  const [selected, setSelected] = React.useState<{ caseId: string; serviceName: string } | null>(null);
+  const [chats, setChats] = React.useState<ClientCaseChatVM[] | null>(null);
+  const [loadingChats, setLoadingChats] = React.useState(false);
 
-  // In-screen "ask your team" affordances (e.g. service detail) open this same
-  // overlay via the team-chat bus — but only while we're on an account route, so
-  // a request fired elsewhere can't leave the sheet stuck open on return.
+  const hasCases = !!caseId;
   const onAccount = isAccountRoute(pathname);
+
+  // Lazily load (and reload) the case-chat list whenever the list view opens.
+  // NOTE: `loadingChats` is intentionally NOT a dependency — it's set *inside*
+  // this effect, so depending on it would make `setLoadingChats(true)` re-run
+  // the effect and fire its own cleanup, cancelling the in-flight request and
+  // leaving the list stuck on "Cargando…" forever.
+  React.useEffect(() => {
+    if (view !== "list" || chats !== null) return;
+    let cancelled = false;
+    setLoadingChats(true);
+    listClientCaseChatsAction()
+      .then((r) => {
+        if (cancelled) return;
+        setChats(r.success ? r.data : []);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setChats([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingChats(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [view, chats]);
+
+  // In-screen "ask your team" affordances open the list. Reset on leaving.
   React.useEffect(() => {
     if (!onAccount) {
-      setChatOpen(false);
+      setView("closed");
       return;
     }
-    return onOpenTeamChat(() => setChatOpen(true));
+    return onOpenTeamChat(() => setView("list"));
   }, [onAccount]);
+
+  // Chat actions for the selected case (keyed by caseId via the ChatSheet key).
+  const chat = React.useMemo(
+    () => (selected ? buildChatActions(RAW, selected.caseId) : null),
+    [selected],
+  );
 
   if (!onAccount) return null;
 
   return (
     <>
-      {chat ? (
-        <MessagingLauncher
-          label={teamLabel}
-          badge={unreadCount}
-          onClick={() => setChatOpen(true)}
-        />
+      {hasCases ? (
+        <MessagingLauncher label={teamLabel} badge={unreadCount} onClick={() => setView("list")} />
       ) : null}
-      <BottomNav
-        variant="cuenta"
-        labels={navLabels}
-        notifCount={unreadCount}
-      />
+      <BottomNav variant="cuenta" labels={navLabels} notifCount={unreadCount} />
       <PwaInstallPrompt />
-      {chat ? (
-        <ChatSheet
-          open={chatOpen}
-          onClose={() => setChatOpen(false)}
+
+      {/* Account-level list: one chat per case */}
+      {hasCases ? (
+        <BottomSheet
+          open={view === "list"}
+          onClose={() => setView("closed")}
           title={teamLabel}
+          subtitle={tt("Tus chats, uno por caso", "Your chats, one per case")}
+          height="82vh"
+        >
+          <ClientCaseChatList
+            chats={chats ?? []}
+            loading={loadingChats || chats === null}
+            locale={locale}
+            onSelect={(c) => {
+              setSelected({ caseId: c.caseId, serviceName: c.serviceName ?? teamLabel });
+              setView("thread");
+            }}
+          />
+        </BottomSheet>
+      ) : null}
+
+      {/* Selected case thread (remounts per case so it reloads cleanly) */}
+      {chat && selected ? (
+        <ChatSheet
+          key={selected.caseId}
+          open={view === "thread"}
+          onClose={() => setView("closed")}
+          onBack={() => {
+            setChats(null); // refresh unread/snippets on return
+            setView("list");
+          }}
+          title={selected.serviceName}
           locale={locale}
           loadThread={chat.loadThread}
           actions={chat.actions}

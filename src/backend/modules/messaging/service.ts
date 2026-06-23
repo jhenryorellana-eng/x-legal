@@ -43,6 +43,8 @@ import {
   listActiveStaffIds,
   listActiveStaffProfiles,
   listConversationsForUser,
+  getServicesInfo,
+  getCaseChatPreview,
   isParticipant,
   getParticipant,
   addParticipants,
@@ -58,6 +60,7 @@ import {
   type ConversationRow,
   type MessageRow,
 } from "./repository";
+import { getCasesForClient } from "@/backend/modules/cases";
 
 const ADMIN_BUCKET = "chat-attachments";
 
@@ -469,6 +472,58 @@ export async function listStaffDirectory(actor: Actor): Promise<StaffDirectoryEn
     initials: initialsOf(p.name),
     color: senderColor(p.userId),
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Client case-chat list (one chat per case — client account level, DOC-51)
+// ---------------------------------------------------------------------------
+
+/** One row of the client's "your chats" list — one per case the client has. */
+export interface ClientCaseChatDto {
+  caseId: string;
+  conversationId: string | null;
+  serviceName: string | null;
+  serviceColor: string | null;
+  serviceIcon: string | null;
+  caseNumber: string | null;
+  snippet: string;
+  unread: number;
+  lastMessageAt: string | null;
+}
+
+/**
+ * One chat per case the client has, enriched with the service (name/color/icon)
+ * and a conversation preview (snippet/unread). Based on the client's CASES — not
+ * on existing conversations — so a case without a chat yet still appears (its
+ * conversation is created lazily on first open). No `can()` guard: returns only
+ * the caller's own cases (getCasesForClient is RLS-scoped + client-only).
+ */
+export async function listClientCaseChats(actor: Actor): Promise<ClientCaseChatDto[]> {
+  const page = await getCasesForClient(actor, { limit: 50 });
+  const cases = page.items;
+  const services = await getServicesInfo(cases.map((c) => c.service_id));
+
+  const rows = await Promise.all(
+    cases.map(async (c) => {
+      const preview = await getCaseChatPreview(c.id, actor.userId);
+      const svc = services.get(c.service_id);
+      return {
+        caseId: c.id,
+        conversationId: preview.conversationId,
+        serviceName: svc?.name ?? null,
+        serviceColor: svc?.color ?? null,
+        serviceIcon: svc?.icon ?? null,
+        caseNumber: c.case_number,
+        snippet: conversationSnippet(preview.lastMessage, actor.userId),
+        unread: preview.unread,
+        lastMessageAt: preview.lastMessageAt,
+      } satisfies ClientCaseChatDto;
+    }),
+  );
+
+  // Most recent activity first; cases without messages keep their case order.
+  rows.sort((a, b) => (b.lastMessageAt ?? "").localeCompare(a.lastMessageAt ?? ""));
+  return rows;
 }
 
 // ---------------------------------------------------------------------------

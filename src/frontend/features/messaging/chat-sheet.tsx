@@ -24,6 +24,8 @@ export interface ChatSheetProps {
   /** Lazily loads the thread when the sheet opens. */
   loadThread: () => Promise<ChatThreadVM | null>;
   actions: ChatActions;
+  /** When set, the header shows a "back" arrow (e.g. return to the case list). */
+  onBack?: () => void;
 }
 
 type Call = { kind: "audio" | "video"; name: string; participants: ParticipantVM[] };
@@ -260,7 +262,7 @@ function CallOverlay({ call, locale, onEnd }: { call: Call; locale: "es" | "en";
   );
 }
 
-export function ChatSheet({ open, onClose, title, locale, loadThread, actions }: ChatSheetProps) {
+export function ChatSheet({ open, onClose, title, locale, loadThread, actions, onBack }: ChatSheetProps) {
   const [vm, setVm] = React.useState<ChatThreadVM | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState(false);
@@ -312,6 +314,16 @@ export function ChatSheet({ open, onClose, title, locale, loadThread, actions }:
             background: "var(--card)",
           }}
         >
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              aria-label={tt(locale, "Volver a tus chats", "Back to your chats")}
+              style={{ width: 34, height: 34, display: "grid", placeItems: "center", background: "none", border: "none", cursor: "pointer", borderRadius: 10, flexShrink: 0, marginLeft: -4 }}
+            >
+              <Icon name="arrowL" size={20} color="var(--ink-2)" />
+            </button>
+          )}
           {staff.length > 0 && (
             <div style={{ display: "flex", flexShrink: 0 }}>
               {staff.slice(0, 4).map((p, idx) => (

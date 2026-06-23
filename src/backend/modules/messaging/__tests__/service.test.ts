@@ -32,7 +32,11 @@ const mockRepo = vi.hoisted(() => ({
   findConversationByTitle: vi.fn(),
   listActiveStaffIds: vi.fn(),
   listActiveStaffProfiles: vi.fn().mockResolvedValue([]),
+  getServicesInfo: vi.fn().mockResolvedValue(new Map()),
+  getCaseChatPreview: vi.fn().mockResolvedValue({ conversationId: null, lastMessage: null, unread: 0, lastMessageAt: null }),
 }));
+
+const mockCases = vi.hoisted(() => ({ getCasesForClient: vi.fn() }));
 
 const mockEvents = vi.hoisted(() => {
   // emit + emitAndWait share one spy so assertions on `.emit` still observe the
@@ -44,6 +48,7 @@ const mockAudit = vi.hoisted(() => ({ writeAudit: vi.fn().mockResolvedValue(unde
 const mockAi = vi.hoisted(() => ({ translateText: vi.fn() }));
 
 vi.mock("../repository.js", () => mockRepo);
+vi.mock("@/backend/modules/cases", () => mockCases);
 vi.mock("@/backend/platform/events", () => mockEvents);
 vi.mock("@/backend/modules/audit", () => mockAudit);
 vi.mock("@/backend/modules/ai-engine", () => mockAi);
@@ -78,6 +83,7 @@ import {
   getThread,
   listConversations,
   listStaffDirectory,
+  listClientCaseChats,
   ensureTeamConversation,
   ensureStaffDirectConversation,
 } from "../service";
@@ -280,6 +286,57 @@ describe("listConversations (staff inbox: Clientes vs Equipo)", () => {
       name: "Sofía Cabrera", initials: "SC", serviceChip: "Visa Juvenil", caseNumber: "ULP-2026-0002", unread: 2, snippet: "Diana: Recibido",
     });
     expect(r.team[0]).toMatchObject({ name: "Equipo UsaLatinoPrime", snippet: "Andrium: Reunión el viernes" });
+  });
+});
+
+describe("listClientCaseChats (client: one chat per case)", () => {
+  it("returns one row per case enriched with service + conversation preview", async () => {
+    mockCases.getCasesForClient.mockResolvedValue({
+      items: [
+        { id: "case-1", service_id: "svc-1", case_number: "ULP-0001" },
+        { id: "case-2", service_id: "svc-2", case_number: "ULP-0002" },
+      ],
+      nextCursor: null,
+    });
+    mockRepo.getServicesInfo.mockResolvedValue(
+      new Map([
+        ["svc-1", { name: "Asilo Político", color: "#E4002B", icon: "scale" }],
+        ["svc-2", { name: "Visa Juvenil", color: "#2F6BFF", icon: "family" }],
+      ]),
+    );
+    mockRepo.getCaseChatPreview.mockImplementation(async (caseId: string) =>
+      caseId === "case-1"
+        ? { conversationId: "conv-1", lastMessage: { kind: "text", body: "Hola", senderUserId: "staff-9", senderName: "Diana Ruiz", attachmentName: null }, unread: 2, lastMessageAt: "2026-06-16T09:00:00Z" }
+        : { conversationId: null, lastMessage: null, unread: 0, lastMessageAt: null },
+    );
+
+    const r = await listClientCaseChats(CLIENT);
+    expect(mockCases.getCasesForClient).toHaveBeenCalledWith(CLIENT, expect.objectContaining({ limit: expect.any(Number) }));
+    expect(r).toHaveLength(2);
+    const asilo = r.find((x) => x.caseId === "case-1")!;
+    expect(asilo).toMatchObject({
+      serviceName: "Asilo Político", serviceColor: "#E4002B", serviceIcon: "scale",
+      caseNumber: "ULP-0001", conversationId: "conv-1", unread: 2, snippet: "Diana: Hola",
+    });
+    const visa = r.find((x) => x.caseId === "case-2")!;
+    expect(visa).toMatchObject({ conversationId: null, snippet: "", unread: 0, serviceName: "Visa Juvenil" });
+  });
+
+  it("keeps a case with no conversation yet (empty preview)", async () => {
+    mockCases.getCasesForClient.mockResolvedValue({ items: [{ id: "case-9", service_id: "svc-9", case_number: "ULP-0009" }], nextCursor: null });
+    mockRepo.getServicesInfo.mockResolvedValue(new Map([["svc-9", { name: "Ciudadanía", color: "#1BB673", icon: "shield" }]]));
+    mockRepo.getCaseChatPreview.mockResolvedValue({ conversationId: null, lastMessage: null, unread: 0, lastMessageAt: null });
+    const r = await listClientCaseChats(CLIENT);
+    expect(r).toHaveLength(1);
+    expect(r[0]).toMatchObject({ caseId: "case-9", conversationId: null, serviceName: "Ciudadanía", snippet: "", unread: 0 });
+  });
+
+  it("rejects a staff actor (the client-only gate lives in getCasesForClient)", async () => {
+    // getCasesForClient throws AuthzError("wrong_kind") for non-client actors;
+    // listClientCaseChats must propagate it (no swallow) — locks the contract.
+    mockCases.getCasesForClient.mockRejectedValue(new AuthzError("wrong_kind"));
+    await expect(listClientCaseChats(STAFF)).rejects.toBeInstanceOf(AuthzError);
+    expect(mockRepo.getServicesInfo).not.toHaveBeenCalled();
   });
 });
 
