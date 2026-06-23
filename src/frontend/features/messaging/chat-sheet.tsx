@@ -1,11 +1,12 @@
 "use client";
 
 /**
- * ChatSheet — client messaging overlay "Tu equipo" (O1, PROMPT-CLI-27). Wraps
- * ChatThread in a BottomSheet with a group header (stacked team avatars +
- * presence + call/video/roster actions). Pressing "integrantes" switches the
- * overlay body in place between the chat and the team roster (NO modal-on-modal),
- * and a visual call overlay covers the screen on call (LiveKit lands in F7).
+ * ChatSheet — client messaging overlay "Tu equipo" (O1, PROMPT-CLI-27).
+ *
+ * Solid surfaces (no translucent chrome), styled to match the staff panel.
+ * The header carries identity + the roster toggle only; group call/video live
+ * inside the roster ("Integrantes"), next to the people they reach. A visual
+ * call overlay covers the screen on call (LiveKit lands in F7).
  * Boundaries: no @/backend imports.
  */
 
@@ -55,7 +56,8 @@ function Avatar({ p, size = 34, ring }: { p: ParticipantVM; size?: number; ring?
   );
 }
 
-function HeaderBtn({
+/** Square accent action button (matches the staff panel's .th-act). */
+function ActionBtn({
   label,
   active,
   onClick,
@@ -76,15 +78,14 @@ function HeaderBtn({
       style={{
         width: 40,
         height: 40,
-        borderRadius: 999,
+        borderRadius: 12,
         border: "none",
         cursor: "pointer",
         display: "grid",
         placeItems: "center",
-        background: active
-          ? "var(--accent)"
-          : "var(--blue-soft, color-mix(in srgb, var(--accent) 12%, transparent))",
+        background: active ? "var(--accent)" : "var(--blue-soft, #eaf1ff)",
         flexShrink: 0,
+        transition: "background .14s",
       }}
     >
       {children}
@@ -92,20 +93,22 @@ function HeaderBtn({
   );
 }
 
-/** In-place team roster (replaces the thread body — NOT a modal over the sheet). */
+/** In-place team roster (replaces the thread body — no modal over the sheet). */
 function RosterPanel({
   staff,
   locale,
   onBack,
   onCall,
+  onGroupCall,
 }: {
   staff: ParticipantVM[];
   locale: "es" | "en";
   onBack: () => void;
   onCall: (p: ParticipantVM, kind: "audio" | "video") => void;
+  onGroupCall: (kind: "audio" | "video") => void;
 }) {
   return (
-    <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "10px 14px 18px" }}>
+    <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "12px 14px 20px", background: "var(--card)" }}>
       <button
         type="button"
         onClick={onBack}
@@ -119,18 +122,48 @@ function RosterPanel({
           color: "var(--accent)",
           fontSize: 13,
           fontWeight: 800,
-          padding: "2px 0 10px",
+          padding: "2px 0 12px",
         }}
       >
         <Icon name="arrowL" size={18} color="var(--accent)" />
         {tt(locale, "Volver al chat", "Back to chat")}
       </button>
-      <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 800, color: "var(--ink-3)" }}>
-        {tt(locale, "Integrantes del equipo", "Your team")}
+
+      {/* Group call actions — the hero of this view */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 18 }}>
+        <button
+          type="button"
+          onClick={() => onGroupCall("audio")}
+          style={groupBtnStyle}
+        >
+          <Icon name="phone" size={19} color="var(--accent)" />
+          {tt(locale, "Llamar al equipo", "Call the team")}
+        </button>
+        <button
+          type="button"
+          onClick={() => onGroupCall("video")}
+          style={groupBtnStyle}
+        >
+          <Icon name="video" size={19} color="var(--accent)" />
+          {tt(locale, "Videollamada", "Video call")}
+        </button>
+      </div>
+
+      <p style={{ margin: "0 0 6px 2px", fontSize: 12.5, fontWeight: 800, color: "var(--ink-3)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+        {tt(locale, "Integrantes", "Members")} · {staff.length}
       </p>
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        {staff.map((p) => (
-          <div key={p.userId} style={{ display: "flex", alignItems: "center", gap: 11, padding: "8px 2px" }}>
+      <div>
+        {staff.map((p, i) => (
+          <div
+            key={p.userId}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 11,
+              padding: "10px 2px",
+              borderTop: i === 0 ? "none" : "1px solid var(--line)",
+            }}
+          >
             <Avatar p={p} size={42} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <p style={{ margin: 0, fontSize: 14.5, fontWeight: 800, color: "var(--ink)" }}>{p.name}</p>
@@ -138,18 +171,46 @@ function RosterPanel({
                 <p style={{ margin: "1px 0 0", fontSize: 12, color: "var(--ink-2)", fontWeight: 600 }}>{p.roleLabel}</p>
               )}
             </div>
-            <HeaderBtn label={tt(locale, "Llamar", "Call")} onClick={() => onCall(p, "audio")}>
-              <Icon name="phone" size={18} color="var(--accent)" />
-            </HeaderBtn>
-            <HeaderBtn label={tt(locale, "Videollamada", "Video call")} onClick={() => onCall(p, "video")}>
-              <Icon name="video" size={18} color="var(--accent)" />
-            </HeaderBtn>
+            <button type="button" onClick={() => onCall(p, "audio")} aria-label={tt(locale, `Llamar a ${p.name}`, `Call ${p.name}`)} style={memberBtnStyle}>
+              <Icon name="phone" size={17} color="var(--accent)" />
+            </button>
+            <button type="button" onClick={() => onCall(p, "video")} aria-label={tt(locale, `Videollamar a ${p.name}`, `Video call ${p.name}`)} style={memberBtnStyle}>
+              <Icon name="video" size={17} color="var(--accent)" />
+            </button>
           </div>
         ))}
       </div>
     </div>
   );
 }
+
+const groupBtnStyle: React.CSSProperties = {
+  flex: 1,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 8,
+  height: 48,
+  borderRadius: 14,
+  border: "1px solid var(--line)",
+  cursor: "pointer",
+  background: "var(--blue-soft, #eaf1ff)",
+  color: "var(--accent)",
+  fontWeight: 800,
+  fontSize: 13.5,
+};
+
+const memberBtnStyle: React.CSSProperties = {
+  width: 36,
+  height: 36,
+  borderRadius: 10,
+  border: "none",
+  cursor: "pointer",
+  display: "grid",
+  placeItems: "center",
+  background: "var(--blue-soft, #eaf1ff)",
+  flexShrink: 0,
+};
 
 function CallOverlay({ call, locale, onEnd }: { call: Call; locale: "es" | "en"; onEnd: () => void }) {
   const heads = call.participants.slice(0, 3);
@@ -238,8 +299,8 @@ export function ChatSheet({ open, onClose, title, locale, loadThread, actions }:
 
   return (
     <BottomSheet open={open} onClose={onClose} hideHeader height="88vh">
-      <div style={{ position: "relative", display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
-        {/* Group header */}
+      <div style={{ position: "relative", display: "flex", flexDirection: "column", height: "100%", minHeight: 0, background: "var(--card)" }}>
+        {/* Group header — solid surface */}
         <div
           style={{
             display: "flex",
@@ -248,14 +309,14 @@ export function ChatSheet({ open, onClose, title, locale, loadThread, actions }:
             padding: "13px 14px",
             borderBottom: "1px solid var(--line)",
             flexShrink: 0,
-            background: "linear-gradient(120deg, color-mix(in srgb, var(--accent) 10%, transparent), transparent)",
+            background: "var(--card)",
           }}
         >
           {staff.length > 0 && (
             <div style={{ display: "flex", flexShrink: 0 }}>
               {staff.slice(0, 4).map((p, idx) => (
                 <div key={p.userId} style={{ marginLeft: idx === 0 ? 0 : -10 }}>
-                  <Avatar p={p} size={34} ring />
+                  <Avatar p={p} size={36} ring />
                 </div>
               ))}
             </div>
@@ -268,36 +329,29 @@ export function ChatSheet({ open, onClose, title, locale, loadThread, actions }:
             </p>
           </div>
           {staff.length > 0 && (
-            <>
-              <HeaderBtn label={tt(locale, "Llamar", "Call")} onClick={() => setCall({ kind: "audio", name: title, participants: staff })}>
-                <Icon name="phone" size={19} color="var(--accent)" />
-              </HeaderBtn>
-              <HeaderBtn label={tt(locale, "Videollamada", "Video call")} onClick={() => setCall({ kind: "video", name: title, participants: staff })}>
-                <Icon name="video" size={19} color="var(--accent)" />
-              </HeaderBtn>
-              <HeaderBtn
-                label={tt(locale, "Ver integrantes", "View members")}
-                active={showRoster}
-                onClick={() => setView((v) => (v === "roster" ? "chat" : "roster"))}
-              >
-                <Icon name="family" size={19} color={showRoster ? "#fff" : "var(--accent)"} />
-              </HeaderBtn>
-            </>
+            <ActionBtn
+              label={tt(locale, "Ver integrantes", "View members")}
+              active={showRoster}
+              onClick={() => setView((v) => (v === "roster" ? "chat" : "roster"))}
+            >
+              <Icon name="family" size={19} color={showRoster ? "#fff" : "var(--accent)"} />
+            </ActionBtn>
           )}
           <button type="button" onClick={onClose} aria-label={tt(locale, "Cerrar", "Close")}
-            style={{ background: "none", border: "none", cursor: "pointer", padding: 6, borderRadius: 999, flexShrink: 0 }}>
+            style={{ width: 40, height: 40, display: "grid", placeItems: "center", background: "none", border: "none", cursor: "pointer", borderRadius: 12, flexShrink: 0 }}>
             <Icon name="x" size={20} color="var(--ink-3)" />
           </button>
         </div>
 
-        {/* Body — chat OR roster, swapped in place (no modal over the sheet) */}
-        <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+        {/* Body — chat OR roster, swapped in place */}
+        <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", background: "var(--card)" }}>
           {showRoster ? (
             <RosterPanel
               staff={staff}
               locale={locale}
               onBack={() => setView("chat")}
               onCall={(p, kind) => setCall({ kind, name: p.name, participants: [p] })}
+              onGroupCall={(kind) => setCall({ kind, name: title, participants: staff })}
             />
           ) : loading || (!vm && !error) ? (
             <p style={{ textAlign: "center", color: "var(--ink-3)", marginTop: 40 }}>
