@@ -22,6 +22,7 @@ import {
   upsertPhasePolicyAction,
   upsertAppointmentScheduleAction,
   createRequiredDocumentAction,
+  updateRequiredDocumentAction,
   createServicePartyRoleAction,
   updateServicePartyRoleAction,
   deleteServicePartyRoleAction,
@@ -86,6 +87,19 @@ export async function createRequiredDocUi(
 ): Promise<Res<{ id: string }>> {
   const r = await createRequiredDocumentAction(
     input as Parameters<typeof createRequiredDocumentAction>[0],
+  );
+  return r.success
+    ? { success: true, data: { id: (r.data as { id: string }).id } }
+    : { success: false, error: r.error };
+}
+
+export async function updateRequiredDocUi(
+  id: string,
+  patch: Record<string, unknown>,
+): Promise<Res<{ id: string }>> {
+  const r = await updateRequiredDocumentAction(
+    id,
+    patch as Parameters<typeof updateRequiredDocumentAction>[1],
   );
   return r.success
     ? { success: true, data: { id: (r.data as { id: string }).id } }

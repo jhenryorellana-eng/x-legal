@@ -522,6 +522,12 @@ export interface ExpandedRequirement {
   ai_extract: boolean;
   extraction_schema: Record<string, unknown> | null;
   position: number;
+  /**
+   * True only in the staff-facing resolution (`includeHidden`): the requirement
+   * carries an `is_hidden` override and is NOT shown to the client. In the
+   * client-facing resolution these items are dropped entirely (never present).
+   */
+  is_hidden?: boolean;
 }
 
 export interface RequirementOverrideInput {
@@ -917,11 +923,18 @@ function toExpanded(doc: RequiredDocumentType, partyId: string | null): Expanded
 /**
  * Merges case_requirement_overrides onto the expanded catalog requirements.
  * DOC-40 §2.7.
+ *
+ * `includeHidden` toggles the audience:
+ *  - omitted/false (client view): hidden requirements are removed entirely.
+ *  - true (staff view): hidden requirements are kept, flagged `is_hidden=true`,
+ *    so staff can see and restore them. Clients never receive these items.
  */
 export function applyRequirementOverrides(
   expanded: ExpandedRequirement[],
   overrides: RequirementOverrideInput[],
+  opts: { includeHidden?: boolean } = {},
 ): ExpandedRequirement[] {
+  const { includeHidden = false } = opts;
   let out = [...expanded];
 
   for (const ov of overrides) {
@@ -949,7 +962,12 @@ export function applyRequirementOverrides(
         req.required_document_type_id === ov.required_document_type_id &&
         (ov.party_id === null || ov.party_id === req.party_id);
       if (!matches) return [req];
-      if (ov.is_hidden) return [];
+      if (ov.is_hidden) {
+        // Client view drops it; staff view keeps it flagged so it can be restored.
+        return includeHidden
+          ? [{ ...req, is_hidden: true, override_id: ov.id }]
+          : [];
+      }
       return [{ ...req, is_required: ov.is_required ?? req.is_required, override_id: ov.id }];
     });
   }

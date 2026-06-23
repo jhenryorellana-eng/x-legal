@@ -799,6 +799,88 @@ export async function getRequirementOverrides(
   return data ?? [];
 }
 
+/**
+ * Finds an existing override for the (case, requirement, party) triple.
+ *
+ * The unique constraint treats NULL party_id as distinct, so the service layer
+ * does find-or-create instead of upsert to avoid duplicate null-party rows.
+ */
+export async function findRequirementOverride(
+  caseId: string,
+  requiredDocumentTypeId: string | null,
+  partyId: string | null,
+): Promise<CaseRequirementOverrideRow | null> {
+  const supabase = await createServerClient();
+  let query = supabase
+    .from("case_requirement_overrides")
+    .select("*")
+    .eq("case_id", caseId);
+
+  query = requiredDocumentTypeId
+    ? query.eq("required_document_type_id", requiredDocumentTypeId)
+    : query.is("required_document_type_id", null);
+  query = partyId ? query.eq("party_id", partyId) : query.is("party_id", null);
+
+  const { data } = await query.maybeSingle();
+  return data ?? null;
+}
+
+/** Inserts a requirement override row. Returns the created row. */
+export async function insertRequirementOverride(
+  row: TablesInsert<"case_requirement_overrides">,
+): Promise<CaseRequirementOverrideRow> {
+  const supabase = await createServiceClient();
+  const { data, error } = await supabase
+    .from("case_requirement_overrides")
+    .insert(row)
+    .select()
+    .single();
+
+  if (error || !data) {
+    throw new Error(
+      `cases.repository: insertRequirementOverride failed — ${error?.message}`,
+    );
+  }
+  return data;
+}
+
+/** Updates a requirement override row by ID. */
+export async function updateRequirementOverride(
+  id: string,
+  fields: TablesUpdate<"case_requirement_overrides">,
+): Promise<void> {
+  const supabase = await createServiceClient();
+  const { error } = await supabase
+    .from("case_requirement_overrides")
+    .update({ ...fields, updated_at: new Date().toISOString() })
+    .eq("id", id);
+
+  if (error) {
+    throw new Error(
+      `cases.repository: updateRequirementOverride failed — ${error.message}`,
+    );
+  }
+}
+
+/** Deletes a requirement override row (restores the catalog default). */
+export async function deleteRequirementOverride(
+  caseId: string,
+  overrideId: string,
+): Promise<void> {
+  const supabase = await createServiceClient();
+  const { error } = await supabase
+    .from("case_requirement_overrides")
+    .delete()
+    .eq("id", overrideId)
+    .eq("case_id", caseId);
+
+  if (error) {
+    throw new Error(
+      `cases.repository: deleteRequirementOverride failed — ${error.message}`,
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Parties
 // ---------------------------------------------------------------------------

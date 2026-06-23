@@ -1915,6 +1915,11 @@ export async function getCaseRequirements(input: {
   phase_id: string;
   parties: Array<{ id: string; party_role: string }>;
   requirement_overrides: RequirementOverrideInput[];
+  /**
+   * Staff view: keep `is_hidden` requirements flagged (so they can be restored)
+   * instead of dropping them. Default false → client view (hidden removed).
+   */
+  include_hidden?: boolean;
 }): Promise<{
   phase: Pick<ServicePhase, "id" | "slug" | "label_i18n" | "client_explainer_i18n" | "position">;
   milestones: Milestone[];
@@ -1929,7 +1934,9 @@ export async function getCaseRequirements(input: {
     catalog.docs as unknown as import("./domain").RequiredDocumentType[],
     input.parties,
   );
-  const documents = applyRequirementOverrides(expanded, input.requirement_overrides);
+  const documents = applyRequirementOverrides(expanded, input.requirement_overrides, {
+    includeHidden: input.include_hidden ?? false,
+  });
 
   const forms = await resolveForms(catalog.forms);
 

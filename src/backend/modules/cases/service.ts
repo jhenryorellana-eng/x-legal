@@ -57,6 +57,10 @@ import {
   listCases,
   listCaseDocuments,
   getRequirementOverrides,
+  findRequirementOverride,
+  insertRequirementOverride,
+  updateRequirementOverride,
+  deleteRequirementOverride,
   getCaseParties,
   findServiceLite,
   listServicePhases,
@@ -120,6 +124,7 @@ export class CaseError extends Error {
       | "DOC_INVALID_STATE"
       | "DOC_REJECTION_REASON_REQUIRED"
       | "DOC_REQUIREMENT_NOT_FOUND"
+      | "REQUIREMENT_NOT_OPTIONAL"
       | "DOC_PARTY_NOT_ELIGIBLE"
       | "DOC_UPLOAD_INVALID"
       | "FORM_NOT_FOUND"
@@ -154,6 +159,11 @@ function iconForEvent(eventType: string): string {
     "document.rejected": "alert-circle",
     "terms.accepted": "file-check",
     "phase.advanced": "chevrons-right",
+    "appointment.booked": "calendar",
+    "appointment.cancelled": "alert-circle",
+    "appointment.rescheduled": "refresh-cw",
+    "appointment.completed": "check-circle",
+    "appointment.no_show": "alert-circle",
   };
   return map[eventType] ?? "info";
 }
@@ -164,6 +174,14 @@ function colorForEvent(eventType: string, actorKind: string): string {
   if (eventType === "document.approved") return "green";
   if (eventType === "downpayment.confirmed") return "green";
   if (eventType === "phase.advanced") return "gold";
+  // Appointment lifecycle (DOC-43): booked/completed positive (green), reschedule
+  // neutral (gold), cancelled soft-warning (amber), no_show is the factual record
+  // (red — the historical bitácora supports it; push notifications stay amber).
+  if (eventType === "appointment.booked") return "green";
+  if (eventType === "appointment.completed") return "green";
+  if (eventType === "appointment.rescheduled") return "gold";
+  if (eventType === "appointment.cancelled") return "amber";
+  if (eventType === "appointment.no_show") return "red";
   if (actorKind === "system") return "blue";
   return "gray";
 }
@@ -198,6 +216,69 @@ async function writeTimeline(entry: {
     color: colorForEvent(entry.eventType, entry.actorKind),
     visibleToClient: entry.visibleToClient,
     occurredAt: entry.occurredAt ?? new Date(),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// appendAppointmentTimeline — public projection of scheduling events to the
+// case timeline (DOC-43 / DOC-41 §3.14). Cases remains the SOLE writer of the
+// case timeline; the scheduling consumers in register-consumers call this.
+// ---------------------------------------------------------------------------
+
+export type AppointmentTimelineEventType =
+  | "appointment.booked"
+  | "appointment.cancelled"
+  | "appointment.rescheduled"
+  | "appointment.completed"
+  | "appointment.no_show";
+
+const APPOINTMENT_TIMELINE_CONTENT: Record<
+  AppointmentTimelineEventType,
+  { titleI18n: { es: string; en: string }; bodyI18n?: { es: string; en: string } }
+> = {
+  "appointment.booked": {
+    titleI18n: { es: "Cita agendada", en: "Appointment booked" },
+  },
+  "appointment.cancelled": {
+    titleI18n: { es: "Cita cancelada", en: "Appointment cancelled" },
+  },
+  "appointment.rescheduled": {
+    titleI18n: { es: "Cita reprogramada", en: "Appointment rescheduled" },
+  },
+  "appointment.completed": {
+    titleI18n: { es: "Cita completada", en: "Appointment completed" },
+    bodyI18n: { es: "Asististe a tu cita.", en: "You attended your appointment." },
+  },
+  "appointment.no_show": {
+    titleI18n: { es: "No asististe a la cita", en: "You missed your appointment" },
+    bodyI18n: {
+      es: "Se registró una inasistencia. Podrás reagendar más adelante.",
+      en: "A no-show was recorded. You'll be able to reschedule later.",
+    },
+  },
+};
+
+/**
+ * Projects a scheduling appointment lifecycle event onto the case timeline,
+ * visible to the client. Body copy is locale-neutral (no exact date) so no
+ * timezone formatting is coupled to the backend — the cita screen shows the
+ * precise date/time. (DOC-41 §3.14, RF-TRX-024 CA3.)
+ */
+export async function appendAppointmentTimeline(input: {
+  caseId: string;
+  eventType: AppointmentTimelineEventType;
+  actorKind: "client" | "team" | "system";
+  actorUserId?: string | null;
+}): Promise<void> {
+  const content = APPOINTMENT_TIMELINE_CONTENT[input.eventType];
+  await writeTimeline({
+    caseId: input.caseId,
+    eventType: input.eventType,
+    actorKind: input.actorKind,
+    actorUserId: input.actorUserId ?? null,
+    titleI18n: content.titleI18n,
+    bodyI18n: content.bodyI18n ?? null,
+    visibleToClient: true,
   });
 }
 
@@ -933,6 +1014,125 @@ export async function reviewDocument(
 }
 
 // ---------------------------------------------------------------------------
+// setRequirementVisibility — staff hides/shows an OPTIONAL document per case
+// (RF-TRX-002, DOC-41 §3.5). Backed by case_requirement_overrides.is_hidden.
+// ---------------------------------------------------------------------------
+
+export interface SetRequirementVisibilityInput {
+  caseId: string;
+  /** Catalog requirement id (required_document_type_id). */
+  requirementId: string | null;
+  /** Specific party instance (per-party docs) or null for the whole document. */
+  partyId: string | null;
+  /** true → hide from client; false → restore. */
+  hidden: boolean;
+}
+
+/**
+ * Hides or restores an OPTIONAL document requirement for a single case so it no
+ * longer shows to the client (e.g. a requirement that does not apply to this
+ * case). Per-instance: a per-party doc can be hidden for one party only.
+ *
+ * Decisions (confirmed): only admin + sales may toggle; only optional
+ * requirements (is_required=false) can be hidden — required docs are always
+ * shown. Restoring deletes the override (back to the catalog default).
+ */
+export async function setRequirementVisibility(
+  actor: Actor,
+  input: SetRequirementVisibilityInput,
+): Promise<void> {
+  can(actor, "cases", "edit");
+  // Only admin + sales configure case documents (paralegal/finance excluded).
+  if (actor.kind !== "staff" || (actor.role !== "admin" && actor.role !== "sales")) {
+    throw new AuthzError("forbidden_module");
+  }
+  await requireCaseAccess(actor, input.caseId);
+
+  const caseRow = await findCaseById(input.caseId);
+  if (!caseRow) throw new CaseError("CASE_NOT_FOUND");
+  if (!caseRow.current_phase_id) throw new CaseError("CASE_PHASE_INVALID");
+
+  // Resolve the requirement in this case's context (staff view → includes hidden
+  // so a previously-hidden item can be located and restored).
+  const parties = await getCaseParties(input.caseId);
+  const overrides = await getRequirementOverrides(input.caseId);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const catalog = (await import("@/backend/modules/catalog")) as any;
+  const resolved = await catalog.getCaseRequirements({
+    service_id: caseRow.service_id,
+    phase_id: caseRow.current_phase_id,
+    parties: parties.map((p) => ({ id: p.id, party_role: p.party_role })),
+    requirement_overrides: overrides.map((o) => ({
+      id: o.id,
+      required_document_type_id: o.required_document_type_id,
+      party_id: o.party_id,
+      is_required: o.is_required ?? undefined,
+      is_hidden: o.is_hidden,
+      custom_label_i18n: asI18n(o.custom_label_i18n) ?? undefined,
+    })),
+    include_hidden: true,
+  });
+
+  const target = (resolved.documents as Array<{
+    required_document_type_id: string | null;
+    party_id: string | null;
+    is_required: boolean;
+  }>).find(
+    (d) =>
+      d.required_document_type_id === input.requirementId &&
+      d.party_id === input.partyId,
+  );
+  if (!target) throw new CaseError("DOC_REQUIREMENT_NOT_FOUND");
+
+  // Only optional requirements may be hidden (required docs are always shown).
+  if (input.hidden && target.is_required) {
+    throw new CaseError("REQUIREMENT_NOT_OPTIONAL");
+  }
+
+  const existing = await findRequirementOverride(
+    input.caseId,
+    input.requirementId,
+    input.partyId,
+  );
+
+  if (input.hidden) {
+    if (existing) {
+      await updateRequirementOverride(existing.id, { is_hidden: true });
+    } else {
+      await insertRequirementOverride({
+        case_id: input.caseId,
+        required_document_type_id: input.requirementId,
+        party_id: input.partyId,
+        is_hidden: true,
+        created_by: actor.userId,
+      });
+    }
+  } else if (existing) {
+    // Restore: if the override only carried visibility, delete it (clean
+    // default). If it also carries a label/requirement override, keep those.
+    if (existing.is_required === null && existing.custom_label_i18n === null) {
+      await deleteRequirementOverride(input.caseId, existing.id);
+    } else {
+      await updateRequirementOverride(existing.id, { is_hidden: false });
+    }
+  }
+
+  await writeAudit(
+    actor,
+    input.hidden ? "case.requirement.hidden" : "case.requirement.shown",
+    "case_requirement_overrides",
+    input.caseId,
+    {
+      after: {
+        requirementId: input.requirementId,
+        partyId: input.partyId,
+        hidden: input.hidden,
+      },
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
 // changeCaseStatus — admin transitions
 // ---------------------------------------------------------------------------
 
@@ -1253,10 +1453,16 @@ function asI18n(value: unknown): I18nValue | null {
 /** Resolves the display name for a case party (person record first, then user). */
 async function resolvePartyName(party: {
   person_record_id: string | null;
+  user_id?: string | null;
 }): Promise<string | null> {
   if (party.person_record_id) {
     const person = await findPersonRecord(party.person_record_id);
     if (person) return `${person.first_name} ${person.last_name}`.trim();
+  }
+  // The applicant/petitioner party is stored with user_id (no person_record),
+  // so per-party docs on the applicant resolve their name from the client profile.
+  if (party.user_id) {
+    return findClientDisplayName(party.user_id);
   }
   return null;
 }
@@ -1273,6 +1479,7 @@ interface DocsCount {
  */
 async function buildDocumentsMatrix(
   caseRow: CaseRow,
+  opts: { includeHidden?: boolean } = {},
 ): Promise<{ items: DocumentMatrixItem[]; counts: DocsCount }> {
   if (!caseRow.current_phase_id) {
     return { items: [], counts: { total: 0, done: 0, pending: 0 } };
@@ -1284,6 +1491,8 @@ async function buildDocumentsMatrix(
 
   // Resolve the catalog requirements (per-party expansion + overrides) via the
   // catalog module's runtime resolver (no cross-table read inside catalog).
+  // includeHidden=true (staff) keeps hidden requirements flagged; the client
+  // view (default) drops them entirely.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const catalog = (await import("@/backend/modules/catalog")) as any;
   const resolved = await catalog.getCaseRequirements({
@@ -1298,6 +1507,7 @@ async function buildDocumentsMatrix(
       is_hidden: o.is_hidden,
       custom_label_i18n: asI18n(o.custom_label_i18n) ?? undefined,
     })),
+    include_hidden: opts.includeHidden ?? false,
   });
 
   // Latest doc per (requirement, party): documents is desc by created_at.
@@ -1322,6 +1532,7 @@ async function buildDocumentsMatrix(
       help_i18n: unknown;
       category_i18n: unknown;
       is_required: boolean;
+      is_hidden?: boolean;
       position: number;
     }) => {
       const docKey = `${r.required_document_type_id ?? "free"}:${r.party_id ?? "case"}`;
@@ -1343,6 +1554,7 @@ async function buildDocumentsMatrix(
         helpI18n: asI18n(r.help_i18n),
         categoryI18n: asI18n(r.category_i18n),
         isRequired: r.is_required,
+        isHidden: r.is_hidden ?? false,
         position: r.position,
         status,
         documentId: doc?.id ?? null,
@@ -1352,7 +1564,9 @@ async function buildDocumentsMatrix(
     },
   );
 
-  const required = items.filter((i) => i.isRequired);
+  // Hidden requirements are optional-only and never shown to the client, so they
+  // never contribute to the progress counts (staff sees them flagged separately).
+  const required = items.filter((i) => i.isRequired && !i.isHidden);
   const done = required.filter(
     (i) => i.status === "aprobado" || i.status === "revision",
   ).length;
@@ -1375,6 +1589,8 @@ export interface DocumentMatrixItem {
   helpI18n: I18nValue | null;
   categoryI18n: I18nValue | null;
   isRequired: boolean;
+  /** Staff view only: true when an override hides this requirement from the client. */
+  isHidden: boolean;
   position: number;
   status: "pendiente" | "revision" | "aprobado" | "corregir";
   documentId: string | null;
@@ -1547,6 +1763,7 @@ export interface DocumentsMatrixDto {
 export async function getDocumentsMatrix(
   actor: Actor,
   caseId: string,
+  opts: { includeHidden?: boolean } = {},
 ): Promise<DocumentsMatrixDto> {
   await requireCaseAccess(actor, caseId);
   const caseRow = await findCaseById(caseId);
@@ -1559,7 +1776,10 @@ export async function getDocumentsMatrix(
     ? (phases.find((p) => p.id === caseRow.current_phase_id) ?? null)
     : null;
 
-  const { items, counts } = await buildDocumentsMatrix(caseRow);
+  // Defense in depth: hidden requirements are only ever exposed to staff. Even
+  // if includeHidden leaks to a client-facing caller, clients never see them.
+  const includeHidden = opts.includeHidden === true && actor.kind === "staff";
+  const { items, counts } = await buildDocumentsMatrix(caseRow, { includeHidden });
   const progress = computePhaseProgress({
     totalDocuments: counts.total,
     approvedDocuments: counts.done,

@@ -51,7 +51,9 @@ export default async function DocumentosPage({
 
   const items: DocItem[] = matrix.items.map((d) => {
     const baseLabel = pickLocale(d.labelI18n, locale);
-    const label = d.partyName ? `${baseLabel} · ${d.partyName}` : baseLabel;
+    // Per-party docs read "<Document> de <Name>" (es) so the client sees, e.g.,
+    // "Pasaporte de María", "Pasaporte de Juan" expanded dynamically per party.
+    const label = d.partyName ? `${baseLabel} ${t("partyConnector")} ${d.partyName}` : baseLabel;
     const category = pickLocale(d.categoryI18n, locale) || uncategorized;
     const qs = new URLSearchParams();
     if (d.requirementId) qs.set("req", d.requirementId);
