@@ -12,6 +12,7 @@ export {
   startDocumentUpload,
   confirmDocumentUpload,
   reviewDocument,
+  setRequirementVisibility,
   changeCaseStatus,
   getCasesForClient,
   getCaseOverview,
@@ -44,13 +45,19 @@ export {
   transitionCaseSystem,
   onExpedienteSentToFinanceCase,
   onExpedientePrintedCase,
+  // Timeline projection for scheduling events (DOC-41 §3.14)
+  appendAppointmentTimeline,
 } from "./service";
+
+// Timeline projection types
+export type { AppointmentTimelineEventType } from "./service";
 
 // createCaseFromContract types
 export type {
   CreateCaseFromContractInput,
   CreateCaseFromContractResult,
   CasePartyInput,
+  SetRequirementVisibilityInput,
   // F4-Ola3 form types
   SaveFormDraftInput,
   SubmitFormResponseInput,

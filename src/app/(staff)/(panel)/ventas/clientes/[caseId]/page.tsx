@@ -40,6 +40,7 @@ import type { CaseWorkspaceVM } from "@/frontend/features/shared-case";
 import { mapStatusToPill } from "../../../admin/casos/view-helpers";
 import {
   reviewDocumentAction,
+  setRequirementVisibilityAction,
   registerPaymentAction,
   resendSigningLinkAction,
   sendContractAction,
@@ -78,7 +79,7 @@ export default async function VentasCasoDetailPage({
     getTimeline(actor, caseId, { limit: 8 }).catch(() => ({ items: [], nextCursor: null })),
     getClientFormsForCase(actor, caseId).catch(() => []),
     getRunsForCase(actor, caseId).catch(() => []),
-    getDocumentsMatrix(actor, caseId).catch(() => null),
+    getDocumentsMatrix(actor, caseId, { includeHidden: true }).catch(() => null),
   ]);
 
   const requirements = (matrix?.items ?? []).map((d) => ({
@@ -89,10 +90,14 @@ export default async function VentasCasoDetailPage({
     label: resolveI18n(d.labelI18n, locale),
     category: d.categoryI18n ? resolveI18n(d.categoryI18n, locale) : null,
     isRequired: d.isRequired,
+    isHidden: d.isHidden,
     status: d.status,
     documentId: d.documentId,
     rejectionReason: d.rejectionReasonI18n ? resolveI18n(d.rejectionReasonI18n, locale) : null,
   }));
+
+  // Visibility toggle is an admin + sales affordance (DOC-41 §3.5 decision).
+  const canManageDocs = actor.role === "admin" || actor.role === "sales";
 
   const pill = mapStatusToPill(workspace.status);
   const installments = (plan?.installments ?? []).map((i) => ({
@@ -194,6 +199,7 @@ export default async function VentasCasoDetailPage({
       vm={vm}
       actions={{
         reviewDocument: reviewDocumentAction,
+        setRequirementVisibility: canManageDocs ? setRequirementVisibilityAction : undefined,
         registerPayment: registerPaymentAction,
         resendSigningLink: resendSigningLinkAction,
         sendContract: sendContractAction,

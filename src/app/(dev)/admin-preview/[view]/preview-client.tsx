@@ -124,6 +124,7 @@ export function PreviewClient({ view }: { view: string }) {
             upsertPolicy: noopRes,
             upsertSchedule: noopRes,
             createRequiredDoc: async () => ({ success: true, data: { id: "mock-doc" } }),
+            updateRequiredDoc: async () => ({ success: true, data: { id: "mock-doc" } }),
             createPartyRole: async () => ({ success: true, data: { id: "mock-role" } }),
             updatePartyRole: noopRes,
             deletePartyRole: noopRes,

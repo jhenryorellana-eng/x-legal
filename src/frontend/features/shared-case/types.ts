@@ -70,6 +70,8 @@ export interface DocMatrixVM {
   label: string;
   category: string | null;
   isRequired: boolean;
+  /** Staff view only: requirement is hidden from the client (optional docs only). */
+  isHidden: boolean;
   status: "pendiente" | "revision" | "aprobado" | "corregir";
   documentId: string | null;
   rejectionReason: string | null;
@@ -211,5 +213,16 @@ export interface CaseDetailActions {
     requirementId: string | null;
     partyId: string | null;
     originalFilename: string;
+  }) => Promise<{ ok: boolean; error?: { code: string } }>;
+  /**
+   * Hide / restore an OPTIONAL document requirement for this case so it stops
+   * showing to the client (admin + sales only). Optional — not every surface
+   * wires it (e.g. read-only views).
+   */
+  setRequirementVisibility?: (input: {
+    caseId: string;
+    requirementId: string | null;
+    partyId: string | null;
+    hidden: boolean;
   }) => Promise<{ ok: boolean; error?: { code: string } }>;
 }

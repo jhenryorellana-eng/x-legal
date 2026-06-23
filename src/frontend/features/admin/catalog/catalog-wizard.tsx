@@ -131,6 +131,7 @@ export interface CatalogWizardProps {
     upsertPolicy: (input: Record<string, unknown>) => Promise<ActionRes<unknown>>;
     upsertSchedule: (input: Record<string, unknown>) => Promise<ActionRes<unknown>>;
     createRequiredDoc: (input: Record<string, unknown>) => Promise<ActionRes<{ id: string }>>;
+    updateRequiredDoc: (id: string, patch: Record<string, unknown>) => Promise<ActionRes<{ id: string }>>;
     createPartyRole: (input: Record<string, unknown>) => Promise<ActionRes<{ id: string }>>;
     updatePartyRole: (id: string, patch: Record<string, unknown>) => Promise<ActionRes<unknown>>;
     deletePartyRole: (id: string) => Promise<ActionRes<unknown>>;
@@ -1059,11 +1060,36 @@ function DocsStep({
   const [docPartyRoles, setDocPartyRoles] = React.useState<string[]>([]);
   const [docAiExtract, setDocAiExtract] = React.useState(false);
   const [savingDoc, setSavingDoc] = React.useState(false);
+  // null = create mode; a doc id = editing that document in place.
+  const [editingDocId, setEditingDocId] = React.useState<string | null>(null);
 
   function togglePartyRole(key: string) {
     setDocPartyRoles((prev) =>
       prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
     );
+  }
+
+  // Quick lookup of a role's display label for the "Partes" column.
+  const roleLabelByKey = new Map(roleOptions.map((o) => [o.key, o.label]));
+
+  function resetDocForm() {
+    setEditingDocId(null);
+    setDocLabel({ es: "", en: "" });
+    setDocCategory("");
+    setDocRequired(true);
+    setDocPerParty(false);
+    setDocPartyRoles([]);
+    setDocAiExtract(false);
+  }
+
+  function startEditDoc(d: WizardDoc) {
+    setEditingDocId(d.id);
+    setDocLabel({ es: d.label.es ?? "", en: d.label.en ?? "" });
+    setDocCategory(d.category.es ?? "");
+    setDocRequired(d.is_required);
+    setDocPerParty(d.is_per_party);
+    setDocPartyRoles(d.party_roles ?? []);
+    setDocAiExtract(d.ai_extract);
   }
 
   const docSlugFrom = (es: string) =>
@@ -1075,7 +1101,7 @@ function DocsStep({
       .replace(/^-+|-+$/g, "")
       .slice(0, 60) || `documento-${(phase?.docs.length ?? 0) + 1}`;
 
-  async function addDocument() {
+  async function saveDocument() {
     if (!phase) return;
     if (!docLabel.es?.trim()) {
       toast.error(t.docNeedName);
@@ -1086,12 +1112,58 @@ function DocsStep({
       return;
     }
     const docRoles = docPerParty ? docPartyRoles : null;
+    const labelI18n = { es: docLabel.es ?? "", en: docLabel.en ?? "" };
+    const categoryI18n = docCategory.trim() ? { es: docCategory.trim(), en: "" } : null;
     setSavingDoc(true);
+
+    // --- Edit an existing document in place (party assignment, required, label) ---
+    if (editingDocId) {
+      const r = await actions.updateRequiredDoc(editingDocId, {
+        label_i18n: labelI18n,
+        category_i18n: categoryI18n,
+        is_required: docRequired,
+        is_per_party: docPerParty,
+        party_roles: docRoles,
+        ai_extract: docAiExtract,
+      });
+      setSavingDoc(false);
+      if (r.success) {
+        setPhases((prev) =>
+          prev.map((p, i) =>
+            i === phaseIdx
+              ? {
+                  ...p,
+                  docs: p.docs.map((d) =>
+                    d.id === editingDocId
+                      ? {
+                          ...d,
+                          label: labelI18n,
+                          category: { es: docCategory.trim(), en: "" },
+                          is_required: docRequired,
+                          is_per_party: docPerParty,
+                          party_roles: docRoles ?? [],
+                          ai_extract: docAiExtract,
+                        }
+                      : d,
+                  ),
+                }
+              : p,
+          ),
+        );
+        resetDocForm();
+        toast.success(t.saved);
+      } else {
+        toast.error(r.error?.message ?? "Error");
+      }
+      return;
+    }
+
+    // --- Create a new document ---
     const r = await actions.createRequiredDoc({
       service_phase_id: phase.id,
       slug: docSlugFrom(docLabel.es),
-      label_i18n: { es: docLabel.es ?? "", en: docLabel.en ?? "" },
-      category_i18n: docCategory.trim() ? { es: docCategory.trim(), en: "" } : null,
+      label_i18n: labelI18n,
+      category_i18n: categoryI18n,
       is_required: docRequired,
       is_per_party: docPerParty,
       party_roles: docRoles,
@@ -1103,7 +1175,7 @@ function DocsStep({
       const created: WizardDoc = {
         id: r.data.id,
         slug: docSlugFrom(docLabel.es),
-        label: { es: docLabel.es ?? "", en: docLabel.en ?? "" },
+        label: labelI18n,
         help: { es: "", en: "" },
         category: { es: docCategory.trim(), en: "" },
         is_required: docRequired,
@@ -1115,12 +1187,7 @@ function DocsStep({
       setPhases((prev) =>
         prev.map((p, i) => (i === phaseIdx ? { ...p, docs: [...p.docs, created] } : p)),
       );
-      setDocLabel({ es: "", en: "" });
-      setDocCategory("");
-      setDocRequired(true);
-      setDocPerParty(false);
-      setDocPartyRoles([]);
-      setDocAiExtract(false);
+      resetDocForm();
       toast.success(t.saved);
     } else {
       toast.error(r.error?.message ?? "Error");
@@ -1173,9 +1240,14 @@ function DocsStep({
               <Switch checked={docAiExtract} onCheckedChange={setDocAiExtract} aria-label={t.docAiExtract} />
               {t.docAiExtract}
             </label>
-            <GradientBtn onClick={addDocument} disabled={savingDoc} aria-label={t.docAdd}>
-              {savingDoc ? "…" : t.docAdd}
+            <GradientBtn onClick={saveDocument} disabled={savingDoc} aria-label={editingDocId ? t.docSave : t.docAdd}>
+              {savingDoc ? "…" : editingDocId ? t.docSave : t.docAdd}
             </GradientBtn>
+            {editingDocId && (
+              <GhostBtn size="md" full={false} onClick={resetDocForm}>
+                {t.docCancelEdit}
+              </GhostBtn>
+            )}
           </div>
 
           {docPerParty && (
@@ -1212,19 +1284,21 @@ function DocsStep({
                 <th style={docHead}>{t.docCategory}</th>
                 <th style={{ ...docHead, textAlign: "center" }}>{t.docRequired}</th>
                 <th style={{ ...docHead, textAlign: "center" }}>{t.docPerParty}</th>
+                <th style={docHead}>{t.docPartiesColumn}</th>
                 <th style={{ ...docHead, textAlign: "center" }}>{t.docAiExtract}</th>
+                <th style={{ ...docHead, textAlign: "right" }} aria-label={t.docActions} />
               </tr>
             </thead>
             <tbody>
               {phase.docs.length === 0 ? (
                 <tr>
-                  <td colSpan={5} style={{ ...docCell, textAlign: "center", color: "var(--ink-3)", padding: "26px" }}>
+                  <td colSpan={7} style={{ ...docCell, textAlign: "center", color: "var(--ink-3)", padding: "26px" }}>
                     {t.emptyTitle ?? "—"}
                   </td>
                 </tr>
               ) : (
                 phase.docs.map((d) => (
-                  <tr key={d.id}>
+                  <tr key={d.id} style={editingDocId === d.id ? { background: "var(--blue-soft)" } : undefined}>
                     <td style={docCell}>
                       <div style={{ fontWeight: 700, color: "var(--ink)" }}>{d.label.es || d.slug}</div>
                       <code style={{ fontSize: 11, color: "var(--ink-3)" }}>{d.slug}</code>
@@ -1232,7 +1306,17 @@ function DocsStep({
                     <td style={docCell}>{d.category.es || "—"}</td>
                     <td style={{ ...docCell, textAlign: "center" }}>{d.is_required ? <Icon name="check" size={16} color="var(--green)" /> : "—"}</td>
                     <td style={{ ...docCell, textAlign: "center" }}>{d.is_per_party ? <Icon name="check" size={16} color="var(--green)" /> : "—"}</td>
+                    <td style={docCell}>
+                      {d.is_per_party && d.party_roles.length > 0
+                        ? d.party_roles.map((k) => roleLabelByKey.get(k) ?? k).join(", ")
+                        : "—"}
+                    </td>
                     <td style={{ ...docCell, textAlign: "center" }}>{d.ai_extract ? <Chip tone="gold" dot>{t.docAiExtract}</Chip> : "—"}</td>
+                    <td style={{ ...docCell, textAlign: "right" }}>
+                      <GhostBtn size="md" full={false} icon="edit" onClick={() => startEditDoc(d)}>
+                        {t.docEdit}
+                      </GhostBtn>
+                    </td>
                   </tr>
                 ))
               )}

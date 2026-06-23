@@ -259,6 +259,7 @@
       "title": "My Documents",
       "subtitle": "Upload the ones for your {phase} phase. Scanned PDF only (no photos).",
       "of": "of",
+      "partyConnector": "—",
       "completed": "documents completed",
       "tip": "Tip: use the camera to scan. Lex shows you how.",
       "approved": "Approved",
@@ -876,6 +877,11 @@
         "issueWarning": "Warning",
         "ackWarning": "I understand and want to publish anyway",
         "docAdd": "Add document",
+        "docSave": "Save changes",
+        "docCancelEdit": "Cancel",
+        "docEdit": "Edit",
+        "docActions": "Actions",
+        "docPartiesColumn": "Parties",
         "docNeedName": "Enter the document name (ES).",
         "formsNeedPhaseTitle": "Create a phase first",
         "formsNeedPhaseSub": "Save the service and add at least one phase so you can create forms in it.",
@@ -1285,7 +1291,13 @@
         "optional": "Optional",
         "docPending": "Pending",
         "docReason": "Reason",
-        "docsMatrixEmpty": "This case has no document requirements yet."
+        "docsMatrixEmpty": "This case has no document requirements yet.",
+        "hideForClient": "Hide from client",
+        "showToClient": "Show to client",
+        "hiddenFromClient": "Hidden from client",
+        "hideRequiredBlocked": "Only optional documents can be hidden.",
+        "hideDone": "Document hidden from the client",
+        "showDone": "Document visible to the client"
       }
     },
     "ventas": {

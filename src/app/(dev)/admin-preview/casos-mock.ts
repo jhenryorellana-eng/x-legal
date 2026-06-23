@@ -143,8 +143,8 @@ export const caseWorkspaceVmMock: CaseWorkspaceVM = {
     { id: "d3", filename: "Comprobante de domicilio.pdf", status: "approved", partyName: null, createdAt: new Date().toISOString() },
   ],
   requirements: [
-    { key: "r1", requirementId: "req-1", partyId: null, partyName: null, label: "Pasaporte", category: "Identidad", isRequired: true, status: "revision", documentId: "d1", rejectionReason: null },
-    { key: "r2", requirementId: "req-2", partyId: null, partyName: null, label: "Comprobante de domicilio", category: "Identidad", isRequired: false, status: "pendiente", documentId: null, rejectionReason: null },
+    { key: "r1", requirementId: "req-1", partyId: null, partyName: null, label: "Pasaporte", category: "Identidad", isRequired: true, isHidden: false, status: "revision", documentId: "d1", rejectionReason: null },
+    { key: "r2", requirementId: "req-2", partyId: null, partyName: null, label: "Comprobante de domicilio", category: "Identidad", isRequired: false, isHidden: false, status: "pendiente", documentId: null, rejectionReason: null },
   ],
   docsApproved: 1,
   docsTotal: 3,

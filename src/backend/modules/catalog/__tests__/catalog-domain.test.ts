@@ -680,6 +680,41 @@ describe("applyRequirementOverrides", () => {
     expect(p1?.is_required).toBe(false);
     expect(p2?.is_required).toBe(true);
   });
+
+  // --- includeHidden: staff view keeps hidden items flagged (does not drop) ---
+
+  it("with includeHidden=true, keeps a hidden item flagged instead of dropping it", () => {
+    const expanded = [makeExpanded()];
+    const overrides: RequirementOverrideInput[] = [
+      { id: "ov-1", required_document_type_id: "doc-1", party_id: null, is_hidden: true },
+    ];
+    const result = applyRequirementOverrides(expanded, overrides, { includeHidden: true });
+    expect(result).toHaveLength(1);
+    expect(result[0].is_hidden).toBe(true);
+    expect(result[0].override_id).toBe("ov-1");
+  });
+
+  it("with includeHidden=true, only the party-scoped instance is flagged hidden", () => {
+    const expanded = [
+      makeExpanded({ key: "doc-1:p1", party_id: "p1" }),
+      makeExpanded({ key: "doc-1:p2", party_id: "p2" }),
+    ];
+    const overrides: RequirementOverrideInput[] = [
+      { id: "ov-1", required_document_type_id: "doc-1", party_id: "p1", is_hidden: true },
+    ];
+    const result = applyRequirementOverrides(expanded, overrides, { includeHidden: true });
+    expect(result).toHaveLength(2);
+    expect(result.find((r) => r.party_id === "p1")?.is_hidden).toBe(true);
+    expect(result.find((r) => r.party_id === "p2")?.is_hidden ?? false).toBe(false);
+  });
+
+  it("client view (default) still drops the same hidden item", () => {
+    const expanded = [makeExpanded()];
+    const overrides: RequirementOverrideInput[] = [
+      { id: "ov-1", required_document_type_id: "doc-1", party_id: null, is_hidden: true },
+    ];
+    expect(applyRequirementOverrides(expanded, overrides)).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -31,6 +31,7 @@ import {
 import {
   createCaseFromContract,
   reviewDocument,
+  setRequirementVisibility,
   startDocumentUpload,
   confirmDocumentUpload,
   saveFormDraft,
@@ -205,6 +206,21 @@ export async function reviewDocumentAction(input: {
       verdict: input.verdict,
       reason: input.reason ? { en: input.reason.en, es: input.reason.es } : null,
     });
+    return { ok: true };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+export async function setRequirementVisibilityAction(input: {
+  caseId: string;
+  requirementId: string | null;
+  partyId: string | null;
+  hidden: boolean;
+}): Promise<{ ok: boolean; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    await setRequirementVisibility(actor, input);
     return { ok: true };
   } catch (err) {
     return mapErr(err);

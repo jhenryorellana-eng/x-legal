@@ -49,6 +49,10 @@ export function DocumentosTab({
   const [reasonEn, setReasonEn] = React.useState("");
   const [busyKey, setBusyKey] = React.useState<string | null>(null);
 
+  // The visibility toggle is wired only on surfaces that pass the action
+  // (admin + sales case detail). Read-only views omit it → no button.
+  const canToggle = typeof actions.setRequirementVisibility === "function";
+
   async function onView(documentId: string) {
     const res = await actions.getDocumentUrl({ documentId });
     if (res.ok && res.url) getBridge().share.openExternal(res.url);
@@ -85,6 +89,26 @@ export function DocumentosTab({
     } else toast.error(strings.errorTitle);
   }
 
+  async function onToggleVisibility(item: DocMatrixVM, hidden: boolean) {
+    if (!actions.setRequirementVisibility) return;
+    setBusyKey(item.key);
+    const res = await actions.setRequirementVisibility({
+      caseId: vm.header.caseId,
+      requirementId: item.requirementId,
+      partyId: item.partyId,
+      hidden,
+    });
+    setBusyKey(null);
+    if (res.ok) {
+      toast.success(hidden ? t.hideDone : t.showDone);
+      router.refresh();
+    } else if (res.error?.code === "REQUIREMENT_NOT_OPTIONAL") {
+      toast.error(t.hideRequiredBlocked);
+    } else {
+      toast.error(strings.errorTitle);
+    }
+  }
+
   // Group by party (null party → general bucket, rendered first).
   const groups = new Map<string | null, DocMatrixVM[]>();
   for (const item of vm.requirements) {
@@ -114,16 +138,21 @@ export function DocumentosTab({
                 </div>
               )}
               {list.map((item) => (
-                <div key={item.key} className="doc-row">
+                <div key={item.key} className="doc-row" style={item.isHidden ? { opacity: 0.55 } : undefined}>
                   <span aria-hidden="true" className="doc-ico">
                     <Icon name="doc" size={20} color="var(--brand-red)" />
                   </span>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p className="doc-name" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {item.label}
-                      {!item.isRequired && (
+                      {!item.isRequired && !item.isHidden && (
                         <span style={{ marginLeft: 8 }}>
                           <Chip tone="blue">{t.optional}</Chip>
+                        </span>
+                      )}
+                      {item.isHidden && (
+                        <span style={{ marginLeft: 8 }}>
+                          <Chip tone="amber">{t.hiddenFromClient}</Chip>
                         </span>
                       )}
                     </p>
@@ -134,42 +163,70 @@ export function DocumentosTab({
                     )}
                   </div>
 
-                  <StatusPill kind={item.status as StatusKind}>{statusLabel(item.status, t)}</StatusPill>
+                  {!item.isHidden && (
+                    <StatusPill kind={item.status as StatusKind}>{statusLabel(item.status, t)}</StatusPill>
+                  )}
 
                   <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-                    {(item.status === "pendiente" || item.status === "corregir") && (
-                      <UploadButton
-                        item={item}
-                        caseId={vm.header.caseId}
-                        actions={actions}
-                        strings={strings}
-                        busy={busyKey === item.key}
-                        setBusy={(b) => setBusyKey(b ? item.key : null)}
-                        onDone={() => router.refresh()}
-                      />
-                    )}
-                    {item.documentId && (
-                      <GhostBtn size="md" full={false} icon="external" onClick={() => onView(item.documentId!)}>
-                        {t.view}
-                      </GhostBtn>
-                    )}
-                    {item.status === "revision" && item.documentId && (
-                      <>
-                        <GradientBtn size="sm" full={false} icon="check" disabled={busyKey === item.key} onClick={() => onApprove(item)}>
-                          {t.approve}
-                        </GradientBtn>
+                    {item.isHidden ? (
+                      canToggle && (
                         <GhostBtn
                           size="md"
                           full={false}
-                          icon="x"
-                          onClick={() => {
-                            setReasonEs("");
-                            setReasonEn("");
-                            setRejecting(item);
-                          }}
+                          disabled={busyKey === item.key}
+                          onClick={() => onToggleVisibility(item, false)}
                         >
-                          {t.reject}
+                          {t.showToClient}
                         </GhostBtn>
+                      )
+                    ) : (
+                      <>
+                        {(item.status === "pendiente" || item.status === "corregir") && (
+                          <UploadButton
+                            item={item}
+                            caseId={vm.header.caseId}
+                            actions={actions}
+                            strings={strings}
+                            busy={busyKey === item.key}
+                            setBusy={(b) => setBusyKey(b ? item.key : null)}
+                            onDone={() => router.refresh()}
+                          />
+                        )}
+                        {item.documentId && (
+                          <GhostBtn size="md" full={false} icon="external" onClick={() => onView(item.documentId!)}>
+                            {t.view}
+                          </GhostBtn>
+                        )}
+                        {item.status === "revision" && item.documentId && (
+                          <>
+                            <GradientBtn size="sm" full={false} icon="check" disabled={busyKey === item.key} onClick={() => onApprove(item)}>
+                              {t.approve}
+                            </GradientBtn>
+                            <GhostBtn
+                              size="md"
+                              full={false}
+                              icon="x"
+                              onClick={() => {
+                                setReasonEs("");
+                                setReasonEn("");
+                                setRejecting(item);
+                              }}
+                            >
+                              {t.reject}
+                            </GhostBtn>
+                          </>
+                        )}
+                        {canToggle && !item.isRequired && (
+                          <GhostBtn
+                            size="md"
+                            full={false}
+                            icon="lock"
+                            disabled={busyKey === item.key}
+                            onClick={() => onToggleVisibility(item, true)}
+                          >
+                            {t.hideForClient}
+                          </GhostBtn>
+                        )}
                       </>
                     )}
                   </div>

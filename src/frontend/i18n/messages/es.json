@@ -259,6 +259,7 @@
       "title": "Mis Documentos",
       "subtitle": "Sube los de tu fase de {phase}. Solo PDF escaneado (no fotos).",
       "of": "de",
+      "partyConnector": "de",
       "completed": "documentos completados",
       "tip": "Consejo: usa la cámara para escanear. Lex te muestra cómo.",
       "approved": "Aprobado",
@@ -876,6 +877,11 @@
         "issueWarning": "Advertencia",
         "ackWarning": "Entiendo y quiero publicar de todos modos",
         "docAdd": "Agregar documento",
+        "docSave": "Guardar cambios",
+        "docCancelEdit": "Cancelar",
+        "docEdit": "Editar",
+        "docActions": "Acciones",
+        "docPartiesColumn": "Partes",
         "docNeedName": "Escribe el nombre del documento (ES).",
         "formsNeedPhaseTitle": "Primero crea una fase",
         "formsNeedPhaseSub": "Guarda el servicio y agrega al menos una fase para poder crear formularios en ella.",
@@ -1285,7 +1291,13 @@
         "optional": "Opcional",
         "docPending": "Pendiente",
         "docReason": "Motivo",
-        "docsMatrixEmpty": "Este caso aún no tiene requisitos de documentos."
+        "docsMatrixEmpty": "Este caso aún no tiene requisitos de documentos.",
+        "hideForClient": "Ocultar al cliente",
+        "showToClient": "Mostrar al cliente",
+        "hiddenFromClient": "Oculto para el cliente",
+        "hideRequiredBlocked": "Solo puedes ocultar documentos opcionales.",
+        "hideDone": "Documento oculto para el cliente",
+        "showDone": "Documento visible para el cliente"
       }
     },
     "ventas": {
