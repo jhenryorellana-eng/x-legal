@@ -20,6 +20,16 @@ export interface ChatMessageVM {
   createdAt: string;
 }
 
+/** A participant with presentation fields (group header, roster, sender colors). */
+export interface ParticipantVM {
+  userId: string;
+  name: string;
+  roleLabel: string | null;
+  kind: string; // 'client' | 'staff'
+  initials: string;
+  color: string;
+}
+
 export interface ChatThreadVM {
   conversationId: string;
   scope: string;
@@ -28,6 +38,8 @@ export interface ChatThreadVM {
   nextCursor: string | null;
   myLastReadAt: string | null;
   participantIds: string[];
+  /** Participants with name/role/initials/color for the group header + roster. */
+  participants: ParticipantVM[];
   /** False for staff with case access who are not participants (read-only). */
   viewerCanPost: boolean;
 }

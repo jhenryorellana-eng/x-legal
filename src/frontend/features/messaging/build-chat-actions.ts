@@ -6,7 +6,7 @@
  * frontend free of backend imports (boundaries).
  */
 
-import { mapMessageRow, type ChatActions, type ChatThreadVM } from "./types";
+import { mapMessageRow, type ChatActions, type ChatThreadVM, type ParticipantVM } from "./types";
 
 type AR<T> = { success: true; data: T } | { success: false; error: { code: string; message: string } };
 type Row = Record<string, unknown>;
@@ -20,6 +20,7 @@ export interface RawChatActions {
       nextCursor: string | null;
       myLastReadAt: string | null;
       participantIds: string[];
+      participants?: ParticipantVM[];
       viewerCanPost: boolean;
     }>
   >;
@@ -61,6 +62,7 @@ export function buildChatActions(
       nextCursor: d.nextCursor,
       myLastReadAt: d.myLastReadAt,
       participantIds: d.participantIds,
+      participants: d.participants ?? [],
       viewerCanPost: d.viewerCanPost,
     };
   };

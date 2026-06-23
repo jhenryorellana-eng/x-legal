@@ -24,6 +24,9 @@ import {
   computeCaseParticipantIds,
   validateAttachmentRefs,
   renderSystemMessage,
+  senderColor,
+  initialsOf,
+  conversationSnippet,
   type ConversationScope,
   type SystemMessageKey,
   type AttachmentRef,
@@ -31,10 +34,15 @@ import {
 import {
   findCaseConversation,
   findConversationById,
+  findConversationByTitle,
   insertConversation,
   touchLastMessageAt,
   listParticipantIds,
   listParticipantsWithKind,
+  loadParticipantProfiles,
+  listActiveStaffIds,
+  listActiveStaffProfiles,
+  listConversationsForUser,
   isParticipant,
   getParticipant,
   addParticipants,
@@ -85,12 +93,46 @@ export class MessagingError extends Error {
 // DTOs
 // ---------------------------------------------------------------------------
 
+/** A participant with presentation fields (group header, roster, sender colors). */
+export interface ParticipantProfile {
+  userId: string;
+  name: string;
+  roleLabel: string | null;
+  kind: string; // 'client' | 'staff'
+  initials: string;
+  color: string;
+}
+
+/** One row of the staff inbox (PROMPT-VAN-07) or a client inbox. */
+export interface ConversationSummaryDto {
+  conversationId: string;
+  scope: ConversationScope;
+  title: string | null;
+  caseId: string | null;
+  caseNumber: string | null;
+  name: string;
+  initials: string;
+  color: string;
+  serviceChip: string | null;
+  snippet: string;
+  lastMessageAt: string | null;
+  unread: number;
+}
+
+/** The staff inbox split into the two prototype tabs. */
+export interface ConversationListDto {
+  clients: ConversationSummaryDto[];
+  team: ConversationSummaryDto[];
+}
+
 export interface ConversationThreadDto {
   conversation: { id: string; scope: ConversationScope; caseId: string | null; title: string | null };
   meUserId: string;
   messages: MessageRow[]; // chronological ASC within the page
   nextCursor: string | null; // older messages
   participantIds: string[];
+  /** Participants with name/role/initials/color for the group header + roster. */
+  participants: ParticipantProfile[];
   myLastReadAt: string | null;
   /**
    * Whether the viewer may post. True for conversation participants and for
@@ -147,6 +189,66 @@ export async function ensureCaseConversation(caseId: string): Promise<Conversati
   if (!row) throw new MessagingError("CONVERSATION_NOT_FOUND", { caseId });
 
   await addParticipants(row.id, computeCaseParticipantIds(sources));
+  return row;
+}
+
+// ---------------------------------------------------------------------------
+// Internal team conversations (staff panel "Equipo" tab) — idempotent
+// ---------------------------------------------------------------------------
+
+/** Reserved title marking the org-wide all-staff group ("Equipo UsaLatinoPrime"). */
+const TEAM_TITLE = "__team__";
+/** Reserved title for a deterministic 1:1 staff DM (sorted so it's order-free). */
+function dmTitle(a: string, b: string): string {
+  return `__dm__:${[a, b].sort().join("|")}`;
+}
+
+/**
+ * The org-wide all-staff group, created lazily with every active staff member.
+ * Staff-only: `can()` rejects clients (Server Actions are public POST endpoints).
+ */
+export async function ensureTeamConversation(actor: Actor): Promise<ConversationRow> {
+  can(actor, "messaging", "view");
+  const orgId = actor.orgId;
+  const existing = await findConversationByTitle(orgId, "support", TEAM_TITLE);
+  if (existing) return existing;
+
+  const staffIds = await listActiveStaffIds(orgId);
+  const { row, conflict } = await insertConversation({ orgId, scope: "support", title: TEAM_TITLE });
+  if (conflict) {
+    const won = await findConversationByTitle(orgId, "support", TEAM_TITLE);
+    if (!won) throw new MessagingError("CONVERSATION_NOT_FOUND");
+    await addParticipants(won.id, staffIds);
+    return won;
+  }
+  if (!row) throw new MessagingError("CONVERSATION_NOT_FOUND");
+  await addParticipants(row.id, staffIds);
+  return row;
+}
+
+/** A 1:1 internal thread between the actor and another staff member (lazy). */
+export async function ensureStaffDirectConversation(
+  actor: Actor,
+  otherUserId: string,
+): Promise<ConversationRow> {
+  can(actor, "messaging", "view");
+  // The target must be active staff in the actor's org — never a client or a
+  // cross-org user (addParticipants bypasses RLS, so guard it here).
+  const staffIds = await listActiveStaffIds(actor.orgId);
+  if (!staffIds.includes(otherUserId)) throw new AuthzError("wrong_kind");
+  const title = dmTitle(actor.userId, otherUserId);
+  const existing = await findConversationByTitle(actor.orgId, "support", title);
+  if (existing) return existing;
+
+  const { row, conflict } = await insertConversation({ orgId: actor.orgId, scope: "support", title });
+  if (conflict) {
+    const won = await findConversationByTitle(actor.orgId, "support", title);
+    if (!won) throw new MessagingError("CONVERSATION_NOT_FOUND");
+    await addParticipants(won.id, [actor.userId, otherUserId]);
+    return won;
+  }
+  if (!row) throw new MessagingError("CONVERSATION_NOT_FOUND");
+  await addParticipants(row.id, [actor.userId, otherUserId]);
   return row;
 }
 
@@ -237,13 +339,23 @@ async function buildThreadDto(
 ): Promise<ConversationThreadDto> {
   const page = await listMessages(conv.id, opts ?? {});
   const participantIds = await listParticipantIds(conv.id);
+  const profiles = await loadParticipantProfiles(conv.id, conv.org_id);
   const me = await getParticipant(conv.id, actor.userId);
+  const participants: ParticipantProfile[] = profiles.map((p) => ({
+    userId: p.userId,
+    name: p.name,
+    roleLabel: p.roleLabel,
+    kind: p.kind,
+    initials: initialsOf(p.name),
+    color: senderColor(p.userId),
+  }));
   return {
     conversation: { id: conv.id, scope: conv.scope as ConversationScope, caseId: conv.case_id, title: conv.title },
     meUserId: actor.userId,
     messages: [...page.items].reverse(), // ASC for display
     nextCursor: page.nextCursor,
     participantIds,
+    participants,
     myLastReadAt: me?.last_read_at ?? null,
     viewerCanPost: isStaffAdmin(actor) || participantIds.includes(actor.userId),
   };
@@ -301,6 +413,62 @@ export async function markRead(actor: Actor, conversationId: string): Promise<vo
 
 export async function getUnreadBadge(actor: Actor): Promise<{ total: number }> {
   return { total: await countUnreadAggregate(actor.userId) };
+}
+
+// ---------------------------------------------------------------------------
+// Inbox list (staff panel Clientes/Equipo — PROMPT-VAN-07)
+// ---------------------------------------------------------------------------
+
+/**
+ * The viewer's conversations, split into the two prototype tabs: `clients`
+ * (scope='case') and `team` (internal support/lead threads). Each row is
+ * enriched with initials/color/snippet for the list UI.
+ */
+export async function listConversations(actor: Actor): Promise<ConversationListDto> {
+  // No `can()` guard: this returns ONLY the caller's own conversations
+  // (filtered by actor.userId), so it is safe for any authenticated actor —
+  // staff today, clients if a client inbox is ever wired to it.
+  const rows = await listConversationsForUser(actor.userId);
+  const dtos: ConversationSummaryDto[] = rows.map((r) => ({
+    conversationId: r.conversationId,
+    scope: r.scope,
+    title: r.title,
+    caseId: r.caseId,
+    caseNumber: r.caseNumber,
+    name: r.peerName,
+    initials: initialsOf(r.peerName),
+    color: senderColor(r.conversationId),
+    serviceChip: r.serviceChip,
+    snippet: conversationSnippet(r.lastMessage, actor.userId),
+    lastMessageAt: r.lastMessageAt,
+    unread: r.unread,
+  }));
+  return {
+    clients: dtos.filter((d) => d.scope === "case"),
+    team: dtos.filter((d) => d.scope === "support" || d.scope === "lead"),
+  };
+}
+
+/** Active staff directory entry (Equipo tab — start a 1:1). */
+export interface StaffDirectoryEntry {
+  userId: string;
+  name: string;
+  roleLabel: string | null;
+  initials: string;
+  color: string;
+}
+
+/** Other active staff in the org, enriched for the Equipo-tab DM list. */
+export async function listStaffDirectory(actor: Actor): Promise<StaffDirectoryEntry[]> {
+  can(actor, "messaging", "view"); // staff PII (names/roles) — never expose to clients
+  const rows = await listActiveStaffProfiles(actor.orgId, actor.userId);
+  return rows.map((p) => ({
+    userId: p.userId,
+    name: p.name,
+    roleLabel: p.roleLabel,
+    initials: initialsOf(p.name),
+    color: senderColor(p.userId),
+  }));
 }
 
 // ---------------------------------------------------------------------------

@@ -40,6 +40,9 @@ yarn-error.log*
 .env*
 !.env.example
 
+# local MCP config — carries a Supabase access token; never commit
+.mcp.json
+
 # vercel
 .vercel
 

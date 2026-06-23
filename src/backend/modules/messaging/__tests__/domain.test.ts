@@ -8,6 +8,10 @@ import {
   renderSystemMessage,
   computeCaseParticipantIds,
   validateAttachmentRefs,
+  senderColor,
+  SENDER_PALETTE,
+  initialsOf,
+  conversationSnippet,
 } from "../domain";
 
 describe("messaging.domain: isUnread (RF-TRX-017)", () => {
@@ -52,6 +56,62 @@ describe("messaging.domain: computeCaseParticipantIds", () => {
   });
   it("drops null staff", () => {
     expect(computeCaseParticipantIds({ caseMemberIds: ["c1"], paralegalId: null, salesId: null, adminIds: [] })).toEqual(["c1"]);
+  });
+});
+
+describe("messaging.domain: senderColor", () => {
+  it("is deterministic for the same seed", () => {
+    expect(senderColor("user-abc")).toBe(senderColor("user-abc"));
+  });
+  it("always returns a color from the brand palette", () => {
+    for (const seed of ["a", "diana", "00000000-0000-0000-0000-000000000301", ""]) {
+      expect(SENDER_PALETTE).toContain(senderColor(seed));
+    }
+  });
+  it("spreads different seeds across more than one color", () => {
+    const seeds = ["u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8"];
+    const colors = new Set(seeds.map(senderColor));
+    expect(colors.size).toBeGreaterThan(1);
+  });
+});
+
+describe("messaging.domain: initialsOf", () => {
+  it("takes first + last initial for multi-word names", () => {
+    expect(initialsOf("Sofía Cabrera")).toBe("SC");
+    expect(initialsOf("Miguel Ángel Soto")).toBe("MS");
+  });
+  it("takes the first two letters for a single word", () => {
+    expect(initialsOf("Diana")).toBe("DI");
+  });
+  it("falls back to ? for empty/whitespace", () => {
+    expect(initialsOf("   ")).toBe("?");
+  });
+});
+
+describe("messaging.domain: conversationSnippet", () => {
+  const me = "me-1";
+  it("returns empty string when there is no last message", () => {
+    expect(conversationSnippet(null, me)).toBe("");
+  });
+  it("prefixes my own text message with 'Tú: '", () => {
+    expect(
+      conversationSnippet({ kind: "text", body: "Hola", senderUserId: me, senderName: "Yo", attachmentName: null }, me),
+    ).toBe("Tú: Hola");
+  });
+  it("prefixes a peer text message with their first name", () => {
+    expect(
+      conversationSnippet({ kind: "text", body: "Recibido", senderUserId: "u2", senderName: "Diana Pérez", attachmentName: null }, me),
+    ).toBe("Diana: Recibido");
+  });
+  it("shows a paperclip + filename for attachments (no name prefix)", () => {
+    expect(
+      conversationSnippet({ kind: "attachment", body: null, senderUserId: "u2", senderName: "Diana", attachmentName: "Acta.pdf" }, me),
+    ).toBe("📎 Acta.pdf");
+  });
+  it("shows the raw body for system messages (no sender prefix)", () => {
+    expect(
+      conversationSnippet({ kind: "system", body: "Tu caso avanzó de fase.", senderUserId: null, senderName: null, attachmentName: null }, me),
+    ).toBe("Tu caso avanzó de fase.");
   });
 });
 

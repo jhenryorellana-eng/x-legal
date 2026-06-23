@@ -12,7 +12,7 @@ import * as React from "react";
 import { Icon, GhostBtn } from "@/frontend/components/brand";
 import { getBridge } from "@/frontend/platform-bridge";
 import { useConversationRealtime } from "./use-conversation-realtime";
-import type { ChatActions, ChatMessageVM, ChatThreadVM } from "./types";
+import type { ChatActions, ChatMessageVM, ChatThreadVM, ParticipantVM } from "./types";
 
 export interface ChatThreadProps {
   vm: ChatThreadVM;
@@ -43,6 +43,12 @@ function fmtSize(bytes: number) {
 
 export function ChatThread({ vm, actions, locale }: ChatThreadProps) {
   const meId = vm.meUserId;
+  // userId → presentation profile (sender avatar + colored name in group bubbles).
+  const participantsById = React.useMemo(() => {
+    const map = new Map<string, ParticipantVM>();
+    for (const p of vm.participants ?? []) map.set(p.userId, p);
+    return map;
+  }, [vm.participants]);
   const [messages, setMessages] = React.useState<ChatMessageVM[]>(vm.messages);
   const [cursor, setCursor] = React.useState<string | null>(vm.nextCursor);
   const [text, setText] = React.useState("");
@@ -179,19 +185,24 @@ export function ChatThread({ vm, actions, locale }: ChatThreadProps) {
           </p>
         )}
 
-        {messages.map((m) => {
+        {messages.map((m, i) => {
           if (m.kind === "system") {
             return (
               <div key={m.id} style={{ alignSelf: "center", maxWidth: "85%", textAlign: "center" }}>
-                <span style={{ display: "inline-block", background: "var(--hover, rgba(47,107,255,0.06))", color: "var(--ink-3)", fontSize: 12, padding: "6px 12px", borderRadius: 999 }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "var(--hover, rgba(47,107,255,0.06))", color: "var(--ink-3)", fontSize: 12, padding: "6px 12px", borderRadius: 999 }}>
+                  <Icon name="check" size={13} color="var(--green)" />
                   {m.body}
                 </span>
               </div>
             );
           }
           const mine = m.senderUserId === meId;
-          return (
-            <div key={m.id} style={{ alignSelf: mine ? "flex-end" : "flex-start", maxWidth: "82%" }}>
+          const prev = messages[i - 1];
+          const firstOfGroup = !prev || prev.senderUserId !== m.senderUserId || prev.kind === "system";
+          const sender = m.senderUserId ? participantsById.get(m.senderUserId) : undefined;
+
+          const content = (
+            <>
               <div style={{
                 background: mine ? "var(--accent)" : "var(--card)",
                 color: mine ? "#fff" : "var(--ink)",
@@ -203,6 +214,7 @@ export function ChatThread({ vm, actions, locale }: ChatThreadProps) {
                 fontSize: 14,
                 lineHeight: 1.45,
                 wordBreak: "break-word",
+                boxShadow: "0 1px 2px rgba(11,27,51,.06), 0 2px 8px rgba(11,27,51,.05)",
               }}>
                 {m.body && <span>{m.body}</span>}
                 {m.attachments.map((a) => (
@@ -227,6 +239,32 @@ export function ChatThread({ vm, actions, locale }: ChatThreadProps) {
                     {translations[m.id] ? tt(locale, "Ver original", "Show original") : tt(locale, "Traducir", "Translate")}
                   </button>
                 )}
+              </div>
+            </>
+          );
+
+          if (mine) {
+            return (
+              <div key={m.id} style={{ alignSelf: "flex-end", maxWidth: "82%" }}>{content}</div>
+            );
+          }
+
+          // Team message: avatar + colored sender name (grouped — only the first
+          // of a run shows the avatar/name).
+          return (
+            <div key={m.id} style={{ display: "flex", gap: 8, alignSelf: "flex-start", maxWidth: "86%" }}>
+              <div style={{ width: 28, flexShrink: 0 }}>
+                {firstOfGroup && (
+                  <div aria-hidden="true" style={{ width: 28, height: 28, borderRadius: 999, background: sender?.color ?? "var(--accent)", color: "#fff", display: "grid", placeItems: "center", fontSize: 11, fontWeight: 800 }}>
+                    {sender?.initials ?? "?"}
+                  </div>
+                )}
+              </div>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                {firstOfGroup && sender && (
+                  <div style={{ fontSize: 11.5, fontWeight: 800, color: sender.color, margin: "0 0 3px 2px" }}>{sender.name}</div>
+                )}
+                {content}
               </div>
             </div>
           );

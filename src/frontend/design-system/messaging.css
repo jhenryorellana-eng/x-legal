@@ -1,0 +1,313 @@
+/* =============================================================================
+ * messaging.css — staff floating messaging panel (PROMPT-VAN-07).
+ * Ported verbatim from the prototype `V2/UI Vanessa/styles.css` (msg-* / conv /
+ * th-head / call-*). The thread message body + composer reuse <ChatThread>
+ * (inline-styled, group bubbles from Wave 2), so the prototype's `.bub` / `.th-body`
+ * / `.th-input` classes are intentionally NOT ported here.
+ *
+ * Tokens (--accent, --panel, --ink*, --line, --glass*, --accent-soft, --brand-*,
+ * --shadow-*) come from the staff design system (vanessa.css / tokens.css).
+ * Less-certain tokens carry inline fallbacks.
+ * ============================================================================= */
+
+.msg-launch {
+  position: fixed;
+  right: 26px;
+  bottom: 24px;
+  z-index: 60;
+  width: 62px;
+  height: 62px;
+  border: none;
+  cursor: pointer;
+  border-radius: 20px;
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 55%, var(--brand-navy)));
+  display: grid;
+  place-items: center;
+  color: #fff;
+  box-shadow: 0 14px 34px color-mix(in srgb, var(--accent) 48%, transparent);
+  transition: 0.18s var(--ease, cubic-bezier(0.4, 0.8, 0.3, 1));
+}
+.msg-launch:hover { transform: translateY(-3px) scale(1.04); }
+.msg-launch .material-symbols-rounded { font-size: 28px; }
+.msg-launch .pop {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 99px;
+  background: var(--brand-red, #e4002b);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 900;
+  display: grid;
+  place-items: center;
+  border: 2.5px solid var(--bg, #eef3fa);
+}
+
+.msg-panel {
+  position: fixed;
+  right: 26px;
+  bottom: 24px;
+  z-index: 61;
+  width: 392px;
+  height: min(640px, 82vh);
+  display: flex;
+  flex-direction: column;
+  border-radius: 24px;
+  overflow: hidden;
+  background: var(--glass, var(--panel, #fff));
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  border: 1px solid var(--glass-brd, var(--line));
+  box-shadow: var(--shadow-lg, 0 18px 48px rgba(11, 27, 51, 0.16));
+  animation: bubin 0.32s cubic-bezier(0.4, 0.8, 0.3, 1) both;
+}
+@media (max-width: 480px) {
+  .msg-panel { right: 12px; left: 12px; bottom: 12px; width: auto; height: min(640px, 86vh); }
+  .msg-launch { right: 16px; bottom: 16px; }
+}
+
+.msg-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 16px 13px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(120deg, color-mix(in srgb, var(--accent) 13%, transparent), transparent);
+}
+.msg-head .tt { font-weight: 900; font-size: 17px; color: var(--ink); }
+
+.msg-search { position: relative; padding: 12px 14px 6px; }
+.msg-search input {
+  width: 100%;
+  height: 40px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel, #fff);
+  padding: 0 14px 0 40px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.msg-search input:focus { outline: none; border-color: var(--accent); }
+.msg-search > .material-symbols-rounded {
+  position: absolute;
+  left: 26px;
+  top: 50%;
+  transform: translateY(-30%);
+  color: var(--ink-3);
+  font-size: 19px;
+}
+
+.msg-tabs { display: flex; gap: 3px; padding: 4px 14px 12px; }
+.msg-tab {
+  flex: 1;
+  height: 36px;
+  border: none;
+  cursor: pointer;
+  border-radius: 10px;
+  font-weight: 800;
+  font-size: 13.5px;
+  color: var(--ink-2);
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: 0.14s;
+}
+.msg-tab .material-symbols-rounded { font-size: 18px; }
+.msg-tab.on { background: var(--accent); color: #fff; }
+
+.conv-list { flex: 1; overflow-y: auto; padding: 0 8px 10px; }
+.conv {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 10px;
+  border-radius: 14px;
+  transition: 0.14s;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+}
+.conv:hover { background: var(--hover, color-mix(in srgb, var(--accent) 7%, transparent)); }
+.conv-av {
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 900;
+  font-size: 16px;
+  position: relative;
+}
+.conv-av .on-dot {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--brand-green, #1bb673);
+  border: 2.5px solid var(--panel, #fff);
+}
+.conv-main { flex: 1; min-width: 0; }
+.conv-name { font-weight: 800; font-size: 14.5px; color: var(--ink); display: flex; align-items: center; gap: 6px; }
+.conv-sub {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+.conv-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; flex: none; }
+.conv-time { font-size: 11px; font-weight: 800; color: var(--ink-3); }
+.conv-badge {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 99px;
+  background: var(--brand-red, #e4002b);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 900;
+  display: grid;
+  place-items: center;
+}
+.conv .chip.gold {
+  height: 18px;
+  font-size: 9.5px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 99px;
+  font-weight: 800;
+  background: color-mix(in srgb, var(--brand-gold, #ffc629) 22%, transparent);
+  color: color-mix(in srgb, var(--brand-gold, #ffc629) 60%, var(--ink));
+}
+.msg-note {
+  padding: 10px 12px;
+  font-size: 11.5px;
+  color: var(--ink-3);
+  font-weight: 700;
+  text-align: center;
+  line-height: 1.5;
+}
+
+/* thread header (the message body + composer come from <ChatThread>) */
+.th-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 13px 14px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(120deg, color-mix(in srgb, var(--accent) 13%, transparent), transparent);
+}
+.th-back {
+  width: 34px;
+  height: 34px;
+  border: none;
+  cursor: pointer;
+  background: transparent;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  color: var(--ink-2);
+  flex: none;
+}
+.th-back:hover { background: var(--hover, color-mix(in srgb, var(--accent) 7%, transparent)); color: var(--ink); }
+.th-name { font-weight: 900; font-size: 14.5px; line-height: 1.1; color: var(--ink); }
+.th-sub { font-size: 11.5px; color: var(--ink-2); font-weight: 700; margin-top: 1px; }
+.th-acts { display: flex; gap: 6px; margin-left: auto; }
+.th-act {
+  width: 38px;
+  height: 38px;
+  border: none;
+  cursor: pointer;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  background: var(--accent-soft);
+  transition: 0.14s;
+}
+.th-act:hover { background: var(--accent); color: #fff; }
+.th-act .material-symbols-rounded { font-size: 20px; }
+
+/* call overlay (visual only — LiveKit in F7) */
+.call-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  background: rgba(2, 8, 20, 0.7);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  animation: fadein 0.25s;
+}
+.call-card {
+  width: min(380px, 92vw);
+  border-radius: 26px;
+  overflow: hidden;
+  box-shadow: var(--shadow-lg, 0 18px 48px rgba(11, 27, 51, 0.16));
+  text-align: center;
+  padding: 34px 28px 26px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 16%, var(--panel, #fff)), var(--panel, #fff));
+}
+.call-av {
+  width: 108px;
+  height: 108px;
+  border-radius: 50%;
+  margin: 0 auto 18px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 900;
+  font-size: 38px;
+  animation: ring 1.6s ease-out infinite;
+}
+@keyframes ring {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent); }
+  100% { box-shadow: 0 0 0 26px transparent; }
+}
+.call-name { font-weight: 900; font-size: 20px; color: var(--ink); }
+.call-status { color: var(--ink-2); font-weight: 700; font-size: 13.5px; margin-top: 4px; }
+.call-actions { display: flex; justify-content: center; gap: 16px; margin-top: 22px; }
+.call-btn {
+  width: 58px;
+  height: 58px;
+  border: none;
+  cursor: pointer;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  transition: 0.14s;
+}
+.call-btn:hover { transform: scale(1.06); }
+.call-btn .material-symbols-rounded { font-size: 26px; }
+.call-end { background: var(--brand-red, #e4002b); }
+.call-mute { background: var(--chip, color-mix(in srgb, var(--ink-3) 12%, transparent)); color: var(--ink); }
+
+@keyframes bubin {
+  from { opacity: 0; transform: translateY(8px) scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes fadein {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg-panel, .call-overlay, .call-av { animation: none !important; }
+}

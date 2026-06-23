@@ -10,6 +10,8 @@
 @import "../frontend/design-system/vanessa.css";
 /* Staff shell: content padding + mobile responsive drawer (DOC-50 §1.3) */
 @import "../frontend/design-system/staff-shell.css";
+/* Staff floating messaging panel (PROMPT-VAN-07 replica) */
+@import "../frontend/design-system/messaging.css";
 
 /* shadcn dark-mode variant driven by [data-theme="dark"] instead of `.dark` */
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));

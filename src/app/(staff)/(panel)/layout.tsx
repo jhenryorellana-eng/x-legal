@@ -24,6 +24,23 @@ import {
   markAllNotificationsReadAction,
   getUnreadCountAction,
 } from "@/backend/modules/notifications/actions";
+import { getUnreadBadge } from "@/backend/modules/messaging";
+import {
+  listConversationsAction,
+  getConversationThreadAction,
+  listStaffDirectoryAction,
+  openTeamConversationAction,
+  openStaffDirectConversationAction,
+  getUnreadBadgeAction,
+  sendMessageAction,
+  loadMoreMessagesAction,
+  listSinceAction,
+  markReadAction,
+  translateMessageAction,
+  getAttachmentUploadUrlAction,
+  confirmAttachmentAction,
+  getAttachmentDownloadUrlAction,
+} from "@/backend/modules/messaging/actions";
 import { mapNotificationRow } from "@/frontend/features/notifications/types";
 import { resolveI18n, type Locale } from "@/shared/i18n";
 import { STAFF_NAV, filterNav } from "@/frontend/lib/nav";
@@ -99,10 +116,11 @@ export default async function StaffPanelLayout({
     logout: t("shell.logout"),
   };
 
-  // Notification bell: first page + unread badge, resolved server-side.
-  const [notifPage, unread] = await Promise.all([
+  // Notification bell + messaging badge: resolved server-side.
+  const [notifPage, unread, msgBadge] = await Promise.all([
     getNotifications(actor, { limit: 20 }),
     getUnreadCount(actor),
+    getUnreadBadge(actor),
   ]);
   const notifInitial = notifPage.items.map((r) =>
     mapNotificationRow(r as unknown as Record<string, unknown>, locale as "es" | "en"),
@@ -132,6 +150,27 @@ export default async function StaffPanelLayout({
             markRead: markNotificationReadAction,
             markAllRead: markAllNotificationsReadAction,
             getUnreadCount: getUnreadCountAction,
+          },
+        }}
+        messaging={{
+          locale: locale as "es" | "en",
+          initialUnread: msgBadge.total,
+          raw: {
+            getCaseThread: getConversationThreadAction,
+            getConversationThread: getConversationThreadAction,
+            listConversations: listConversationsAction,
+            staffDirectory: listStaffDirectoryAction,
+            openTeamConversation: openTeamConversationAction,
+            openStaffDirect: openStaffDirectConversationAction,
+            getUnreadBadge: getUnreadBadgeAction,
+            send: sendMessageAction,
+            loadMore: loadMoreMessagesAction,
+            listSince: listSinceAction,
+            markRead: markReadAction,
+            translate: translateMessageAction,
+            getUploadUrl: getAttachmentUploadUrlAction,
+            confirmAttachment: confirmAttachmentAction,
+            getDownloadUrl: getAttachmentDownloadUrlAction,
           },
         }}
       >

@@ -12,7 +12,12 @@ import { requireActor, AuthzError } from "@/backend/platform/authz";
 import { logger } from "@/backend/platform/logger";
 import { MessagingError } from "./service";
 import * as svc from "./service";
-import type { ConversationThreadDto, SendMessageInput } from "./service";
+import type {
+  ConversationThreadDto,
+  ConversationListDto,
+  StaffDirectoryEntry,
+  SendMessageInput,
+} from "./service";
 import type { AttachmentRef, MessageRow } from "./index";
 
 type ActionResult<T> =
@@ -91,6 +96,57 @@ export async function getUnreadBadgeAction(): Promise<ActionResult<{ total: numb
   try {
     const actor = await requireActor();
     return ok(await svc.getUnreadBadge(actor));
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+export async function listConversationsAction(): Promise<ActionResult<ConversationListDto>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.listConversations(actor));
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+export async function getConversationThreadAction(
+  conversationId: string,
+): Promise<ActionResult<ConversationThreadDto>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.getThread(actor, conversationId));
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+export async function listStaffDirectoryAction(): Promise<ActionResult<StaffDirectoryEntry[]>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.listStaffDirectory(actor));
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+export async function openTeamConversationAction(): Promise<ActionResult<ConversationThreadDto>> {
+  try {
+    const actor = await requireActor();
+    const conv = await svc.ensureTeamConversation(actor);
+    return ok(await svc.getThread(actor, conv.id));
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+export async function openStaffDirectConversationAction(
+  otherUserId: string,
+): Promise<ActionResult<ConversationThreadDto>> {
+  try {
+    const actor = await requireActor();
+    const conv = await svc.ensureStaffDirectConversation(actor, otherUserId);
+    return ok(await svc.getThread(actor, conv.id));
   } catch (err) {
     return fail(err);
   }

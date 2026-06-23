@@ -17,6 +17,10 @@ export {
   listSince,
   markRead,
   getUnreadBadge,
+  listConversations,
+  listStaffDirectory,
+  ensureTeamConversation,
+  ensureStaffDirectConversation,
   translateMessage,
   addParticipant,
   removeParticipant,
@@ -26,7 +30,14 @@ export {
   MessagingError,
 } from "./service";
 
-export type { ConversationThreadDto, SendMessageInput } from "./service";
+export type {
+  ConversationThreadDto,
+  ConversationSummaryDto,
+  ConversationListDto,
+  ParticipantProfile,
+  StaffDirectoryEntry,
+  SendMessageInput,
+} from "./service";
 export type {
   ConversationScope,
   MessageKind,

@@ -27,6 +27,11 @@ const mockRepo = vi.hoisted(() => ({
   loadCaseParticipantSources: vi.fn(),
   getUserLocale: vi.fn(),
   findCaseOrgId: vi.fn(),
+  loadParticipantProfiles: vi.fn().mockResolvedValue([]),
+  listConversationsForUser: vi.fn().mockResolvedValue([]),
+  findConversationByTitle: vi.fn(),
+  listActiveStaffIds: vi.fn(),
+  listActiveStaffProfiles: vi.fn().mockResolvedValue([]),
 }));
 
 const mockEvents = vi.hoisted(() => {
@@ -70,8 +75,14 @@ import {
   removeParticipant,
   translateMessage,
   getCaseThread,
+  getThread,
+  listConversations,
+  listStaffDirectory,
+  ensureTeamConversation,
+  ensureStaffDirectConversation,
 } from "../service";
 import { AuthzError } from "@/backend/platform/authz";
+import { senderColor } from "../domain";
 
 const ORG = "org-1";
 const CASE = "11111111-1111-4111-8111-111111111111";
@@ -225,5 +236,98 @@ describe("translateMessage", () => {
     const r = await translateMessage(CLIENT, "m1");
     expect(r.text).toBe("Hello");
     expect(mockRepo.setMessageTranslation).toHaveBeenCalledWith("m1", { lang: "en", text: "Hello" });
+  });
+});
+
+describe("getThread participants (group header / sender colors)", () => {
+  beforeEach(() => {
+    mockRepo.findConversationById.mockResolvedValue(conv);
+    mockRepo.isParticipant.mockResolvedValue(true);
+    mockRepo.listMessages.mockResolvedValue({ items: [], nextCursor: null });
+    mockRepo.listParticipantIds.mockResolvedValue(["client-1", "staff-1"]);
+    mockRepo.getParticipant.mockResolvedValue({ last_read_at: null });
+  });
+  it("enriches each participant with initials + a stable color", async () => {
+    mockRepo.loadParticipantProfiles.mockResolvedValue([
+      { userId: "staff-1", name: "Diana Pérez", roleLabel: "Preparación del expediente", kind: "staff" },
+      { userId: "client-1", name: "María González", roleLabel: null, kind: "client" },
+    ]);
+    const r = await getThread(STAFF, CONV);
+    expect(r.participants).toHaveLength(2);
+    expect(r.participants[0]).toMatchObject({ userId: "staff-1", initials: "DP", color: senderColor("staff-1") });
+    expect(r.participants[1]).toMatchObject({ userId: "client-1", initials: "MG" });
+  });
+});
+
+describe("listConversations (staff inbox: Clientes vs Equipo)", () => {
+  it("groups by scope and enriches snippet/initials/color", async () => {
+    mockRepo.listConversationsForUser.mockResolvedValue([
+      {
+        conversationId: "c-case", scope: "case", title: null, caseId: CASE, caseNumber: "ULP-2026-0002", serviceChip: "Visa Juvenil",
+        peerName: "Sofía Cabrera", lastMessageAt: "2026-06-16T09:41:00Z", unread: 2,
+        lastMessage: { kind: "text", body: "Recibido", senderUserId: "staff-9", senderName: "Diana Ruiz", attachmentName: null },
+      },
+      {
+        conversationId: "c-team", scope: "support", title: "__team__", caseId: null, caseNumber: null, serviceChip: null,
+        peerName: "Equipo UsaLatinoPrime", lastMessageAt: "2026-06-15T11:00:00Z", unread: 0,
+        lastMessage: { kind: "text", body: "Reunión el viernes", senderUserId: "staff-2", senderName: "Andrium Vega", attachmentName: null },
+      },
+    ]);
+    const r = await listConversations(STAFF);
+    expect(r.clients).toHaveLength(1);
+    expect(r.team).toHaveLength(1);
+    expect(r.clients[0]).toMatchObject({
+      name: "Sofía Cabrera", initials: "SC", serviceChip: "Visa Juvenil", caseNumber: "ULP-2026-0002", unread: 2, snippet: "Diana: Recibido",
+    });
+    expect(r.team[0]).toMatchObject({ name: "Equipo UsaLatinoPrime", snippet: "Andrium: Reunión el viernes" });
+  });
+});
+
+describe("listStaffDirectory (Equipo tab — start a DM)", () => {
+  it("returns active staff (excluding self) with initials + stable color", async () => {
+    mockRepo.listActiveStaffProfiles.mockResolvedValue([
+      { userId: "staff-2", name: "Diana Pérez", roleLabel: "Paralegal" },
+      { userId: "staff-3", name: "Andrium Vega", roleLabel: "Coordinación" },
+    ]);
+    const r = await listStaffDirectory(STAFF);
+    expect(mockRepo.listActiveStaffProfiles).toHaveBeenCalledWith(ORG, "staff-1");
+    expect(r).toHaveLength(2);
+    expect(r[0]).toMatchObject({ userId: "staff-2", initials: "DP", color: senderColor("staff-2") });
+  });
+});
+
+describe("ensureTeamConversation (internal all-staff group)", () => {
+  it("returns the existing team group without inserting", async () => {
+    const team = { id: "team-1", org_id: ORG, scope: "support", case_id: null, title: "__team__" };
+    mockRepo.findConversationByTitle.mockResolvedValue(team);
+    const r = await ensureTeamConversation(STAFF);
+    expect(r.id).toBe("team-1");
+    expect(mockRepo.insertConversation).not.toHaveBeenCalled();
+  });
+  it("creates the group and adds every active staff member", async () => {
+    const team = { id: "team-1", org_id: ORG, scope: "support", case_id: null, title: "__team__" };
+    mockRepo.findConversationByTitle.mockResolvedValue(null);
+    mockRepo.listActiveStaffIds.mockResolvedValue(["staff-1", "staff-2", "staff-3"]);
+    mockRepo.insertConversation.mockResolvedValue({ row: team, conflict: false });
+    await ensureTeamConversation(STAFF);
+    expect(mockRepo.addParticipants).toHaveBeenCalledWith("team-1", ["staff-1", "staff-2", "staff-3"]);
+  });
+});
+
+describe("ensureStaffDirectConversation (1:1 staff DM)", () => {
+  it("creates a deterministic DM thread with both staff as participants", async () => {
+    const dm = { id: "dm-1", org_id: ORG, scope: "support", case_id: null, title: "__dm__:staff-1|staff-2" };
+    mockRepo.findConversationByTitle.mockResolvedValue(null);
+    mockRepo.listActiveStaffIds.mockResolvedValue(["staff-1", "staff-2"]);
+    mockRepo.insertConversation.mockResolvedValue({ row: dm, conflict: false });
+    const r = await ensureStaffDirectConversation(STAFF, "staff-2");
+    expect(r.id).toBe("dm-1");
+    expect(mockRepo.findConversationByTitle).toHaveBeenCalledWith(ORG, "support", "__dm__:staff-1|staff-2");
+    expect(mockRepo.addParticipants).toHaveBeenCalledWith("dm-1", expect.arrayContaining(["staff-1", "staff-2"]));
+  });
+  it("rejects a target that is not active staff in the org (no DM with a client/cross-org)", async () => {
+    mockRepo.listActiveStaffIds.mockResolvedValue(["staff-1", "staff-2"]);
+    await expect(ensureStaffDirectConversation(STAFF, "client-99")).rejects.toBeInstanceOf(AuthzError);
+    expect(mockRepo.insertConversation).not.toHaveBeenCalled();
   });
 });

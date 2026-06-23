@@ -15,6 +15,10 @@ import { Icon } from "@/frontend/components/brand/icon";
 import { NotificationBell } from "@/frontend/features/notifications/notification-bell";
 import type { NotificationVM } from "@/frontend/features/notifications/types";
 import type { RawNotificationActions } from "@/frontend/features/notifications/build-notification-actions";
+import {
+  StaffMessagingPanel,
+  type RawStaffMessagingActions,
+} from "@/frontend/features/messaging/staff/staff-messaging-panel";
 
 /**
  * StaffShell — the desktop panel chrome (DOC-50 §1.3, DOC-53 §0).
@@ -44,6 +48,12 @@ export interface StaffShellNotifications {
   raw: RawNotificationActions;
 }
 
+export interface StaffShellMessaging {
+  locale: "es" | "en";
+  initialUnread: number;
+  raw: RawStaffMessagingActions;
+}
+
 export interface StaffShellProps {
   groups: SidebarGroup[];
   user: SidebarUser;
@@ -52,6 +62,8 @@ export interface StaffShellProps {
   logoutAction: () => void;
   /** Notification bell data + actions (injected from the layout). */
   notifications?: StaffShellNotifications;
+  /** Floating messaging panel data + actions (injected from the layout). */
+  messaging?: StaffShellMessaging;
   children: React.ReactNode;
 }
 
@@ -61,6 +73,7 @@ export function StaffShell({
   messages,
   logoutAction,
   notifications,
+  messaging,
   children,
 }: StaffShellProps) {
   const [pending, startTransition] = React.useTransition();
@@ -154,6 +167,14 @@ export function StaffShell({
           {children}
         </main>
       </div>
+
+      {messaging ? (
+        <StaffMessagingPanel
+          locale={messaging.locale}
+          initialUnread={messaging.initialUnread}
+          raw={messaging.raw}
+        />
+      ) : null}
 
       <BrandToaster />
     </div>
