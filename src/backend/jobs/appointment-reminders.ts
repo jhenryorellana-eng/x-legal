@@ -258,9 +258,12 @@ export async function handleAppointmentReminders(
 
     for (const appt of appointments) {
       // Build action URL for the appointment detail
+      // The client appointment detail route is /caso/[caseId]/cita/[appointmentId]
+      // (singular "cita"). "citas" 404s. Without a caseId there is no deep-link
+      // target, so fall back to the client home.
       const actionUrl = appt.caseId
-        ? `/caso/${appt.caseId}/citas/${appt.id}`
-        : `/citas/${appt.id}`;
+        ? `/caso/${appt.caseId}/cita/${appt.id}`
+        : `/home`;
 
       // Collect recipients: client + staff (DOC-47 §4.3 reminder rows: ①②③)
       const recipients: Array<{ userId: string; actionUrl: string }> = [];
