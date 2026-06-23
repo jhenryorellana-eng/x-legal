@@ -500,24 +500,63 @@ export function NewCaseModal({
       )}
 
       {step === 3 && signingLink && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <p style={{ margin: 0, fontSize: 14, color: "var(--ink-2)", lineHeight: 1.5 }}>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            textAlign: "center",
+            gap: 16,
+            padding: "12px 0 8px",
+          }}
+        >
+          {/* Success badge */}
+          <div
+            aria-hidden="true"
+            style={{
+              width: 72,
+              height: 72,
+              borderRadius: "50%",
+              background: "var(--blue-soft)",
+              display: "grid",
+              placeItems: "center",
+              boxShadow: "0 0 0 8px color-mix(in srgb, var(--accent) 8%, transparent)",
+            }}
+          >
+            <Icon name="check" size={34} color="var(--accent)" />
+          </div>
+
+          <p
+            style={{
+              margin: 0,
+              fontSize: 14.5,
+              color: "var(--ink-2)",
+              lineHeight: 1.55,
+              maxWidth: 400,
+            }}
+          >
             {strings.linkBody}
           </p>
+
+          {/* Signing link */}
           <div
             style={{
+              width: "100%",
               display: "flex",
               alignItems: "center",
               gap: 10,
               background: "var(--blue-soft)",
+              border: "1px solid color-mix(in srgb, var(--accent) 18%, transparent)",
               borderRadius: 12,
               padding: "12px 14px",
+              boxSizing: "border-box",
             }}
           >
             <Icon name="lock" size={16} color="var(--accent)" />
             <code
               style={{
                 flex: 1,
+                textAlign: "left",
                 fontSize: 12.5,
                 color: "var(--ink)",
                 overflow: "hidden",
@@ -529,6 +568,7 @@ export function NewCaseModal({
               {signingLink}
             </code>
           </div>
+
           <GradientBtn size="md" full icon="copy" onClick={copyLink}>
             {strings.copyLink}
           </GradientBtn>
