@@ -25,6 +25,7 @@
  *   job-failed                — QStash failure callback (DOC-26 §5.2, F4)
  *   retry-abogados-polling    — Abogados.com polling retry (DOC-70, DOC-26 §2.8, F6)
  *   installment-reminders     — overdue mark + due-3d/due-day client reminders (DOC-44 §3.9, F6-Ola2)
+ *   expire-stale-checkouts    — clear orphaned pending/stripe payments (unblocks new checkouts)
  */
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -41,6 +42,8 @@ import { handleAiBudgetAggregation } from "@/backend/jobs/ai-budget-aggregation"
 import { handleJobFailed } from "@/backend/jobs/job-failed";
 import { handleRetryAbogadosPolling } from "@/backend/jobs/retry-abogados-polling";
 import { handleInstallmentReminders } from "@/backend/jobs/installment-reminders";
+import { handleExpireStaleCheckouts } from "@/backend/jobs/expire-stale-checkouts";
+import { handleReconcileStripePayments } from "@/backend/jobs/reconcile-stripe-payments";
 import { handleSendCampaign } from "@/backend/jobs/send-campaign";
 
 // ---------------------------------------------------------------------------
@@ -68,6 +71,10 @@ const JOB_REGISTRY: Record<string, JobHandler> = {
   "retry-abogados-polling": handleRetryAbogadosPolling,
   // F6-Ola2 billing cron (DOC-44 §3.9)
   "installment-reminders": handleInstallmentReminders,
+  // Billing cron — clear orphaned Stripe checkout attempts (unblocks new checkouts)
+  "expire-stale-checkouts": handleExpireStaleCheckouts,
+  // Billing cron — reconcile created-but-unconfirmed Stripe sessions (card safety net)
+  "reconcile-stripe-payments": handleReconcileStripePayments,
   // F6-Ola3 campaigns (DOC-26 §2.5)
   "send-campaign": handleSendCampaign,
 };

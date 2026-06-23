@@ -20,12 +20,16 @@ export {
   // F6-Ola1
   createCheckoutSessionForInstallment,
   handleStripeEvent,
+  reconcileCheckoutSession,
+  reconcilePendingStripePayments,
   submitZelleProof,
   confirmZellePayment,
   rejectZelleProof,
   getAccountStatement,
   getInstallmentPaymentStatus,
   getZelleProofUploadUrl,
+  getZelleProofViewUrl,
+  expireOrphanCheckouts,
   onContractSigned,
   // F6-Ola2
   waiveInstallment,
@@ -54,6 +58,10 @@ export type {
   SubmitZelleProofInput,
   RejectZelleProofInput,
   GetZelleProofUploadUrlInput,
+  ZelleProofView,
+  ExpireOrphanCheckoutsResult,
+  ReconcileResult,
+  ReconcilePendingResult,
   AccountStatementDto,
   // F6-Ola2
   WaiveInstallmentInput,

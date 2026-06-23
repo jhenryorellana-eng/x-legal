@@ -26,12 +26,14 @@ import {
   rejectZelleProof,
   registerZellePayment,
   getZelleProofUploadUrl,
+  getZelleProofViewUrl,
   waiveInstallment,
   rescheduleInstallment,
   BillingError,
   type RejectZelleProofInput,
   type RegisterZellePaymentInput,
   type GetZelleProofUploadUrlInput,
+  type ZelleProofView,
 } from "@/backend/modules/billing";
 
 // ---------------------------------------------------------------------------
@@ -127,6 +129,24 @@ export async function getZelleProofUploadUrlAction(
   try {
     const actor = await requireActor();
     const data = await getZelleProofUploadUrl(actor, input);
+    return { ok: true, data };
+  } catch (err) {
+    if (err instanceof BillingError) return { ok: false, error: { code: err.code } };
+    return { ok: false, error: { code: "UNEXPECTED" } };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// getZelleProofViewUrlAction (RF-AND-011)
+// Returns a short-lived signed URL to view an uploaded Zelle proof.
+// ---------------------------------------------------------------------------
+
+export async function getZelleProofViewUrlAction(
+  paymentId: string,
+): Promise<BillingResult<ZelleProofView>> {
+  try {
+    const actor = await requireActor();
+    const data = await getZelleProofViewUrl(actor, paymentId);
     return { ok: true, data };
   } catch (err) {
     if (err instanceof BillingError) return { ok: false, error: { code: err.code } };

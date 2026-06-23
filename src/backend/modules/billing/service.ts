@@ -18,7 +18,7 @@ import { env } from "@/backend/platform/env";
 import { logger } from "@/backend/platform/logger";
 import { getStripe } from "@/backend/platform/stripe";
 import { createServiceClient } from "@/backend/platform/supabase";
-import { validateUploadedObject, createSignedUploadUrl } from "@/backend/platform/storage";
+import { validateUploadedObject, createSignedUploadUrl, createSignedDownloadUrl } from "@/backend/platform/storage";
 import { limitBillingCheckout, limitBillingUploadUrl } from "@/backend/platform/ratelimit";
 import { writeAudit, appendCaseTimeline } from "@/backend/modules/audit";
 
@@ -53,6 +53,9 @@ import {
   findInstallmentCaseId,
   getAccountStatement as repoGetAccountStatement,
   findActiveStripePayment,
+  listOrphanStripePayments,
+  listPendingStripeSessionsToReconcile,
+  findOrphanStripePaymentForInstallment,
   findPaymentByIntentId,
   findPaymentBySessionId,
   findStripeCustomer,
@@ -99,6 +102,7 @@ export class BillingError extends Error {
       | "PAYMENT_IN_PROGRESS"
       | "PROOF_ALREADY_SUBMITTED"
       | "PROOF_INVALID_FILE"
+      | "PROOF_NOT_FOUND"
       | "INSTALLMENT_NOT_WAIVABLE"
       | "WAIVE_REASON_REQUIRED"
       | "WAIVE_REQUIRES_ADMIN"
@@ -604,6 +608,17 @@ export async function createCheckoutSessionForInstallment(
     ? await findInstallmentCountForPlan(installment.payment_plan_id)
     : null;
 
+  // Lazy cleanup (Ola-2 fix): if a prior attempt orphaned a pending/stripe row
+  // (insert succeeded but stripe.checkout.sessions.create threw → session_id stayed
+  // null), expire it so this retry is not blocked by payments_active_stripe_unique_idx.
+  // 5-min floor avoids racing a genuine concurrent checkout, whose session is created
+  // within seconds. Older session_id-null rows are unambiguously orphans.
+  const orphanCutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  const orphan = await findOrphanStripePaymentForInstallment(installmentId, orphanCutoff);
+  if (orphan) {
+    await updatePayment(orphan.id, { status: "failed" });
+  }
+
   // BLOCKER-2: Insert the payment row BEFORE calling Stripe — the BD is the mutex.
   // The unique partial index payments_active_stripe_unique_idx
   // (installment_id WHERE status='pending' AND method='stripe') prevents a second
@@ -631,10 +646,10 @@ export async function createCheckoutSessionForInstallment(
     throw err;
   }
 
-  // TODO (Ola-2): if stripe.checkout.sessions.create throws AFTER the insert above,
-  // the payment row is orphaned (pending/stripe, session_id=null) and blocks further
-  // checkouts for this installment via the unique index until manually cleared. Add a
-  // cleanup job that expires pending stripe payments with null session_id after ~1h.
+  // NOTE: if stripe.checkout.sessions.create throws AFTER the insert above, the
+  // payment row is orphaned (pending/stripe, session_id=null). Two safety nets clear
+  // it: (1) the lazy cleanup at the top of this function (next retry, 5-min floor),
+  // and (2) the expire-stale-checkouts cron (expireOrphanCheckouts, hourly, 60-min).
   const stripe = getStripe();
   const expiresAt = Math.floor(Date.now() / 1000) + 24 * 60 * 60; // 24h
 
@@ -690,6 +705,51 @@ export async function createCheckoutSessionForInstallment(
 }
 
 // ---------------------------------------------------------------------------
+// settlePaidCheckoutSession — shared confirmation path (DOC-71 §3.2 + §3.4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Settles a Stripe Checkout Session against its local payment if Stripe reports
+ * it as paid. This is the SINGLE confirmation path shared by all three layers:
+ *   1. the webhook (checkout.session.completed) — real-time,
+ *   2. reconcileCheckoutSession (success_url return) — immediate on the client,
+ *   3. reconcilePendingStripePayments (cron) — safety net for abandoned tabs.
+ *
+ * The Session passed in must come from an authoritative source (the verified
+ * webhook event, or `stripe.checkout.sessions.retrieve` on the server) — never
+ * from client-supplied data. Confirmation funnels through applyPaymentSuccess,
+ * which is idempotent, so calling this repeatedly / from several layers is safe.
+ *
+ * Returns:
+ *  - "settled"    payment confirmed now (or already was — applyPaymentSuccess no-op)
+ *  - "not_paid"   session.payment_status !== "paid" — nothing to do yet
+ *  - "no_payment" no local payment / installment found for the session
+ */
+async function settlePaidCheckoutSession(
+  session: import("stripe").Stripe.Checkout.Session,
+): Promise<"settled" | "not_paid" | "no_payment"> {
+  if (session.payment_status !== "paid") return "not_paid";
+
+  const payment = await resolvePaymentForSession(session);
+  if (!payment) return "no_payment";
+
+  // Link payment → intent if now known (mirrors the webhook behaviour)
+  if (session.payment_intent && typeof session.payment_intent === "string") {
+    await updatePayment(payment.id, { stripe_payment_intent_id: session.payment_intent });
+  }
+
+  const installment = await findInstallmentById(payment.installment_id);
+  if (!installment) return "no_payment";
+
+  const caseId = await findInstallmentCaseId(installment.id);
+  // MED-3: orgId ALWAYS from BD — never from Stripe metadata (user-controlled)
+  const orgId = await findOrgIdForCase(caseId);
+
+  await applyPaymentSuccess(payment, installment, caseId, orgId);
+  return "settled";
+}
+
+// ---------------------------------------------------------------------------
 // handleStripeEvent — webhook dispatcher (DOC-71 §3.2)
 // ---------------------------------------------------------------------------
 
@@ -713,27 +773,12 @@ export async function handleStripeEvent(
     // -----------------------------------------------------------------------
     case "checkout.session.completed": {
       const session = event.data.object as import("stripe").Stripe.Checkout.Session;
-      if (session.payment_status !== "paid") break; // not a completed payment
-
-      const payment = await resolvePaymentForSession(session);
-      if (!payment) {
+      // Funnel through the shared settle path (same logic used by the reconcile
+      // layers). "not_paid" → no-op; "no_payment" → record a webhook error.
+      const outcome = await settlePaidCheckoutSession(session);
+      if (outcome === "no_payment") {
         await markWebhookError(source, webhookKey, `checkout.session.completed: no payment for session ${session.id}`);
-        break;
       }
-
-      // Update payment with intent id if now known
-      if (session.payment_intent && typeof session.payment_intent === "string") {
-        await updatePayment(payment.id, { stripe_payment_intent_id: session.payment_intent });
-      }
-
-      const installment = await findInstallmentById(payment.installment_id);
-      if (!installment) break;
-      const caseId = await findInstallmentCaseId(installment.id);
-      // MED-3: orgId ALWAYS from BD (findOrgIdForCase) — never from Stripe metadata
-      // (metadata is controlled by whoever created the session — not a trusted source)
-      const orgId = await findOrgIdForCase(caseId);
-
-      await applyPaymentSuccess(payment, installment, caseId, orgId);
       break;
     }
 
@@ -830,6 +875,146 @@ export async function handleStripeEvent(
       // Unknown events: silently accept (200) without error — Stripe sends many
       logger.info({ eventType: event.type }, "billing: unhandled Stripe event type — ignoring");
   }
+}
+
+// ---------------------------------------------------------------------------
+// reconcileCheckoutSession — L2: success_url return reconciliation (DOC-71 §3.5)
+// ---------------------------------------------------------------------------
+
+export interface ReconcileResult {
+  installmentStatus: string;
+  paymentStatus: string | null;
+  /** true once the payment is confirmed (this call or a prior one). */
+  settled: boolean;
+}
+
+/**
+ * Reconciles a Stripe Checkout Session when the client lands back on the
+ * success_url (`/pagos/confirmacion?session_id=…`). The SERVER independently
+ * asks Stripe whether the session is paid (`checkout.sessions.retrieve`) and
+ * settles the payment if so — it NEVER trusts a client-reported status
+ * (DOC-51 §8). This makes card confirmation immediate for the user even when
+ * the webhook is delayed, retrying, or not yet configured: confirmation no
+ * longer depends on a single external callback.
+ *
+ * Idempotent and safe to poll: settling funnels through applyPaymentSuccess.
+ *
+ * Authorization: client must have access to the owning case (fail-closed);
+ * staff need billing:edit + same-org. Throws PAYMENT_NOT_PENDING if the
+ * session has no local payment row (unknown / forged session id).
+ */
+export async function reconcileCheckoutSession(
+  actor: Actor,
+  sessionId: string,
+): Promise<ReconcileResult> {
+  const payment = await findPaymentBySessionId(sessionId);
+  if (!payment) throw new BillingError("PAYMENT_NOT_PENDING");
+
+  // Authorize against the owning case (same guards as the rest of the module).
+  const caseId = await findInstallmentCaseId(payment.installment_id);
+  if (actor.kind === "client") {
+    if (!caseId) throw new AuthzError("forbidden_case");
+    await requireCaseAccess(actor, caseId);
+  } else {
+    can(actor, "billing", "edit");
+    await requirePaymentOrg(actor, payment.id);
+  }
+
+  // Authoritative check: ask Stripe directly. Tolerate transient Stripe errors
+  // (the webhook / cron are the backstops) — surface the current DB status.
+  let outcome: "settled" | "not_paid" | "no_payment" = "not_paid";
+  try {
+    const stripe = getStripe();
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+    outcome = await settlePaidCheckoutSession(session);
+  } catch (err) {
+    logger.warn(
+      { err, sessionId, paymentId: payment.id },
+      "billing.reconcileCheckoutSession: Stripe retrieve/settle failed — returning current status",
+    );
+  }
+
+  // Re-read fresh status for the UI.
+  const installment = await findInstallmentById(payment.installment_id);
+  const latest = await findPaymentById(payment.id);
+  return {
+    installmentStatus: installment?.status ?? "unknown",
+    paymentStatus: latest?.status ?? null,
+    settled: outcome === "settled" || installment?.status === "paid",
+  };
+}
+
+// ---------------------------------------------------------------------------
+// reconcilePendingStripePayments — L3: reconciliation cron (DOC-71 §3.6)
+// ---------------------------------------------------------------------------
+
+export interface ReconcilePendingResult {
+  /** rows examined */
+  reconciled: number;
+  /** confirmed as paid */
+  settled: number;
+  /** marked failed (session expired) */
+  expired: number;
+}
+
+/**
+ * Sweeps pending/stripe payments whose Checkout Session was created but never
+ * confirmed (older than `olderThanMinutes`), retrieves each session from Stripe,
+ * and settles (paid) or fails (expired) it. Safety net for the case where the
+ * webhook never arrives AND the client closed the tab before the return-URL
+ * reconcile ran. Complements expireOrphanCheckouts (which handles session_id-null
+ * orphans). Cron-only (systemActor). Idempotent.
+ */
+export async function reconcilePendingStripePayments(
+  systemActor: Actor,
+  opts?: { olderThanMinutes?: number },
+): Promise<ReconcilePendingResult> {
+  // MED-1: defense-in-depth — cron-only endpoint
+  requireSystemActor(systemActor);
+
+  // 3-min floor: the return-URL reconcile settles fresh sessions within seconds;
+  // only sweep ones old enough that the immediate path has clearly not fired.
+  const minutes = opts?.olderThanMinutes ?? 3;
+  const cutoffIso = new Date(Date.now() - minutes * 60 * 1000).toISOString();
+
+  const pending = await listPendingStripeSessionsToReconcile(cutoffIso);
+  let settled = 0;
+  let expired = 0;
+
+  const stripe = getStripe();
+  for (const payment of pending) {
+    if (!payment.stripe_checkout_session_id) continue;
+    try {
+      const session = await stripe.checkout.sessions.retrieve(
+        payment.stripe_checkout_session_id,
+      );
+      const outcome = await settlePaidCheckoutSession(session);
+      if (outcome === "settled") {
+        settled += 1;
+      } else if (session.status === "expired") {
+        // Session can no longer be paid → free the lock + revert the installment.
+        const installment = await findInstallmentById(payment.installment_id);
+        if (installment) {
+          await applyPaymentFailure(payment, installment);
+          expired += 1;
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        { err, paymentId: payment.id, sessionId: payment.stripe_checkout_session_id },
+        "billing.reconcilePendingStripePayments: failed to reconcile one payment — continuing",
+      );
+    }
+  }
+
+  if (settled > 0 || expired > 0) {
+    logger.info(
+      { job: "reconcile-stripe-payments", examined: pending.length, settled, expired },
+      "billing: reconciled pending stripe payments",
+    );
+  }
+
+  return { reconciled: pending.length, settled, expired };
 }
 
 // ---------------------------------------------------------------------------
@@ -1034,6 +1219,43 @@ export async function getZelleProofUploadUrl(
   const storagePath = `payment-proofs/${parsed.installmentId}/${Date.now()}-${sanitizedFilename}`;
 
   return createSignedUploadUrl("payment-proofs", storagePath);
+}
+
+// ---------------------------------------------------------------------------
+// getZelleProofViewUrl — signed read URL for staff proof verification (RF-AND-011)
+// ---------------------------------------------------------------------------
+
+export interface ZelleProofView {
+  url: string;
+  kind: "image" | "pdf";
+}
+
+/**
+ * Returns a short-lived signed URL to view a Zelle payment proof.
+ *
+ * Authorization: billing staff (view). Cross-org guard via requirePaymentOrg.
+ * Used by the finance verification panel (RF-AND-011) to render the uploaded
+ * comprobante (image or PDF) before approving/rejecting the payment.
+ */
+export async function getZelleProofViewUrl(
+  actor: Actor,
+  paymentId: string,
+): Promise<ZelleProofView> {
+  can(actor, "billing", "view");
+
+  // CRITICAL-1 (complementary): cross-org guard before any data access
+  await requirePaymentOrg(actor, paymentId);
+
+  const p = await findPaymentById(paymentId);
+  if (!p || p.method !== "zelle" || !p.zelle_proof_path) {
+    throw new BillingError("PROOF_NOT_FOUND");
+  }
+
+  const ext = p.zelle_proof_path.split(".").pop()?.toLowerCase() ?? "";
+  const kind: "image" | "pdf" = ext === "pdf" ? "pdf" : "image";
+
+  const url = await createSignedDownloadUrl("payment-proofs", p.zelle_proof_path);
+  return { url, kind };
 }
 
 // ---------------------------------------------------------------------------
@@ -1354,6 +1576,51 @@ export async function markOverdues(
   }
 
   return { marked: due.length };
+}
+
+// ---------------------------------------------------------------------------
+// expireOrphanCheckouts — clear stuck pending/stripe payments (expire-stale-checkouts cron)
+// ---------------------------------------------------------------------------
+
+export interface ExpireOrphanCheckoutsResult {
+  expired: number;
+}
+
+/**
+ * Expires orphaned Stripe checkout attempts: pending/stripe payment rows whose
+ * Checkout Session was never created (session_id IS NULL) and that are older than
+ * `olderThanMinutes`. Each is marked `failed`, which frees the
+ * payments_active_stripe_unique_idx lock so the client can start a fresh checkout.
+ *
+ * The installment is left untouched: on the orphan path, installment.status is set
+ * to 'processing' only AFTER the Stripe session is created, so an orphan's installment
+ * is still 'pending'/'overdue' (no revert needed).
+ *
+ * Called ONLY by the expire-stale-checkouts cron job (systemActor). Idempotent.
+ */
+export async function expireOrphanCheckouts(
+  _systemActor: Actor,
+  opts?: { olderThanMinutes?: number },
+): Promise<ExpireOrphanCheckoutsResult> {
+  // MED-1: defense-in-depth — this endpoint is cron-only (systemActor)
+  requireSystemActor(_systemActor);
+
+  const minutes = opts?.olderThanMinutes ?? 60;
+  const cutoffIso = new Date(Date.now() - minutes * 60 * 1000).toISOString();
+
+  const orphans = await listOrphanStripePayments(cutoffIso);
+  for (const orphan of orphans) {
+    await updatePayment(orphan.id, { status: "failed" });
+  }
+
+  if (orphans.length > 0) {
+    logger.info(
+      { job: "expire-stale-checkouts", expired: orphans.length },
+      "billing: expired orphan stripe checkouts",
+    );
+  }
+
+  return { expired: orphans.length };
 }
 
 // ---------------------------------------------------------------------------

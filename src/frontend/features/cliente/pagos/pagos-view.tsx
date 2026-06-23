@@ -39,7 +39,7 @@ export interface InstallmentVM {
   /** Localized display label, e.g. "5 mar" */
   dateLabel: string;
   /** Derived from status + position relative to nextDue */
-  displayStatus: "paid" | "due" | "scheduled" | "processing" | "waived" | "overdue";
+  displayStatus: "paid" | "due" | "scheduled" | "processing" | "processingCard" | "waived" | "overdue";
 }
 
 export interface PagosLabels {
@@ -55,6 +55,7 @@ export interface PagosLabels {
   statusDue: string;
   statusScheduled: string;
   statusProcessing: string;
+  statusProcessingCard: string;
   statusWaived: string;
   statusOverdue: string;
   howToPayTitle: string;
@@ -76,6 +77,7 @@ export interface PagosLabels {
   offlineBanner: string;
   downpaymentLabel: string;
   zelleDestinationTodo: string;
+  caseSelectorLabel: string;
 }
 
 export interface PagosViewProps {
@@ -115,6 +117,10 @@ export interface PagosViewProps {
   /** True when the browser is offline (passed from online event listener in
    *  the RSC shell — actually just an initial value; real updates from navigator) */
   isOffline?: boolean;
+  /** Client's cases for the selector. Selector shows only when length > 1. */
+  cases?: { id: string; label: string }[];
+  /** The case whose statement is currently shown (drives the selector value). */
+  selectedCaseId?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -252,6 +258,8 @@ export function PagosView({
   onGetZelleUploadUrl,
   onConfirmZelleProof,
   isOffline: initialOffline = false,
+  cases = [],
+  selectedCaseId = null,
 }: PagosViewProps) {
   const [selectedMethod, setSelectedMethod] = React.useState<"zelle" | "card">("zelle");
   const [busyCheckout, setBusyCheckout] = React.useState(false);
@@ -378,6 +386,42 @@ export function PagosView({
       >
         {labels.title}
       </h1>
+
+      {/* Case selector — only for multi-case clients (BIL-RSC-4) */}
+      {cases.length > 1 && (
+        <div style={{ margin: "0 0 18px" }}>
+          <label
+            htmlFor="pagos-case-select"
+            style={{ display: "block", fontSize: 13, color: "var(--ink-3)", marginBottom: 6 }}
+          >
+            {labels.caseSelectorLabel}
+          </label>
+          <select
+            id="pagos-case-select"
+            value={selectedCaseId ?? ""}
+            onChange={(e) => {
+              window.location.href = `/pagos?caseId=${encodeURIComponent(e.target.value)}`;
+            }}
+            style={{
+              width: "100%",
+              borderRadius: 12,
+              border: "1.5px solid var(--line)",
+              padding: "11px 12px",
+              fontSize: 14,
+              color: "var(--ink)",
+              background: "var(--card)",
+              fontFamily: "inherit",
+              outline: "none",
+            }}
+          >
+            {cases.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {/* Offline banner */}
       {isOffline && (
@@ -829,6 +873,7 @@ function InstallmentRow({
   const isWaived = inst.displayStatus === "waived";
   const isPaid = inst.displayStatus === "paid";
   const isProcessing = inst.displayStatus === "processing";
+  const isProcessingCard = inst.displayStatus === "processingCard";
   const isOverdue = inst.displayStatus === "overdue";
 
   const rowOpacity = isScheduled ? 0.5 : 1;
@@ -875,6 +920,7 @@ function InstallmentRow({
         {isPaid && <StatusPill kind="hecho">{labels.statusPaid}</StatusPill>}
         {isDue && <StatusPill kind="pendiente">{labels.statusDue}</StatusPill>}
         {isProcessing && <StatusPill kind="revision">{labels.statusProcessing}</StatusPill>}
+        {isProcessingCard && <StatusPill kind="revision">{labels.statusProcessingCard}</StatusPill>}
         {isOverdue && (
           /* Overdue: gold-deep chip, non-punitive */
           <span

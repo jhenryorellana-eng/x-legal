@@ -463,6 +463,84 @@ export async function findActiveStripePayment(
 }
 
 /**
+ * Lists orphaned Stripe payment attempts: pending/stripe rows inserted before the
+ * Checkout Session was created (session_id IS NULL) and older than the cutoff.
+ * These block new checkouts via payments_active_stripe_unique_idx until cleared.
+ * (Sessions that WERE created and then expire are handled by the
+ * checkout.session.expired webhook, so they are intentionally excluded here.)
+ */
+export async function listOrphanStripePayments(
+  olderThanIso: string,
+): Promise<PaymentRow[]> {
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("payments")
+    .select("*")
+    .eq("method", "stripe")
+    .eq("status", "pending")
+    .is("stripe_checkout_session_id", null)
+    .lt("created_at", olderThanIso);
+
+  if (error) {
+    throw new Error(
+      `billing.repository: listOrphanStripePayments failed — ${error.message}`,
+    );
+  }
+  return data ?? [];
+}
+
+/**
+ * Lists Stripe payments awaiting reconciliation: pending/stripe rows whose Checkout
+ * Session WAS created (session_id IS NOT NULL) but never confirmed, older than the
+ * cutoff. The reconcile-stripe-payments cron retrieves each session from Stripe and
+ * settles it (paid) or fails it (expired). This is the safety net for when the
+ * webhook never arrives AND the client closed the tab before the return-URL
+ * reconcile ran — complementary to listOrphanStripePayments (session_id IS NULL).
+ */
+export async function listPendingStripeSessionsToReconcile(
+  olderThanIso: string,
+): Promise<PaymentRow[]> {
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("payments")
+    .select("*")
+    .eq("method", "stripe")
+    .eq("status", "pending")
+    .not("stripe_checkout_session_id", "is", null)
+    .lt("created_at", olderThanIso);
+
+  if (error) {
+    throw new Error(
+      `billing.repository: listPendingStripeSessionsToReconcile failed — ${error.message}`,
+    );
+  }
+  return data ?? [];
+}
+
+/**
+ * Returns the orphaned Stripe payment for a single installment (session_id IS NULL
+ * and older than the cutoff), if any. Used by the lazy cleanup inside
+ * createCheckoutSessionForInstallment so a client can retry without waiting for cron.
+ */
+export async function findOrphanStripePaymentForInstallment(
+  installmentId: string,
+  olderThanIso: string,
+): Promise<PaymentRow | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("payments")
+    .select("*")
+    .eq("installment_id", installmentId)
+    .eq("method", "stripe")
+    .eq("status", "pending")
+    .is("stripe_checkout_session_id", null)
+    .lt("created_at", olderThanIso)
+    .maybeSingle();
+
+  return data ?? null;
+}
+
+/**
  * Finds a payment by its Stripe Payment Intent ID.
  */
 export async function findPaymentByIntentId(

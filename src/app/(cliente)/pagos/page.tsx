@@ -84,8 +84,16 @@ function resolveDisplayStatus(
   switch (row.status) {
     case "paid":
       return "paid";
-    case "processing":
-      return "processing";
+    case "processing": {
+      // Distinguish an automatic card payment in flight ("Procesando pago") from a
+      // Zelle proof awaiting manual staff review ("En verificación"). Card payments
+      // settle in seconds via the reconcile layers, so this is mostly transient;
+      // Zelle stays here until finance confirms. Use the latest pending payment.
+      const latestPending = [...row.payments]
+        .filter((p) => p.status === "pending")
+        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
+      return latestPending?.method === "stripe" ? "processingCard" : "processing";
+    }
     case "waived":
       return "waived";
     case "overdue":
@@ -158,7 +166,11 @@ async function confirmZelleProofAction(
 // Page (RSC)
 // ---------------------------------------------------------------------------
 
-export default async function PagosPage() {
+export default async function PagosPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ caseId?: string }>;
+}) {
   const actor = await getActor();
   if (!actor || actor.kind !== "client") redirect("/welcome");
 
@@ -166,14 +178,24 @@ export default async function PagosPage() {
   const tz = await getTimeZone();
   const t = await getTranslations("cliente.pagos");
 
-  // Resolve the primary active case (first in list — TODO BIL-RSC-4 for multi-case)
-  let caseId: string | null = null;
+  // List the client's cases for the selector (was: first case only — BIL-RSC-4).
+  // RLS scopes the list to the client's own cases.
+  let cases: { id: string; label: string }[] = [];
   try {
-    const casesPage = await getCasesForClient(actor, { limit: 1 });
-    caseId = casesPage.items[0]?.id ?? null;
+    const casesPage = await getCasesForClient(actor, { limit: 50 });
+    cases = casesPage.items.map((c) => ({
+      id: c.id,
+      label: c.case_number ?? c.id.slice(0, 8),
+    }));
   } catch {
-    caseId = null;
+    cases = [];
   }
+
+  // Resolve the selected case from ?caseId= (validated against membership),
+  // defaulting to the first case.
+  const requested = (await searchParams)?.caseId ?? null;
+  const caseId: string | null =
+    (requested && cases.some((c) => c.id === requested) ? requested : cases[0]?.id) ?? null;
 
   // Account statement (plan + installments + aggregates + nextDue)
   let statement: AccountStatementDto | null = null;
@@ -236,6 +258,7 @@ export default async function PagosPage() {
     statusDue: t("statusDue"),
     statusScheduled: t("statusScheduled"),
     statusProcessing: t("statusProcessing"),
+    statusProcessingCard: t("statusProcessingCard"),
     statusWaived: t("statusWaived"),
     statusOverdue: t("statusOverdue"),
     howToPayTitle: t("howToPayTitle"),
@@ -257,6 +280,7 @@ export default async function PagosPage() {
     offlineBanner: t("offlineBanner"),
     downpaymentLabel: t("downpaymentLabel"),
     zelleDestinationTodo: t("zelleDestinationTodo"),
+    caseSelectorLabel: t("caseSelectorLabel"),
   };
 
   return (
@@ -270,6 +294,8 @@ export default async function PagosPage() {
       progressPct={progressPct}
       zelleDestination={zelleDestination}
       labels={labels}
+      cases={cases}
+      selectedCaseId={caseId}
       onCreateCheckout={createInstallmentCheckoutAction}
       onGetZelleUploadUrl={getZelleUploadUrlAction}
       onConfirmZelleProof={confirmZelleProofAction}
