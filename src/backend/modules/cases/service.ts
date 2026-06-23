@@ -46,8 +46,7 @@ import {
   findCaseByCaseId,
   findCaseByContractId,
   nextCaseNumber,
-  insertCase,
-  upsertCaseMember,
+  createCaseAtomic,
   updateCase,
   insertPhaseHistory,
   findDocumentById,
@@ -262,23 +261,22 @@ export interface CreateCaseFromContractResult {
  *   1. Validate service + plan active
  *   2. Check paymentPlan consistency (downpayment ≤ total)
  *   3. IDEMPOTENCY: if contractId already has a case → return {created:false}
- *   4. Sequential atomic steps (see atomicity note below):
+ *   4. Compute everything (nextCaseNumber, party roles + person_records, contract
+ *      snapshots + terms, installment math) then write atomically:
  *      a. nextCaseNumber()
- *      b. insertCase (status=payment_pending)
- *      c. upsertCaseMember (primaryClient, owner)
- *      d. case_parties (person_records via identity for non-user parties)
- *      e. insertContract (draft) — via contracts module
- *      f. billing.createPaymentPlan
+ *      b. parties: validate roles + resolve person_records (identity)
+ *      c. contract snapshots + active terms version
+ *      d. installments (billing.buildInstallments)
+ *      e. createCaseAtomic() — case + member + parties + contract + payment_plan
+ *         + installments in ONE transaction (migration 0026 create_case_atomic)
  *   5. Emit case.created (+ case.assigned) + audit
  *
- * ATOMICITY NOTE: Supabase JS SDK does not expose multi-table transactions.
- * We use sequential inserts with compensation on failure:
- * - If insertContract fails, the case + members + parties are left orphaned
- *   (payment_pending with no contract — harmless; next attempt is idempotent
- *   on contractId if provided, or creates a new case otherwise).
- * - The idempotency guard on contractId ensures re-tries don't create duplicates.
- * - For billing, PAYMENT_PLAN_EXISTS is caught and treated as idempotent.
- * - TODO(SoT): Replace with a Postgres function or RPC for true atomicity.
+ * ATOMICITY: the writes go through the create_case_atomic RPC (one transaction),
+ * so a failure mid-creation rolls back everything — a partially-created case
+ * (payment_pending with no contract/plan) can no longer be orphaned (this replaced
+ * the old sequential-insert flow that left exactly such orphans, e.g. ULP-2026-0002).
+ * person_records are still resolved in TS before the RPC; a stray person_record on
+ * a rolled-back case is harmless (no case references it).
  *
  * @api-id API-CASE-13 (cases.createCaseFromContract)
  */
@@ -362,198 +360,177 @@ export async function createCaseFromContract(
   // Step 4a: case_number
   const caseNumber = await nextCaseNumber(actor.orgId);
 
-  // Step 4b: insertCase
-  const caseRow = await insertCase({
-    org_id: actor.orgId,
-    case_number: caseNumber,
-    service_id: p.serviceId,
-    service_plan_id: p.servicePlanId,
-    current_phase_id: null,
-    status: "payment_pending",
-    primary_client_id: p.primaryClientId,
-    assigned_paralegal_id: p.assignedParalegalId ?? null,
-    assigned_sales_id:
-      actor.role === "sales" ? actor.userId : (p.assignedSalesId ?? null),
-  });
+  // A sales actor owns the cases they create.
+  const assignedSalesId =
+    actor.role === "sales" ? actor.userId : (p.assignedSalesId ?? null);
 
-  // Step 4c: upsertCaseMember (primaryClient = owner)
-  await upsertCaseMember(caseRow.id, p.primaryClientId, "owner");
+  // Step 4b: Parties. The applicant is the principal party (role 'petitioner',
+  // position 0); additional parties from the modal are validated against the
+  // service's declared roles. person_records (identity-owned) are resolved here,
+  // BEFORE the atomic write — a stray person_record on a rolled-back case is
+  // harmless. The resulting array is inserted atomically by create_case_atomic.
+  const { upsertPersonRecord: upsertPerson } =
+    await import("@/backend/modules/identity") as {
+      upsertPersonRecord: (
+        actor: Actor,
+        i: { firstName: string; lastName: string; relationship?: string | null },
+      ) => Promise<string>;
+    };
 
-  // Step 4d: Parties. The applicant is auto-added as the principal party (role
-  // 'petitioner', position 0); the additional parties from the modal are
-  // validated against the service's declared roles and inserted after.
-  {
-    const { insertCasePartyRow: insertParty, upsertPersonRecord: upsertPerson } =
-      await import("@/backend/modules/identity") as {
-        insertCasePartyRow: (i: {
-          caseId: string; personRecordId: string | null; userId: string | null;
-          partyRole: string; position: number;
-        }) => Promise<void>;
-        upsertPersonRecord: (
-          actor: Actor,
-          i: { firstName: string; lastName: string; relationship?: string | null },
-        ) => Promise<string>;
-      };
-
-    // Validate additional roles ⊆ the service's declared roles (clean error
-    // instead of a raw DB constraint violation). The principal role is implicit
-    // and must NOT appear among the additional parties.
-    if (p.parties.length > 0) {
-      let allowed: Set<string>;
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const catalogModule = await import("@/backend/modules/catalog") as any;
-        const roles = await catalogModule.listServicePartyRoles(p.serviceId);
-        allowed = new Set((roles as Array<{ role_key: string }>).map((r) => r.role_key));
-      } catch {
-        // Transient catalog failure — surface a retryable error, NOT a false
-        // "invalid role" (the roles may well be valid; we just couldn't load them).
-        throw new CaseError("CASE_SERVICE_NOT_AVAILABLE");
-      }
-      for (const party of p.parties) {
-        if (party.role === PRINCIPAL_ROLE_KEY || !allowed.has(party.role)) {
-          throw new CaseError("CASE_PARTY_ROLE_INVALID", { role: party.role });
-        }
+  if (p.parties.length > 0) {
+    let allowed: Set<string>;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const catalogModule = await import("@/backend/modules/catalog") as any;
+      const roles = await catalogModule.listServicePartyRoles(p.serviceId);
+      allowed = new Set((roles as Array<{ role_key: string }>).map((r) => r.role_key));
+    } catch {
+      // Transient catalog failure — surface a retryable error, NOT a false
+      // "invalid role" (the roles may well be valid; we just couldn't load them).
+      throw new CaseError("CASE_SERVICE_NOT_AVAILABLE");
+    }
+    for (const party of p.parties) {
+      if (party.role === PRINCIPAL_ROLE_KEY || !allowed.has(party.role)) {
+        throw new CaseError("CASE_PARTY_ROLE_INVALID", { role: party.role });
       }
     }
+  }
 
-    // Principal applicant first (the primary client).
-    await insertParty({
-      caseId: caseRow.id,
-      personRecordId: null,
-      userId: p.primaryClientId,
-      partyRole: PRINCIPAL_ROLE_KEY,
-      position: 0,
-    });
-
-    // Additional parties (person_records via identity), positions 1..N.
-    for (const [i, party] of p.parties.entries()) {
-      let personRecordId: string | null = null;
-      const partyUserId: string | null = party.userId ?? null;
-
-      if (!partyUserId && party.person) {
-        personRecordId = await upsertPerson(actor, {
-          firstName: party.person.firstName,
-          lastName: party.person.lastName,
-          relationship: party.person.relationship,
-        });
-      }
-
-      await insertParty({
-        caseId: caseRow.id,
-        personRecordId,
-        userId: partyUserId,
-        partyRole: party.role,
-        position: i + 1,
+  const partiesPayload: Array<{
+    person_record_id: string | null;
+    user_id: string | null;
+    party_role: string;
+    position: number;
+  }> = [
+    // Principal applicant (the primary client) — position 0.
+    { person_record_id: null, user_id: p.primaryClientId, party_role: PRINCIPAL_ROLE_KEY, position: 0 },
+  ];
+  for (const [i, party] of p.parties.entries()) {
+    let personRecordId: string | null = null;
+    const partyUserId: string | null = party.userId ?? null;
+    if (!partyUserId && party.person) {
+      personRecordId = await upsertPerson(actor, {
+        firstName: party.person.firstName,
+        lastName: party.person.lastName,
+        relationship: party.person.relationship,
       });
     }
-  }
-
-  // Step 4e: Contract (via contracts module — draft)
-  let contractId: string;
-  if (p.contractId) {
-    // Caller already holds a draft contractId (not possible with current modal flow,
-    // but future-proof for lead-won path). Update its case_id.
-    contractId = p.contractId;
-    const supabase = createServiceClient();
-    await (supabase as unknown as ReturnType<typeof createServiceClient>)
-      .from("contracts")
-      .update({ case_id: caseRow.id })
-      .eq("id", contractId);
-  } else {
-    // Create a fresh draft contract
-    const { createContract } = await import("@/backend/modules/contracts") as {
-      createContract: (i: import("@/backend/modules/contracts").CreateContractInput) => Promise<{ id: string }>;
-    };
-    // Fetch active terms version for the org
-    let termsVersion: string | null = null;
-    try {
-      const { getActiveTermsVersion } = await import("@/backend/modules/contracts") as {
-        getActiveTermsVersion: (orgId: string) => Promise<{ version: string } | null>;
-      };
-      const tv = await getActiveTermsVersion(actor.orgId);
-      termsVersion = tv?.version ?? null;
-    } catch {
-      // graceful degradation if terms table not yet seeded
-    }
-
-    const planSnapshot: Record<string, unknown> = {
-      // serviceLabel frozen into the snapshot so the public signing page can
-      // show the service name without a live catalog lookup (the page is anon).
-      serviceLabel: (serviceRow as { label_i18n?: unknown }).label_i18n ?? null,
-      planKind: (planRow as { kind: string }).kind,
-      totalCents: p.paymentPlan.totalCents,
-      downpaymentCents: p.paymentPlan.downpaymentCents,
-      installmentCount: p.paymentPlan.installmentCount,
-      currency: "USD",
-    };
-    const partiesSnapshot: Record<string, unknown> = {
-      parties: p.parties.map((pt) => ({
-        role: pt.role,
-        userId: pt.userId ?? null,
-        name: pt.person ? `${pt.person.firstName} ${pt.person.lastName}`.trim() : null,
-      })),
-    };
-
-    const contract = await createContract({
-      orgId: actor.orgId,
-      caseId: caseRow.id,
-      leadId: p.leadId ?? null,
-      serviceId: p.serviceId,
-      servicePlanId: p.servicePlanId,
-      planSnapshot,
-      partiesSnapshot,
-      createdBy: actor.userId,
-      termsVersion,
+    partiesPayload.push({
+      person_record_id: personRecordId,
+      user_id: partyUserId,
+      party_role: party.role,
+      position: i + 1,
     });
-    contractId = contract.id;
   }
 
-  // Step 4f: Payment plan (billing module)
+  // Step 4c: Contract snapshots + active terms version.
+  let termsVersion: string | null = null;
   try {
-    const { createPaymentPlan } = await import("@/backend/modules/billing") as {
-      createPaymentPlan: (
-        actor: Actor,
-        i: { contractId: string; totalCents: number; downpaymentCents: number; installmentCount: number; notes?: string | null },
-      ) => Promise<unknown>;
+    const { getActiveTermsVersion } = await import("@/backend/modules/contracts") as {
+      getActiveTermsVersion: (orgId: string) => Promise<{ version: string } | null>;
     };
-    await createPaymentPlan(actor, {
-      contractId,
-      totalCents: p.paymentPlan.totalCents,
-      downpaymentCents: p.paymentPlan.downpaymentCents,
-      installmentCount: p.paymentPlan.installmentCount,
-      notes: p.paymentPlan.notes,
-    });
-  } catch (err) {
-    // M-1 FIX: only swallow PAYMENT_PLAN_EXISTS (idempotent retry).
-    // Any other billing error means the case has no payment plan — the client
-    // would never be able to activate it (no installment to pay). Re-throw so
-    // the modal surfaces a failure and the admin can retry. The idempotency guard
-    // on contractId makes retries safe (createCaseFromContract returns created:false
-    // if the contract already has a case, then billing is retried cleanly).
-    const code = (err as { code?: string }).code;
-    if (code !== "PAYMENT_PLAN_EXISTS") {
-      logger.error({ err, caseId: caseRow.id }, "createCaseFromContract: billing.createPaymentPlan failed — re-throwing");
-      throw err;
-    }
+    const tv = await getActiveTermsVersion(actor.orgId);
+    termsVersion = tv?.version ?? null;
+  } catch {
+    // graceful degradation if terms table not yet seeded
   }
+
+  const planSnapshot: Record<string, unknown> = {
+    // serviceLabel frozen into the snapshot so the public signing page can show
+    // the service name without a live catalog lookup (the page is anon).
+    serviceLabel: (serviceRow as { label_i18n?: unknown }).label_i18n ?? null,
+    planKind: (planRow as { kind: string }).kind,
+    totalCents: p.paymentPlan.totalCents,
+    downpaymentCents: p.paymentPlan.downpaymentCents,
+    installmentCount: p.paymentPlan.installmentCount,
+    currency: "USD",
+  };
+  const partiesSnapshot: Record<string, unknown> = {
+    parties: p.parties.map((pt) => ({
+      role: pt.role,
+      userId: pt.userId ?? null,
+      name: pt.person ? `${pt.person.firstName} ${pt.person.lastName}`.trim() : null,
+    })),
+  };
+
+  // Step 4d: Installments — downpayment + monthly cuotas (billing domain math).
+  // Provisional due dates anchored to today; re-anchored when the contract is signed.
+  const { buildInstallments } = await import("@/backend/modules/billing") as {
+    buildInstallments: (i: {
+      totalCents: number; downpaymentCents: number; installmentCount: number; startDate: string;
+    }) => Array<{ number: number; amountCents: number; dueDate: string; isDownpayment: boolean }>;
+  };
+  const installmentsPayload = buildInstallments({
+    totalCents: p.paymentPlan.totalCents,
+    downpaymentCents: p.paymentPlan.downpaymentCents,
+    installmentCount: p.paymentPlan.installmentCount,
+    startDate: new Date().toISOString().slice(0, 10),
+  }).map((d) => ({
+    number: d.number,
+    is_downpayment: d.isDownpayment,
+    amount_cents: d.amountCents,
+    due_date: d.dueDate,
+    status: "pending",
+  }));
+
+  // Step 4e: ATOMIC write (migration 0026). case + member + parties + contract +
+  // payment_plan + installments in ONE transaction — on failure nothing persists,
+  // so a partially-created case (payment_pending with no plan) can never be left.
+  const atomic = await createCaseAtomic({
+    case: {
+      org_id: actor.orgId,
+      case_number: caseNumber,
+      service_id: p.serviceId,
+      service_plan_id: p.servicePlanId,
+      current_phase_id: null,
+      status: "payment_pending",
+      primary_client_id: p.primaryClientId,
+      assigned_paralegal_id: p.assignedParalegalId ?? null,
+      assigned_sales_id: assignedSalesId,
+    },
+    member: { user_id: p.primaryClientId, access_role: "owner" },
+    parties: partiesPayload,
+    contract: {
+      org_id: actor.orgId,
+      lead_id: p.leadId ?? null,
+      service_id: p.serviceId,
+      service_plan_id: p.servicePlanId,
+      status: "draft",
+      plan_snapshot: planSnapshot,
+      parties_snapshot: partiesSnapshot,
+      created_by: actor.userId,
+      terms_version: termsVersion,
+      signing_token: null,
+      signing_expires_at: null,
+    },
+    plan: {
+      total_cents: p.paymentPlan.totalCents,
+      downpayment_cents: p.paymentPlan.downpaymentCents,
+      installment_count: p.paymentPlan.installmentCount,
+      notes: p.paymentPlan.notes ?? null,
+    },
+    installments: installmentsPayload,
+  });
+
+  const caseId = atomic.caseId;
+  const contractId = atomic.contractId;
 
   // Step 5: Emit domain events + audit
   await appEvents.emitAndWait({
     type: "case.created",
-    payload: { caseId: caseRow.id },
+    payload: { caseId },
     occurredAt: new Date(),
   });
 
-  if (caseRow.assigned_paralegal_id) {
+  if (p.assignedParalegalId) {
     await appEvents.emitAndWait({
       type: "case.assigned",
-      payload: { caseId: caseRow.id, paralegalId: caseRow.assigned_paralegal_id },
+      payload: { caseId, paralegalId: p.assignedParalegalId },
       occurredAt: new Date(),
     });
   }
 
-  await writeAudit(actor, "case.created", "cases", caseRow.id, {
+  await writeAudit(actor, "case.created", "cases", caseId, {
     after: {
       caseNumber,
       serviceId: p.serviceId,
@@ -563,7 +540,7 @@ export async function createCaseFromContract(
   });
 
   await writeTimeline({
-    caseId: caseRow.id,
+    caseId,
     eventType: "case.created",
     actorKind: "team",
     actorUserId: actor.userId,
@@ -571,7 +548,7 @@ export async function createCaseFromContract(
     titleI18n: { en: "Case opened", es: "Caso creado" },
   });
 
-  return { caseId: caseRow.id, contractId, created: true };
+  return { caseId, contractId, created: true };
 }
 
 // ---------------------------------------------------------------------------

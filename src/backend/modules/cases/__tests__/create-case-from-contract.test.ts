@@ -7,40 +7,34 @@
  * - Throws CASE_SERVICE_NOT_AVAILABLE for inactive/missing service
  * - Throws CASE_SERVICE_NOT_AVAILABLE for inactive/missing plan
  * - Throws CASE_PAYMENT_PLAN_INVALID when downpayment > total
- * - Happy path: creates case + member + contract + billing plan, emits case.created
- * - Creates person_records for non-user parties
- * - Billing PAYMENT_PLAN_EXISTS is treated as idempotent (does not throw)
+ * - Happy path: builds the atomic payload (case + member + contract + plan +
+ *   installments) and calls create_case_atomic; emits case.created
+ * - Creates person_records for non-user parties; applicant auto-added first
+ * - Atomic write (migration 0026): a single createCaseAtomic call replaces the old
+ *   sequential inserts — there is no partial-failure / orphan path to test for.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ---------------------------------------------------------------------------
-// Hoist ALL variables that are referenced inside vi.mock() factories.
-// vi.mock() factories are hoisted to the top of the file by vitest — any
-// variable they close over must be declared via vi.hoisted() as well.
+// Hoist ALL variables referenced inside vi.mock() factories.
 // ---------------------------------------------------------------------------
 
 const {
   mockCan,
   mockFindCaseByContractId,
   mockNextCaseNumber,
-  mockInsertCase,
-  mockUpsertCaseMember,
+  mockCreateCaseAtomic,
   mockWriteAudit,
   mockEmit,
   mockUpsertPersonRecord,
-  mockInsertCasePartyRow,
   mockAppendCaseTimeline,
-  // Supabase chainable client
   mockServiceClient,
-  // Dynamic-import mocks (used by vi.mock factories for contracts/billing/catalog)
-  mockCreateContract,
   mockGetActiveTermsVersion,
-  mockCreatePaymentPlan,
+  mockBuildInstallments,
   mockListContractableServices,
   mockListServicePartyRoles,
 } = vi.hoisted(() => {
-  // Build a chainable Supabase-style client mock
   const client = {
     from: vi.fn(),
     select: vi.fn(),
@@ -48,7 +42,6 @@ const {
     update: vi.fn(),
     maybeSingle: vi.fn(),
   };
-  // Default: every chainable method returns `client` itself
   client.from.mockReturnValue(client);
   client.select.mockReturnValue(client);
   client.eq.mockReturnValue(client);
@@ -58,17 +51,18 @@ const {
     mockCan: vi.fn(),
     mockFindCaseByContractId: vi.fn(),
     mockNextCaseNumber: vi.fn().mockResolvedValue("ULP-2026-0001"),
-    mockInsertCase: vi.fn(),
-    mockUpsertCaseMember: vi.fn().mockResolvedValue(undefined),
+    mockCreateCaseAtomic: vi.fn(),
     mockWriteAudit: vi.fn().mockResolvedValue(undefined),
     mockEmit: vi.fn(),
     mockUpsertPersonRecord: vi.fn().mockResolvedValue("person-record-id-1"),
-    mockInsertCasePartyRow: vi.fn().mockResolvedValue(undefined),
     mockAppendCaseTimeline: vi.fn().mockResolvedValue(undefined),
     mockServiceClient: client,
-    mockCreateContract: vi.fn().mockResolvedValue({ id: "contract-new-1" }),
     mockGetActiveTermsVersion: vi.fn().mockResolvedValue({ version: "v1.0" }),
-    mockCreatePaymentPlan: vi.fn().mockResolvedValue({ id: "plan-1" }),
+    mockBuildInstallments: vi.fn().mockReturnValue([
+      { number: 1, amountCents: 10000, dueDate: "2026-06-23", isDownpayment: true },
+      { number: 2, amountCents: 20000, dueDate: "2026-07-23", isDownpayment: false },
+      { number: 3, amountCents: 20000, dueDate: "2026-08-23", isDownpayment: false },
+    ]),
     mockListContractableServices: vi.fn().mockResolvedValue([]),
     mockListServicePartyRoles: vi
       .fn()
@@ -77,7 +71,7 @@ const {
 });
 
 // ---------------------------------------------------------------------------
-// Mocks (registered before SUT import — they use the hoisted refs above)
+// Mocks (registered before SUT import)
 // ---------------------------------------------------------------------------
 
 vi.mock("@/backend/platform/authz", () => ({
@@ -115,16 +109,14 @@ vi.mock("@/backend/modules/audit", () => ({
   appendCaseTimeline: mockAppendCaseTimeline,
 }));
 
-// Repository — spread from real module so unrelated fns keep their shape,
-// then override the ones used by createCaseFromContract.
+// Repository — spread from real module, override the ones used by the SUT.
 vi.mock("../repository", async (importOriginal) => {
   const original = await importOriginal<typeof import("../repository")>();
   return {
     ...original,
     findCaseByContractId: mockFindCaseByContractId,
     nextCaseNumber: mockNextCaseNumber,
-    insertCase: mockInsertCase,
-    upsertCaseMember: mockUpsertCaseMember,
+    createCaseAtomic: mockCreateCaseAtomic,
     findCaseById: vi.fn().mockResolvedValue(null),
     findCaseByCaseId: vi.fn().mockResolvedValue(null),
     listCases: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
@@ -147,11 +139,10 @@ vi.mock("../repository", async (importOriginal) => {
   };
 });
 
-// Identity module — sync mock for upsertPersonRecord / insertCasePartyRow
-// (dynamic imports inside createCaseFromContract resolve to this mock)
+// Identity module — person record resolution + boundary helpers.
 vi.mock("@/backend/modules/identity", () => ({
   upsertPersonRecord: mockUpsertPersonRecord,
-  insertCasePartyRow: mockInsertCasePartyRow,
+  insertCasePartyRow: vi.fn(),
   can: mockCan,
   requireActor: vi.fn(),
   getActor: vi.fn(),
@@ -164,9 +155,9 @@ vi.mock("@/backend/modules/identity", () => ({
   provisionClientUser: vi.fn().mockResolvedValue({ userId: "client-1", created: true }),
 }));
 
-// Contracts module
+// Contracts module — only getActiveTermsVersion is used now.
 vi.mock("@/backend/modules/contracts", () => ({
-  createContract: mockCreateContract,
+  createContract: vi.fn(),
   getActiveTermsVersion: mockGetActiveTermsVersion,
   sendContractForSigning: vi.fn().mockResolvedValue(undefined),
   ContractError: class ContractError extends Error {
@@ -174,9 +165,9 @@ vi.mock("@/backend/modules/contracts", () => ({
   },
 }));
 
-// Billing module
+// Billing module — buildInstallments (pure domain math) is used to size cuotas.
 vi.mock("@/backend/modules/billing", () => ({
-  createPaymentPlan: mockCreatePaymentPlan,
+  buildInstallments: mockBuildInstallments,
   BillingError: class BillingError extends Error {
     constructor(public readonly code: string) { super(code); }
   },
@@ -209,24 +200,10 @@ const ACTOR = {
 const SERVICE_ID = "11111111-1111-4111-8111-111111111111";
 const PLAN_ID = "22222222-2222-4222-8222-222222222222";
 const CLIENT_ID = "33333333-3333-4333-8333-333333333333";
-const CASE_ROW = {
-  id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-  org_id: ACTOR.orgId,
-  case_number: "ULP-2026-0001",
-  service_id: SERVICE_ID,
-  service_plan_id: PLAN_ID,
-  primary_client_id: CLIENT_ID,
-  status: "payment_pending",
-  current_phase_id: null,
-  assigned_paralegal_id: null,
-  assigned_sales_id: null,
-  opened_at: null,
-  completed_at: null,
-  internal_note: null,
-  rebooking_blocked_until: null,
-  created_at: new Date().toISOString(),
-  updated_at: new Date().toISOString(),
-};
+const NEW_CASE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const NEW_CONTRACT_ID = "contract-new-1";
+
+const ATOMIC_RESULT = { caseId: NEW_CASE_ID, contractId: NEW_CONTRACT_ID, planId: "plan-1" };
 
 const VALID_PAYMENT_PLAN = {
   totalCents: 50000,
@@ -236,16 +213,10 @@ const VALID_PAYMENT_PLAN = {
 
 // ---------------------------------------------------------------------------
 // Helper: configure Supabase mock chain for service + plan queries.
-// The service does TWO maybeSingle() calls: first for services, second for
-// service_plans. A call-counter distinguishes the two.
 // ---------------------------------------------------------------------------
 
-function setupDbQueryMocks(opts: {
-  serviceActive?: boolean;
-  planActive?: boolean;
-} = {}) {
+function setupDbQueryMocks(opts: { serviceActive?: boolean; planActive?: boolean } = {}) {
   const { serviceActive = true, planActive = true } = opts;
-
   let callCount = 0;
   mockServiceClient.maybeSingle.mockImplementation(() => {
     callCount++;
@@ -274,15 +245,17 @@ describe("createCaseFromContract", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCan.mockReturnValue(undefined);
-    mockInsertCase.mockResolvedValue(CASE_ROW);
+    mockCreateCaseAtomic.mockResolvedValue(ATOMIC_RESULT);
     mockFindCaseByContractId.mockResolvedValue(null);
-    mockCreateContract.mockResolvedValue({ id: "contract-new-1" });
-    mockCreatePaymentPlan.mockResolvedValue({ id: "plan-1" });
     mockGetActiveTermsVersion.mockResolvedValue({ version: "v1.0" });
+    mockBuildInstallments.mockReturnValue([
+      { number: 1, amountCents: 10000, dueDate: "2026-06-23", isDownpayment: true },
+      { number: 2, amountCents: 20000, dueDate: "2026-07-23", isDownpayment: false },
+      { number: 3, amountCents: 20000, dueDate: "2026-08-23", isDownpayment: false },
+    ]);
     mockListContractableServices.mockResolvedValue([]);
     mockListServicePartyRoles.mockResolvedValue([{ role_key: "spouse" }, { role_key: "minor" }]);
     mockUpsertPersonRecord.mockResolvedValue("person-record-id-1");
-    mockInsertCasePartyRow.mockResolvedValue(undefined);
     mockNextCaseNumber.mockResolvedValue("ULP-2026-0001");
     setupDbQueryMocks();
   });
@@ -318,12 +291,11 @@ describe("createCaseFromContract", () => {
       contractId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
       created: false,
     });
-    expect(mockInsertCase).not.toHaveBeenCalled();
+    expect(mockCreateCaseAtomic).not.toHaveBeenCalled();
   });
 
   it("throws CASE_SERVICE_NOT_AVAILABLE when service is not active", async () => {
     setupDbQueryMocks({ serviceActive: false });
-
     await expect(
       createCaseFromContract(ACTOR, {
         primaryClientId: CLIENT_ID,
@@ -337,7 +309,6 @@ describe("createCaseFromContract", () => {
 
   it("throws CASE_SERVICE_NOT_AVAILABLE when plan is not active", async () => {
     setupDbQueryMocks({ serviceActive: true, planActive: false });
-
     await expect(
       createCaseFromContract(ACTOR, {
         primaryClientId: CLIENT_ID,
@@ -361,7 +332,7 @@ describe("createCaseFromContract", () => {
     ).rejects.toMatchObject({ code: "CASE_PAYMENT_PLAN_INVALID" });
   });
 
-  it("happy path: creates case, member, contract, billing plan; emits case.created; returns created:true", async () => {
+  it("happy path: builds the atomic payload (case + member + contract + plan + installments); emits case.created; returns created:true", async () => {
     const result = await createCaseFromContract(ACTOR, {
       primaryClientId: CLIENT_ID,
       serviceId: SERVICE_ID,
@@ -370,10 +341,12 @@ describe("createCaseFromContract", () => {
       paymentPlan: VALID_PAYMENT_PLAN,
     });
 
-    expect(result).toMatchObject({ caseId: CASE_ROW.id, created: true });
+    expect(result).toEqual({ caseId: NEW_CASE_ID, contractId: NEW_CONTRACT_ID, created: true });
 
-    // Case inserted with correct fields
-    expect(mockInsertCase).toHaveBeenCalledWith(
+    expect(mockCreateCaseAtomic).toHaveBeenCalledTimes(1);
+    const payload = mockCreateCaseAtomic.mock.calls[0][0];
+
+    expect(payload.case).toEqual(
       expect.objectContaining({
         org_id: ACTOR.orgId,
         case_number: "ULP-2026-0001",
@@ -381,38 +354,25 @@ describe("createCaseFromContract", () => {
         primary_client_id: CLIENT_ID,
       }),
     );
-
-    // Case member upserted as owner
-    expect(mockUpsertCaseMember).toHaveBeenCalledWith(CASE_ROW.id, CLIENT_ID, "owner");
-
-    // Contract created
-    expect(mockCreateContract).toHaveBeenCalledWith(
-      expect.objectContaining({
-        orgId: ACTOR.orgId,
-        caseId: CASE_ROW.id,
-      }),
+    expect(payload.member).toEqual({ user_id: CLIENT_ID, access_role: "owner" });
+    expect(payload.contract).toEqual(
+      expect.objectContaining({ org_id: ACTOR.orgId, status: "draft", terms_version: "v1.0" }),
     );
-
-    // Billing plan created
-    expect(mockCreatePaymentPlan).toHaveBeenCalledWith(
-      ACTOR,
-      expect.objectContaining({
-        totalCents: 50000,
-        downpaymentCents: 10000,
-        installmentCount: 3,
-      }),
+    expect(payload.plan).toEqual(
+      expect.objectContaining({ total_cents: 50000, downpayment_cents: 10000, installment_count: 3 }),
     );
+    // Installments mapped from buildInstallments drafts (snake_case rows).
+    expect(payload.installments).toEqual([
+      expect.objectContaining({ number: 1, is_downpayment: true, amount_cents: 10000, status: "pending" }),
+      expect.objectContaining({ number: 2, is_downpayment: false, amount_cents: 20000 }),
+      expect.objectContaining({ number: 3, is_downpayment: false, amount_cents: 20000 }),
+    ]);
 
-    // case.created event emitted
-    expect(mockEmit).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "case.created" }),
-    );
-
-    // Audit written
+    expect(mockEmit).toHaveBeenCalledWith(expect.objectContaining({ type: "case.created" }));
     expect(mockWriteAudit).toHaveBeenCalled();
   });
 
-  it("creates person_records for non-user parties; applicant auto-added first", async () => {
+  it("creates person_records for non-user parties; applicant auto-added first in the payload", async () => {
     const result = await createCaseFromContract(ACTOR, {
       primaryClientId: CLIENT_ID,
       serviceId: SERVICE_ID,
@@ -425,37 +385,14 @@ describe("createCaseFromContract", () => {
     });
 
     expect(result.created).toBe(true);
-
-    // upsertPersonRecord called for each non-user party
     expect(mockUpsertPersonRecord).toHaveBeenCalledTimes(2);
 
-    // case_parties rows inserted: applicant (principal) first, then the 2 additional
-    expect(mockInsertCasePartyRow).toHaveBeenCalledTimes(3);
-    // Principal applicant — auto-added as 'petitioner', userId = primary client, position 0
-    expect(mockInsertCasePartyRow).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        caseId: CASE_ROW.id,
-        userId: CLIENT_ID,
-        personRecordId: null,
-        partyRole: "petitioner",
-        position: 0,
-      }),
-    );
-    // Additional parties shift to positions 1..N
-    expect(mockInsertCasePartyRow).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        personRecordId: "person-record-id-1",
-        userId: null,
-        partyRole: "spouse",
-        position: 1,
-      }),
-    );
-    expect(mockInsertCasePartyRow).toHaveBeenNthCalledWith(
-      3,
-      expect.objectContaining({ partyRole: "minor", position: 2 }),
-    );
+    const payload = mockCreateCaseAtomic.mock.calls[0][0];
+    expect(payload.parties).toEqual([
+      expect.objectContaining({ user_id: CLIENT_ID, person_record_id: null, party_role: "petitioner", position: 0 }),
+      expect.objectContaining({ person_record_id: "person-record-id-1", user_id: null, party_role: "spouse", position: 1 }),
+      expect.objectContaining({ party_role: "minor", position: 2 }),
+    ]);
   });
 
   it("auto-adds only the applicant when there are no additional parties", async () => {
@@ -467,14 +404,14 @@ describe("createCaseFromContract", () => {
       paymentPlan: VALID_PAYMENT_PLAN,
     });
 
-    expect(mockInsertCasePartyRow).toHaveBeenCalledTimes(1);
-    expect(mockInsertCasePartyRow).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: CLIENT_ID, partyRole: "petitioner", position: 0 }),
+    const payload = mockCreateCaseAtomic.mock.calls[0][0];
+    expect(payload.parties).toHaveLength(1);
+    expect(payload.parties[0]).toEqual(
+      expect.objectContaining({ user_id: CLIENT_ID, party_role: "petitioner", position: 0 }),
     );
   });
 
   it("rejects an additional party whose role is not declared by the service", async () => {
-    // The service declares only spouse + minor; 'guardian' is not allowed.
     await expect(
       createCaseFromContract(ACTOR, {
         primaryClientId: CLIENT_ID,
@@ -484,6 +421,7 @@ describe("createCaseFromContract", () => {
         paymentPlan: VALID_PAYMENT_PLAN,
       }),
     ).rejects.toMatchObject({ code: "CASE_PARTY_ROLE_INVALID" });
+    expect(mockCreateCaseAtomic).not.toHaveBeenCalled();
   });
 
   it("rejects the principal role among the additional parties", async () => {
@@ -508,34 +446,14 @@ describe("createCaseFromContract", () => {
     });
 
     expect(mockUpsertPersonRecord).not.toHaveBeenCalled();
-    expect(mockInsertCasePartyRow).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", personRecordId: null }),
+    const payload = mockCreateCaseAtomic.mock.calls[0][0];
+    expect(payload.parties).toContainEqual(
+      expect.objectContaining({ user_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", person_record_id: null }),
     );
   });
 
-  it("treats PAYMENT_PLAN_EXISTS as idempotent (does not throw)", async () => {
-    // billing.createPaymentPlan throws PAYMENT_PLAN_EXISTS
-    mockCreatePaymentPlan.mockRejectedValueOnce(
-      Object.assign(new Error("PAYMENT_PLAN_EXISTS"), { code: "PAYMENT_PLAN_EXISTS" }),
-    );
-
-    const result = await createCaseFromContract(ACTOR, {
-      primaryClientId: CLIENT_ID,
-      serviceId: SERVICE_ID,
-      servicePlanId: PLAN_ID,
-      parties: [],
-      paymentPlan: VALID_PAYMENT_PLAN,
-    });
-
-    expect(result.created).toBe(true);
-  });
-
-  // M-1 FIX: any billing error other than PAYMENT_PLAN_EXISTS must propagate so
-  // the admin can retry — a case with no payment plan cannot be activated.
-  it("M-1: re-throws non-PAYMENT_PLAN_EXISTS billing errors", async () => {
-    const billingErr = Object.assign(new Error("BILLING_ERROR"), { code: "BILLING_ERROR" });
-    mockCreatePaymentPlan.mockRejectedValueOnce(billingErr);
-
+  it("propagates a createCaseAtomic failure (atomic — nothing partial persists)", async () => {
+    mockCreateCaseAtomic.mockRejectedValueOnce(new Error("create_case_atomic failed"));
     await expect(
       createCaseFromContract(ACTOR, {
         primaryClientId: CLIENT_ID,
@@ -544,15 +462,13 @@ describe("createCaseFromContract", () => {
         parties: [],
         paymentPlan: VALID_PAYMENT_PLAN,
       }),
-    ).rejects.toMatchObject({ code: "BILLING_ERROR" });
+    ).rejects.toThrow();
+    // No success side-effects when the atomic write fails.
+    expect(mockWriteAudit).not.toHaveBeenCalled();
+    expect(mockEmit).not.toHaveBeenCalledWith(expect.objectContaining({ type: "case.created" }));
   });
 
   it("emits case.assigned when assignedParalegalId is set", async () => {
-    mockInsertCase.mockResolvedValueOnce({
-      ...CASE_ROW,
-      assigned_paralegal_id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
-    });
-
     await createCaseFromContract(ACTOR, {
       primaryClientId: CLIENT_ID,
       serviceId: SERVICE_ID,
@@ -562,8 +478,8 @@ describe("createCaseFromContract", () => {
       paymentPlan: VALID_PAYMENT_PLAN,
     });
 
-    expect(mockEmit).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "case.assigned" }),
-    );
+    expect(mockEmit).toHaveBeenCalledWith(expect.objectContaining({ type: "case.assigned" }));
+    const payload = mockCreateCaseAtomic.mock.calls[0][0];
+    expect(payload.case.assigned_paralegal_id).toBe("ffffffff-ffff-4fff-8fff-ffffffffffff");
   });
 });
