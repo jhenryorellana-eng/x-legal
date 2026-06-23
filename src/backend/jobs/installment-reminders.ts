@@ -119,7 +119,10 @@ async function dispatchReminderForTarget(
   const isToday = dueDate === today;
   const content = buildReminderContent(dueDate, isToday);
   const dedupeKey = `${content.type}:${installmentId}:${clientUserId}`;
-  const actionUrl = `/caso/${caseId}/cuotas`;
+  // Client payments live at the account-level /pagos screen (there is no
+  // /caso/[caseId]/cuotas route — linking there 404s). ?caseId opens that
+  // case's plan via the multi-case selector.
+  const actionUrl = `/pagos?caseId=${caseId}`;
 
   const user = await findUserById(clientUserId);
   if (!user) {
