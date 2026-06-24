@@ -30,9 +30,23 @@ PWA de gestión de casos migratorios/legales. Stack: **Next.js 15** (App Router,
 
 **Definition of Done (DOC-80 §6)**: `typecheck` (0) · `lint` (0 warnings) · `vitest run` (verde) · `build` · `check:i18n`. Más detalles de verificación en vivo en la sección *Verificación / dev / test*.
 
-## Supabase MCP — cómo leer/escribir la BD (CONFIRMADO funcionando 2026-06-14)
+## Supabase MCP — cómo leer/escribir la BD (CONFIRMADO funcionando 2026-06-22)
 
-El MCP de Supabase está conectado vía **access token** (lo configuró Henry). Proyecto: **`uexxyokexcamyjcknxua`** ("USALATINO V2"). Herramientas (cargar con ToolSearch `select:mcp__supabase__<name>` si aparecen como deferred):
+> **Conexión: local vía `.mcp.json` (NO el MCP integrado de Claude).** El servidor `supabase` se
+> declara en `.mcp.json` (raíz del repo, **gitignored** — lleva el access token, ver `.gitignore`):
+> ejecuta `npx -y @supabase/mcp-server-supabase@latest --read-only --project-ref=uexxyokexcamyjcknxua`
+> con `SUPABASE_ACCESS_TOKEN` en `env`. **El MCP integrado/hosted de Claude (`plugin:supabase`) NO
+> funciona** (pide OAuth y no conecta). El `.mcp.json` ya está creado en esta máquina y se autoconecta
+> al iniciar sesión → **NO preguntar de nuevo cómo conectarlo ni pedir el token**; las herramientas
+> `mcp__supabase__*` aparecen como deferred y se cargan con `ToolSearch select:mcp__supabase__<name>`.
+> **Modo escritura (2026-06-22): se quitó `--read-only` por decisión de Henry** para aplicar migraciones
+> vía MCP (`apply_migration`). Esto habilita INSERT/UPDATE/DDL a PRODUCCIÓN — usar con cuidado; conviene
+> re-añadir `--read-only` cuando no se estén aplicando migraciones. Nota: editar `.mcp.json` NO recarga el
+> servidor MCP en caliente — el cambio aplica al reiniciar la sesión. Para aplicar DDL sin reiniciar se
+> puede usar la **Management API** (`POST https://api.supabase.com/v1/projects/<ref>/database/query` con
+> el access token) — es el canal que usa `apply_migration` por debajo.
+
+El MCP de Supabase está conectado vía **access token** (en `.mcp.json` local). Proyecto: **`uexxyokexcamyjcknxua`** ("USALATINO V2"). Herramientas (cargar con ToolSearch `select:mcp__supabase__<name>` si aparecen como deferred):
 
 | Acción | Herramienta | Notas |
 |---|---|---|

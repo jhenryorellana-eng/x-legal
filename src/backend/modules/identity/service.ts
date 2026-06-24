@@ -63,6 +63,9 @@ import {
   insertClientRows,
   insertPersonRecord,
   updateUserLocale,
+  updateUserTimezone,
+  updateUserLocation,
+  findUserLocation,
   findUserUiPrefs,
   updateUserUiPrefs,
   type StaffProfileRow,
@@ -102,6 +105,69 @@ export async function setUserLocale(actor: Actor, rawLocale: string): Promise<Su
     : "es";
   await updateUserLocale(actor.userId, locale);
   return locale;
+}
+
+// ---------------------------------------------------------------------------
+// setUserTimezone — persist the actor's own IANA timezone (DOC-23 §6.5)
+// ---------------------------------------------------------------------------
+
+/** Validates a candidate IANA timezone string via the Intl engine. */
+function isValidIanaTimezone(tz: string): boolean {
+  try {
+    // Throws RangeError for unknown zones; cheap and dependency-free.
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Persists the authenticated user's own timezone to `users.timezone`. Any
+ * authenticated user (client or staff) may set their own — no `can()` gate
+ * beyond authentication. The caller (action) mirrors it to the `ulp-tz` cookie
+ * so SSR (getTimeZone) renders times in the new zone on the next request.
+ * Invalid zones fall back to America/New_York (the product default).
+ */
+export async function setUserTimezone(actor: Actor, rawTz: string): Promise<string> {
+  const tz = isValidIanaTimezone(rawTz) ? rawTz : "America/New_York";
+  await updateUserTimezone(actor.userId, tz);
+  return tz;
+}
+
+/**
+ * Reads the actor's current location (timezone + city/country) for the
+ * Configuración location card. Falls back to America/New_York timezone.
+ */
+export async function getCurrentUserLocation(
+  actor: Actor,
+): Promise<{ timezone: string; city: string | null; country: string | null }> {
+  const loc = await findUserLocation(actor.userId);
+  return {
+    timezone: loc?.timezone ?? "America/New_York",
+    city: loc?.city ?? null,
+    country: loc?.country ?? null,
+  };
+}
+
+/**
+ * Persists the authenticated user's full location (timezone + city/country),
+ * as detected by the browser geolocation + reverse geocode flow. The timezone
+ * is validated (falls back to America/New_York); city/country are stored as-is.
+ * Returns the persisted timezone (the action mirrors it to the ulp-tz cookie).
+ */
+export async function setUserLocation(
+  actor: Actor,
+  input: { timezone: string; city?: string | null; country?: string | null; countryCode?: string | null },
+): Promise<string> {
+  const tz = isValidIanaTimezone(input.timezone) ? input.timezone : "America/New_York";
+  await updateUserLocation(actor.userId, {
+    timezone: tz,
+    city: input.city ?? null,
+    country: input.country ?? null,
+    countryCode: input.countryCode ?? null,
+  });
+  return tz;
 }
 
 // ---------------------------------------------------------------------------

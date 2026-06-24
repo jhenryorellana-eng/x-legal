@@ -8,10 +8,11 @@
  */
 
 import { redirect } from "next/navigation";
-import { getTranslations } from "next-intl/server";
+import { getLocale, getTranslations } from "next-intl/server";
 import { formatInTimeZone } from "date-fns-tz";
 import { getActor } from "@/backend/modules/identity";
 import { getAvailabilityConfig } from "@/backend/modules/scheduling";
+import { tzLabel } from "@/frontend/lib/datetime";
 import { DisponibilidadView, LexPrefsProvider } from "@/frontend/features/vanessa";
 import type { DayRule } from "@/frontend/features/vanessa";
 import {
@@ -39,6 +40,7 @@ export default async function VentasDisponibilidadPage() {
   if (!actor || actor.kind !== "staff") redirect("/login");
 
   const t = await getTranslations("staff.ventas.disponibilidad");
+  const locale = (await getLocale()) === "en" ? "en" : "es";
 
   // Read the rep's saved availability (weekly rules + exceptions + settings).
   // Falls back to empty defaults if the read fails (e.g. missing permission) so
@@ -83,7 +85,7 @@ export default async function VentasDisponibilidadPage() {
   const strings = {
     title: t("title"),
     sub: t("sub"),
-    tzChip: t("tzChip"),
+    tzChip: t("tzChip", { region: tzLabel(staffTz, locale) }),
     lexTipHtml: t.markup("lexTipHtml", { b: (c) => `<b>${c}</b>` }),
     weeklyTitle: t("weeklyTitle"),
     notAvailable: t("notAvailable"),

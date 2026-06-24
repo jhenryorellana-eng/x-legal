@@ -82,6 +82,10 @@ export const SUBJECTS: Record<string, { es: string; en: string }> = {
     es: "Tu cita cambió de fecha",
     en: "Your appointment has been rescheduled",
   },
+  "appointment-no-show": {
+    es: "No asististe a tu cita",
+    en: "You missed your appointment",
+  },
   "appointment-24h": {
     es: "Tu cita es mañana",
     en: "Your appointment is tomorrow",

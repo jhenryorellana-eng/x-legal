@@ -3,8 +3,9 @@
  *
  * Server component. Reads the appointment for the client (anti-enumeration: same
  * error for not-found / not-yours → 404). Formats the dual hour server-side with
- * date-fns-tz: the client's own TZ as primary + the office TZ (Utah) as the small
- * secondary, both from the SAME UTC instant (DOC-23 §6.5) — never a fixed offset.
+ * date-fns-tz: the client's own TZ as primary + the office TZ (the attending
+ * advisor's timezone) as the small secondary, both from the SAME UTC instant
+ * (DOC-23 §6.5) — never a fixed offset.
  *
  * The "Entrar a la videollamada" button stays visible but disabled ("Pronto")
  * because LiveKit is F7; the screen still reads naturally. Confetti fires when the
@@ -28,14 +29,6 @@ import type { Locale } from "@/frontend/features/cliente/shared/i18n";
 import { CitaScreen } from "@/frontend/features/cliente/cita/cita-screen";
 import { EmptyCase } from "@/frontend/features/cliente/shared/empty-case";
 import { cancelAppointmentAction } from "./actions";
-
-/**
- * Office timezone (the Utah practice — America/Denver). A stable business fact
- * used to render the small dual hour "… en Utah"; the offset itself is always
- * derived per instant by date-fns-tz, never a fixed table (DOC-23 §6.4).
- */
-const OFFICE_TZ = "America/Denver";
-const OFFICE_CITY_ES = "Utah";
 
 export default async function CitaPage({
   params,
@@ -89,17 +82,19 @@ export default async function CitaPage({
   // Date (client TZ) — "Jueves 12 de junio".
   const dateText = fmtHeaderDate(startsAt, clientTz, locale);
 
-  // Dual time — client primary (with region) + office (Utah) secondary, both
-  // from the same UTC instant. Region uses the friendly client TZ label.
-  const clientHour = fmtTimeZoned(startsAt, clientTz); // "2:00 PM EDT"
+  // Dual time — client primary (with region) + office (the attending advisor's
+  // timezone) secondary, both from the same UTC instant. When the advisor shares
+  // the client's zone (or is unknown) the secondary collapses away.
+  const officeTz = advisorProfile?.timezone ?? clientTz;
   const clientHourPlain = fmtTime(startsAt, clientTz); // "2:00 PM"
   const region = tzLabel(clientTz, locale); // "Florida (ET)"
-  const officeHour = fmtTime(startsAt, OFFICE_TZ); // "12:00 PM"
-  const sameWall = clientHour === fmtTimeZoned(startsAt, OFFICE_TZ);
+  const officeHour = fmtTime(startsAt, officeTz); // "12:00 PM"
+  const officeLabel = tzLabel(officeTz, locale);
+  const sameWall = fmtTimeZoned(startsAt, clientTz) === fmtTimeZoned(startsAt, officeTz);
   const inWord = locale === "en" ? "in" : "en";
   const timeText = sameWall
     ? `${clientHourPlain} (${region})`
-    : `${clientHourPlain} (${region}) · ${officeHour} ${inWord} ${OFFICE_CITY_ES}`;
+    : `${clientHourPlain} (${region}) · ${officeHour} ${inWord} ${officeLabel}`;
 
   // Advisor: use real name if available; fall back to generic when not assigned.
   // DOC-51 §19 expects "{name}, tu asesora" (advisorValue key) when name is known.

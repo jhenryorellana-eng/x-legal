@@ -17,6 +17,7 @@ import type {
   CameraBridge,
   DictationBridge,
   FilesBridge,
+  GeolocationBridge,
   HapticsBridge,
   PlatformBridge,
   PushBridge,
@@ -116,6 +117,20 @@ const translatorStub: TranslatorBridge = {
   },
 };
 
+// Geolocation: until @capacitor/geolocation is wired, report unsupported so the
+// caller falls back to the browser timezone / manual selection.
+const geolocationStub: GeolocationBridge = {
+  isSupported() {
+    return Promise.resolve(false);
+  },
+  getPermissionStatus() {
+    return Promise.resolve("unsupported");
+  },
+  getCurrentPosition() {
+    return Promise.resolve(null);
+  },
+};
+
 export function createCapacitorBridge(): PlatformBridge {
   return {
     platform: "capacitor",
@@ -126,5 +141,6 @@ export function createCapacitorBridge(): PlatformBridge {
     share: shareStub,
     haptics: hapticsStub,
     translator: translatorStub,
+    geolocation: geolocationStub,
   };
 }

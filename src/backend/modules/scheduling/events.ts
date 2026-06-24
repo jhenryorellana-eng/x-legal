@@ -89,6 +89,23 @@ export interface AppointmentCompletedPayload {
 export type AppointmentCompletedEvent = DomainEvent<AppointmentCompletedPayload>;
 
 // ---------------------------------------------------------------------------
+// appointment.no_show (Propuesta SOT-4 — DOC-43 §3.5)
+// ---------------------------------------------------------------------------
+
+export interface AppointmentNoShowPayload {
+  appointmentId: string;
+  caseId: string | null;
+  leadId: string | null;
+  staffId: string;
+  clientUserId: string | null;
+  startsAt: Date;
+  /** When the client's rebooking is blocked until (penalty), null if no case. */
+  blockedUntil: Date | null;
+}
+
+export type AppointmentNoShowEvent = DomainEvent<AppointmentNoShowPayload>;
+
+// ---------------------------------------------------------------------------
 // Union
 // ---------------------------------------------------------------------------
 
@@ -96,4 +113,5 @@ export type SchedulingEvent =
   | AppointmentBookedEvent
   | AppointmentCancelledEvent
   | AppointmentRescheduledEvent
-  | AppointmentCompletedEvent;
+  | AppointmentCompletedEvent
+  | AppointmentNoShowEvent;

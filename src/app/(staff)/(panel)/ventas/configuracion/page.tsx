@@ -5,9 +5,10 @@
 
 import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
-import { getActor } from "@/backend/modules/identity";
+import { getActor, getCurrentUserLocation } from "@/backend/modules/identity";
 import { ConfiguracionView, LexPrefsProvider } from "@/frontend/features/vanessa";
-import type { Locale } from "@/frontend/lib/datetime";
+import { StaffTimezoneSection } from "../../_components/staff-timezone-section";
+import { tzLabel, type Locale } from "@/frontend/lib/datetime";
 import { setUserLocaleAction } from "@/backend/modules/identity/actions";
 import {
   registerPushSubscriptionAction,
@@ -21,6 +22,7 @@ export default async function VentasConfigPage() {
   if (!actor || actor.kind !== "staff") redirect("/login");
 
   const locale = (await getLocale()) as Locale;
+  const staffTz = (await getCurrentUserLocation(actor)).timezone;
   const t = await getTranslations("staff.ventas.config");
   const tCfg = await getTranslations("staff.config");
 
@@ -30,7 +32,7 @@ export default async function VentasConfigPage() {
     name: t("name"),
     role: t("role"),
     email: t("email"),
-    tzChip: t("tzChip"),
+    tzChip: t("tzChip", { region: tzLabel(staffTz, locale) }),
     edit: t("edit"),
     appearance: t("appearance"),
     darkMode: t("darkMode"),
@@ -52,17 +54,20 @@ export default async function VentasConfigPage() {
   };
 
   return (
-    <LexPrefsProvider>
-      <ConfiguracionView
-        strings={strings}
-        locale={locale}
-        actions={{ setLocale: setUserLocaleAction }}
-        push={{
-          vapidPublicKey: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
-          registerAction: registerPushSubscriptionAction,
-          removeAction: removePushSubscriptionAction,
-        }}
-      />
-    </LexPrefsProvider>
+    <>
+      <LexPrefsProvider>
+        <ConfiguracionView
+          strings={strings}
+          locale={locale}
+          actions={{ setLocale: setUserLocaleAction }}
+          push={{
+            vapidPublicKey: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
+            registerAction: registerPushSubscriptionAction,
+            removeAction: removePushSubscriptionAction,
+          }}
+        />
+      </LexPrefsProvider>
+      <StaffTimezoneSection locale={locale === "en" ? "en" : "es"} />
+    </>
   );
 }

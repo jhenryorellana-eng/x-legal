@@ -537,6 +537,46 @@ function createTranslatorBridge(): TranslatorBridge {
 }
 
 // ===========================================================================
+// Geolocation (DOC-24 §3 — native API funneled through the bridge per RNF-036)
+// ===========================================================================
+
+function createGeolocationBridge(): import("./index").GeolocationBridge {
+  const supported = () =>
+    typeof navigator !== "undefined" && "geolocation" in navigator;
+
+  return {
+    isSupported() {
+      return Promise.resolve(supported());
+    },
+    async getPermissionStatus() {
+      if (!supported()) return "unsupported";
+      try {
+        const perms = (navigator as Navigator & { permissions?: Permissions }).permissions;
+        if (!perms?.query) return "prompt";
+        const status = await perms.query({ name: "geolocation" as PermissionName });
+        return status.state as "granted" | "denied" | "prompt";
+      } catch {
+        return "prompt";
+      }
+    },
+    getCurrentPosition() {
+      return new Promise((resolve) => {
+        if (!supported()) {
+          resolve(null);
+          return;
+        }
+        navigator.geolocation.getCurrentPosition(
+          (pos) =>
+            resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+          () => resolve(null), // denied / timeout / unavailable → caller falls back
+          { enableHighAccuracy: false, timeout: 10_000, maximumAge: 600_000 },
+        );
+      });
+    },
+  };
+}
+
+// ===========================================================================
 // Bridge factory
 // ===========================================================================
 
@@ -550,5 +590,6 @@ export function createWebBridge(): PlatformBridge {
     share: createShareBridge(),
     haptics: createHapticsBridge(),
     translator: createTranslatorBridge(),
+    geolocation: createGeolocationBridge(),
   };
 }

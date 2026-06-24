@@ -114,13 +114,16 @@ export default async function AgendarPage({
         labels={{
           title: t("title"),
           subtitle: t("subtitle"),
-          bannerTz: t("bannerTz"),
+          // Raw template: AgendarScreen fills {region} client-side (next-intl would
+          // otherwise fail the ICU format on the missing arg and echo the key).
+          bannerTz: t.raw("bannerTz"),
           region: tzLabel(clientTz, locale),
           monthAria: t("monthAria"),
           prevMonth: t("prevMonth"),
           nextMonth: t("nextMonth"),
           weekdays: t("weekdays"),
-          slotsTitle: t("slotsTitle"),
+          // Raw templates: the screen fills {date} / {hora} / {n}/{total} client-side.
+          slotsTitle: t.raw("slotsTitle"),
           slotsLoading: t("slotsLoading"),
           pickDayFirst: t("pickDayFirst"),
           noSlotsDay: t("noSlotsDay"),
@@ -134,8 +137,8 @@ export default async function AgendarPage({
           ctaReady: t("ctaReady"),
           ctaReschedule: t("ctaReschedule"),
           ctaBooking: t("ctaBooking"),
-          inOffice: t("inOffice"),
-          seqLabel: t("seqLabel"),
+          inOffice: t.raw("inOffice"),
+          seqLabel: t.raw("seqLabel"),
           errSlotTaken: t("errSlotTaken"),
           errNoLeft: t("errNoLeft"),
           errGeneric: t("errGeneric"),
@@ -154,7 +157,7 @@ export default async function AgendarPage({
         return (
           <AgendarBlocked
             title={t("blockedTitle")}
-            body={t("blockedBody")}
+            body={t.raw("blockedBody")}
             hint={t("blockedHint")}
             unblockDate={unblockDate}
           />

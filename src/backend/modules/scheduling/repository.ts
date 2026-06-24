@@ -28,7 +28,7 @@ import type {
 export type AppointmentRow = Tables<"appointments">;
 export type AvailabilityRuleRow = Tables<"availability_rules">;
 export type AvailabilityExceptionRow = Tables<"availability_exceptions">;
-export type StaffSchedulingSettingsRow = Tables<"staff_scheduling_settings">;
+export type OrgSchedulingSettingsRow = Tables<"org_scheduling_settings">;
 export type PhasePolicyRow = Tables<"phase_appointment_policies">;
 export type CaseOverrideRow = Tables<"case_overrides">;
 
@@ -45,7 +45,7 @@ const DEFAULT_SETTINGS: SchedulingSettings = {
   prospectDurationMinutes: 45,
 };
 
-function rowToSettings(row: StaffSchedulingSettingsRow): SchedulingSettings {
+function rowToSettings(row: OrgSchedulingSettingsRow): SchedulingSettings {
   return {
     minNoticeHours: row.min_notice_hours,
     maxAdvanceDays: row.max_advance_days,
@@ -59,8 +59,11 @@ function rowToSettings(row: StaffSchedulingSettingsRow): SchedulingSettings {
 function rowToRule(row: AvailabilityRuleRow): AvailabilityRule {
   return {
     weekday: row.weekday,
-    startLocal: row.start_local,
-    endLocal: row.end_local,
+    // Postgres `time` columns serialize as "HH:MM:SS"; the domain (materializeSlots,
+    // validateRuleSet) works in "HH:MM" wall-time. Normalize at the row→domain edge
+    // so `${date}T${startLocal}:00` never becomes "…THH:MM:SS:00" (Invalid time value).
+    startLocal: row.start_local.slice(0, 5),
+    endLocal: row.end_local.slice(0, 5),
     timezone: row.timezone,
     isActive: row.is_active,
   };
@@ -87,6 +90,7 @@ export async function findById(id: string): Promise<AppointmentRow | null> {
 }
 
 export interface InsertAppointmentInput {
+  orgId: string;
   caseId: string | null;
   leadId: string | null;
   servicePhaseId: string | null;
@@ -114,6 +118,7 @@ export async function insertAppointment(
 ): Promise<AppointmentRow> {
   const supabase = createServiceClient();
   const row: TablesInsert<"appointments"> = {
+    org_id: input.orgId,
     case_id: input.caseId,
     lead_id: input.leadId,
     service_phase_id: input.servicePhaseId,
@@ -193,9 +198,12 @@ export async function updateAppointment(
   }
 }
 
-/** Finds all staff appointments in [fromUtc, toUtc) with given statuses. */
-export async function findStaffAppointmentsInRange(
-  staffId: string,
+/**
+ * Finds all appointments of an ORG in [fromUtc, toUtc) with given statuses.
+ * Org-wide (DOC-43 org-level agenda): every staff member sees the same agenda.
+ */
+export async function findOrgAppointmentsInRange(
+  orgId: string,
   fromUtc: Date,
   toUtc: Date,
   statuses: string[],
@@ -204,14 +212,14 @@ export async function findStaffAppointmentsInRange(
   const { data, error } = await supabase
     .from("appointments")
     .select("*")
-    .eq("staff_id", staffId)
+    .eq("org_id", orgId)
     .gte("starts_at", fromUtc.toISOString())
     .lt("starts_at", toUtc.toISOString())
     .in("status", statuses)
     .order("starts_at");
 
   if (error) {
-    logger.error({ err: error }, "scheduling.repo: findStaffAppointmentsInRange error");
+    logger.error({ err: error }, "scheduling.repo: findOrgAppointmentsInRange error");
     return [];
   }
   return data ?? [];
@@ -223,7 +231,7 @@ export async function findStaffAppointmentsInRange(
  * This is the correct input for materializeSlots (DOC-43 §4).
  */
 export async function findBookedForMaterialization(
-  staffId: string,
+  orgId: string,
   fromUtc: Date,
   toUtc: Date,
 ): Promise<Array<{ startsAt: Date; endsAt: Date }>> {
@@ -231,7 +239,7 @@ export async function findBookedForMaterialization(
   const { data, error } = await supabase
     .from("appointments")
     .select("starts_at, ends_at")
-    .eq("staff_id", staffId)
+    .eq("org_id", orgId)
     .eq("status", "scheduled")
     .lt("starts_at", toUtc.toISOString())
     .gt("ends_at", fromUtc.toISOString());
@@ -409,13 +417,13 @@ export async function markReminderSent(
 // Availability rules
 // ---------------------------------------------------------------------------
 
-/** Returns all active rules for a staff member, ordered by weekday. */
-export async function getActiveRules(staffId: string): Promise<AvailabilityRule[]> {
+/** Returns all active rules for an org, ordered by weekday. */
+export async function getActiveRules(orgId: string): Promise<AvailabilityRule[]> {
   const supabase = createServiceClient();
   const { data, error } = await supabase
     .from("availability_rules")
     .select("*")
-    .eq("staff_id", staffId)
+    .eq("org_id", orgId)
     .eq("is_active", true)
     .order("weekday")
     .order("start_local");
@@ -427,13 +435,13 @@ export async function getActiveRules(staffId: string): Promise<AvailabilityRule[
   return (data ?? []).map(rowToRule);
 }
 
-/** Returns ALL rules for a staff member (active and inactive). */
-export async function getAllRules(staffId: string): Promise<AvailabilityRuleRow[]> {
+/** Returns ALL rules for an org (active and inactive). */
+export async function getAllRules(orgId: string): Promise<AvailabilityRuleRow[]> {
   const supabase = createServiceClient();
   const { data, error } = await supabase
     .from("availability_rules")
     .select("*")
-    .eq("staff_id", staffId)
+    .eq("org_id", orgId)
     .order("weekday")
     .order("start_local");
 
@@ -453,11 +461,11 @@ export interface RuleInput {
 }
 
 /**
- * Replaces all availability rules for a staff member in a single transaction
+ * Replaces all availability rules for an org in a single transaction
  * (delete old → insert new). RF-VAN-032 step 5.
  */
 export async function replaceRules(
-  staffId: string,
+  orgId: string,
   rules: RuleInput[],
 ): Promise<void> {
   const supabase = createServiceClient();
@@ -466,7 +474,7 @@ export async function replaceRules(
   const { error: delErr } = await supabase
     .from("availability_rules")
     .delete()
-    .eq("staff_id", staffId);
+    .eq("org_id", orgId);
 
   if (delErr) {
     logger.error({ err: delErr }, "scheduling.repo: replaceRules delete error");
@@ -475,9 +483,10 @@ export async function replaceRules(
 
   if (rules.length === 0) return;
 
-  // Insert new rules
+  // Insert new rules (org-level: staff_id is null — the agenda belongs to the org)
   const rows: TablesInsert<"availability_rules">[] = rules.map((r) => ({
-    staff_id: staffId,
+    org_id: orgId,
+    staff_id: null,
     weekday: r.weekday,
     start_local: r.startLocal,
     end_local: r.endLocal,
@@ -496,18 +505,18 @@ export async function replaceRules(
 }
 
 /**
- * Rewrites all rules for a staff member with a new timezone snapshot,
+ * Rewrites all rules for an org with a new timezone snapshot,
  * keeping the same start_local/end_local wall times. (DOC-23 §7.1 migration)
  */
 export async function rewriteRulesTimezone(
-  staffId: string,
+  orgId: string,
   newTimezone: string,
 ): Promise<void> {
   const supabase = createServiceClient();
   const { error } = await supabase
     .from("availability_rules")
     .update({ timezone: newTimezone })
-    .eq("staff_id", staffId);
+    .eq("org_id", orgId);
 
   if (error) {
     logger.error({ err: error }, "scheduling.repo: rewriteRulesTimezone error");
@@ -521,7 +530,7 @@ export async function rewriteRulesTimezone(
 
 /** Finds exceptions that overlap the given UTC range (for materialization). */
 export async function getExceptionsInRange(
-  staffId: string,
+  orgId: string,
   fromUtc: Date,
   toUtc: Date,
 ): Promise<Array<{ startsAt: Date; endsAt: Date }>> {
@@ -529,7 +538,7 @@ export async function getExceptionsInRange(
   const { data, error } = await supabase
     .from("availability_exceptions")
     .select("starts_at, ends_at")
-    .eq("staff_id", staffId)
+    .eq("org_id", orgId)
     .lt("starts_at", toUtc.toISOString())
     .gt("ends_at", fromUtc.toISOString());
 
@@ -544,7 +553,7 @@ export async function getExceptionsInRange(
 }
 
 export interface InsertExceptionInput {
-  staffId: string;
+  orgId: string;
   startsAt: Date;
   endsAt: Date;
   reason: string | null;
@@ -557,7 +566,8 @@ export async function insertException(
   const { data, error } = await supabase
     .from("availability_exceptions")
     .insert({
-      staff_id: input.staffId,
+      org_id: input.orgId,
+      staff_id: null,
       starts_at: input.startsAt.toISOString(),
       ends_at: input.endsAt.toISOString(),
       reason: input.reason,
@@ -590,14 +600,14 @@ export async function deleteException(exceptionId: string): Promise<void> {
  * that has not fully elapsed yet (ends in the future). Ordered by start.
  */
 export async function listExceptions(
-  staffId: string,
+  orgId: string,
   fromUtc: Date,
 ): Promise<AvailabilityExceptionRow[]> {
   const supabase = createServiceClient();
   const { data, error } = await supabase
     .from("availability_exceptions")
     .select("*")
-    .eq("staff_id", staffId)
+    .eq("org_id", orgId)
     .gt("ends_at", fromUtc.toISOString())
     .order("starts_at");
 
@@ -610,7 +620,7 @@ export async function listExceptions(
 
 /** Finds scheduled appointments that overlap the given range (exception check). */
 export async function findScheduledInRange(
-  staffId: string,
+  orgId: string,
   fromUtc: Date,
   toUtc: Date,
 ): Promise<AppointmentRow[]> {
@@ -618,7 +628,7 @@ export async function findScheduledInRange(
   const { data, error } = await supabase
     .from("appointments")
     .select("*")
-    .eq("staff_id", staffId)
+    .eq("org_id", orgId)
     .eq("status", "scheduled")
     .lt("starts_at", toUtc.toISOString())
     .gt("ends_at", fromUtc.toISOString());
@@ -633,18 +643,18 @@ export async function findScheduledInRange(
 /**
  * Finds future scheduled appointments that fall outside the new availability rules.
  * Used by saveAvailabilityRules to surface orphaned appointments. (RF-VAN-032 A3)
- * Simplified: returns all future scheduled appointments for the staff member —
+ * Simplified: returns all future scheduled appointments for the org —
  * the service layer compares them against the new rules.
  */
 export async function findScheduledOutsideRules(
-  staffId: string,
+  orgId: string,
   afterUtc: Date,
 ): Promise<AppointmentRow[]> {
   const supabase = createServiceClient();
   const { data, error } = await supabase
     .from("appointments")
     .select("*")
-    .eq("staff_id", staffId)
+    .eq("org_id", orgId)
     .eq("status", "scheduled")
     .gt("starts_at", afterUtc.toISOString())
     .order("starts_at");
@@ -657,20 +667,35 @@ export async function findScheduledOutsideRules(
 }
 
 // ---------------------------------------------------------------------------
-// Staff scheduling settings
+// Org scheduling settings (org-level agenda — DOC-43)
 // ---------------------------------------------------------------------------
 
-/** Returns the scheduling settings for a staff member, or defaults if no row exists. */
-export async function getSettings(staffId: string): Promise<SchedulingSettings> {
+/** Returns the scheduling settings for an org, or defaults if no row exists. */
+export async function getSettings(orgId: string): Promise<SchedulingSettings> {
   const supabase = createServiceClient();
   const { data } = await supabase
-    .from("staff_scheduling_settings")
+    .from("org_scheduling_settings")
     .select("*")
-    .eq("staff_id", staffId)
+    .eq("org_id", orgId)
     .maybeSingle();
 
   if (!data) return DEFAULT_SETTINGS;
   return rowToSettings(data);
+}
+
+/**
+ * The org's canonical "office" timezone — the zone availability_rules wall-times
+ * are stored in. Each staff member sees/edits availability converted to their
+ * own zone (DOC-23 §6.5). Falls back to America/New_York.
+ */
+export async function getOfficeTimezone(orgId: string): Promise<string> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("org_scheduling_settings")
+    .select("office_timezone")
+    .eq("org_id", orgId)
+    .maybeSingle();
+  return data?.office_timezone ?? "America/New_York";
 }
 
 export interface SettingsPatch {
@@ -683,12 +708,12 @@ export interface SettingsPatch {
 }
 
 export async function upsertSettings(
-  staffId: string,
+  orgId: string,
   patch: SettingsPatch,
 ): Promise<void> {
   const supabase = createServiceClient();
-  const update: TablesInsert<"staff_scheduling_settings"> = {
-    staff_id: staffId,
+  const update: TablesInsert<"org_scheduling_settings"> = {
+    org_id: orgId,
     min_notice_hours: patch.minNoticeHours ?? DEFAULT_SETTINGS.minNoticeHours,
     max_advance_days: patch.maxAdvanceDays ?? DEFAULT_SETTINGS.maxAdvanceDays,
     buffer_minutes: patch.bufferMinutes ?? DEFAULT_SETTINGS.bufferMinutes,
@@ -701,8 +726,8 @@ export async function upsertSettings(
   };
 
   const { error } = await supabase
-    .from("staff_scheduling_settings")
-    .upsert(update, { onConflict: "staff_id" });
+    .from("org_scheduling_settings")
+    .upsert(update, { onConflict: "org_id" });
 
   if (error) {
     logger.error({ err: error }, "scheduling.repo: upsertSettings error");

@@ -18,6 +18,7 @@
  *   appointment.cancelled   → Counterpart of actor ①②③ (appointment-cancelled)
  *   appointment.rescheduled → Counterpart of actor ①②③ (appointment-rescheduled)
  *   appointment.completed   → no-op (timeline + metrics only, per matrix)
+ *   appointment.no_show     → Client ①②③ (appointment-no-show, amber — RF-TRX-022)
  *   lead.created            → Assigned staff (asesora) ①② (no email per matrix)
  *
  * Channels: ① in-app (always, base channel) · ② push (web-push/VAPID, F7) ·
@@ -210,7 +211,7 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
       channels: { push: true, email: true },
       category: "appointment_reminders",
       emailTemplateKey: "appointment-booked",
-      deepLinkTemplate: "/caso/{caseId}/citas/{appointmentId}",
+      deepLinkTemplate: "/caso/{caseId}/cita/{appointmentId}",
     },
     {
       type: "appointment.booked",
@@ -229,7 +230,7 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
       channels: { push: true, email: true },
       category: "appointment_reminders",
       emailTemplateKey: "appointment-cancelled",
-      deepLinkTemplate: "/caso/{caseId}/citas",
+      deepLinkTemplate: "/caso/{caseId}/agendar",
     },
   ],
 
@@ -241,7 +242,22 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
       channels: { push: true, email: true },
       category: "appointment_reminders",
       emailTemplateKey: "appointment-rescheduled",
-      deepLinkTemplate: "/caso/{caseId}/citas/{newAppointmentId}",
+      deepLinkTemplate: "/caso/{caseId}/cita/{newAppointmentId}",
+    },
+  ],
+
+  // appointment.no_show → Client ①②③ (amber, never red — RF-TRX-022).
+  // Always staff-initiated, so notify the client and point them to rebook.
+  // Lead/prospect no_show (no caseId, no client_user_id) → appointment_client
+  // resolves to [] → notification is correctly a silent no-op (no logged-in client).
+  "appointment.no_show": [
+    {
+      type: "appointment.no_show",
+      recipients: [{ resolverKey: "appointment_client" }],
+      channels: { push: true, email: true },
+      category: "appointment_reminders",
+      emailTemplateKey: "appointment-no-show",
+      deepLinkTemplate: "/caso/{caseId}/agendar",
     },
   ],
 
@@ -531,6 +547,12 @@ function renderContent(
       bodyI18n: { en: "Your appointment has been moved to a new date.", es: "Tu cita fue cambiada a una nueva fecha." },
       icon: "calendar-clock",
       color: "gold",
+    },
+    "appointment.no_show": {
+      titleI18n: { en: "You missed your appointment", es: "No asististe a tu cita" },
+      bodyI18n: { en: "You can reschedule later. If this was a mistake, let us know.", es: "Puedes reagendar más adelante. Si fue un error, avísanos." },
+      icon: "calendar-x",
+      color: "amber", // never red toward the client (RF-TRX-022)
     },
     // F3 reminder types (used by job appointment-reminders)
     "appointment.reminder_1d": {

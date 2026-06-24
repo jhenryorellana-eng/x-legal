@@ -13,17 +13,16 @@
 
 import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
-import { getActor } from "@/backend/modules/identity";
+import { formatInTimeZone } from "date-fns-tz";
+import { getActor, getCurrentUserLocation } from "@/backend/modules/identity";
 import { listLeads, listMyTasks } from "@/backend/modules/kanban";
 import { MiDiaView } from "@/frontend/features/vanessa";
-import { fmtHeaderDate, fmtRelative, type Locale } from "@/frontend/lib/datetime";
+import { fmtHeaderDate, fmtRelative, tzLabel, type Locale } from "@/frontend/lib/datetime";
 import { sourceMeta } from "@/frontend/features/vanessa/shared/source-meta";
 import { MiDiaClientShell } from "./client-shell";
 import { contactLeadAction, toggleTaskDoneAction } from "../actions";
 
 export const dynamic = "force-dynamic";
-
-const STAFF_TZ = "America/New_York";
 
 export default async function MiDiaPage() {
   const actor = await getActor();
@@ -31,6 +30,9 @@ export default async function MiDiaPage() {
 
   const locale = (await getLocale()) as Locale;
   const t = await getTranslations("staff.ventas.miDia");
+  // Render the date + greeting + chip in the STAFF's own timezone (DOC-23 §6.5):
+  // Vanessa (Colombia) and Henry (US) each see their own local time.
+  const staffTz = (await getCurrentUserLocation(actor)).timezone;
 
   // Uncontacted leads (oldest first) → "Por atender ahora"
   const leadsPage = await listLeads(actor, { uncontacted: true }).catch(() => null);
@@ -56,17 +58,18 @@ export default async function MiDiaPage() {
 
   const uncontactedCount = leadsPage?.items.length ?? 0;
 
+  const localHour = Number(formatInTimeZone(now, staffTz, "H"));
   const greetKey =
-    now.getHours() < 12
+    localHour < 12
       ? "greetingMorning"
-      : now.getHours() < 19
+      : localHour < 19
         ? "greetingAfternoon"
         : "greetingEvening";
 
   const strings = {
     greeting: t(greetKey, { name: "Vanessa" }),
-    dateLine: t("dateLine", { date: fmtHeaderDate(now, STAFF_TZ, locale) }),
-    tzChip: t("tzChip"),
+    dateLine: t("dateLine", { date: fmtHeaderDate(now, staffTz, locale) }),
+    tzChip: t("tzChip", { region: tzLabel(staffTz, locale) }),
     attendTitle: t("attendTitle"),
     attendChip: t("attendChip"),
     emptyAttend: t("emptyAttend"),

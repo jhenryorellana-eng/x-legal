@@ -361,6 +361,7 @@ export type Database = {
           lead_id: string | null
           livekit_room_id: string | null
           notes: string | null
+          org_id: string
           reminder_1d: boolean
           reminder_1d_sent_at: string | null
           reminder_1h: boolean
@@ -383,6 +384,7 @@ export type Database = {
           lead_id?: string | null
           livekit_room_id?: string | null
           notes?: string | null
+          org_id: string
           reminder_1d?: boolean
           reminder_1d_sent_at?: string | null
           reminder_1h?: boolean
@@ -405,6 +407,7 @@ export type Database = {
           lead_id?: string | null
           livekit_room_id?: string | null
           notes?: string | null
+          org_id?: string
           reminder_1d?: boolean
           reminder_1d_sent_at?: string | null
           reminder_1h?: boolean
@@ -436,6 +439,13 @@ export type Database = {
             columns: ["lead_id"]
             isOneToOne: false
             referencedRelation: "leads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "appointments_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "orgs"
             referencedColumns: ["id"]
           },
           {
@@ -510,8 +520,9 @@ export type Database = {
           created_at: string
           ends_at: string
           id: string
+          org_id: string
           reason: string | null
-          staff_id: string
+          staff_id: string | null
           starts_at: string
           updated_at: string
         }
@@ -519,8 +530,9 @@ export type Database = {
           created_at?: string
           ends_at: string
           id?: string
+          org_id: string
           reason?: string | null
-          staff_id: string
+          staff_id?: string | null
           starts_at: string
           updated_at?: string
         }
@@ -528,12 +540,20 @@ export type Database = {
           created_at?: string
           ends_at?: string
           id?: string
+          org_id?: string
           reason?: string | null
-          staff_id?: string
+          staff_id?: string | null
           starts_at?: string
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "availability_exceptions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "orgs"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "availability_exceptions_staff_id_fkey"
             columns: ["staff_id"]
@@ -549,7 +569,8 @@ export type Database = {
           end_local: string
           id: string
           is_active: boolean
-          staff_id: string
+          org_id: string
+          staff_id: string | null
           start_local: string
           timezone: string
           updated_at: string
@@ -560,7 +581,8 @@ export type Database = {
           end_local: string
           id?: string
           is_active?: boolean
-          staff_id: string
+          org_id: string
+          staff_id?: string | null
           start_local: string
           timezone: string
           updated_at?: string
@@ -571,13 +593,21 @@ export type Database = {
           end_local?: string
           id?: string
           is_active?: boolean
-          staff_id?: string
+          org_id?: string
+          staff_id?: string | null
           start_local?: string
           timezone?: string
           updated_at?: string
           weekday?: number
         }
         Relationships: [
+          {
+            foreignKeyName: "availability_rules_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "orgs"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "availability_rules_staff_id_fkey"
             columns: ["staff_id"]
@@ -3061,6 +3091,53 @@ export type Database = {
           },
         ]
       }
+      org_scheduling_settings: {
+        Row: {
+          buffer_minutes: number
+          cancellation_window_hours: number
+          created_at: string
+          max_advance_days: number
+          min_notice_hours: number
+          office_timezone: string
+          org_id: string
+          prospect_duration_minutes: number
+          rebooking_penalty_days: number
+          updated_at: string
+        }
+        Insert: {
+          buffer_minutes?: number
+          cancellation_window_hours?: number
+          created_at?: string
+          max_advance_days?: number
+          min_notice_hours?: number
+          office_timezone?: string
+          org_id: string
+          prospect_duration_minutes?: number
+          rebooking_penalty_days?: number
+          updated_at?: string
+        }
+        Update: {
+          buffer_minutes?: number
+          cancellation_window_hours?: number
+          created_at?: string
+          max_advance_days?: number
+          min_notice_hours?: number
+          office_timezone?: string
+          org_id?: string
+          prospect_duration_minutes?: number
+          rebooking_penalty_days?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "org_scheduling_settings_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "orgs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       orgs: {
         Row: {
           created_at: string
@@ -3935,6 +4012,9 @@ export type Database = {
       }
       users: {
         Row: {
+          city: string | null
+          country: string | null
+          country_code: string | null
           created_at: string
           email: string | null
           email_bounced_at: string | null
@@ -3943,6 +4023,7 @@ export type Database = {
           kind: string
           last_seen_at: string | null
           locale: string
+          location_confirmed_at: string | null
           org_id: string
           phone_e164: string | null
           text_scale: number
@@ -3951,6 +4032,9 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          city?: string | null
+          country?: string | null
+          country_code?: string | null
           created_at?: string
           email?: string | null
           email_bounced_at?: string | null
@@ -3959,6 +4043,7 @@ export type Database = {
           kind: string
           last_seen_at?: string | null
           locale?: string
+          location_confirmed_at?: string | null
           org_id: string
           phone_e164?: string | null
           text_scale?: number
@@ -3967,6 +4052,9 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          city?: string | null
+          country?: string | null
+          country_code?: string | null
           created_at?: string
           email?: string | null
           email_bounced_at?: string | null
@@ -3975,6 +4063,7 @@ export type Database = {
           kind?: string
           last_seen_at?: string | null
           locale?: string
+          location_confirmed_at?: string | null
           org_id?: string
           phone_e164?: string | null
           text_scale?: number
@@ -4048,6 +4137,7 @@ export type Database = {
     }
     Functions: {
       auth_org_id: { Args: never; Returns: string }
+      create_case_atomic: { Args: { p: Json }; Returns: Json }
       custom_access_token_hook: { Args: { event: Json }; Returns: Json }
       has_module: {
         Args: { module_key: string; need_edit?: boolean }

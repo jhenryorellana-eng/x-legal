@@ -80,5 +80,6 @@ export type {
   AppointmentCancelledEvent,
   AppointmentRescheduledEvent,
   AppointmentCompletedEvent,
+  AppointmentNoShowEvent,
   SchedulingEvent,
 } from "./events";

@@ -11,7 +11,7 @@
 
 import { appEvents } from "@/backend/platform/events";
 import { logger } from "@/backend/platform/logger";
-import { onDownpaymentConfirmed, onExpedienteSentToFinanceCase, onExpedientePrintedCase } from "@/backend/modules/cases";
+import { onDownpaymentConfirmed, onExpedienteSentToFinanceCase, onExpedientePrintedCase, appendAppointmentTimeline } from "@/backend/modules/cases";
 import { notifyFromEvent } from "@/backend/modules/notifications";
 import {
   onCaseAssigned,
@@ -110,6 +110,92 @@ export function registerConsumers(): void {
 
   appEvents.on("appointment.completed", async (event) => {
     await notifyFromEvent(event);
+  });
+
+  // no_show has TWO consumers (like every appointment.* event): this one notifies
+  // the client (amber, never red — RF-TRX-022); the timeline projection consumer
+  // is registered below alongside the other appointment.* timeline writers.
+  appEvents.on("appointment.no_show", async (event) => {
+    await notifyFromEvent(event);
+  });
+
+  // -------------------------------------------------------------------------
+  // scheduling → cases timeline (project appointment lifecycle to case_timeline,
+  // visible to the client — DOC-41 §3.14). Lead/prospect appointments (no caseId)
+  // do not write a case timeline entry.
+  // -------------------------------------------------------------------------
+
+  appEvents.on("appointment.booked", async (event) => {
+    const p = event.payload as {
+      caseId: string | null;
+      bookedBy?: "client" | "staff";
+      staffId?: string;
+      clientUserId?: string | null;
+    };
+    if (!p.caseId) return;
+    const byClient = p.bookedBy === "client";
+    await appendAppointmentTimeline({
+      caseId: p.caseId,
+      eventType: "appointment.booked",
+      actorKind: byClient ? "client" : "team",
+      actorUserId: byClient ? (p.clientUserId ?? null) : (p.staffId ?? null),
+    });
+  });
+
+  appEvents.on("appointment.cancelled", async (event) => {
+    const p = event.payload as {
+      caseId: string | null;
+      cancelledBy?: "client" | "staff";
+      staffId?: string;
+      clientUserId?: string | null;
+    };
+    if (!p.caseId) return;
+    const byClient = p.cancelledBy === "client";
+    await appendAppointmentTimeline({
+      caseId: p.caseId,
+      eventType: "appointment.cancelled",
+      actorKind: byClient ? "client" : "team",
+      actorUserId: byClient ? (p.clientUserId ?? null) : (p.staffId ?? null),
+    });
+  });
+
+  appEvents.on("appointment.rescheduled", async (event) => {
+    const p = event.payload as {
+      caseId: string | null;
+      rescheduledBy?: "client" | "staff";
+      staffId?: string;
+      clientUserId?: string | null;
+    };
+    if (!p.caseId) return;
+    const byClient = p.rescheduledBy === "client";
+    await appendAppointmentTimeline({
+      caseId: p.caseId,
+      eventType: "appointment.rescheduled",
+      actorKind: byClient ? "client" : "team",
+      actorUserId: byClient ? (p.clientUserId ?? null) : (p.staffId ?? null),
+    });
+  });
+
+  appEvents.on("appointment.completed", async (event) => {
+    const p = event.payload as { caseId: string | null; staffId?: string };
+    if (!p.caseId) return;
+    await appendAppointmentTimeline({
+      caseId: p.caseId,
+      eventType: "appointment.completed",
+      actorKind: "team",
+      actorUserId: p.staffId ?? null,
+    });
+  });
+
+  appEvents.on("appointment.no_show", async (event) => {
+    const p = event.payload as { caseId: string | null; staffId?: string };
+    if (!p.caseId) return;
+    await appendAppointmentTimeline({
+      caseId: p.caseId,
+      eventType: "appointment.no_show",
+      actorKind: "team",
+      actorUserId: p.staffId ?? null,
+    });
   });
 
   // -------------------------------------------------------------------------

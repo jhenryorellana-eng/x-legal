@@ -6,7 +6,9 @@
  *   - active flat rules → per-weekday ranges, "HH:MM:SS" trimmed to "HH:MM"
  *   - inactive rules are dropped
  *   - settings (min notice / rebooking penalty) passthrough
- *   - a non-admin reading another staff's config is forbidden
+ *
+ * Org-level agenda (DOC-43): the config belongs to the org, not a person — there
+ * is no longer a "read another staff's config" path.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -19,6 +21,8 @@ vi.mock("../repository.js", () => ({
   getAllRules: mockGetAllRules,
   getSettings: mockGetSettings,
   listExceptions: mockListExceptions,
+  // Office TZ === the mock user TZ (America/New_York) → rule conversion is identity.
+  getOfficeTimezone: vi.fn().mockResolvedValue("America/New_York"),
 }));
 
 vi.mock("@/backend/platform/authz", () => ({
@@ -128,14 +132,5 @@ describe("getAvailabilityConfig", () => {
     expect(res.exceptions).toEqual([
       { id: "ex-1", reason: "Vacaciones", startsAt: "2026-07-01T13:00:00.000Z", endsAt: "2026-07-02T13:00:00.000Z" },
     ]);
-  });
-
-  it("forbids a non-admin from reading another staff's config", async () => {
-    mockGetAllRules.mockResolvedValue([]);
-
-    await expect(
-      getAvailabilityConfig(STAFF, { staffId: "99999999-9999-4999-8999-999999999999" }),
-    ).rejects.toThrow();
-    expect(mockGetAllRules).not.toHaveBeenCalled();
   });
 });

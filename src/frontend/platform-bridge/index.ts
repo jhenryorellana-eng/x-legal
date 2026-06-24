@@ -111,6 +111,26 @@ export interface HapticsBridge {
   vibrate(kind: "success" | "light"): void;
 }
 
+// --- geolocation -------------------------------------------------------------
+
+export interface GeoCoords {
+  latitude: number;
+  longitude: number;
+}
+
+export type GeoPermissionStatus = "granted" | "denied" | "prompt" | "unsupported";
+
+export interface GeolocationBridge {
+  isSupported(): Promise<boolean>;
+  getPermissionStatus(): Promise<GeoPermissionStatus>;
+  /**
+   * Requests the device's current position (prompts for permission the first
+   * time). Returns null when unsupported, denied, or on timeout/error — the
+   * caller falls back to the browser timezone / manual selection.
+   */
+  getCurrentPosition(): Promise<GeoCoords | null>;
+}
+
 // --- translator --------------------------------------------------------------
 
 export type TranslatorLang = "en" | "es";
@@ -140,6 +160,7 @@ export interface PlatformBridge {
   share: ShareBridge;
   haptics: HapticsBridge;
   translator: TranslatorBridge;
+  geolocation: GeolocationBridge;
 }
 
 // --- singleton selection -----------------------------------------------------

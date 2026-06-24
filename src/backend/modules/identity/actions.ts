@@ -29,6 +29,8 @@ import {
   reactivateEmployee,
   listEmployees,
   setUserLocale,
+  setUserTimezone,
+  setUserLocation,
   IdentityError,
   type EmployeeRow,
 } from "./service";
@@ -133,6 +135,74 @@ export async function setUserLocaleAction(rawLocale: string): Promise<ActionResu
     }
     logger.error({ err }, "[setUserLocaleAction] Unexpected error");
     return { ok: false, error: { code: "unknown", message: "No se pudo cambiar el idioma." } };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// setUserTimezoneAction — authenticated (client or staff)
+// ---------------------------------------------------------------------------
+
+const SetTimezoneSchema = z.string().min(1).max(64);
+
+/**
+ * Persists the authenticated user's timezone to `users.timezone` AND mirrors it
+ * to the `ulp-tz` cookie so SSR (next-intl getTimeZone) renders appointment
+ * times in the new zone on the next request. The client /config switch reloads
+ * after this resolves. Invalid zones fall back to America/New_York in service.
+ */
+export async function setUserTimezoneAction(rawTz: string): Promise<ActionResult> {
+  try {
+    const actor = await requireActor();
+    const candidate = SetTimezoneSchema.parse(rawTz);
+    const tz = await setUserTimezone(actor, candidate);
+    const jar = await cookies();
+    jar.set("ulp-tz", tz, { path: "/", maxAge: 60 * 60 * 24 * 365, sameSite: "lax" });
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof AuthzError) {
+      return { ok: false, error: { code: "unauthorized", message: "No autorizado." } };
+    }
+    logger.error({ err }, "[setUserTimezoneAction] Unexpected error");
+    return { ok: false, error: { code: "unknown", message: "No se pudo cambiar la zona horaria." } };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// setUserLocationAction — authenticated (client or staff)
+// ---------------------------------------------------------------------------
+
+const SetLocationSchema = z.object({
+  timezone: z.string().min(1).max(64),
+  city: z.string().max(120).nullable().optional(),
+  country: z.string().max(120).nullable().optional(),
+  countryCode: z.string().max(8).nullable().optional(),
+});
+
+/**
+ * Persists the user's detected location (timezone + city/country) to the DB AND
+ * mirrors the timezone to the ulp-tz cookie so SSR renders in the new zone. Used
+ * by the "Detect my location" button (browser geolocation + reverse geocode).
+ * The client reloads after this resolves.
+ */
+export async function setUserLocationAction(raw: {
+  timezone: string;
+  city?: string | null;
+  country?: string | null;
+  countryCode?: string | null;
+}): Promise<ActionResult> {
+  try {
+    const actor = await requireActor();
+    const input = SetLocationSchema.parse(raw);
+    const tz = await setUserLocation(actor, input);
+    const jar = await cookies();
+    jar.set("ulp-tz", tz, { path: "/", maxAge: 60 * 60 * 24 * 365, sameSite: "lax" });
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof AuthzError) {
+      return { ok: false, error: { code: "unauthorized", message: "No autorizado." } };
+    }
+    logger.error({ err }, "[setUserLocationAction] Unexpected error");
+    return { ok: false, error: { code: "unknown", message: "No se pudo guardar la ubicación." } };
   }
 }
 

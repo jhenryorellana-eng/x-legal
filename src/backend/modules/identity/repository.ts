@@ -538,6 +538,62 @@ export async function updateUserLocale(userId: string, locale: string): Promise<
 }
 
 // ---------------------------------------------------------------------------
+// updateUserTimezone — persist the user's IANA timezone (DOC-23 §6.5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Updates `users.timezone` for a single user. Source of truth for rendering
+ * appointment slots/times in the client's local time; the `ulp-tz` cookie is
+ * its operational mirror (read by next-intl's getTimeZone), set by the action.
+ */
+export async function updateUserTimezone(userId: string, timezone: string): Promise<void> {
+  const supabase = createServiceClient();
+  const { error } = await supabase.from("users").update({ timezone }).eq("id", userId);
+  if (error) throw new Error(`updateUserTimezone: ${error.message}`);
+}
+
+// ---------------------------------------------------------------------------
+// updateUserLocation — persist timezone + city/country (DOC-23 §6.5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Updates `users.timezone` + city/country/country_code and stamps
+ * location_confirmed_at. Used by the "Detect my location" flow (browser
+ * geolocation → reverse geocode) in Configuración.
+ */
+/** Reads a user's timezone + city/country (for the Configuración location card). */
+export async function findUserLocation(
+  userId: string,
+): Promise<{ timezone: string; city: string | null; country: string | null } | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("users")
+    .select("timezone, city, country")
+    .eq("id", userId)
+    .maybeSingle();
+  if (!data) return null;
+  return { timezone: data.timezone, city: data.city, country: data.country };
+}
+
+export async function updateUserLocation(
+  userId: string,
+  input: { timezone: string; city: string | null; country: string | null; countryCode: string | null },
+): Promise<void> {
+  const supabase = createServiceClient();
+  const { error } = await supabase
+    .from("users")
+    .update({
+      timezone: input.timezone,
+      city: input.city,
+      country: input.country,
+      country_code: input.countryCode,
+      location_confirmed_at: new Date().toISOString(),
+    })
+    .eq("id", userId);
+  if (error) throw new Error(`updateUserLocation: ${error.message}`);
+}
+
+// ---------------------------------------------------------------------------
 // User UI prefs (theme + text scale) — DOC-01 §4/§8.5, per-user persistence
 // ---------------------------------------------------------------------------
 

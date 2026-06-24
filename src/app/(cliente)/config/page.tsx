@@ -7,9 +7,9 @@
  */
 
 import { redirect } from "next/navigation";
-import { getLocale, getTranslations } from "next-intl/server";
-import { getActor } from "@/backend/modules/identity";
-import { signOutAction, setUserLocaleAction } from "@/backend/modules/identity/actions";
+import { getLocale, getTranslations, getTimeZone } from "next-intl/server";
+import { getActor, getCurrentUserLocation } from "@/backend/modules/identity";
+import { signOutAction, setUserLocaleAction, setUserTimezoneAction, setUserLocationAction } from "@/backend/modules/identity/actions";
 import { getPreferences } from "@/backend/modules/notifications";
 import {
   updatePreferencesAction,
@@ -26,8 +26,10 @@ export default async function ConfigPage() {
   if (!actor || actor.kind !== "client") redirect("/welcome");
 
   const locale = (await getLocale()) as "es" | "en";
+  const timeZone = await getTimeZone();
   const t = await getTranslations("cliente.config");
   const prefs = await getPreferences(actor);
+  const loc = await getCurrentUserLocation(actor);
 
   async function onSignOut() {
     "use server";
@@ -43,8 +45,13 @@ export default async function ConfigPage() {
   return (
     <ConfigScreen
       initialLocale={locale}
+      initialTimezone={timeZone}
+      initialCity={loc.city}
+      initialCountry={loc.country}
       signOut={onSignOut}
       setLocale={setUserLocaleAction}
+      setTimezone={setUserTimezoneAction}
+      setLocation={setUserLocationAction}
       initialPrefs={{
         messages: prefs.messages,
         appointment_reminders: prefs.appointment_reminders,
@@ -66,6 +73,12 @@ export default async function ConfigPage() {
         off: t("off"),
         textSize: t("textSize"),
         language: t("language"),
+        timezone: t("timezone"),
+        timezoneSub: t("timezoneSub"),
+        timezoneDetect: t("timezoneDetect"),
+        timezoneDetecting: t("timezoneDetecting"),
+        timezoneLocation: t("timezoneLocation"),
+        timezoneUnavailable: t("timezoneUnavailable"),
         notifications: t("notifications"),
         notifMessages: t("notifMessages"),
         notifMeetings: t("notifMeetings"),

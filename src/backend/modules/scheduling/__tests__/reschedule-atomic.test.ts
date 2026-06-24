@@ -24,7 +24,7 @@ const mockGetActiveRules = vi.hoisted(() => vi.fn());
 const mockGetExceptionsInRange = vi.hoisted(() => vi.fn());
 const mockFindBookedForMaterialization = vi.hoisted(() => vi.fn());
 const mockGetUserTimezone = vi.hoisted(() => vi.fn());
-const mockFindStaffAppointmentsInRange = vi.hoisted(() => vi.fn());
+const mockFindOrgAppointmentsInRange = vi.hoisted(() => vi.fn());
 
 vi.mock("../repository.js", () => ({
   findById: mockFindById,
@@ -35,7 +35,7 @@ vi.mock("../repository.js", () => ({
   getExceptionsInRange: mockGetExceptionsInRange,
   findBookedForMaterialization: mockFindBookedForMaterialization,
   getUserTimezone: mockGetUserTimezone,
-  findStaffAppointmentsInRange: mockFindStaffAppointmentsInRange,
+  findOrgAppointmentsInRange: mockFindOrgAppointmentsInRange,
   // Other repo fns used transitively — stub as no-ops
   findBookedInRange: vi.fn().mockResolvedValue([]),
   findDueReminders: vi.fn().mockResolvedValue([]),

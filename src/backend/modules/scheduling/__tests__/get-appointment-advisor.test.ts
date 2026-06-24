@@ -32,7 +32,7 @@ vi.mock("../repository.js", () => ({
   getActiveRules: vi.fn().mockResolvedValue([]),
   getExceptionsInRange: vi.fn().mockResolvedValue([]),
   findBookedForMaterialization: vi.fn().mockResolvedValue([]),
-  findStaffAppointmentsInRange: vi.fn().mockResolvedValue([]),
+  findOrgAppointmentsInRange: vi.fn().mockResolvedValue([]),
   insertAppointment: vi.fn(),
   updateAppointment: vi.fn(),
   countPhaseAppointments: vi.fn().mockResolvedValue(0),
@@ -165,7 +165,7 @@ describe("getAppointmentAdvisor", () => {
 
     const result = await getAppointmentAdvisor(CLIENT_ACTOR, APPT_ID);
 
-    expect(result).toEqual({ displayName: "Diana Restrepo", avatarUrl: null });
+    expect(result).toEqual({ displayName: "Diana Restrepo", avatarUrl: null, timezone: "America/New_York" });
     expect(mockRequireCaseAccess).toHaveBeenCalledWith(CLIENT_ACTOR, CASE_ID);
     // Verify we only requested the minimal fields
     expect(chain.select).toHaveBeenCalledWith("display_name, avatar_url");
@@ -180,7 +180,7 @@ describe("getAppointmentAdvisor", () => {
 
     const result = await getAppointmentAdvisor(CLIENT_ACTOR, APPT_ID);
 
-    expect(result).toEqual({ displayName: "Vanessa Rios", avatarUrl: "https://cdn.example.com/v.jpg" });
+    expect(result).toEqual({ displayName: "Vanessa Rios", avatarUrl: "https://cdn.example.com/v.jpg", timezone: "America/New_York" });
   });
 
   it("appointment not found → returns null without calling requireCaseAccess", async () => {

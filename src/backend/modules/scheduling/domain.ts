@@ -582,3 +582,50 @@ export function isSlotInSet(slot: Slot, slots: Slot[]): boolean {
       s.endUtc.getTime() === slot.endUtc.getTime(),
   );
 }
+
+// ---------------------------------------------------------------------------
+// Cross-timezone presentation of recurring availability rules (DOC-23 §6.5)
+//
+// The org's availability is stored in ONE canonical "office" timezone. Each
+// staff member sees/edits it in THEIR own timezone. Converting a recurring
+// (weekday + wall-time) between zones needs a concrete reference date to
+// resolve the DST-dependent offset — the caller passes `refUtc`.
+// ---------------------------------------------------------------------------
+
+/** ISO-like 0–6 (Sun–Sat) weekday of a civil date, computed at UTC noon (DST-safe). */
+function weekdayOfYmd(ymd: string): number {
+  return new Date(`${ymd}T12:00:00Z`).getUTCDay();
+}
+
+/** Adds `n` civil days to a "YYYY-MM-DD" string (UTC-noon arithmetic, DST-safe). */
+function addDaysYmd(ymd: string, n: number): string {
+  const d = new Date(`${ymd}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Converts a recurring weekly rule wall-time (weekday 0–6 + "HH:MM") from one
+ * IANA timezone to another, resolving the offset at `refUtc`. Returns the
+ * equivalent { weekday, hhmm } in `toTz`. The weekday is recomputed in case the
+ * conversion crosses midnight. Pure (no Date.now()).
+ */
+export function convertRuleWallTime(
+  input: { weekday: number; hhmm: string },
+  fromTz: string,
+  toTz: string,
+  refUtc: Date,
+): { weekday: number; hhmm: string } {
+  if (fromTz === toTz) return { weekday: input.weekday, hhmm: input.hhmm };
+
+  // 1. Civil date (in fromTz) of refUtc, advanced to the target weekday.
+  let dateStr = formatInTimeZone(refUtc, fromTz, "yyyy-MM-dd");
+  const delta = (input.weekday - weekdayOfYmd(dateStr) + 7) % 7;
+  dateStr = addDaysYmd(dateStr, delta);
+
+  // 2. The exact instant of that wall-time in fromTz, then read it in toTz.
+  const instant = fromZonedTime(`${dateStr}T${input.hhmm}:00`, fromTz);
+  const hhmm = formatInTimeZone(instant, toTz, "HH:mm");
+  const weekday = weekdayOfYmd(formatInTimeZone(instant, toTz, "yyyy-MM-dd"));
+  return { weekday, hhmm };
+}

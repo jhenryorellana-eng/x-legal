@@ -16,12 +16,12 @@ import { getLocale, getTranslations } from "next-intl/server";
 import { formatInTimeZone, toZonedTime } from "date-fns-tz";
 import { startOfISOWeek, addDays, format } from "date-fns";
 import { es as esLocale, enUS } from "date-fns/locale";
-import { getActor } from "@/backend/modules/identity";
+import { getActor, getCurrentUserLocation } from "@/backend/modules/identity";
 import { getWeekAgenda, getAvailabilityConfig } from "@/backend/modules/scheduling";
 import type { WeekAgendaResult } from "@/backend/modules/scheduling";
 import { CitasClient } from "./client";
 import type { CalDay, CitaEvent, CitaDetail } from "@/frontend/features/vanessa";
-import type { Locale } from "@/frontend/lib/datetime";
+import { tzLabel, type Locale } from "@/frontend/lib/datetime";
 import {
   bookAppointmentAction,
   createProspectApptAction,
@@ -94,14 +94,14 @@ export default async function VentasCitasPage({
   const sp = searchParams ? await searchParams : {};
   const now = new Date();
 
-  // getWeekAgenda always resolves the staffTimezone from the DB; we use
-  // a default here for the initial week calculation (updated after the call).
-  const defaultTz = "America/New_York";
+  // Resolve the week start in the ACTOR's own timezone (DOC-23 §6.5) so the
+  // grid matches the times getWeekAgenda renders (Vanessa=Colombia, Henry=US).
+  const actorTz = (await getCurrentUserLocation(actor)).timezone;
 
   const weekStartLocal: string =
     sp.week && /^\d{4}-\d{2}-\d{2}$/.test(sp.week)
       ? sp.week
-      : currentWeekStart(now, defaultTz);
+      : currentWeekStart(now, actorTz);
 
   // --------------------------------------------------------------------------
   // 2. Fetch agenda
@@ -113,7 +113,7 @@ export default async function VentasCitasPage({
     agendaResult = await getWeekAgenda(actor, { weekStartLocal, filter: "all" });
   } catch {
     // Fall back to empty grid rather than crashing the page.
-    agendaResult = { appointments: [], staffTimezone: defaultTz };
+    agendaResult = { appointments: [], staffTimezone: actorTz };
   }
 
   const { appointments, staffTimezone } = agendaResult;
@@ -252,7 +252,7 @@ export default async function VentasCitasPage({
     title: t("title"),
     sub: t("sub", { range: `${weekD1}–${weekD2}` }),
     newAppt: t("newAppt"),
-    tzChip: t("tzChip"),
+    tzChip: t("tzChip", { region: tzLabel(staffTimezone, locale) }),
     day: t("day"),
     week: t("week"),
     list: t("list"),
@@ -275,7 +275,7 @@ export default async function VentasCitasPage({
   const nuevaCitaStrings = {
     title: tnc("title"),
     sub: tnc("sub"),
-    tzChip: tnc("tzChip"),
+    tzChip: tnc("tzChip", { region: tzLabel(staffTimezone, locale) }),
     modeClient: tnc("modeClient"),
     modeProspect: tnc("modeProspect"),
     clientHint: tnc("clientHint"),

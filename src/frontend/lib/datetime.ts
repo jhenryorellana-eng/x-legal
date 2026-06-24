@@ -28,6 +28,10 @@ const TZ_LABEL: Record<string, { es: string; en: string }> = {
   "America/Denver": { es: "Montaña (MT)", en: "Mountain (MT)" },
   "America/Phoenix": { es: "Arizona (MST)", en: "Arizona (MST)" },
   "America/Los_Angeles": { es: "Pacífico (PT)", en: "Pacific (PT)" },
+  "America/Bogota": { es: "Colombia (COT)", en: "Colombia (COT)" },
+  "America/Mexico_City": { es: "Ciudad de México (CT)", en: "Mexico City (CT)" },
+  "America/Guatemala": { es: "Centroamérica (CT)", en: "Central America (CT)" },
+  "America/Santo_Domingo": { es: "Rep. Dominicana (AST)", en: "Dominican Republic (AST)" },
 };
 
 /** Friendly TZ label for static chips (e.g. "Florida (ET)"). */

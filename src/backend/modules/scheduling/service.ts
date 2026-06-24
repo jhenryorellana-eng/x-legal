@@ -13,7 +13,7 @@ import { z } from "zod";
 import { addMinutes, addDays } from "date-fns";
 import { fromZonedTime } from "date-fns-tz";
 
-import { can, requireCaseAccess, AuthzError } from "@/backend/platform/authz";
+import { can, requireCaseAccess } from "@/backend/platform/authz";
 import type { Actor } from "@/backend/platform/authz";
 import { appEvents } from "@/backend/platform/events";
 import { createServiceClient } from "@/backend/platform/supabase";
@@ -33,6 +33,7 @@ import {
   isRebookingBlocked,
   validateRuleSet,
   materializeSlots,
+  convertRuleWallTime,
   isSlotInSet,
   type AppointmentStatus,
   type AppointmentActorKind,
@@ -88,6 +89,29 @@ async function getUserTimezone(userId: string): Promise<string> {
     .eq("id", userId)
     .maybeSingle();
   return data?.timezone ?? "America/New_York";
+}
+
+/**
+ * Resolves the org's default "serving" sales owner — the staff_id stamped on an
+ * appointment when the case has no assigned sales. Picks the earliest-created
+ * active sales member (today: Vanessa). This is the org-level fallback that
+ * removes the NO_STAFF_ASSIGNED dead-end for cases created without a sales.
+ *
+ * Scalability note (DOC-43): with more than one sales, formalize this with an
+ * additive `orgs.default_sales_owner_id` column instead of created_at ordering.
+ */
+async function defaultSalesOwner(orgId: string): Promise<string | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("users")
+    .select("id, staff_profiles!inner(role)")
+    .eq("org_id", orgId)
+    .eq("is_active", true)
+    .eq("staff_profiles.role", "sales")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  return data?.id ?? null;
 }
 
 /** Lazily loads the cases module to avoid circular dependencies. */
@@ -205,7 +229,7 @@ export interface BookingWarning {
 }
 
 async function computeBookingWarnings(
-  staffId: string,
+  orgId: string,
   startsAt: Date,
   endsAt: Date,
   // settings is intentionally ignored — the function re-fetches via repo.getSettings
@@ -215,7 +239,7 @@ async function computeBookingWarnings(
   const warnings: BookingWarning[] = [];
   const nowTs = now();
 
-  const fullSettings = await repo.getSettings(staffId);
+  const fullSettings = await repo.getSettings(orgId);
 
   // Check min_notice
   if (startsAt.getTime() < nowTs.getTime() + fullSettings.minNoticeHours * 3_600_000) {
@@ -228,9 +252,9 @@ async function computeBookingWarnings(
   }
 
   // Check availability rules (is the slot within any active rule?)
-  const rules = await repo.getActiveRules(staffId);
+  const rules = await repo.getActiveRules(orgId);
   const exceptions = await repo.getExceptionsInRange(
-    staffId,
+    orgId,
     new Date(startsAt.getTime() - 86_400_000),
     new Date(endsAt.getTime() + 86_400_000),
   );
@@ -321,7 +345,11 @@ export async function getAvailableSlots(
     });
   }
 
-  const staffId = c.assignedSalesId;
+  // Org-level agenda: availability/anti-overlap belong to the ORG, not a person.
+  // staffId is "who attends" — the case's assigned sales, falling back to the
+  // org's default sales owner so a case without an assigned sales still books.
+  const orgId = actor.orgId;
+  const staffId = c.assignedSalesId ?? (await defaultSalesOwner(orgId));
   if (!staffId) {
     throw new SchedulingError("NO_STAFF_ASSIGNED");
   }
@@ -338,10 +366,10 @@ export async function getAvailableSlots(
   const kind = entry?.kind ?? policy.kind;
 
   const [rules, settings, exceptions, booked] = await Promise.all([
-    repo.getActiveRules(staffId),
-    repo.getSettings(staffId),
-    repo.getExceptionsInRange(staffId, input.windowFromUtc, input.windowToUtc),
-    repo.findBookedForMaterialization(staffId, input.windowFromUtc, input.windowToUtc),
+    repo.getActiveRules(orgId),
+    repo.getSettings(orgId),
+    repo.getExceptionsInRange(orgId, input.windowFromUtc, input.windowToUtc),
+    repo.findBookedForMaterialization(orgId, input.windowFromUtc, input.windowToUtc),
   ]);
 
   const slots = materializeSlots({
@@ -355,7 +383,9 @@ export async function getAvailableSlots(
     nowUtc: now(),
   });
 
-  const staffTimezone = await getUserTimezone(staffId);
+  // The agenda timezone is the org's availability TZ (falls back to the serving
+  // staff's TZ when the org has no rules yet).
+  const staffTimezone = rules[0]?.timezone ?? (await getUserTimezone(staffId));
 
   return {
     slots,
@@ -455,7 +485,9 @@ export async function bookAppointment(
     });
   }
 
-  const staffId = c.assignedSalesId;
+  // Org-level agenda: staffId is "who attends" (assigned sales → org default).
+  const orgId = actor.orgId;
+  const staffId = c.assignedSalesId ?? (await defaultSalesOwner(orgId));
   if (!staffId) throw new SchedulingError("NO_STAFF_ASSIGNED");
 
   // Validate slot or compute warnings
@@ -465,10 +497,10 @@ export async function bookAppointment(
     const windowFrom = new Date(startsAt.getTime() - margin);
     const windowTo = new Date(endsAt.getTime() + margin);
     const [rules, settings, exceptions, booked] = await Promise.all([
-      repo.getActiveRules(staffId),
-      repo.getSettings(staffId),
-      repo.getExceptionsInRange(staffId, windowFrom, windowTo),
-      repo.findBookedForMaterialization(staffId, windowFrom, windowTo),
+      repo.getActiveRules(orgId),
+      repo.getSettings(orgId),
+      repo.getExceptionsInRange(orgId, windowFrom, windowTo),
+      repo.findBookedForMaterialization(orgId, windowFrom, windowTo),
     ]);
     const slots = materializeSlots({
       rules,
@@ -485,8 +517,8 @@ export async function bookAppointment(
     }
   } else {
     // Staff: compute non-blocking warnings
-    const settings = await repo.getSettings(staffId);
-    const warnings = await computeBookingWarnings(staffId, startsAt, endsAt, settings);
+    const settings = await repo.getSettings(orgId);
+    const warnings = await computeBookingWarnings(orgId, startsAt, endsAt, settings);
     if (warnings.length > 0 && !p.force) {
       return { warnings };
     }
@@ -496,6 +528,7 @@ export async function bookAppointment(
   let appt: AppointmentRow;
   try {
     appt = await repo.insertAppointment({
+      orgId,
       caseId: p.caseId,
       leadId: null,
       servicePhaseId: phaseId,
@@ -591,7 +624,7 @@ export async function cancelAppointment(
     throw new SchedulingError("APPT_INVALID_TRANSITION", { from: a.status });
   }
 
-  const settings = await repo.getSettings(a.staff_id);
+  const settings = await repo.getSettings(a.org_id);
   const late =
     actorKind === "client" &&
     isLateCancellation(now(), new Date(a.starts_at), settings.cancellationWindowHours);
@@ -674,7 +707,7 @@ export async function rescheduleAppointment(
 
   const actorKind: AppointmentActorKind =
     actor.kind === "client" ? "client" : "staff";
-  const settings = await repo.getSettings(a.staff_id);
+  const settings = await repo.getSettings(a.org_id);
 
   if (actorKind === "client") {
     await requireCaseAccess(actor, a.case_id!);
@@ -699,9 +732,9 @@ export async function rescheduleAppointment(
     const windowFrom = new Date(newStarts.getTime() - margin);
     const windowTo = new Date(newEnds.getTime() + margin);
     const [rules, exceptions, booked] = await Promise.all([
-      repo.getActiveRules(a.staff_id),
-      repo.getExceptionsInRange(a.staff_id, windowFrom, windowTo),
-      repo.findBookedForMaterialization(a.staff_id, windowFrom, windowTo),
+      repo.getActiveRules(a.org_id),
+      repo.getExceptionsInRange(a.org_id, windowFrom, windowTo),
+      repo.findBookedForMaterialization(a.org_id, windowFrom, windowTo),
     ]);
     // Exclude the current appointment from "booked" (it will be rescheduled)
     const bookedWithoutCurrent = booked.filter(
@@ -744,6 +777,7 @@ export async function rescheduleAppointment(
   let fresh: AppointmentRow;
   try {
     fresh = await repo.insertAppointment({
+      orgId: a.org_id,
       caseId: a.case_id,
       leadId: a.lead_id,
       servicePhaseId: a.service_phase_id,
@@ -892,12 +926,13 @@ export async function markNoShow(
   });
 
   // Apply penalty (same as late cancellation — DOC-43 §2.4)
+  let blockedUntil: Date | null = null;
   if (a.case_id) {
-    const settings = await repo.getSettings(a.staff_id);
+    const settings = await repo.getSettings(a.org_id);
     const cases = await getCasesModule();
     const c = await cases.getCaseCore(a.case_id);
     if (c) {
-      const blockedUntil = computeRebookingBlockedUntil(
+      blockedUntil = computeRebookingBlockedUntil(
         now(),
         settings.rebookingPenaltyDays,
         c.rebookingBlockedUntil,
@@ -905,6 +940,19 @@ export async function markNoShow(
       await cases.setRebookingBlock(a.case_id, blockedUntil);
     }
   }
+
+  await emit({
+    type: "appointment.no_show",
+    payload: {
+      appointmentId: a.id,
+      caseId: a.case_id,
+      leadId: a.lead_id,
+      staffId: a.staff_id,
+      clientUserId: a.client_user_id,
+      startsAt: new Date(a.starts_at),
+      blockedUntil,
+    },
+  });
 
   await writeAudit(
     actor,
@@ -962,9 +1010,9 @@ export async function createProspectAppointment(
   const startsAt = p.startsAtUtc;
   const endsAt = addMinutes(startsAt, p.durationMinutes);
 
-  // Staff warnings (non-blocking)
-  const settings = await repo.getSettings(actor.userId);
-  const warnings = await computeBookingWarnings(actor.userId, startsAt, endsAt, settings);
+  // Staff warnings (non-blocking) — org-level availability
+  const settings = await repo.getSettings(actor.orgId);
+  const warnings = await computeBookingWarnings(actor.orgId, startsAt, endsAt, settings);
   if (warnings.length > 0 && !p.force) {
     return { warnings };
   }
@@ -972,6 +1020,7 @@ export async function createProspectAppointment(
   let appt: AppointmentRow;
   try {
     appt = await repo.insertAppointment({
+      orgId: actor.orgId,
       caseId: null,
       leadId: p.leadId,
       servicePhaseId: null,
@@ -1059,6 +1108,7 @@ export interface WeekAgendaResult {
 export async function getWeekAgenda(
   actor: Actor,
   input: {
+    /** @deprecated org-level agenda: ignored. Kept for call-site compatibility. */
     staffId?: string;
     weekStartLocal: string; // 'YYYY-MM-DD'
     filter?: "all" | "case" | "lead";
@@ -1066,8 +1116,11 @@ export async function getWeekAgenda(
 ): Promise<WeekAgendaResult> {
   can(actor, "calendar", "view");
 
-  const staffId = input.staffId ?? actor.userId;
-  const staffTimezone = await getUserTimezone(staffId);
+  // Org-level agenda: every staff member sees the SAME appointments (DOC-43),
+  // each rendered in THEIR OWN timezone (DOC-23 §6.5) — Vanessa in Colombia,
+  // Henry in the US see the same citas at their respective local times.
+  const orgId = actor.orgId;
+  const staffTimezone = await getUserTimezone(actor.userId);
 
   // Convert local week boundaries to UTC (DOC-23 §6.1 — fromZonedTime by concrete date).
   // M-7 FIX: add 7 CIVIL days in the staff timezone before converting to UTC.
@@ -1081,7 +1134,7 @@ export async function getWeekAgenda(
   );
 
   const statuses = ["scheduled", "completed", "no_show"];
-  const rows = await repo.findStaffAppointmentsInRange(staffId, fromUtc, toUtc, statuses);
+  const rows = await repo.findOrgAppointmentsInRange(orgId, fromUtc, toUtc, statuses);
 
   let appts = rows.map((r) => ({
     id: r.id,
@@ -1200,30 +1253,47 @@ export interface AvailabilityConfigResult {
  */
 export async function getAvailabilityConfig(
   actor: Actor,
-  input?: { staffId?: string },
+  _input?: { staffId?: string },
 ): Promise<AvailabilityConfigResult> {
   can(actor, "availability", "edit");
-  const staffId = input?.staffId ?? actor.userId;
+  // Org-level agenda: a single shared availability config for the whole org.
+  const orgId = actor.orgId;
 
-  if (staffId !== actor.userId && actor.role !== "admin") {
-    throw new AuthzError("forbidden_module");
-  }
-
-  const [rules, settings, exceptions, staffTimezone] = await Promise.all([
-    repo.getAllRules(staffId),
-    repo.getSettings(staffId),
-    repo.listExceptions(staffId, now()),
-    getUserTimezone(staffId),
+  const [rules, settings, exceptions, actorTz, officeTz] = await Promise.all([
+    repo.getAllRules(orgId),
+    repo.getSettings(orgId),
+    repo.listExceptions(orgId, now()),
+    getUserTimezone(actor.userId),
+    repo.getOfficeTimezone(orgId),
   ]);
+  // The editor shows the org availability in the STAFF's own timezone (DOC-23
+  // §6.5): convert each rule from the canonical office TZ to the actor's TZ.
+  const ref = now();
+  const staffTimezone = actorTz;
 
   return {
-    rules: rules.map((r) => ({
-      weekday: r.weekday,
-      // Stored as "HH:MM:SS" (time column) — the editor works in "HH:MM".
-      startLocal: r.start_local.slice(0, 5),
-      endLocal: r.end_local.slice(0, 5),
-      isActive: r.is_active,
-    })),
+    rules: rules.map((r) => {
+      // Stored as "HH:MM:SS" (time column); the editor works in "HH:MM".
+      const fromTz = r.timezone || officeTz;
+      const s = convertRuleWallTime(
+        { weekday: r.weekday, hhmm: r.start_local.slice(0, 5) },
+        fromTz,
+        actorTz,
+        ref,
+      );
+      const e = convertRuleWallTime(
+        { weekday: r.weekday, hhmm: r.end_local.slice(0, 5) },
+        fromTz,
+        actorTz,
+        ref,
+      );
+      return {
+        weekday: s.weekday,
+        startLocal: s.hhmm,
+        endLocal: e.hhmm,
+        isActive: r.is_active,
+      };
+    }),
     exceptions: exceptions.map((e) => ({
       id: e.id,
       reason: e.reason,
@@ -1242,11 +1312,8 @@ export async function saveAvailabilityRules(
   input: SaveRulesInput,
 ): Promise<{ orphanedAppointments: AppointmentRow[] }> {
   can(actor, "availability", "edit");
-  const staffId = input.staffId ?? actor.userId;
-
-  if (staffId !== actor.userId && actor.role !== "admin") {
-    throw new AuthzError("forbidden_module");
-  }
+  // Org-level agenda: the whole org shares one availability set.
+  const orgId = actor.orgId;
 
   // Validate rules (domain pure check)
   const issues = validateRuleSet(input.rules);
@@ -1257,24 +1324,35 @@ export async function saveAvailabilityRules(
     throw new SchedulingError("AVAILABILITY_INVALID_RANGE");
   }
 
-  const tz = await getUserTimezone(staffId);
-  const ruleRows: RuleInput[] = input.rules.map((r) => ({
-    weekday: r.weekday,
-    startLocal: r.startLocal,
-    endLocal: r.endLocal,
-    timezone: tz,
-    isActive: true,
-  }));
+  // The staff edits in THEIR OWN timezone (DOC-23 §6.5); rules are stored in the
+  // org's canonical office TZ. Convert each wall-time from the actor's zone to
+  // the office zone before persisting (kept stable across editors).
+  const [actorTz, officeTz] = await Promise.all([
+    getUserTimezone(actor.userId),
+    repo.getOfficeTimezone(orgId),
+  ]);
+  const ref = now();
+  const ruleRows: RuleInput[] = input.rules.map((r) => {
+    const s = convertRuleWallTime({ weekday: r.weekday, hhmm: r.startLocal }, actorTz, officeTz, ref);
+    const e = convertRuleWallTime({ weekday: r.weekday, hhmm: r.endLocal }, actorTz, officeTz, ref);
+    return {
+      weekday: s.weekday,
+      startLocal: s.hhmm,
+      endLocal: e.hhmm,
+      timezone: officeTz,
+      isActive: true,
+    };
+  });
 
-  await repo.replaceRules(staffId, ruleRows);
+  await repo.replaceRules(orgId, ruleRows);
 
-  const orphaned = await repo.findScheduledOutsideRules(staffId, now());
+  const orphaned = await repo.findScheduledOutsideRules(orgId, now());
 
   await writeAudit(
     actor,
     "scheduling.availability.updated",
-    "staff_profile",
-    staffId,
+    "org",
+    orgId,
     { after: { ruleCount: ruleRows.length } },
   );
 
@@ -1282,7 +1360,8 @@ export async function saveAvailabilityRules(
 }
 
 export interface ExceptionInput {
-  staffId: string;
+  /** @deprecated org-level agenda: ignored. Kept for call-site compatibility. */
+  staffId?: string;
   startsAt: Date;
   endsAt: Date;
   reason?: string | null;
@@ -1290,7 +1369,8 @@ export interface ExceptionInput {
 }
 
 /**
- * Adds an availability exception (block). Returns affected future appointments.
+ * Adds an availability exception (block) for the org. Returns affected future
+ * appointments.
  *
  * @api-id API-SCH-10 (add)
  */
@@ -1299,13 +1379,14 @@ export async function addAvailabilityException(
   input: ExceptionInput,
 ): Promise<{ exceptionRow: repo.AvailabilityExceptionRow; affected: AppointmentRow[] }> {
   can(actor, "availability", "edit");
+  const orgId = actor.orgId;
 
   if (input.endsAt <= input.startsAt) {
     throw new SchedulingError("AVAILABILITY_INVALID_RANGE");
   }
 
   const affected = await repo.findScheduledInRange(
-    input.staffId,
+    orgId,
     input.startsAt,
     input.endsAt,
   );
@@ -1316,7 +1397,7 @@ export async function addAvailabilityException(
   }
 
   const row = await repo.insertException({
-    staffId: input.staffId,
+    orgId,
     startsAt: input.startsAt,
     endsAt: input.endsAt,
     reason: input.reason ?? null,
@@ -1327,7 +1408,7 @@ export async function addAvailabilityException(
     "scheduling.exception.created",
     "availability_exception",
     row.id,
-    { after: { staffId: input.staffId } },
+    { after: { orgId } },
   );
 
   return { exceptionRow: row, affected };
@@ -1380,9 +1461,10 @@ export async function updateSchedulingSettings(
 ): Promise<void> {
   can(actor, "availability", "edit");
   const p = SettingsSchema.parse(input);
-  const staffId = p.staffId ?? actor.userId;
+  // Org-level agenda: one settings row per org.
+  const orgId = actor.orgId;
 
-  await repo.upsertSettings(staffId, {
+  await repo.upsertSettings(orgId, {
     minNoticeHours: p.minNoticeHours,
     maxAdvanceDays: p.maxAdvanceDays,
     bufferMinutes: p.bufferMinutes,
@@ -1394,8 +1476,8 @@ export async function updateSchedulingSettings(
   await writeAudit(
     actor,
     "scheduling.settings.updated",
-    "staff_profile",
-    staffId,
+    "org",
+    orgId,
     { after: p },
   );
 }
@@ -1412,18 +1494,18 @@ export async function migrateAvailabilityTimezone(
   input: { staffId?: string; convert: boolean },
 ): Promise<void> {
   can(actor, "availability", "edit");
-  const staffId = input.staffId ?? actor.userId;
+  const orgId = actor.orgId;
 
   if (input.convert) {
-    const tz = await getUserTimezone(staffId);
-    await repo.rewriteRulesTimezone(staffId, tz);
+    const tz = await getUserTimezone(actor.userId);
+    await repo.rewriteRulesTimezone(orgId, tz);
   }
 
   await writeAudit(
     actor,
     "scheduling.availability.tz_migrated",
-    "staff_profile",
-    staffId,
+    "org",
+    orgId,
     { after: { convert: input.convert } },
   );
 }
@@ -1578,6 +1660,8 @@ export async function getCaseAppointments(
 export interface AppointmentAdvisorResult {
   displayName: string;
   avatarUrl: string | null;
+  /** The attending staff member's IANA timezone (office TZ for the dual hour). */
+  timezone: string;
 }
 
 /**
@@ -1621,8 +1705,12 @@ export async function getAppointmentAdvisor(
 
   if (!data) return null;
 
+  // Office TZ for the dual hour = the attending staff member's timezone.
+  const timezone = await getUserTimezone(a.staff_id);
+
   return {
     displayName: data.display_name,
     avatarUrl: data.avatar_url,
+    timezone,
   };
 }

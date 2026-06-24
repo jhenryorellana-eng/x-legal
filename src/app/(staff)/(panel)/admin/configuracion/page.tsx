@@ -22,6 +22,7 @@ import { ConfigView } from "@/frontend/features/admin/config/config-view";
 import { StaffLanguageCard } from "@/frontend/components/desktop/staff-language-card";
 import { StaffAppearanceCard } from "@/frontend/components/desktop/staff-appearance-card";
 import { StaffPushCard } from "@/frontend/components/desktop/staff-push-card";
+import { StaffTimezoneSection } from "../../_components/staff-timezone-section";
 import { saveOrgSettings, setCoverActive, createTerms, publishTerms } from "./actions";
 
 /** Common US/Latam IANA timezones (the form offers a curated list). */
@@ -100,6 +101,7 @@ export default async function ConfigPage() {
             denied: tCfg("pushDenied"),
           }}
         />
+        <StaffTimezoneSection locale={locale === "en" ? "en" : "es"} />
       </div>
     </>
   );

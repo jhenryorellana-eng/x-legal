@@ -15,6 +15,8 @@ import {
 } from "@/frontend/lib/theme";
 import { usePushNotifications } from "@/frontend/features/notifications/use-push-notifications";
 import type { BrowserPushSubscription } from "@/frontend/features/notifications/push-helpers";
+import { getBridge } from "@/frontend/platform-bridge";
+import { reverseGeocode, detectBrowserTimezone } from "@/frontend/lib/geocoding";
 
 type AR = { success: true } | { success: false; error: { code: string; message: string } };
 
@@ -50,6 +52,12 @@ export interface ConfigLabels {
   off: string;
   textSize: string;
   language: string;
+  timezone: string;
+  timezoneSub: string;
+  timezoneDetect: string;
+  timezoneDetecting: string;
+  timezoneLocation: string;
+  timezoneUnavailable: string;
   notifications: string;
   notifMessages: string;
   notifMeetings: string;
@@ -72,6 +80,23 @@ const TEXT_SIZES: { value: TextScale; label: string; size: number }[] = [
   { value: "sm", label: "A", size: 15 },
   { value: "md", label: "A", size: 18 },
   { value: "lg", label: "A", size: 22 },
+];
+
+/**
+ * Timezone choices offered to the client (IANA + bilingual label). Common US
+ * zones the clientele lives in + a few LatAm zones. The client can also pick
+ * "use my device's" which detects the browser zone. (DOC-23 §6.5.)
+ */
+const TIMEZONES: { id: string; es: string; en: string }[] = [
+  { id: "America/New_York", es: "Florida / Este (ET)", en: "Florida / Eastern (ET)" },
+  { id: "America/Chicago", es: "Centro (CT)", en: "Central (CT)" },
+  { id: "America/Denver", es: "Montaña (MT)", en: "Mountain (MT)" },
+  { id: "America/Phoenix", es: "Arizona (MST)", en: "Arizona (MST)" },
+  { id: "America/Los_Angeles", es: "Pacífico (PT)", en: "Pacific (PT)" },
+  { id: "America/Mexico_City", es: "Ciudad de México", en: "Mexico City" },
+  { id: "America/Bogota", es: "Colombia / Perú", en: "Colombia / Peru" },
+  { id: "America/Guatemala", es: "Centroamérica", en: "Central America" },
+  { id: "America/Santo_Domingo", es: "Rep. Dominicana", en: "Dominican Republic" },
 ];
 
 function Switch({ on, onClick }: { on: boolean; onClick: () => void }) {
@@ -130,14 +155,23 @@ function Section({ children }: { children: React.ReactNode }) {
 
 export function ConfigScreen({
   initialLocale,
+  initialTimezone,
+  initialCity,
+  initialCountry,
   signOut,
   labels,
   initialPrefs,
   updatePrefs,
   push,
   setLocale,
+  setTimezone,
+  setLocation,
 }: {
   initialLocale: "es" | "en";
+  /** Effective IANA timezone resolved by SSR (mirror of users.timezone). */
+  initialTimezone: string;
+  initialCity: string | null;
+  initialCountry: string | null;
   signOut: () => Promise<void>;
   labels: ConfigLabels;
   initialPrefs: ConfigPrefs;
@@ -146,10 +180,24 @@ export function ConfigScreen({
   push: ConfigPushProps;
   /** Persists the UI language to users.locale + ulp-locale cookie (DOC-24 i18n). */
   setLocale: (locale: "es" | "en") => Promise<{ ok: boolean }>;
+  /** Persists the timezone to users.timezone + ulp-tz cookie (DOC-23 §6.5). */
+  setTimezone: (tz: string) => Promise<{ ok: boolean }>;
+  /** Persists detected timezone + city/country (browser geolocation flow). */
+  setLocation: (input: {
+    timezone: string;
+    city: string | null;
+    country: string | null;
+    countryCode: string | null;
+  }) => Promise<{ ok: boolean }>;
 }) {
   const [theme, setTheme] = React.useState<Theme>("light");
   const [scale, setScale] = React.useState<TextScale>("md");
   const [lang, setLang] = React.useState<"es" | "en">(initialLocale);
+  const [tz, setTz] = React.useState<string>(initialTimezone);
+  const [city, setCity] = React.useState<string | null>(initialCity);
+  const [country, setCountry] = React.useState<string | null>(initialCountry);
+  const [tzBusy, setTzBusy] = React.useState(false);
+  const [tzUnavailable, setTzUnavailable] = React.useState(false);
   const [notif, setNotif] = React.useState({
     msg: initialPrefs.messages,
     cita: initialPrefs.appointment_reminders,
@@ -213,6 +261,65 @@ export function ConfigScreen({
     await setLocale(next);
     window.location.reload();
   };
+  const onTz = async (next: string) => {
+    if (!next || next === tz || tzBusy) return;
+    const prev = tz;
+    setTzBusy(true);
+    setTz(next);
+    // Persist users.timezone (source of truth) + the ulp-tz cookie, then reload
+    // so SSR (getTimeZone) re-renders appointment times in the new local zone.
+    // On failure, revert the optimistic selection instead of reloading into a
+    // zone the server rejected.
+    const res = await setTimezone(next);
+    if (res.ok) {
+      window.location.reload();
+    } else {
+      setTz(prev);
+      setTzBusy(false);
+    }
+  };
+  // Detect location: browser geolocation (via the bridge — RNF-036) + reverse
+  // geocode for city/country + Intl for the IANA timezone, then persist.
+  const onDetectLocation = async () => {
+    if (tzBusy) return;
+    setTzBusy(true);
+    setTzUnavailable(false);
+    try {
+      const coords = await getBridge().geolocation.getCurrentPosition();
+      const browserTz = detectBrowserTimezone();
+      if (!coords && !browserTz) {
+        setTzUnavailable(true);
+        setTzBusy(false);
+        return;
+      }
+      const geo = coords
+        ? await reverseGeocode(coords.latitude, coords.longitude, lang)
+        : { city: null, country: null, countryCode: null };
+      const timezone = browserTz ?? tz;
+      const res = await setLocation({
+        timezone,
+        city: geo.city,
+        country: geo.country,
+        countryCode: geo.countryCode,
+      });
+      if (res.ok) {
+        setTz(timezone);
+        setCity(geo.city);
+        setCountry(geo.country);
+        window.location.reload();
+      } else {
+        setTzBusy(false);
+      }
+    } catch {
+      setTzUnavailable(true);
+      setTzBusy(false);
+    }
+  };
+  // The select must always include the current zone, even if it's not in the
+  // curated list (e.g. a device-detected zone).
+  const tzOptions = TIMEZONES.some((z) => z.id === tz)
+    ? TIMEZONES
+    : [{ id: tz, es: tz, en: tz }, ...TIMEZONES];
 
   return (
     <div
@@ -373,6 +480,89 @@ export function ConfigScreen({
             );
           })}
         </div>
+      </Card>
+
+      {/* Timezone (DOC-23 §6.5) — the client books/views times in this zone. */}
+      <Section>{labels.timezone}</Section>
+      <Card style={{ padding: 16, marginBottom: 22 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+          <Icon name="globe" size={22} color="var(--accent)" />
+          <span style={{ flex: 1, fontSize: 13.5, color: "var(--ink-2)", fontWeight: 500 }}>
+            {labels.timezoneSub}
+          </span>
+        </div>
+        <div style={{ position: "relative" }}>
+          <select
+            value={tz}
+            disabled={tzBusy}
+            onChange={(e) => void onTz(e.target.value)}
+            aria-label={labels.timezone}
+            className="mp-tap"
+            style={{
+              width: "100%",
+              height: 56,
+              borderRadius: 16,
+              border: "2px solid var(--line)",
+              background: "var(--card)",
+              color: "var(--navy)",
+              fontFamily: "var(--font-title)",
+              fontWeight: 700,
+              fontSize: 16,
+              padding: "0 44px 0 16px",
+              cursor: tzBusy ? "default" : "pointer",
+              appearance: "none",
+              WebkitAppearance: "none",
+            }}
+          >
+            {tzOptions.map((z) => (
+              <option key={z.id} value={z.id}>
+                {lang === "en" ? z.en : z.es}
+              </option>
+            ))}
+          </select>
+          <span style={{ position: "absolute", right: 16, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}>
+            <Icon name="chevR" size={18} color="var(--ink-3)" />
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => void onDetectLocation()}
+          disabled={tzBusy}
+          className="mp-tap"
+          style={{
+            marginTop: 12,
+            width: "100%",
+            height: 46,
+            borderRadius: 14,
+            border: "2px solid var(--line)",
+            background: "var(--card)",
+            color: "var(--accent)",
+            fontFamily: "var(--font-title)",
+            fontWeight: 700,
+            fontSize: 14.5,
+            cursor: tzBusy ? "default" : "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
+          }}
+        >
+          <Icon name="globe" size={16} color="var(--accent)" />
+          {tzBusy ? labels.timezoneDetecting : labels.timezoneDetect}
+        </button>
+        {(city || country) && (
+          <div style={{ marginTop: 10, fontSize: 13.5, color: "var(--ink-2)", fontWeight: 500 }}>
+            {labels.timezoneLocation}:{" "}
+            <strong style={{ color: "var(--navy)" }}>
+              {[city, country].filter(Boolean).join(", ")}
+            </strong>
+          </div>
+        )}
+        {tzUnavailable && (
+          <div style={{ marginTop: 8, fontSize: 12.5, color: "var(--ink-3)" }}>
+            {labels.timezoneUnavailable}
+          </div>
+        )}
       </Card>
 
       {/* Notifications (UI-only in F2) */}

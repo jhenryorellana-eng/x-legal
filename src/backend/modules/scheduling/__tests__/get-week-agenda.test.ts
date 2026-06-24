@@ -46,9 +46,10 @@ vi.mock("@/backend/modules/audit", () => ({
   writeAudit: vi.fn().mockResolvedValue(undefined),
 }));
 
-// Scheduling repository stubs — only findStaffAppointmentsInRange is exercised here.
+// Scheduling repository stubs — only findOrgAppointmentsInRange is exercised here.
 vi.mock("../repository.js", () => ({
-  findStaffAppointmentsInRange: vi.fn(),
+  findOrgAppointmentsInRange: vi.fn(),
+  getActiveRules: vi.fn().mockResolvedValue([]),
   findById: vi.fn().mockResolvedValue(null),
   findBookedForMaterialization: vi.fn().mockResolvedValue([]),
   getExceptionsInRange: vi.fn().mockResolvedValue([]),
@@ -175,7 +176,7 @@ describe("getWeekAgenda — clientName resolution", () => {
   });
 
   it("case appointment → clientName from preferred_name when set", async () => {
-    vi.mocked(schedulingRepo.findStaffAppointmentsInRange).mockResolvedValue([
+    vi.mocked(schedulingRepo.findOrgAppointmentsInRange).mockResolvedValue([
       makeApptRow({ client_user_id: CLIENT_USER_ID, case_id: CASE_ID }) as never,
     ]);
 
@@ -195,7 +196,7 @@ describe("getWeekAgenda — clientName resolution", () => {
   });
 
   it("case appointment → clientName falls back to first_name when preferred_name is null", async () => {
-    vi.mocked(schedulingRepo.findStaffAppointmentsInRange).mockResolvedValue([
+    vi.mocked(schedulingRepo.findOrgAppointmentsInRange).mockResolvedValue([
       makeApptRow({ client_user_id: CLIENT_USER_ID, case_id: CASE_ID }) as never,
     ]);
 
@@ -212,7 +213,7 @@ describe("getWeekAgenda — clientName resolution", () => {
   });
 
   it("lead appointment → clientName from leads.full_name", async () => {
-    vi.mocked(schedulingRepo.findStaffAppointmentsInRange).mockResolvedValue([
+    vi.mocked(schedulingRepo.findOrgAppointmentsInRange).mockResolvedValue([
       makeApptRow({ lead_id: LEAD_ID, case_id: null, client_user_id: null }) as never,
     ]);
 
@@ -231,7 +232,7 @@ describe("getWeekAgenda — clientName resolution", () => {
   });
 
   it("no profile found → clientName is null, not the UUID", async () => {
-    vi.mocked(schedulingRepo.findStaffAppointmentsInRange).mockResolvedValue([
+    vi.mocked(schedulingRepo.findOrgAppointmentsInRange).mockResolvedValue([
       makeApptRow({ client_user_id: CLIENT_USER_ID, case_id: CASE_ID }) as never,
     ]);
 
@@ -245,7 +246,7 @@ describe("getWeekAgenda — clientName resolution", () => {
   });
 
   it("empty week → appointments is empty, no enrichment .in() calls made", async () => {
-    vi.mocked(schedulingRepo.findStaffAppointmentsInRange).mockResolvedValue([]);
+    vi.mocked(schedulingRepo.findOrgAppointmentsInRange).mockResolvedValue([]);
 
     const client = makeServiceClient();
     mockServiceClient.mockReturnValue(client);

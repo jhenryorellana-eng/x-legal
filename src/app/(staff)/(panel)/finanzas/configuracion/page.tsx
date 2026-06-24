@@ -16,6 +16,7 @@ import {
 import { StaffLanguageCard } from "@/frontend/components/desktop/staff-language-card";
 import { StaffAppearanceCard } from "@/frontend/components/desktop/staff-appearance-card";
 import { StaffPushCard } from "@/frontend/components/desktop/staff-push-card";
+import { StaffTimezoneSection } from "../../_components/staff-timezone-section";
 
 export const dynamic = "force-dynamic";
 
@@ -56,6 +57,7 @@ export default async function FinanzasConfigPage() {
           }}
         />
       </div>
+      <StaffTimezoneSection locale={locale} />
     </div>
   );
 }
