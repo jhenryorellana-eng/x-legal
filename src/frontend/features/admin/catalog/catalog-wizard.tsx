@@ -883,13 +883,16 @@ function PartiesStep({
       return;
     }
     setSaving(true);
+    // Next position = max existing + 1 (robust to add/remove; `partyRoles.length`
+    // could collide after a deletion and make the order non-deterministic).
+    const nextPos = partyRoles.reduce((m, r) => Math.max(m, r.position), -1) + 1;
     const r = await actions.createPartyRole({
       service_id: serviceId,
       role_key: roleKey,
       label_i18n: { es: label.es ?? "", en: label.en ?? "" },
       cardinality,
       is_required: required,
-      position: partyRoles.length,
+      position: nextPos,
     });
     setSaving(false);
     if (r.success && r.data) {
@@ -899,7 +902,7 @@ function PartiesStep({
         label: { es: label.es ?? "", en: label.en ?? "" },
         cardinality,
         is_required: required,
-        position: partyRoles.length,
+        position: nextPos,
       };
       setPartyRoles((prev) => [...prev, created]);
       // Derive the next available role from the UPDATED list (not the render-time
@@ -982,45 +985,80 @@ function PartiesStep({
         </div>
       )}
 
-      {partyRoles.length === 0 ? (
-        <p style={{ color: "var(--ink-3)", fontSize: 14 }}>{t.partiesEmpty}</p>
-      ) : (
-        <div style={{ display: "grid", gap: 8 }}>
-          {partyRoles.map((r) => (
-            <div
-              key={r.id}
+      <div style={{ display: "grid", gap: 8 }}>
+        {/* Solicitante — implicit principal party (PRINCIPAL_ROLE_KEY): always
+            present, auto-included, and NOT removable (DOC-41). Shown fixed at the
+            top so the admin sees it's part of every case. */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            border: "1px solid var(--line)",
+            borderRadius: 10,
+            padding: "10px 14px",
+            background: "var(--blue-soft)",
+          }}
+        >
+          <span style={{ fontWeight: 700, color: "var(--ink)" }}>
+            {DEFAULT_PARTY_ROLE_LABELS[PRINCIPAL_ROLE_KEY].es}
+          </span>
+          <Chip tone="gold">{t.partySingle}</Chip>
+          <Chip tone="green">{t.partyRequired}</Chip>
+          <span
+            style={{
+              marginLeft: "auto",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: 12.5,
+              fontWeight: 700,
+              color: "var(--ink-3)",
+            }}
+          >
+            <Icon name="lock" size={14} color="var(--ink-3)" />
+            {t.partyApplicantFixed}
+          </span>
+        </div>
+
+        {partyRoles.map((r) => (
+          <div
+            key={r.id}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              border: "1px solid var(--line)",
+              borderRadius: 10,
+              padding: "10px 14px",
+            }}
+          >
+            <span style={{ fontWeight: 700, color: "var(--ink)" }}>{r.label.es || r.role_key}</span>
+            <Chip tone={r.cardinality === "multiple" ? "blue" : "gold"}>
+              {r.cardinality === "multiple" ? t.partyMultiple : t.partySingle}
+            </Chip>
+            {r.is_required && <Chip tone="green">{t.partyRequired}</Chip>}
+            <button
+              type="button"
+              onClick={() => removeRole(r.id)}
+              aria-label={t.partyRemove}
               style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-                border: "1px solid var(--line)",
-                borderRadius: 10,
-                padding: "10px 14px",
+                marginLeft: "auto",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                display: "grid",
+                placeItems: "center",
               }}
             >
-              <span style={{ fontWeight: 700, color: "var(--ink)" }}>{r.label.es || r.role_key}</span>
-              <Chip tone={r.cardinality === "multiple" ? "blue" : "gold"}>
-                {r.cardinality === "multiple" ? t.partyMultiple : t.partySingle}
-              </Chip>
-              {r.is_required && <Chip tone="green">{t.partyRequired}</Chip>}
-              <button
-                type="button"
-                onClick={() => removeRole(r.id)}
-                aria-label={t.partyRemove}
-                style={{
-                  marginLeft: "auto",
-                  background: "none",
-                  border: "none",
-                  cursor: "pointer",
-                  display: "grid",
-                  placeItems: "center",
-                }}
-              >
-                <Icon name="x" size={16} color="var(--ink-3)" />
-              </button>
-            </div>
-          ))}
-        </div>
+              <Icon name="x" size={16} color="var(--ink-3)" />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {partyRoles.length === 0 && (
+        <p style={{ color: "var(--ink-3)", fontSize: 14, marginTop: 10 }}>{t.partiesEmpty}</p>
       )}
     </div>
   );
