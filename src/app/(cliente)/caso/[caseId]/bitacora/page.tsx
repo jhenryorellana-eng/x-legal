@@ -115,6 +115,14 @@ export default async function BitacoraPage({
           },
           locale,
         ) || row.event_type,
+      body:
+        pickLocale(
+          {
+            es: (row.body_i18n as { es?: string })?.es ?? "",
+            en: (row.body_i18n as { en?: string })?.en ?? "",
+          },
+          locale,
+        ) || null,
       time: timeFmt.format(date),
       team: row.actor_kind !== "client",
     });

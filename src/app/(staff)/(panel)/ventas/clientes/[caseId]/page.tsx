@@ -188,6 +188,10 @@ export default async function VentasCasoDetailPage({
         (ev.title_i18n as { es?: string; en?: string } | null)?.[lc] ??
         (ev.title_i18n as { es?: string; en?: string } | null)?.es ??
         ev.event_type,
+      body:
+        (ev.body_i18n as { es?: string; en?: string } | null)?.[lc] ??
+        (ev.body_i18n as { es?: string; en?: string } | null)?.es ??
+        null,
       occurredAt: ev.occurred_at,
       actorKind: ev.actor_kind,
       icon: ev.icon ?? "info",

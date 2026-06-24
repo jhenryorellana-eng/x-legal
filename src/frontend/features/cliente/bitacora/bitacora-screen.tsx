@@ -20,6 +20,7 @@ export interface BitacoraEvent {
   icon: IconName;
   color: string;
   text: string;
+  body?: string | null; // optional detail (e.g. objectives summary)
   time: string; // formatted in user TZ
   team: boolean; // true = "Tu equipo", false = "Tú"
 }
@@ -233,6 +234,11 @@ export function BitacoraScreen({
                   >
                     {it.text}
                   </p>
+                  {it.body ? (
+                    <p style={{ margin: "4px 0 0", fontSize: 13.5, lineHeight: 1.45, color: "var(--ink-2)", fontWeight: 500 }}>
+                      {it.body}
+                    </p>
+                  ) : null}
                   <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 6 }}>
                     <span
                       style={{

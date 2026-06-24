@@ -74,6 +74,11 @@ export function CaseHistory({
                     <span className="htl-title">{ev.title}</span>
                     <span className="htl-time">{fmt(ev.occurredAt, locale, { hour: "numeric", minute: "2-digit" })}</span>
                   </div>
+                  {ev.body ? (
+                    <div style={{ marginTop: 4, fontSize: 13, color: "var(--ink-2)", lineHeight: 1.45 }}>
+                      {ev.body}
+                    </div>
+                  ) : null}
                 </div>
               </div>
             );

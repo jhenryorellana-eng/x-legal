@@ -98,6 +98,8 @@ export interface InstallmentVM {
 export interface TimelineEventVM {
   id: string;
   title: string;
+  /** Optional detail line (e.g. "Lograste 2 de 4 objetivos de la cita."). */
+  body?: string | null;
   occurredAt: string;
   actorKind: string;
   icon: string;
