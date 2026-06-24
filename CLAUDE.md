@@ -10,6 +10,7 @@ PWA de gestión de casos migratorios/legales. Stack: **Next.js 15** (App Router,
 
 - **Repo**: `C:\Users\mauri\Documents\Trabajos\usalatino-v2\`
 - **SoT (biblioteca de docs)**: `C:\Users\mauri\Documents\Trabajos\USALATINO V2\V2\docs\` (104 docs `DOC-XX`). El plan por fases es **DOC-80** (F0→F8). Continuidad de sesión en `PROGRESO.md` (raíz del repo).
+- **Producción**: dominio **`https://x-legal.usalatinoprime.com`** (Vercel, team `henrys-projects-8597114e`, proyecto `x-legal`; auto-deploy al pushear a `main` del remoto `github.com/jhenryorellana-eng/x-legal`). ⚠ **NO confundir**: `x-legal.vercel.app` es un proyecto ajeno (app china "X-Legal | 合规护航"), `app.usalatinoprime.com` es otro portal, y las URLs `*-henrys-projects-8597114e.vercel.app` devuelven 401 (Deployment Protection). Para verificar prod usar **siempre** `x-legal.usalatinoprime.com`.
 
 ## Comandos (scripts en `package.json`)
 
