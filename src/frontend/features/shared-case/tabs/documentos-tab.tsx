@@ -2,10 +2,13 @@
 
 /**
  * Documentos tab (DOC-52 §5.6 / DOC-53 §3.4.2) — the full requirements matrix
- * (the documents the admin defined on the service) grouped by member. Staff
- * (Henry / Vanessa) can UPLOAD a PDF on the client's behalf for a pending/to-fix
- * slot (RF-ADM-008: startUpload → PUT to signed URL → confirmUpload), VIEW the
- * uploaded file, and APPROVE / REJECT (bilingual reason).
+ * (the documents the admin defined on the service) grouped by party. Each party
+ * (solicitante, cónyuge, …) gets its own header; documents that belong to NO
+ * party are listed last under a generic "Documentos" subtitle (so they never
+ * read as belonging to the party above). Staff (Henry / Vanessa) can UPLOAD a
+ * PDF on the client's behalf for a pending/to-fix slot (RF-ADM-008:
+ * startUpload → PUT to signed URL → confirmUpload), VIEW the uploaded file, and
+ * APPROVE / REJECT (bilingual reason).
  */
 
 import * as React from "react";
@@ -109,13 +112,115 @@ export function DocumentosTab({
     }
   }
 
-  // Group by party (null party → general bucket, rendered first).
+  // Group by party. Documents WITH a party (solicitante, cónyuge, …) render
+  // under their party header; documents WITHOUT a party fall into a single
+  // "general" bucket rendered LAST under a generic "Documentos" subtitle.
   const groups = new Map<string | null, DocMatrixVM[]>();
   for (const item of vm.requirements) {
     const arr = groups.get(item.partyName) ?? [];
     arr.push(item);
     groups.set(item.partyName, arr);
   }
+  const partyGroups = [...groups.entries()].filter(
+    (e): e is [string, DocMatrixVM[]] => e[0] != null,
+  );
+  const generalGroup = groups.get(null) ?? [];
+
+  const renderRow = (item: DocMatrixVM) => (
+    <div key={item.key} className="doc-row" style={item.isHidden ? { opacity: 0.55 } : undefined}>
+      <span aria-hidden="true" className="doc-ico">
+        <Icon name="doc" size={20} color="var(--brand-red)" />
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p className="doc-name" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {item.label}
+          {!item.isRequired && !item.isHidden && (
+            <span style={{ marginLeft: 8 }}>
+              <Chip tone="blue">{t.optional}</Chip>
+            </span>
+          )}
+          {item.isHidden && (
+            <span style={{ marginLeft: 8 }}>
+              <Chip tone="amber">{t.hiddenFromClient}</Chip>
+            </span>
+          )}
+        </p>
+        {item.status === "corregir" && item.rejectionReason && (
+          <p className="doc-meta" style={{ color: "var(--brand-red)" }}>
+            {t.docReason}: {item.rejectionReason}
+          </p>
+        )}
+      </div>
+
+      {!item.isHidden && (
+        <StatusPill kind={item.status as StatusKind}>{statusLabel(item.status, t)}</StatusPill>
+      )}
+
+      <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+        {item.isHidden ? (
+          canToggle && (
+            <GhostBtn
+              size="md"
+              full={false}
+              disabled={busyKey === item.key}
+              onClick={() => onToggleVisibility(item, false)}
+            >
+              {t.showToClient}
+            </GhostBtn>
+          )
+        ) : (
+          <>
+            {(item.status === "pendiente" || item.status === "corregir") && (
+              <UploadButton
+                item={item}
+                caseId={vm.header.caseId}
+                actions={actions}
+                strings={strings}
+                busy={busyKey === item.key}
+                setBusy={(b) => setBusyKey(b ? item.key : null)}
+                onDone={() => router.refresh()}
+              />
+            )}
+            {item.documentId && (
+              <GhostBtn size="md" full={false} icon="external" onClick={() => onView(item.documentId!)}>
+                {t.view}
+              </GhostBtn>
+            )}
+            {item.status === "revision" && item.documentId && (
+              <>
+                <GradientBtn size="sm" full={false} icon="check" disabled={busyKey === item.key} onClick={() => onApprove(item)}>
+                  {t.approve}
+                </GradientBtn>
+                <GhostBtn
+                  size="md"
+                  full={false}
+                  icon="x"
+                  onClick={() => {
+                    setReasonEs("");
+                    setReasonEn("");
+                    setRejecting(item);
+                  }}
+                >
+                  {t.reject}
+                </GhostBtn>
+              </>
+            )}
+            {canToggle && !item.isRequired && (
+              <GhostBtn
+                size="md"
+                full={false}
+                icon="lock"
+                disabled={busyKey === item.key}
+                onClick={() => onToggleVisibility(item, true)}
+              >
+                {t.hideForClient}
+              </GhostBtn>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <Card>
@@ -127,113 +232,29 @@ export function DocumentosTab({
         </div>
       ) : (
         <div style={{ marginTop: 14 }}>
-          {[...groups.entries()].map(([party, list]) => (
-            <div key={party ?? "_general"}>
-              {party && (
-                <div className="member-head">
-                  <span aria-hidden="true" className="member-av">
-                    {party.charAt(0).toUpperCase()}
-                  </span>
-                  {party}
-                </div>
-              )}
-              {list.map((item) => (
-                <div key={item.key} className="doc-row" style={item.isHidden ? { opacity: 0.55 } : undefined}>
-                  <span aria-hidden="true" className="doc-ico">
-                    <Icon name="doc" size={20} color="var(--brand-red)" />
-                  </span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p className="doc-name" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {item.label}
-                      {!item.isRequired && !item.isHidden && (
-                        <span style={{ marginLeft: 8 }}>
-                          <Chip tone="blue">{t.optional}</Chip>
-                        </span>
-                      )}
-                      {item.isHidden && (
-                        <span style={{ marginLeft: 8 }}>
-                          <Chip tone="amber">{t.hiddenFromClient}</Chip>
-                        </span>
-                      )}
-                    </p>
-                    {item.status === "corregir" && item.rejectionReason && (
-                      <p className="doc-meta" style={{ color: "var(--brand-red)" }}>
-                        {t.docReason}: {item.rejectionReason}
-                      </p>
-                    )}
-                  </div>
-
-                  {!item.isHidden && (
-                    <StatusPill kind={item.status as StatusKind}>{statusLabel(item.status, t)}</StatusPill>
-                  )}
-
-                  <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-                    {item.isHidden ? (
-                      canToggle && (
-                        <GhostBtn
-                          size="md"
-                          full={false}
-                          disabled={busyKey === item.key}
-                          onClick={() => onToggleVisibility(item, false)}
-                        >
-                          {t.showToClient}
-                        </GhostBtn>
-                      )
-                    ) : (
-                      <>
-                        {(item.status === "pendiente" || item.status === "corregir") && (
-                          <UploadButton
-                            item={item}
-                            caseId={vm.header.caseId}
-                            actions={actions}
-                            strings={strings}
-                            busy={busyKey === item.key}
-                            setBusy={(b) => setBusyKey(b ? item.key : null)}
-                            onDone={() => router.refresh()}
-                          />
-                        )}
-                        {item.documentId && (
-                          <GhostBtn size="md" full={false} icon="external" onClick={() => onView(item.documentId!)}>
-                            {t.view}
-                          </GhostBtn>
-                        )}
-                        {item.status === "revision" && item.documentId && (
-                          <>
-                            <GradientBtn size="sm" full={false} icon="check" disabled={busyKey === item.key} onClick={() => onApprove(item)}>
-                              {t.approve}
-                            </GradientBtn>
-                            <GhostBtn
-                              size="md"
-                              full={false}
-                              icon="x"
-                              onClick={() => {
-                                setReasonEs("");
-                                setReasonEn("");
-                                setRejecting(item);
-                              }}
-                            >
-                              {t.reject}
-                            </GhostBtn>
-                          </>
-                        )}
-                        {canToggle && !item.isRequired && (
-                          <GhostBtn
-                            size="md"
-                            full={false}
-                            icon="lock"
-                            disabled={busyKey === item.key}
-                            onClick={() => onToggleVisibility(item, true)}
-                          >
-                            {t.hideForClient}
-                          </GhostBtn>
-                        )}
-                      </>
-                    )}
-                  </div>
-                </div>
-              ))}
+          {partyGroups.map(([party, list]) => (
+            <div key={party}>
+              <div className="member-head">
+                <span aria-hidden="true" className="member-av">
+                  {party.charAt(0).toUpperCase()}
+                </span>
+                {party}
+              </div>
+              {list.map(renderRow)}
             </div>
           ))}
+
+          {generalGroup.length > 0 && (
+            <div key="_general">
+              <div className="member-head">
+                <span aria-hidden="true" className="member-av">
+                  <Icon name="doc" size={15} color="var(--accent)" />
+                </span>
+                {t.docsNoPartyGroup}
+              </div>
+              {generalGroup.map(renderRow)}
+            </div>
+          )}
         </div>
       )}
 

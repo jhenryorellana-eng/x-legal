@@ -1344,6 +1344,7 @@
         "docPending": "Pending",
         "docReason": "Reason",
         "docsMatrixEmpty": "This case has no document requirements yet.",
+        "docsNoPartyGroup": "Documents",
         "hideForClient": "Hide from client",
         "showToClient": "Show to client",
         "hiddenFromClient": "Hidden from client",
