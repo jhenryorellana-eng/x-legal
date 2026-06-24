@@ -104,6 +104,7 @@ export default async function ServiceDetailPage({
       is_per_party: d.is_per_party,
       party_roles: (d.party_roles ?? []) as string[],
       ai_extract: d.ai_extract,
+      extraction_schema: (d.extraction_schema ?? null) as Record<string, unknown> | null,
       accepted_format: (d.accepted_format ?? "pdf") as "pdf" | "png",
       is_active: d.is_active,
     })),

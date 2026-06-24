@@ -28,6 +28,8 @@ import {
   deleteServicePartyRoleAction,
   createFormDefinitionAction,
   updateFormDefinitionAction,
+  proposeExtractionSchemaAction,
+  validateExtractionSchemaAction,
 } from "@/backend/modules/catalog/actions";
 
 type Res<T> = { success: boolean; data?: T; error?: { code: string; message: string } };
@@ -167,6 +169,24 @@ export async function updateFormUi(
     patch as Parameters<typeof updateFormDefinitionAction>[1],
   );
   return r.success ? { success: true, data: r.data } : { success: false, error: r.error };
+}
+
+export async function proposeExtractionSchemaUi(input: {
+  service_phase_id: string;
+  label: string;
+  help?: string;
+}): Promise<Res<object>> {
+  const r = await proposeExtractionSchemaAction(input);
+  return r.success ? { success: true, data: r.data as object } : { success: false, error: r.error };
+}
+
+export async function validateExtractionSchemaUi(
+  schema: unknown,
+): Promise<Res<{ valid: boolean; reason?: string }>> {
+  const r = await validateExtractionSchemaAction({ schema });
+  return r.success
+    ? { success: true, data: r.data as { valid: boolean; reason?: string } }
+    : { success: false, error: r.error };
 }
 
 export async function activateServiceUi(

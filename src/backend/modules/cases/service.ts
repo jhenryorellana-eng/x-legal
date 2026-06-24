@@ -75,7 +75,7 @@ import {
   insertFormResponse,
   mergeFormAnswers,
   updateFormResponse,
-  findApprovedDocumentBySlug,
+  findLatestActiveDocumentBySlug,
   findDocumentExtractionByCaseDocId,
   findCompletedGenerationByFormSlug,
   findClientProfileForForm,
@@ -1417,6 +1417,42 @@ export async function getCaseDocumentDownloadUrl(
 }
 
 /**
+ * Returns the Gemini extraction status + extracted fields for a case document.
+ * The client polls this after uploading an ai_extract document to render the
+ * "analizando con IA…" state and the read-only review of what was read.
+ * Authorized via the owning case (requireCaseAccess). Never returns raw_text.
+ *
+ * Status `null` means no extraction row exists yet (job not started / not an
+ * ai_extract document) — the client keeps polling until a timeout.
+ *
+ * @api-id API-CASE-08
+ */
+export async function getDocumentExtractionStatus(
+  actor: Actor,
+  documentId: string,
+): Promise<{
+  status: "pending" | "completed" | "failed" | null;
+  payload: Record<string, unknown> | null;
+}> {
+  const doc = await findDocumentById(documentId);
+  if (!doc) throw new CaseError("DOC_NOT_FOUND");
+  await requireCaseAccess(actor, doc.case_id);
+
+  const ext = await findDocumentExtractionByCaseDocId(documentId);
+  if (!ext) return { status: null, payload: null };
+
+  const status = ext.status as "pending" | "completed" | "failed";
+  let payload: Record<string, unknown> | null = null;
+  if (status === "completed" && ext.payload && typeof ext.payload === "object") {
+    // Defensive: raw_text is excluded from payload at write time, but strip it
+    // here too so it never reaches the client review UI.
+    const { raw_text: _rawText, ...rest } = ext.payload as Record<string, unknown>;
+    payload = rest;
+  }
+  return { status, payload };
+}
+
+/**
  * Returns paginated timeline for a case.
  *
  * Clients only receive visible_to_client=true entries.
@@ -1574,6 +1610,7 @@ async function buildDocumentsMatrix(
       is_required: boolean;
       is_hidden?: boolean;
       accepted_format?: "pdf" | "png";
+      ai_extract?: boolean;
       position: number;
     }) => {
       const docKey = `${r.required_document_type_id ?? "free"}:${r.party_id ?? "case"}`;
@@ -1597,6 +1634,7 @@ async function buildDocumentsMatrix(
         isRequired: r.is_required,
         isHidden: r.is_hidden ?? false,
         acceptedFormat: r.accepted_format ?? "pdf",
+        aiExtract: r.ai_extract ?? false,
         position: r.position,
         status,
         documentId: doc?.id ?? null,
@@ -1635,6 +1673,8 @@ export interface DocumentMatrixItem {
   isHidden: boolean;
   /** Accepted upload format for this document (admin-configured): pdf | png. */
   acceptedFormat: "pdf" | "png";
+  /** True when the document has AI extraction enabled (ai_extract=true). */
+  aiExtract: boolean;
   position: number;
   status: "pendiente" | "revision" | "aprobado" | "corregir";
   documentId: string | null;
@@ -1997,7 +2037,7 @@ export async function resolveBySource(
     const jsonPath = sourceRef["json_path"] as string | undefined;
     if (!documentSlug) return null;
 
-    const approvedDoc = await findApprovedDocumentBySlug(caseId, documentSlug, partyId);
+    const approvedDoc = await findLatestActiveDocumentBySlug(caseId, documentSlug, partyId);
     if (!approvedDoc) return null;
 
     const extraction = await findDocumentExtractionByCaseDocId(approvedDoc.id);

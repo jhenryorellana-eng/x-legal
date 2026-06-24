@@ -17,6 +17,7 @@ import {
   startDocumentUpload,
   confirmDocumentUpload,
   getDocumentsMatrix,
+  getDocumentExtractionStatus,
   CaseError,
 } from "@/backend/modules/cases";
 
@@ -57,6 +58,8 @@ export interface ConfirmUploadResult {
   /** New phase progress (0–100) and gain since before this upload. */
   progress?: number;
   gain?: number;
+  /** The created case_documents id — used by the client to poll AI extraction. */
+  caseDocumentId?: string;
   error?: { code: string };
 }
 
@@ -71,7 +74,7 @@ export async function confirmUploadAction(input: {
 }): Promise<ConfirmUploadResult> {
   try {
     const actor = await requireActor();
-    await confirmDocumentUpload(actor, {
+    const doc = await confirmDocumentUpload(actor, {
       caseId: input.caseId,
       uploadRef: input.uploadRef,
       requirementId: input.requirementId,
@@ -80,7 +83,29 @@ export async function confirmUploadAction(input: {
     });
     const matrix = await getDocumentsMatrix(actor, input.caseId);
     const gain = Math.max(0, matrix.progress - input.previousProgress);
-    return { ok: true, progress: matrix.progress, gain };
+    return { ok: true, progress: matrix.progress, gain, caseDocumentId: doc.id };
+  } catch (err) {
+    const code = err instanceof CaseError ? err.code : "UNEXPECTED";
+    return { ok: false, error: { code } };
+  }
+}
+
+/** Poll the AI extraction status + extracted fields for a freshly-uploaded
+ *  document (ai_extract requirements). Boundary R1/R2: app → module-pub. */
+export interface ExtractionStatusResult {
+  ok: boolean;
+  status?: "pending" | "completed" | "failed" | null;
+  payload?: Record<string, unknown> | null;
+  error?: { code: string };
+}
+
+export async function getExtractionStatusAction(input: {
+  caseDocumentId: string;
+}): Promise<ExtractionStatusResult> {
+  try {
+    const actor = await requireActor();
+    const r = await getDocumentExtractionStatus(actor, input.caseDocumentId);
+    return { ok: true, status: r.status, payload: r.payload };
   } catch (err) {
     const code = err instanceof CaseError ? err.code : "UNEXPECTED";
     return { ok: false, error: { code } };

@@ -131,6 +131,11 @@ export function PreviewClient({ view }: { view: string }) {
             createForm: async () => ({ success: true, data: { id: "mock-form" } }),
             updateForm: noopRes,
             activate: async () => ({ success: true, data: { ok: true, issues: [] } }),
+            proposeExtractionSchema: async () => ({
+              success: true,
+              data: { type: "object", properties: {} },
+            }),
+            validateExtractionSchema: async () => ({ success: true, data: { valid: true } }),
           }}
         />
       )}

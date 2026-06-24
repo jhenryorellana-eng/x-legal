@@ -895,17 +895,20 @@ export async function executeExtractionJob(
     });
   }
 
-  // Build schema with raw_text field injected (DOC-42 §3.6 / DOC-74 §3.4)
+  // Build schema with raw_text field injected (DOC-42 §3.6 / DOC-74 §3.4).
+  // The stored extraction_schema is a full JSON Schema ({ type, properties, required }).
+  // `baseProps` above already normalises both shapes (full schema vs bare property map),
+  // so we merge raw_text into the property map — NOT the whole schema object.
+  const baseRequired = Array.isArray((baseSchema as { required?: unknown }).required)
+    ? ((baseSchema as { required?: string[] }).required as string[])
+    : [];
   const extractionSchemaWithRawText = {
     type: "object",
     properties: {
-      ...(rdt.extractionSchema as Record<string, unknown>),
+      ...baseProps,
       raw_text: { type: "string", description: "Full plain text of the document" },
     },
-    required: [
-      ...((rdt.extractionSchema as { required?: string[] }).required ?? []),
-      "raw_text",
-    ],
+    required: [...baseRequired, "raw_text"],
   };
 
   const model = process.env.AI_GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL;
@@ -962,9 +965,9 @@ export async function executeExtractionJob(
         continue;
       }
 
-      // Validate against schema (simplified — full Ajv validation in prod)
-      const schema = rdt.extractionSchema as { required?: string[] };
-      const missingRequired = (schema.required ?? []).filter(
+      // Validate against schema (simplified — full Ajv validation in prod).
+      // `baseRequired` is the normalised required-field list from the stored schema.
+      const missingRequired = baseRequired.filter(
         (key) => extractionResult && !(key in extractionResult),
       );
       if (missingRequired.length > 0) {

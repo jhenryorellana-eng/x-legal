@@ -19,6 +19,13 @@ export interface ConfirmUploadResult {
   ok: boolean;
   progress?: number;
   gain?: number;
+  caseDocumentId?: string;
+  error?: { code: string };
+}
+export interface ExtractionStatusResult {
+  ok: boolean;
+  status?: "pending" | "completed" | "failed" | null;
+  payload?: Record<string, unknown> | null;
   error?: { code: string };
 }
 
@@ -59,6 +66,20 @@ export interface UploadLabels {
   /** Informative anti-blur message — the document was NOT uploaded. */
   blurMsg: string;
   back: string;
+  // --- AI extraction (ai_extract documents only) ---
+  /** Shown while Gemini reads the freshly-uploaded document. */
+  analyzingTitle: string;
+  analyzingSub: string;
+  /** Read-only review of the extracted data before continuing. */
+  reviewTitle: string;
+  reviewSub: string;
+  /** Small badge marking the data came from AI. */
+  reviewBadge: string;
+  reviewContinue: string;
+  reviewEmpty: string;
+  /** Friendly message when extraction failed / timed out (non-blocking). */
+  reviewFailedTitle: string;
+  reviewFailedSub: string;
 }
 
 export interface UploadScreenProps {
@@ -68,6 +89,8 @@ export interface UploadScreenProps {
   documentName: string;
   /** Admin-configured accepted format for this document: pdf | png. */
   acceptedFormat: "pdf" | "png";
+  /** True when this document has AI extraction enabled (ai_extract=true). */
+  aiExtract: boolean;
   previousProgress: number;
   labels: UploadLabels;
   startUpload: (input: {
@@ -86,6 +109,7 @@ export interface UploadScreenProps {
     originalFilename: string;
     previousProgress: number;
   }) => Promise<ConfirmUploadResult>;
+  getExtractionStatus: (input: { caseDocumentId: string }) => Promise<ExtractionStatusResult>;
 }
 
 function putWithProgress(
@@ -106,22 +130,244 @@ function putWithProgress(
   });
 }
 
+function prettifyKey(k: string): string {
+  return k.replace(/[_.]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function formatValue(v: unknown): string {
+  if (v == null || v === "") return "—";
+  if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") return String(v);
+  return JSON.stringify(v);
+}
+
+/** Flattens the extraction payload into displayable label/value rows. */
+function formatExtractionFields(
+  payload: Record<string, unknown>,
+): Array<{ key: string; label: string; value: string }> {
+  return Object.entries(payload)
+    .filter(([k]) => k !== "raw_text")
+    .map(([k, v]) => ({ key: k, label: prettifyKey(k), value: formatValue(v) }));
+}
+
+/** "Analizando con IA…" — shown while Gemini reads the document. */
+function AnalyzingView({ labels }: { labels: UploadLabels }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "50px 0",
+        gap: 18,
+        textAlign: "center",
+      }}
+    >
+      <style>{`@keyframes ulpIndeterminate{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}`}</style>
+      <Lex size={130} mood="atento" />
+      <div className="t-title" style={{ fontSize: 19, fontWeight: 800, color: "var(--navy)" }}>
+        {labels.analyzingTitle}
+      </div>
+      <div style={{ width: "70%", maxWidth: 240 }}>
+        <div
+          aria-hidden="true"
+          style={{
+            height: 8,
+            borderRadius: 999,
+            overflow: "hidden",
+            background: "var(--gold-soft)",
+          }}
+        >
+          <div
+            style={{
+              height: "100%",
+              width: "40%",
+              borderRadius: 999,
+              background: "var(--gold-deep)",
+              animation: "ulpIndeterminate 1.1s ease-in-out infinite",
+            }}
+          />
+        </div>
+      </div>
+      <div style={{ color: "var(--ink-2)", fontSize: 14.5, fontWeight: 500, maxWidth: 300 }}>
+        {labels.analyzingSub}
+      </div>
+    </div>
+  );
+}
+
+/** Read-only review of the extracted data (or a friendly failure note). */
+function ReviewView({
+  labels,
+  fields,
+  failed,
+  onContinue,
+}: {
+  labels: UploadLabels;
+  fields: Array<{ key: string; label: string; value: string }>;
+  failed: boolean;
+  onContinue: () => void;
+}) {
+  if (failed) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16, padding: "40px 0", textAlign: "center" }}>
+        <Lex size={120} mood="atento" />
+        <div className="t-title" style={{ fontSize: 19, fontWeight: 800, color: "var(--navy)" }}>
+          {labels.reviewFailedTitle}
+        </div>
+        <div style={{ color: "var(--ink-2)", fontSize: 14.5, fontWeight: 500, maxWidth: 300 }}>
+          {labels.reviewFailedSub}
+        </div>
+        <div style={{ width: "100%", marginTop: 8 }}>
+          <GradientBtn onClick={onContinue}>{labels.reviewContinue}</GradientBtn>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, paddingTop: 8 }}>
+      <Lex size={104} mood="feliz" />
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 5,
+            height: 24,
+            padding: "0 10px",
+            borderRadius: 999,
+            background: "var(--gold-soft)",
+            color: "var(--gold-deep)",
+            fontFamily: "var(--font-title)",
+            fontWeight: 800,
+            fontSize: 12,
+          }}
+        >
+          <Icon name="sparkle" size={13} color="var(--gold-deep)" fill="var(--gold)" />
+          {labels.reviewBadge}
+        </span>
+      </div>
+      <div className="t-title" style={{ fontSize: 20, fontWeight: 800, color: "var(--navy)", textAlign: "center" }}>
+        {labels.reviewTitle}
+      </div>
+      <div style={{ color: "var(--ink-2)", fontSize: 14, fontWeight: 500, textAlign: "center", maxWidth: 320 }}>
+        {labels.reviewSub}
+      </div>
+
+      <div
+        style={{
+          width: "100%",
+          background: "var(--card)",
+          borderRadius: 18,
+          boxShadow: "var(--shadow-soft)",
+          padding: "6px 16px",
+          marginTop: 6,
+        }}
+      >
+        {fields.length === 0 ? (
+          <div style={{ padding: "20px 0", textAlign: "center", color: "var(--ink-3)", fontSize: 14 }}>
+            {labels.reviewEmpty}
+          </div>
+        ) : (
+          fields.map((f, i) => (
+            <div
+              key={f.key}
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                gap: 14,
+                padding: "13px 0",
+                borderTop: i === 0 ? "none" : "1px solid var(--line)",
+              }}
+            >
+              <span style={{ color: "var(--ink-2)", fontSize: 13.5, fontWeight: 600 }}>{f.label}</span>
+              <span style={{ color: "var(--ink)", fontSize: 14.5, fontWeight: 700, textAlign: "right" }}>
+                {f.value}
+              </span>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div style={{ width: "100%", marginTop: 12 }}>
+        <GradientBtn onClick={onContinue}>{labels.reviewContinue}</GradientBtn>
+      </div>
+    </div>
+  );
+}
+
 export function UploadScreen({
   caseId,
   requirementId,
   partyId,
   documentName,
   acceptedFormat,
+  aiExtract,
   previousProgress,
   labels,
   startUpload,
   confirmUpload,
+  getExtractionStatus,
 }: UploadScreenProps) {
   const router = useRouter();
-  const [stage, setStage] = React.useState<"idle" | "uploading">("idle");
+  const [stage, setStage] = React.useState<"idle" | "uploading" | "analyzing" | "review">("idle");
   const [pct, setPct] = React.useState(0);
   const [error, setError] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  // AI extraction (ai_extract documents): after confirm we poll the extraction
+  // status, then show a read-only review before the celebration.
+  const [caseDocumentId, setCaseDocumentId] = React.useState<string | null>(null);
+  const [extracted, setExtracted] = React.useState<Record<string, unknown> | null>(null);
+  const [extractionFailed, setExtractionFailed] = React.useState(false);
+  const [nav, setNav] = React.useState<{ progress: number; gain: number }>({
+    progress: previousProgress,
+    gain: 0,
+  });
+
+  const goToCelebration = React.useCallback(() => {
+    const qs = new URLSearchParams();
+    qs.set("progress", String(nav.progress));
+    qs.set("gain", String(nav.gain));
+    router.push(`/caso/${caseId}/exito?${qs.toString()}`);
+  }, [router, caseId, nav.progress, nav.gain]);
+
+  // Poll the extraction status while analyzing. Gemini takes a few seconds; we
+  // poll every 2.5s and fall through to a non-blocking "couldn't read" review on
+  // failure or timeout (extraction is assistance — it never blocks the upload).
+  React.useEffect(() => {
+    if (stage !== "analyzing" || !caseDocumentId) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 24; // ~60s
+
+    const tick = async () => {
+      if (cancelled) return;
+      attempts += 1;
+      const r = await getExtractionStatus({ caseDocumentId });
+      if (cancelled) return;
+      if (r.ok && r.status === "completed") {
+        setExtracted(r.payload ?? {});
+        setExtractionFailed(false);
+        setStage("review");
+        return;
+      }
+      if ((r.ok && r.status === "failed") || attempts >= MAX_ATTEMPTS) {
+        setExtractionFailed(true);
+        setStage("review");
+        return;
+      }
+      timer = setTimeout(tick, 2500);
+    };
+
+    timer = setTimeout(tick, 2000);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [stage, caseDocumentId, getExtractionStatus]);
 
   // Everything is scanned (no camera). The admin picks pdf | png per document.
   const acceptMime = acceptedFormat === "png" ? "image/png" : "application/pdf";
@@ -198,9 +444,24 @@ export function UploadScreen({
       return;
     }
 
+    const progress = confirmed.progress ?? previousProgress;
+    const gain = confirmed.gain ?? 0;
+    setNav({ progress, gain });
+
+    // AI extraction documents: show the "analyzing" state, then a read-only
+    // review of what Gemini read before the celebration.
+    if (aiExtract && confirmed.caseDocumentId) {
+      setCaseDocumentId(confirmed.caseDocumentId);
+      setExtracted(null);
+      setExtractionFailed(false);
+      setStage("analyzing");
+      return;
+    }
+
+    // Plain documents go straight to the celebration.
     const qs = new URLSearchParams();
-    qs.set("progress", String(confirmed.progress ?? previousProgress));
-    qs.set("gain", String(confirmed.gain ?? 0));
+    qs.set("progress", String(progress));
+    qs.set("gain", String(gain));
     setTimeout(() => router.push(`/caso/${caseId}/exito?${qs.toString()}`), 600);
   };
 
@@ -295,6 +556,15 @@ export function UploadScreen({
             </div>
           </div>
         </div>
+      ) : stage === "analyzing" ? (
+        <AnalyzingView labels={labels} />
+      ) : stage === "review" ? (
+        <ReviewView
+          labels={labels}
+          fields={extracted ? formatExtractionFields(extracted) : []}
+          failed={extractionFailed}
+          onContinue={goToCelebration}
+        />
       ) : (
         <>
           {error && (

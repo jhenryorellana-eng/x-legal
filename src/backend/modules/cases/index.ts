@@ -19,6 +19,7 @@ export {
   getCaseRequirements,
   getCaseDocuments,
   getCaseDocumentDownloadUrl,
+  getDocumentExtractionStatus,
   listCasesAdmin,
   getTimeline,
   // Client-surface enriched reads (F2 — read-only DTOs, DOC-51)

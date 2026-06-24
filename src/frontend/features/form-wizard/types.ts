@@ -152,6 +152,7 @@ export interface WizardLabels {
   prefillFromProfile: string; // "lo tomamos de tu perfil"
   prefillFromGeneration: string; // "lo tomamos de tu solicitud"
   prefillEdited: string; // "Lo cambiaste tú"
+  prefillAiBadge: string; // "IA" — marks a field autocompleted by AI from a document
   // Field UI
   selectPlaceholder: string; // "Elige una opción"
   textareaPlaceholder: string; // "Escribe aquí, o toca el micrófono para hablar…"

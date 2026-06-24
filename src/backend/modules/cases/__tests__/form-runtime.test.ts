@@ -32,7 +32,7 @@ const {
   mockInsertFormResponse,
   mockMergeFormAnswers,
   mockUpdateFormResponse,
-  mockFindApprovedDocumentBySlug,
+  mockFindLatestActiveDocumentBySlug,
   mockFindDocumentExtractionByCaseDocId,
   mockFindCompletedGenerationByFormSlug,
   mockFindClientProfileForForm,
@@ -60,7 +60,7 @@ const {
   mockInsertFormResponse: vi.fn(),
   mockMergeFormAnswers: vi.fn().mockResolvedValue(undefined),
   mockUpdateFormResponse: vi.fn().mockResolvedValue(undefined),
-  mockFindApprovedDocumentBySlug: vi.fn(),
+  mockFindLatestActiveDocumentBySlug: vi.fn(),
   mockFindDocumentExtractionByCaseDocId: vi.fn(),
   mockFindCompletedGenerationByFormSlug: vi.fn(),
   mockFindClientProfileForForm: vi.fn(),
@@ -142,7 +142,7 @@ vi.mock("../repository", () => ({
   mergeFormAnswers: mockMergeFormAnswers,
   updateFormResponse: mockUpdateFormResponse,
   listFormResponsesForCase: vi.fn().mockResolvedValue([]),
-  findApprovedDocumentBySlug: mockFindApprovedDocumentBySlug,
+  findLatestActiveDocumentBySlug: mockFindLatestActiveDocumentBySlug,
   findDocumentExtractionByCaseDocId: mockFindDocumentExtractionByCaseDocId,
   findCompletedGenerationByFormSlug: mockFindCompletedGenerationByFormSlug,
   findClientProfileForForm: mockFindClientProfileForForm,
@@ -1047,7 +1047,7 @@ describe("resolveBySource", () => {
   });
 
   it("resolves document_extraction via approved doc and extraction payload", async () => {
-    mockFindApprovedDocumentBySlug.mockResolvedValue({
+    mockFindLatestActiveDocumentBySlug.mockResolvedValue({
       id: DOC_ID,
       storage_path: "case/xxx/doc.pdf",
     });
@@ -1070,7 +1070,7 @@ describe("resolveBySource", () => {
   });
 
   it("returns null for document_extraction when no approved doc found", async () => {
-    mockFindApprovedDocumentBySlug.mockResolvedValue(null);
+    mockFindLatestActiveDocumentBySlug.mockResolvedValue(null);
 
     const result = await resolveBySource(
       {
@@ -1086,7 +1086,7 @@ describe("resolveBySource", () => {
   });
 
   it("returns null for document_extraction when extraction is not completed", async () => {
-    mockFindApprovedDocumentBySlug.mockResolvedValue({ id: DOC_ID, storage_path: "x" });
+    mockFindLatestActiveDocumentBySlug.mockResolvedValue({ id: DOC_ID, storage_path: "x" });
     mockFindDocumentExtractionByCaseDocId.mockResolvedValue({
       status: "pending",
       payload: null,

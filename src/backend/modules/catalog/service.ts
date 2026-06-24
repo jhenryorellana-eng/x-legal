@@ -596,6 +596,22 @@ export async function proposeExtractionSchema(
   return schema;
 }
 
+/**
+ * Validates an extraction_schema against the Gemini-portable subset rules
+ * (same check applied when saving a required document). Pure + synchronous —
+ * exposed for live validation feedback in the admin "Esquema…" editor so the
+ * frontend never has to duplicate the rule set (single source of truth).
+ *
+ * @api-id API-CAT-28b
+ */
+export function checkExtractionSchema(
+  actor: Actor,
+  input: { schema: unknown },
+): { valid: boolean; reason?: string } {
+  can(actor, "catalog", "edit");
+  return validateExtractionSchema(input.schema);
+}
+
 // ---------------------------------------------------------------------------
 // §3.5 Form definitions (pdf_automation lifecycle)
 // ---------------------------------------------------------------------------

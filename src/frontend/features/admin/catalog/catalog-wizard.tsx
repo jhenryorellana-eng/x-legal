@@ -15,6 +15,7 @@ import {
 } from "@/frontend/components/brand";
 import { ViewHead, FieldLabel, TextInput, SelectInput } from "../shared/chrome";
 import { I18nField, type I18nValue } from "../shared/i18n-field";
+import { ExtractionSchemaModal, schemaFieldCount } from "./extraction-schema-modal";
 import {
   PARTY_ROLE_KEYS,
   DEFAULT_PARTY_ROLE_LABELS,
@@ -44,6 +45,8 @@ export interface WizardDoc {
   is_per_party: boolean;
   party_roles: string[];
   ai_extract: boolean;
+  /** JSON Schema (Gemini-portable subset) of the fields the AI extracts. null = not configured. */
+  extraction_schema: Record<string, unknown> | null;
   accepted_format: "pdf" | "png";
   is_active: boolean;
 }
@@ -139,6 +142,14 @@ export interface CatalogWizardProps {
     createForm: (input: Record<string, unknown>) => Promise<ActionRes<{ id: string }>>;
     updateForm: (id: string, patch: Record<string, unknown>) => Promise<ActionRes<unknown>>;
     activate: (id: string) => Promise<ActionRes<{ ok: boolean; issues: PublicationIssueVM[] }>>;
+    proposeExtractionSchema: (input: {
+      service_phase_id: string;
+      label: string;
+      help?: string;
+    }) => Promise<ActionRes<object>>;
+    validateExtractionSchema: (
+      schema: unknown,
+    ) => Promise<ActionRes<{ valid: boolean; reason?: string }>>;
   };
 }
 
@@ -1098,6 +1109,10 @@ function DocsStep({
   // Constrained to the service's roles via the multiselect below.
   const [docPartyRoles, setDocPartyRoles] = React.useState<string[]>([]);
   const [docAiExtract, setDocAiExtract] = React.useState(false);
+  // The fields the AI extracts (JSON Schema). Edited in the "Esquema…" modal.
+  const [docExtractionSchema, setDocExtractionSchema] =
+    React.useState<Record<string, unknown> | null>(null);
+  const [schemaModalOpen, setSchemaModalOpen] = React.useState(false);
   // Admin-chosen upload format for this document: pdf | png (default pdf).
   const [docFormat, setDocFormat] = React.useState<"pdf" | "png">("pdf");
   const [savingDoc, setSavingDoc] = React.useState(false);
@@ -1121,6 +1136,7 @@ function DocsStep({
     setDocPerParty(false);
     setDocPartyRoles([]);
     setDocAiExtract(false);
+    setDocExtractionSchema(null);
     setDocFormat("pdf");
   }
 
@@ -1132,6 +1148,7 @@ function DocsStep({
     setDocPerParty(d.is_per_party);
     setDocPartyRoles(d.party_roles ?? []);
     setDocAiExtract(d.ai_extract);
+    setDocExtractionSchema(d.extraction_schema ?? null);
     setDocFormat(d.accepted_format ?? "pdf");
   }
 
@@ -1168,6 +1185,7 @@ function DocsStep({
         is_per_party: docPerParty,
         party_roles: docRoles,
         ai_extract: docAiExtract,
+        extraction_schema: docAiExtract ? docExtractionSchema : null,
         accepted_format: docFormat,
       });
       setSavingDoc(false);
@@ -1187,6 +1205,7 @@ function DocsStep({
                           is_per_party: docPerParty,
                           party_roles: docRoles ?? [],
                           ai_extract: docAiExtract,
+                          extraction_schema: docAiExtract ? docExtractionSchema : null,
                           accepted_format: docFormat,
                         }
                       : d,
@@ -1213,6 +1232,7 @@ function DocsStep({
       is_per_party: docPerParty,
       party_roles: docRoles,
       ai_extract: docAiExtract,
+      extraction_schema: docAiExtract ? docExtractionSchema : null,
       accepted_format: docFormat,
       position: phase.docs.length,
     });
@@ -1228,6 +1248,7 @@ function DocsStep({
         is_per_party: docPerParty,
         party_roles: docRoles ?? [],
         ai_extract: docAiExtract,
+        extraction_schema: docAiExtract ? docExtractionSchema : null,
         accepted_format: docFormat,
         is_active: true,
       };
@@ -1314,6 +1335,12 @@ function DocsStep({
               <Switch checked={docAiExtract} onCheckedChange={setDocAiExtract} aria-label={t.docAiExtract} />
               {t.docAiExtract}
             </label>
+            {docAiExtract && (
+              <GhostBtn size="md" full={false} icon="sparkle" onClick={() => setSchemaModalOpen(true)}>
+                {t.docSchema}
+                {schemaFieldCount(docExtractionSchema) > 0 ? ` · ${schemaFieldCount(docExtractionSchema)}` : ""}
+              </GhostBtn>
+            )}
             <GradientBtn onClick={saveDocument} disabled={savingDoc} aria-label={editingDocId ? t.docSave : t.docAdd}>
               {savingDoc ? "…" : editingDocId ? t.docSave : t.docAdd}
             </GradientBtn>
@@ -1389,7 +1416,16 @@ function DocsStep({
                     <td style={{ ...docCell, textAlign: "center" }}>
                       <Chip tone="blue">{(d.accepted_format ?? "pdf").toUpperCase()}</Chip>
                     </td>
-                    <td style={{ ...docCell, textAlign: "center" }}>{d.ai_extract ? <Chip tone="gold" dot>{t.docAiExtract}</Chip> : "—"}</td>
+                    <td style={{ ...docCell, textAlign: "center" }}>
+                      {d.ai_extract ? (
+                        <Chip tone="gold" dot>
+                          {t.docAiExtract}
+                          {schemaFieldCount(d.extraction_schema) > 0 ? ` · ${schemaFieldCount(d.extraction_schema)}` : ""}
+                        </Chip>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                     <td style={{ ...docCell, textAlign: "right" }}>
                       <GhostBtn size="md" full={false} icon="edit" onClick={() => startEditDoc(d)}>
                         {t.docEdit}
@@ -1401,6 +1437,23 @@ function DocsStep({
             </tbody>
           </table>
         </div>
+      )}
+
+      {schemaModalOpen && phase && (
+        <ExtractionSchemaModal
+          value={docExtractionSchema}
+          servicePhaseId={phase.id}
+          documentLabel={docLabel.en || docLabel.es || ""}
+          documentHelp={docCategory.trim() || undefined}
+          t={t}
+          proposeAction={actions.proposeExtractionSchema}
+          validateAction={actions.validateExtractionSchema}
+          onClose={() => setSchemaModalOpen(false)}
+          onSave={(schema) => {
+            setDocExtractionSchema(schema);
+            setSchemaModalOpen(false);
+          }}
+        />
       )}
     </div>
   );

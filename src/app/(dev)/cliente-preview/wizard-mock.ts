@@ -18,6 +18,7 @@ export const wizardLabelsMock: WizardLabels = {
   prefillFromProfile: "lo tomamos de tu perfil",
   prefillFromGeneration: "lo tomamos de tu solicitud",
   prefillEdited: "Lo cambiaste tú",
+  prefillAiBadge: "IA",
   selectPlaceholder: "Elige una opción",
   textareaPlaceholder: "Escribe aquí, o toca el micrófono para hablar…",
   checkboxYes: "Sí",

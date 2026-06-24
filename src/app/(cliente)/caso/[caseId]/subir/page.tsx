@@ -12,7 +12,7 @@ import { getActor } from "@/backend/modules/identity";
 import { getDocumentsMatrix } from "@/backend/modules/cases";
 import { pickLocale, type Locale } from "@/frontend/features/cliente/shared/i18n";
 import { UploadScreen } from "@/frontend/features/cliente/documentos/upload-screen";
-import { startUploadAction, confirmUploadAction } from "./actions";
+import { startUploadAction, confirmUploadAction, getExtractionStatusAction } from "./actions";
 
 export default async function SubirPage({
   params,
@@ -61,6 +61,7 @@ export default async function SubirPage({
       partyId={target?.partyId ?? party ?? null}
       documentName={documentName}
       acceptedFormat={acceptedFormat}
+      aiExtract={target?.aiExtract ?? false}
       previousProgress={matrix.progress}
       labels={{
         eyebrow: t("eyebrow"),
@@ -81,9 +82,19 @@ export default async function SubirPage({
         errNetwork: t("errNetwork"),
         blurMsg: t("blurMsg"),
         back: t("back"),
+        analyzingTitle: t("analyzingTitle"),
+        analyzingSub: t("analyzingSub"),
+        reviewTitle: t("reviewTitle"),
+        reviewSub: t("reviewSub"),
+        reviewBadge: t("reviewBadge"),
+        reviewContinue: t("reviewContinue"),
+        reviewEmpty: t("reviewEmpty"),
+        reviewFailedTitle: t("reviewFailedTitle"),
+        reviewFailedSub: t("reviewFailedSub"),
       }}
       startUpload={startUploadAction}
       confirmUpload={confirmUploadAction}
+      getExtractionStatus={getExtractionStatusAction}
     />
   );
 }

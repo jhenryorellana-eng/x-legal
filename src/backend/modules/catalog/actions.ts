@@ -504,6 +504,18 @@ export async function proposeExtractionSchemaAction(
   }
 }
 
+/** @api-id API-CAT-28b — validate an extraction_schema (live editor feedback) */
+export async function validateExtractionSchemaAction(
+  input: Parameters<typeof svc.checkExtractionSchema>[1],
+): Promise<ActionResult<ReturnType<typeof svc.checkExtractionSchema>>> {
+  try {
+    const actor = await requireActor();
+    return ok(svc.checkExtractionSchema(actor, input));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 /** @api-id API-CAT-43 */
 export async function publishVersionAction(
   input: Parameters<typeof svc.publishVersion>[1],

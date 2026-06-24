@@ -47,6 +47,7 @@ function previewLabels(lang: "es" | "en"): WizardLabels {
     prefillFromProfile: t("lo tomamos de tu perfil", "from your profile"),
     prefillFromGeneration: t("lo tomamos de tu solicitud", "from your application"),
     prefillEdited: t("Lo cambiaste tú", "You changed it"),
+    prefillAiBadge: t("IA", "AI"),
     selectPlaceholder: t("Elige una opción", "Choose an option"),
     textareaPlaceholder: t("Escribe aquí, o toca el micrófono para hablar…", "Type here, or tap the mic…"),
     checkboxYes: t("Sí", "Yes"),

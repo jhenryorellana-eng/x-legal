@@ -22,6 +22,8 @@ import {
   createFormUi,
   updateFormUi,
   activateServiceUi,
+  proposeExtractionSchemaUi,
+  validateExtractionSchemaUi,
 } from "./actions";
 
 export const catalogWizardActions = {
@@ -41,4 +43,6 @@ export const catalogWizardActions = {
   createForm: createFormUi,
   updateForm: updateFormUi,
   activate: activateServiceUi,
+  proposeExtractionSchema: proposeExtractionSchemaUi,
+  validateExtractionSchema: validateExtractionSchemaUi,
 };

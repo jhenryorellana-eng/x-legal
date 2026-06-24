@@ -100,7 +100,7 @@ vi.mock("../repository", async (importOriginal) => {
     insertFormResponse: vi.fn(),
     mergeFormAnswers: vi.fn(),
     updateFormResponse: vi.fn(),
-    findApprovedDocumentBySlug: vi.fn().mockResolvedValue(null),
+    findLatestActiveDocumentBySlug: vi.fn().mockResolvedValue(null),
     findDocumentExtractionByCaseDocId: vi.fn().mockResolvedValue(null),
     findCompletedGenerationByFormSlug: vi.fn().mockResolvedValue(null),
     findClientProfileForForm: vi.fn().mockResolvedValue(null),

@@ -59,8 +59,30 @@ function PrefillChip({
   labels: WizardLabels;
 }) {
   if (!question.isPrefilled) return null;
+  const isAi = !edited && question.source === "document_extraction";
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+      {isAi && (
+        <span
+          className="anim-soft-pop"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            height: 26,
+            padding: "0 9px",
+            background: "var(--gold)",
+            color: "var(--navy)",
+            borderRadius: 999,
+            fontFamily: "var(--font-title)",
+            fontWeight: 900,
+            fontSize: 11.5,
+            letterSpacing: "0.04em",
+          }}
+          title={labels.prefillFromDocument}
+        >
+          {labels.prefillAiBadge}
+        </span>
+      )}
       <span
         className={edited ? undefined : "anim-soft-pop"}
         style={{

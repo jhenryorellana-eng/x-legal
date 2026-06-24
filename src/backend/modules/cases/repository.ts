@@ -445,10 +445,15 @@ export async function listFormResponsesForCase(
 }
 
 /**
- * Finds the most recently approved document for a (case, requirement_slug, party_id).
- * Used by resolveBySource when source='document_extraction'.
+ * Finds the latest ACTIVE document for a (case, requirement_slug, party_id).
+ * "Active" = the current chain head: status in ('uploaded','approved'),
+ * excluding 'replaced' (superseded) and 'rejected' (bad scan). Used by
+ * resolveBySource when source='document_extraction' — the form field
+ * autocompletes as soon as the extraction completes, without waiting for
+ * staff approval (product decision: AI prefill is assistance the client
+ * can edit; staff still reviews the submitted form response).
  */
-export async function findApprovedDocumentBySlug(
+export async function findLatestActiveDocumentBySlug(
   caseId: string,
   requirementSlug: string,
   partyId: string | null,
@@ -459,7 +464,7 @@ export async function findApprovedDocumentBySlug(
     .select("id, storage_path, required_document_types!inner(slug)")
     .eq("case_id", caseId)
     .eq("required_document_types.slug", requirementSlug)
-    .eq("status", "approved")
+    .in("status", ["uploaded", "approved"])
     .order("created_at", { ascending: false })
     .limit(1);
 
