@@ -72,11 +72,18 @@ export interface WizardForm {
   published_version: number | null;
 }
 
+export interface WizardObjective {
+  id: string;
+  text: I18nValue;
+}
+
 export interface WizardScheduleItem {
   sequence_number: number;
   duration_minutes: number;
   kind: "video" | "phone" | "presencial";
   week_offset: number;
+  /** Admin-defined objectives shown in the cita detail + marked on complete. */
+  objectives: WizardObjective[];
 }
 
 export interface WizardPhase {
@@ -683,6 +690,9 @@ function PhasesStep({
         duration_minutes: s.duration_minutes,
         kind: s.kind,
         week_offset: s.week_offset,
+        objectives: s.objectives
+          .filter((o) => (o.text.es ?? "").trim() || (o.text.en ?? "").trim())
+          .map((o) => ({ id: o.id, text: o.text })),
       })),
     });
     setSavingPhase(false);
@@ -717,9 +727,22 @@ function PhasesStep({
     update(activeIdx, {
       schedule: [
         ...active.schedule,
-        { sequence_number: active.schedule.length + 1, duration_minutes: 45, kind: "video", week_offset: nextWeek },
+        { sequence_number: active.schedule.length + 1, duration_minutes: 45, kind: "video", week_offset: nextWeek, objectives: [] },
       ],
     });
+  }
+  // Objectives editor (per cita): add / edit / remove.
+  function addObjective(ci: number) {
+    const item = active.schedule[ci];
+    updateCita(ci, { objectives: [...item.objectives, { id: crypto.randomUUID(), text: { es: "", en: "" } }] });
+  }
+  function updateObjective(ci: number, oi: number, text: I18nValue) {
+    const item = active.schedule[ci];
+    updateCita(ci, { objectives: item.objectives.map((o, i) => (i === oi ? { ...o, text } : o)) });
+  }
+  function removeObjective(ci: number, oi: number) {
+    const item = active.schedule[ci];
+    updateCita(ci, { objectives: item.objectives.filter((_, i) => i !== oi) });
   }
   const cronoLastWeek = (active?.schedule ?? []).reduce((m, s) => Math.max(m, s.week_offset), 0);
   const cronoTotalWeeks = cronoLastWeek + (active?.processing_weeks ?? 0);
@@ -777,32 +800,64 @@ function PhasesStep({
             <FieldLabel>{t.apptScheduleTitle}</FieldLabel>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {active.schedule.map((s, ci) => (
-                <div key={ci} style={{ display: "grid", gridTemplateColumns: "54px 1fr 1fr 1.3fr 32px", gap: 8, alignItems: "end" }}>
-                  <span style={{ ...subLabel, alignSelf: "center", margin: 0 }}>{t.citaN.replace("{n}", String(ci + 1))}</span>
-                  <div>
-                    <span style={subLabel}>{t.apptDuration}</span>
-                    <TextInput type="number" value={String(s.duration_minutes)} onChange={(e) => updateCita(ci, { duration_minutes: Math.max(5, Number(e.target.value)) })} />
+                <div key={ci} style={{ border: "1px solid var(--line)", borderRadius: 12, padding: 10, background: "var(--panel-2, var(--card-alt))" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "54px 1fr 1fr 1.3fr 32px", gap: 8, alignItems: "end" }}>
+                    <span style={{ ...subLabel, alignSelf: "center", margin: 0 }}>{t.citaN.replace("{n}", String(ci + 1))}</span>
+                    <div>
+                      <span style={subLabel}>{t.apptDuration}</span>
+                      <TextInput type="number" value={String(s.duration_minutes)} onChange={(e) => updateCita(ci, { duration_minutes: Math.max(5, Number(e.target.value)) })} />
+                    </div>
+                    <div>
+                      <span style={subLabel}>{t.citaWeek}</span>
+                      <TextInput type="number" value={String(s.week_offset)} onChange={(e) => updateCita(ci, { week_offset: Math.max(1, Number(e.target.value)) })} />
+                    </div>
+                    <div>
+                      <span style={subLabel}>{t.apptKind}</span>
+                      <SelectInput value={s.kind} onChange={(e) => updateCita(ci, { kind: e.target.value as WizardScheduleItem["kind"] })}>
+                        <option value="video">{t.apptVideo}</option>
+                        <option value="phone">{t.apptPhone}</option>
+                        <option value="presencial">{t.apptPresencial}</option>
+                      </SelectInput>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label={t.delete}
+                      onClick={() => removeCita(ci)}
+                      style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid var(--line)", background: "var(--panel, var(--card))", cursor: "pointer", display: "grid", placeItems: "center" }}
+                    >
+                      <Icon name="x" size={14} color="var(--ink-3)" />
+                    </button>
                   </div>
-                  <div>
-                    <span style={subLabel}>{t.citaWeek}</span>
-                    <TextInput type="number" value={String(s.week_offset)} onChange={(e) => updateCita(ci, { week_offset: Math.max(1, Number(e.target.value)) })} />
+                  {/* Objectives for this cita */}
+                  <div style={{ marginTop: 10 }}>
+                    <span style={subLabel}>{t.objectivesLabel}</span>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {s.objectives.map((o, oi) => (
+                        <div key={o.id} style={{ display: "grid", gridTemplateColumns: "1fr 32px", gap: 8, alignItems: "center" }}>
+                          <TextInput
+                            value={o.text.es ?? ""}
+                            placeholder={t.objectivePh}
+                            onChange={(e) => updateObjective(ci, oi, { es: e.target.value, en: o.text.en ?? "" })}
+                          />
+                          <button
+                            type="button"
+                            aria-label={t.delete}
+                            onClick={() => removeObjective(ci, oi)}
+                            style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid var(--line)", background: "var(--panel, var(--card))", cursor: "pointer", display: "grid", placeItems: "center" }}
+                          >
+                            <Icon name="x" size={14} color="var(--ink-3)" />
+                          </button>
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => addObjective(ci)}
+                        style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 8, cursor: "pointer", border: "1px dashed var(--line)", background: "transparent", color: "var(--accent)", fontWeight: 700, fontSize: 12.5, alignSelf: "flex-start" }}
+                      >
+                        <Icon name="plus" size={13} color="var(--accent)" /> {t.addObjective}
+                      </button>
+                    </div>
                   </div>
-                  <div>
-                    <span style={subLabel}>{t.apptKind}</span>
-                    <SelectInput value={s.kind} onChange={(e) => updateCita(ci, { kind: e.target.value as WizardScheduleItem["kind"] })}>
-                      <option value="video">{t.apptVideo}</option>
-                      <option value="phone">{t.apptPhone}</option>
-                      <option value="presencial">{t.apptPresencial}</option>
-                    </SelectInput>
-                  </div>
-                  <button
-                    type="button"
-                    aria-label={t.delete}
-                    onClick={() => removeCita(ci)}
-                    style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid var(--line)", background: "var(--panel-2, var(--card-alt))", cursor: "pointer", display: "grid", placeItems: "center" }}
-                  >
-                    <Icon name="x" size={14} color="var(--ink-3)" />
-                  </button>
                 </div>
               ))}
               <button

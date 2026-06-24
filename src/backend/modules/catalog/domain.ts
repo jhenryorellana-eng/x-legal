@@ -208,12 +208,21 @@ export type PhaseAppointmentPolicy = z.infer<typeof PhaseAppointmentPolicySchema
 // not constrain the booking engine.
 // ---------------------------------------------------------------------------
 
+/** A single objective the admin defines for a cita (stored in objectives_i18n). */
+export const ServiceObjectiveSchema = z.object({
+  id: z.string().min(1),
+  text: I18nTextDraftSchema,
+});
+export type ServiceObjective = z.infer<typeof ServiceObjectiveSchema>;
+
 export const ServiceAppointmentScheduleItemSchema = z.object({
   sequence_number: z.number().int().min(1),
   duration_minutes: z.number().int().min(5),
   kind: AppointmentKindSchema.default("video"),
   week_offset: z.number().int().min(1),
   label_i18n: I18nTextDraftSchema.nullable().optional(),
+  /** Ordered objectives for this cita (shown in the detail; marked on complete). */
+  objectives: z.array(ServiceObjectiveSchema).optional(),
 });
 export type ServiceAppointmentScheduleItem = z.infer<typeof ServiceAppointmentScheduleItemSchema>;
 

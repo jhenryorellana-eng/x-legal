@@ -13,9 +13,11 @@
  */
 
 import * as React from "react";
+import { fromZonedTime } from "date-fns-tz";
 import { MSym } from "../shared/msym";
 import { Chip } from "../shared/ui";
-import { SidePanel } from "@/frontend/components/desktop";
+import { SidePanel, Modal, Switch } from "@/frontend/components/desktop";
+import { getBridge } from "@/frontend/platform-bridge";
 import { useToast } from "../shared/toast-bridge";
 import type { CitaDetail, CitaEvent, NuevaCitaModalProps } from "./types";
 import { NuevaCitaModal } from "./nueva-cita-modal";
@@ -48,6 +50,22 @@ export interface CitasStrings {
   completedToast: string;
   scheduledChip: string;
   completedChip: string;
+  // Complete-with-objectives modal
+  completeModalTitle: string;
+  completeModalSub: string;
+  achieved: string;
+  notAchieved: string;
+  completeNote: string;
+  completeNotePh: string;
+  confirmComplete: string;
+  noObjectives: string;
+  outcomeTitle: string;
+  // Reschedule modal
+  rescheduleModalTitle: string;
+  rescheduleNewLabel: string;
+  rescheduleConfirm: string;
+  rescheduledToast: string;
+  noVideoLink: string;
 }
 
 export interface CitasViewProps {
@@ -55,11 +73,16 @@ export interface CitasViewProps {
   hours: string[]; // ["9:00","10:00",...]
   events: CitaEvent[]; // already positioned (dayIndex, slotIndex)
   listItems: CitaEvent[];
+  staffTz: string;
   strings: CitasStrings;
   detailFor: (id: string) => CitaDetail | null;
   newApptModal: Omit<NuevaCitaModalProps, "open" | "onOpenChange">;
-  onComplete: (id: string) => Promise<{ ok: boolean }>;
-  onReschedule: (id: string) => void;
+  onComplete: (input: {
+    id: string;
+    outcome: { id: string; text: string; achieved: boolean }[];
+    notes: string;
+  }) => Promise<{ ok: boolean }>;
+  onReschedule: (input: { id: string; startsAtIso: string }) => Promise<{ ok: boolean }>;
   onCancel: (id: string) => Promise<{ ok: boolean }>;
   onNoShow: (id: string) => Promise<{ ok: boolean }>;
   presetLeadId?: string | null;
@@ -83,19 +106,70 @@ export function CitasView(props: CitasViewProps) {
   const [openId, setOpenId] = React.useState<string | null>(null);
   const [modalOpen, setModalOpen] = React.useState(false);
 
+  // Complete-with-objectives modal state.
+  const [completeId, setCompleteId] = React.useState<string | null>(null);
+  const [achievedMap, setAchievedMap] = React.useState<Record<string, boolean>>({});
+  const [completeNote, setCompleteNote] = React.useState("");
+  const [completeBusy, setCompleteBusy] = React.useState(false);
+
+  // Reschedule modal state.
+  const [rescheduleId, setRescheduleId] = React.useState<string | null>(null);
+  const [rescheduleWhen, setRescheduleWhen] = React.useState(""); // datetime-local
+  const [rescheduleBusy, setRescheduleBusy] = React.useState(false);
+
   const passesFilter = (e: CitaEvent) =>
     filter === "all" || (filter === "calls" ? e.kind === "call" : e.kind !== "call");
 
   const visibleEvents = props.events.filter(passesFilter);
   const visibleList = props.listItems.filter(passesFilter);
   const detail = openId ? props.detailFor(openId) : null;
+  const completeDetail = completeId ? props.detailFor(completeId) : null;
   const dayCount = mode === "day" ? 1 : props.calDays.length;
 
-  const complete = async (id: string) => {
-    const res = await props.onComplete(id);
-    if (res.ok) {
-      setOpenId(null);
-      toast.success(strings.completedToast);
+  const joinCall = (link: string | null) => {
+    if (link) getBridge().share.openExternal(link);
+  };
+
+  // Open the completion modal pre-seeding every objective as achieved.
+  const openComplete = (d: CitaDetail) => {
+    setCompleteId(d.id);
+    setAchievedMap(Object.fromEntries(d.objectives.map((o) => [o.id, true])));
+    setCompleteNote("");
+  };
+
+  const submitComplete = async () => {
+    if (!completeDetail || completeBusy) return;
+    setCompleteBusy(true);
+    try {
+      const outcome = completeDetail.objectives.map((o) => ({
+        id: o.id,
+        text: o.text,
+        achieved: achievedMap[o.id] ?? false,
+      }));
+      const res = await props.onComplete({ id: completeDetail.id, outcome, notes: completeNote.trim() });
+      if (res.ok) {
+        setCompleteId(null);
+        setOpenId(null);
+        toast.success(strings.completedToast);
+      }
+    } finally {
+      setCompleteBusy(false);
+    }
+  };
+
+  const submitReschedule = async () => {
+    if (!rescheduleId || !rescheduleWhen || rescheduleBusy) return;
+    setRescheduleBusy(true);
+    try {
+      const startsAtIso = fromZonedTime(rescheduleWhen, props.staffTz).toISOString();
+      const res = await props.onReschedule({ id: rescheduleId, startsAtIso });
+      if (res.ok) {
+        setRescheduleId(null);
+        setOpenId(null);
+        toast.success(strings.rescheduledToast);
+      }
+    } finally {
+      setRescheduleBusy(false);
     }
   };
 
@@ -206,53 +280,171 @@ export function CitasView(props: CitasViewProps) {
         title={detail?.name ?? ""}
         subtitle={detail ? `${detail.dayTime}${detail.clientHour ? ` · ${detail.clientHour}` : ""}` : ""}
         footer={
-          detail && (
+          detail && detail.status === "scheduled" ? (
             <>
-              <button type="button" className="vbtn vbtn-ghost vbtn-sm" onClick={() => detail && props.onReschedule(detail.id)}>
+              <button
+                type="button"
+                className="vbtn vbtn-ghost vbtn-sm"
+                onClick={() => {
+                  setRescheduleId(detail.id);
+                  setRescheduleWhen("");
+                }}
+              >
                 <MSym name="event_repeat" size={18} />
                 {strings.reschedule}
               </button>
-              <button type="button" className="vbtn vbtn-green vbtn-sm" onClick={() => detail && complete(detail.id)}>
+              <button type="button" className="vbtn vbtn-green vbtn-sm" onClick={() => openComplete(detail)}>
                 <MSym name="check_circle" size={18} />
                 {strings.complete}
               </button>
             </>
-          )
+          ) : undefined
         }
       >
         {detail && (
           <>
             <Chip tone="blue" style={{ marginBottom: 14 }}>{detail.typeLabel}</Chip>
             {detail.isVideo && (
-              <button type="button" className="vbtn vbtn-primary" style={{ width: "100%", marginBottom: 16, justifyContent: "center" }}
-                onClick={() => toast.success(`${strings.enterCall} · ${detail.name}`)}>
+              <button
+                type="button"
+                className="vbtn vbtn-primary"
+                style={{ width: "100%", marginBottom: 16, justifyContent: "center", opacity: detail.videoLink ? 1 : 0.5 }}
+                disabled={!detail.videoLink}
+                onClick={() => joinCall(detail.videoLink)}
+              >
                 <MSym name="videocam" size={20} />
-                {strings.enterCall}
+                {detail.videoLink ? strings.enterCall : strings.noVideoLink}
               </button>
             )}
-            <div className="vcard" style={{ padding: 14, background: "var(--accent-soft)", border: "none", marginBottom: 16 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }} dangerouslySetInnerHTML={{ __html: detail.lexHtml }} />
-            </div>
-            <div className="vcard-title" style={{ fontSize: 14, marginBottom: 10 }}>{strings.objectiveTitle}</div>
-            {detail.objectiveItems.map((it, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 9, padding: "7px 0", fontSize: 13, fontWeight: 600, color: "var(--ink-2)" }}>
-                <MSym name="radio_button_unchecked" size={18} color="var(--ink-3)" />
-                {it}
+            {detail.lexHtml && (
+              <div className="vcard" style={{ padding: 14, background: "var(--accent-soft)", border: "none", marginBottom: 16 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }} dangerouslySetInnerHTML={{ __html: detail.lexHtml }} />
               </div>
-            ))}
-            <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
-              <button type="button" className="flag-btn" onClick={async () => { const r = await props.onCancel(detail.id); if (r.ok) setOpenId(null); }}>
-                <MSym name="cancel" size={16} />
-                {strings.cancel}
-              </button>
-              <button type="button" className="flag-btn" onClick={async () => { const r = await props.onNoShow(detail.id); if (r.ok) setOpenId(null); }}>
-                <MSym name="person_off" size={16} />
-                {strings.noShow}
-              </button>
-            </div>
+            )}
+
+            {/* Completed: show the recorded outcome (read-only). */}
+            {detail.status === "completed" && detail.objectivesOutcome && detail.objectivesOutcome.length > 0 ? (
+              <>
+                <div className="vcard-title" style={{ fontSize: 14, marginBottom: 10 }}>{strings.outcomeTitle}</div>
+                {detail.objectivesOutcome.map((o) => (
+                  <div key={o.id} style={{ display: "flex", alignItems: "flex-start", gap: 9, padding: "7px 0", fontSize: 13, fontWeight: 600, color: "var(--ink-2)" }}>
+                    <MSym
+                      name={o.achieved ? "check_circle" : "cancel"}
+                      size={18}
+                      color={o.achieved ? "var(--green)" : "var(--ink-3)"}
+                    />
+                    {o.text}
+                  </div>
+                ))}
+              </>
+            ) : (
+              <>
+                <div className="vcard-title" style={{ fontSize: 14, marginBottom: 10 }}>{strings.objectiveTitle}</div>
+                {detail.objectives.length === 0 ? (
+                  <div style={{ fontSize: 13, color: "var(--ink-3)", fontWeight: 600 }}>{strings.noObjectives}</div>
+                ) : (
+                  detail.objectives.map((o) => (
+                    <div key={o.id} style={{ display: "flex", alignItems: "flex-start", gap: 9, padding: "7px 0", fontSize: 13, fontWeight: 600, color: "var(--ink-2)" }}>
+                      <MSym name="radio_button_unchecked" size={18} color="var(--ink-3)" />
+                      {o.text}
+                    </div>
+                  ))
+                )}
+              </>
+            )}
+
+            {detail.status === "scheduled" && (
+              <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
+                <button type="button" className="flag-btn" onClick={async () => { const r = await props.onCancel(detail.id); if (r.ok) setOpenId(null); }}>
+                  <MSym name="cancel" size={16} />
+                  {strings.cancel}
+                </button>
+                <button type="button" className="flag-btn" onClick={async () => { const r = await props.onNoShow(detail.id); if (r.ok) setOpenId(null); }}>
+                  <MSym name="person_off" size={16} />
+                  {strings.noShow}
+                </button>
+              </div>
+            )}
           </>
         )}
       </SidePanel>
+
+      {/* Complete-with-objectives modal */}
+      <Modal
+        open={completeId !== null}
+        onOpenChange={(o) => !o && setCompleteId(null)}
+        title={strings.completeModalTitle}
+        width={460}
+        footer={
+          <>
+            <button type="button" className="vbtn vbtn-ghost vbtn-sm" onClick={() => setCompleteId(null)}>{strings.cancel}</button>
+            <button type="button" className="vbtn vbtn-green vbtn-sm" disabled={completeBusy} onClick={submitComplete}>
+              <MSym name="check_circle" size={18} />
+              {strings.confirmComplete}
+            </button>
+          </>
+        }
+      >
+        {completeDetail && (
+          <>
+            <div style={{ fontSize: 12.5, color: "var(--ink-2)", fontWeight: 700, marginBottom: 14 }}>{strings.completeModalSub}</div>
+            {completeDetail.objectives.length === 0 ? (
+              <div style={{ fontSize: 13, color: "var(--ink-3)", fontWeight: 600, marginBottom: 8 }}>{strings.noObjectives}</div>
+            ) : (
+              completeDetail.objectives.map((o) => (
+                <div key={o.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: "1px solid var(--line-2)" }}>
+                  <div style={{ flex: 1, fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>{o.text}</div>
+                  <span style={{ fontSize: 11.5, fontWeight: 800, color: achievedMap[o.id] ? "var(--green)" : "var(--ink-3)" }}>
+                    {achievedMap[o.id] ? strings.achieved : strings.notAchieved}
+                  </span>
+                  <Switch
+                    checked={achievedMap[o.id] ?? false}
+                    onCheckedChange={(v) => setAchievedMap((m) => ({ ...m, [o.id]: v }))}
+                    aria-label={o.text}
+                  />
+                </div>
+              ))
+            )}
+            <div className="vfield" style={{ marginTop: 14, marginBottom: 0 }}>
+              <label htmlFor="complete-note">{strings.completeNote}</label>
+              <textarea
+                id="complete-note"
+                rows={3}
+                value={completeNote}
+                onChange={(e) => setCompleteNote(e.target.value)}
+                placeholder={strings.completeNotePh}
+              />
+            </div>
+          </>
+        )}
+      </Modal>
+
+      {/* Reschedule modal */}
+      <Modal
+        open={rescheduleId !== null}
+        onOpenChange={(o) => !o && setRescheduleId(null)}
+        title={strings.rescheduleModalTitle}
+        width={420}
+        footer={
+          <>
+            <button type="button" className="vbtn vbtn-ghost vbtn-sm" onClick={() => setRescheduleId(null)}>{strings.cancel}</button>
+            <button type="button" className="vbtn vbtn-primary vbtn-sm" disabled={!rescheduleWhen || rescheduleBusy} onClick={submitReschedule}>
+              <MSym name="event_repeat" size={18} />
+              {strings.rescheduleConfirm}
+            </button>
+          </>
+        }
+      >
+        <div className="vfield" style={{ marginBottom: 0 }}>
+          <label htmlFor="reschedule-when">{strings.rescheduleNewLabel}</label>
+          <input
+            id="reschedule-when"
+            type="datetime-local"
+            value={rescheduleWhen}
+            onChange={(e) => setRescheduleWhen(e.target.value)}
+          />
+        </div>
+      </Modal>
 
       <NuevaCitaModal open={modalOpen} onOpenChange={setModalOpen} {...props.newApptModal} presetLeadId={props.presetLeadId} />
     </div>

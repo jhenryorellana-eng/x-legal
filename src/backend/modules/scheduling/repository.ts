@@ -12,13 +12,15 @@
 
 import { createServiceClient } from "@/backend/platform/supabase";
 import { logger } from "@/backend/platform/logger";
-import type { Tables, TablesInsert, TablesUpdate } from "@/shared/database.types";
+import type { Json, Tables, TablesInsert, TablesUpdate } from "@/shared/database.types";
+import { resolveObjectiveTemplates } from "./domain";
 import type {
   AvailabilityRule,
   SchedulingSettings,
   PhasePolicy,
   CaseOverride,
   AppointmentScheduleEntry,
+  ObjectiveOutcome,
 } from "./domain";
 
 // ---------------------------------------------------------------------------
@@ -43,6 +45,8 @@ const DEFAULT_SETTINGS: SchedulingSettings = {
   cancellationWindowHours: 24,
   rebookingPenaltyDays: 7,
   prospectDurationMinutes: 45,
+  videoLink: null,
+  remindersEnabled: true,
 };
 
 function rowToSettings(row: OrgSchedulingSettingsRow): SchedulingSettings {
@@ -53,6 +57,9 @@ function rowToSettings(row: OrgSchedulingSettingsRow): SchedulingSettings {
     cancellationWindowHours: row.cancellation_window_hours,
     rebookingPenaltyDays: row.rebooking_penalty_days,
     prospectDurationMinutes: row.prospect_duration_minutes,
+    // Columns added in 0030; tolerate pre-migration rows.
+    videoLink: row.video_link ?? null,
+    remindersEnabled: row.reminders_enabled ?? true,
   };
 }
 
@@ -106,6 +113,7 @@ export interface InsertAppointmentInput {
   notes: string | null;
   cancelledReason?: string | null;
   livekitRoomId?: string | null;
+  videoLink?: string | null;
 }
 
 /**
@@ -134,6 +142,7 @@ export async function insertAppointment(
     notes: input.notes,
     cancelled_reason: input.cancelledReason ?? null,
     livekit_room_id: input.livekitRoomId ?? null,
+    video_link: input.videoLink ?? null,
   };
 
   const { data, error } = await supabase
@@ -166,6 +175,8 @@ export interface UpdateAppointmentInput {
   notes?: string | null;
   cancelledReason?: string | null;
   livekitRoomId?: string | null;
+  videoLink?: string | null;
+  objectivesOutcome?: ObjectiveOutcome[] | null;
   reminder1dSentAt?: string | null;
   reminder1hSentAt?: string | null;
 }
@@ -182,6 +193,9 @@ export async function updateAppointment(
     update.cancelled_reason = patch.cancelledReason;
   if (patch.livekitRoomId !== undefined)
     update.livekit_room_id = patch.livekitRoomId;
+  if (patch.videoLink !== undefined) update.video_link = patch.videoLink;
+  if (patch.objectivesOutcome !== undefined)
+    update.objectives_outcome = (patch.objectivesOutcome ?? null) as Json;
   if (patch.reminder1dSentAt !== undefined)
     update.reminder_1d_sent_at = patch.reminder1dSentAt;
   if (patch.reminder1hSentAt !== undefined)
@@ -354,7 +368,7 @@ export async function findDueReminders(
   const { data, error } = await supabase
     .from("appointments")
     .select(
-      "id, case_id, lead_id, staff_id, client_user_id, starts_at, kind",
+      "id, org_id, case_id, lead_id, staff_id, client_user_id, starts_at, kind",
     )
     .eq("status", "scheduled")
     .eq(flagCol, true)
@@ -366,15 +380,34 @@ export async function findDueReminders(
     logger.error({ err: error }, "scheduling.repo: findDueReminders error");
     return [];
   }
-  return (data ?? []).map((r) => ({
-    id: r.id,
-    caseId: r.case_id,
-    leadId: r.lead_id,
-    staffId: r.staff_id,
-    clientUserId: r.client_user_id,
-    startsAt: new Date(r.starts_at),
-    kind: r.kind,
-  }));
+
+  const rows = data ?? [];
+  if (rows.length === 0) return [];
+
+  // Org-level master switch: when an org disabled automatic reminders
+  // (org_scheduling_settings.reminders_enabled = false) skip ALL its
+  // appointments — toggling off in "Mi disponibilidad" silences reminders
+  // immediately for existing and future citas (no per-row backfill needed).
+  const orgIds = [...new Set(rows.map((r) => r.org_id).filter((id): id is string => id != null))];
+  const { data: settingsRows } = await supabase
+    .from("org_scheduling_settings")
+    .select("org_id, reminders_enabled")
+    .in("org_id", orgIds);
+  const remindersOff = new Set(
+    (settingsRows ?? []).filter((s) => s.reminders_enabled === false).map((s) => s.org_id),
+  );
+
+  return rows
+    .filter((r) => !(r.org_id != null && remindersOff.has(r.org_id)))
+    .map((r) => ({
+      id: r.id,
+      caseId: r.case_id,
+      leadId: r.lead_id,
+      staffId: r.staff_id,
+      clientUserId: r.client_user_id,
+      startsAt: new Date(r.starts_at),
+      kind: r.kind,
+    }));
 }
 
 /**
@@ -705,24 +738,36 @@ export interface SettingsPatch {
   cancellationWindowHours?: number;
   rebookingPenaltyDays?: number;
   prospectDurationMinutes?: number;
+  videoLink?: string | null;
+  remindersEnabled?: boolean;
 }
 
+/**
+ * Merges `patch` over the org's CURRENT settings (not over defaults) and upserts
+ * the full row. Reading-then-writing keeps fields the caller did not pass intact
+ * — the editor only sends a subset (duration / min-notice / reminders / link),
+ * so a plain upsert would otherwise reset the rest to defaults.
+ */
 export async function upsertSettings(
   orgId: string,
   patch: SettingsPatch,
 ): Promise<void> {
   const supabase = createServiceClient();
+  const current = await getSettings(orgId);
   const update: TablesInsert<"org_scheduling_settings"> = {
     org_id: orgId,
-    min_notice_hours: patch.minNoticeHours ?? DEFAULT_SETTINGS.minNoticeHours,
-    max_advance_days: patch.maxAdvanceDays ?? DEFAULT_SETTINGS.maxAdvanceDays,
-    buffer_minutes: patch.bufferMinutes ?? DEFAULT_SETTINGS.bufferMinutes,
+    min_notice_hours: patch.minNoticeHours ?? current.minNoticeHours,
+    max_advance_days: patch.maxAdvanceDays ?? current.maxAdvanceDays,
+    buffer_minutes: patch.bufferMinutes ?? current.bufferMinutes,
     cancellation_window_hours:
-      patch.cancellationWindowHours ?? DEFAULT_SETTINGS.cancellationWindowHours,
+      patch.cancellationWindowHours ?? current.cancellationWindowHours,
     rebooking_penalty_days:
-      patch.rebookingPenaltyDays ?? DEFAULT_SETTINGS.rebookingPenaltyDays,
+      patch.rebookingPenaltyDays ?? current.rebookingPenaltyDays,
     prospect_duration_minutes:
-      patch.prospectDurationMinutes ?? DEFAULT_SETTINGS.prospectDurationMinutes,
+      patch.prospectDurationMinutes ?? current.prospectDurationMinutes,
+    video_link:
+      patch.videoLink !== undefined ? patch.videoLink : current.videoLink,
+    reminders_enabled: patch.remindersEnabled ?? current.remindersEnabled,
   };
 
   const { error } = await supabase
@@ -769,7 +814,7 @@ export async function getAppointmentSchedule(
   const supabase = createServiceClient();
   const { data, error } = await supabase
     .from("service_appointment_schedule")
-    .select("sequence_number, duration_minutes, kind, week_offset")
+    .select("sequence_number, duration_minutes, kind, week_offset, label_i18n, objectives_i18n")
     .eq("service_phase_id", servicePhaseId)
     .order("sequence_number");
 
@@ -782,6 +827,8 @@ export async function getAppointmentSchedule(
     durationMinutes: r.duration_minutes,
     kind: r.kind as "video" | "phone" | "presencial",
     weekOffset: r.week_offset,
+    labelI18n: (r.label_i18n as AppointmentScheduleEntry["labelI18n"]) ?? null,
+    objectives: resolveObjectiveTemplates(r.objectives_i18n),
   }));
 }
 

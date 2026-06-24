@@ -134,6 +134,39 @@ export async function createContract(
 }
 
 // ---------------------------------------------------------------------------
+// resyncPartiesSnapshot — refresh the informational parties snapshot
+// ---------------------------------------------------------------------------
+
+/**
+ * Re-writes a contract's `parties_snapshot` from the live case parties (built
+ * by the cases module and passed in). No-op when there is no contract or when
+ * the contract is already `signed` — a signed contract is an immutable legal
+ * record and its snapshot is the signed photo. Returns whether it changed.
+ *
+ * Authorization mirrors other contract mutations: governed by cases:edit +
+ * case access (the caller — cases.updateCaseParty — is already admin-gated).
+ *
+ * @api-id (internal) called by cases.updateCaseParty
+ */
+export async function resyncPartiesSnapshot(
+  actor: Actor,
+  caseId: string,
+  partiesSnapshot: Record<string, unknown>,
+): Promise<{ resynced: boolean }> {
+  can(actor, "cases", "edit");
+  await requireCaseAccess(actor, caseId);
+
+  const contract = await findContractByCaseId(caseId);
+  if (!contract) return { resynced: false };
+  if (contract.status === "signed") return { resynced: false };
+
+  await updateContract(contract.id, {
+    parties_snapshot: partiesSnapshot as unknown as import("@/shared/database.types").Json,
+  });
+  return { resynced: true };
+}
+
+// ---------------------------------------------------------------------------
 // sendContractForSigning — draft → sent
 // ---------------------------------------------------------------------------
 

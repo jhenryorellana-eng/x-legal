@@ -361,6 +361,7 @@ export type Database = {
           lead_id: string | null
           livekit_room_id: string | null
           notes: string | null
+          objectives_outcome: Json | null
           org_id: string
           reminder_1d: boolean
           reminder_1d_sent_at: string | null
@@ -372,6 +373,7 @@ export type Database = {
           starts_at: string
           status: string
           updated_at: string
+          video_link: string | null
         }
         Insert: {
           cancelled_reason?: string | null
@@ -384,6 +386,7 @@ export type Database = {
           lead_id?: string | null
           livekit_room_id?: string | null
           notes?: string | null
+          objectives_outcome?: Json | null
           org_id: string
           reminder_1d?: boolean
           reminder_1d_sent_at?: string | null
@@ -395,6 +398,7 @@ export type Database = {
           starts_at: string
           status?: string
           updated_at?: string
+          video_link?: string | null
         }
         Update: {
           cancelled_reason?: string | null
@@ -407,6 +411,7 @@ export type Database = {
           lead_id?: string | null
           livekit_room_id?: string | null
           notes?: string | null
+          objectives_outcome?: Json | null
           org_id?: string
           reminder_1d?: boolean
           reminder_1d_sent_at?: string | null
@@ -418,6 +423,7 @@ export type Database = {
           starts_at?: string
           status?: string
           updated_at?: string
+          video_link?: string | null
         }
         Relationships: [
           {
@@ -3102,7 +3108,9 @@ export type Database = {
           org_id: string
           prospect_duration_minutes: number
           rebooking_penalty_days: number
+          reminders_enabled: boolean
           updated_at: string
+          video_link: string | null
         }
         Insert: {
           buffer_minutes?: number
@@ -3114,7 +3122,9 @@ export type Database = {
           org_id: string
           prospect_duration_minutes?: number
           rebooking_penalty_days?: number
+          reminders_enabled?: boolean
           updated_at?: string
+          video_link?: string | null
         }
         Update: {
           buffer_minutes?: number
@@ -3126,7 +3136,9 @@ export type Database = {
           org_id?: string
           prospect_duration_minutes?: number
           rebooking_penalty_days?: number
+          reminders_enabled?: boolean
           updated_at?: string
+          video_link?: string | null
         }
         Relationships: [
           {
@@ -3491,6 +3503,7 @@ export type Database = {
           id: string
           kind: string
           label_i18n: Json | null
+          objectives_i18n: Json | null
           position: number
           sequence_number: number
           service_phase_id: string
@@ -3503,6 +3516,7 @@ export type Database = {
           id?: string
           kind?: string
           label_i18n?: Json | null
+          objectives_i18n?: Json | null
           position?: number
           sequence_number: number
           service_phase_id: string
@@ -3515,6 +3529,7 @@ export type Database = {
           id?: string
           kind?: string
           label_i18n?: Json | null
+          objectives_i18n?: Json | null
           position?: number
           sequence_number?: number
           service_phase_id?: string
@@ -3839,50 +3854,6 @@ export type Database = {
             isOneToOne: true
             referencedRelation: "users"
             referencedColumns: ["id"]
-          },
-        ]
-      }
-      staff_scheduling_settings: {
-        Row: {
-          buffer_minutes: number
-          cancellation_window_hours: number
-          created_at: string
-          max_advance_days: number
-          min_notice_hours: number
-          prospect_duration_minutes: number
-          rebooking_penalty_days: number
-          staff_id: string
-          updated_at: string
-        }
-        Insert: {
-          buffer_minutes?: number
-          cancellation_window_hours?: number
-          created_at?: string
-          max_advance_days?: number
-          min_notice_hours?: number
-          prospect_duration_minutes?: number
-          rebooking_penalty_days?: number
-          staff_id: string
-          updated_at?: string
-        }
-        Update: {
-          buffer_minutes?: number
-          cancellation_window_hours?: number
-          created_at?: string
-          max_advance_days?: number
-          min_notice_hours?: number
-          prospect_duration_minutes?: number
-          rebooking_penalty_days?: number
-          staff_id?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "staff_scheduling_settings_staff_id_fkey"
-            columns: ["staff_id"]
-            isOneToOne: true
-            referencedRelation: "staff_profiles"
-            referencedColumns: ["user_id"]
           },
         ]
       }

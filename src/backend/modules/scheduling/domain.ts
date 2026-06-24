@@ -16,6 +16,7 @@ import {
   formatInTimeZone,
 } from "date-fns-tz";
 import { addDays } from "date-fns";
+import type { I18nText } from "@/shared/i18n";
 
 // ---------------------------------------------------------------------------
 // Appointment state machine — DOC-43 §2.1
@@ -164,6 +165,77 @@ export interface AppointmentScheduleEntry {
   durationMinutes: number;
   kind: "video" | "phone" | "presencial";
   weekOffset: number;
+  /** Admin-set label for this cita ("Inducción"), i18n. Null when not set. */
+  labelI18n: I18nText | null;
+  /** Admin-defined objectives for this cita (template, ordered). */
+  objectives: ObjectiveTemplate[];
+}
+
+/**
+ * An objective the admin defines for a cita in the service cronograma.
+ * Stored in service_appointment_schedule.objectives_i18n.
+ */
+export interface ObjectiveTemplate {
+  id: string;
+  text: I18nText;
+}
+
+/**
+ * The outcome of a single objective when the advisor completes a cita.
+ * Snapshotted into appointments.objectives_outcome (text resolved at completion
+ * so the record is stable even if the service template changes later).
+ */
+export interface ObjectiveOutcome {
+  id: string;
+  text: string;
+  achieved: boolean;
+}
+
+/**
+ * Parses the raw `service_appointment_schedule.objectives_i18n` jsonb into a
+ * typed, ordered list of objective templates. Tolerant of nulls / legacy rows:
+ * anything that is not a well-formed `{ id, text }` entry is skipped.
+ */
+export function resolveObjectiveTemplates(raw: unknown): ObjectiveTemplate[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ObjectiveTemplate[] = [];
+  for (const item of raw) {
+    if (
+      item != null &&
+      typeof item === "object" &&
+      typeof (item as { id?: unknown }).id === "string" &&
+      (item as { text?: unknown }).text != null &&
+      typeof (item as { text?: unknown }).text === "object"
+    ) {
+      out.push({
+        id: (item as { id: string }).id,
+        text: (item as { text: I18nText }).text,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Parses the raw `appointments.objectives_outcome` jsonb into typed outcomes.
+ * Tolerant: skips anything that is not a well-formed `{ id, text, achieved }`.
+ */
+export function resolveObjectivesOutcome(raw: unknown): ObjectiveOutcome[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ObjectiveOutcome[] = [];
+  for (const item of raw) {
+    if (
+      item != null &&
+      typeof item === "object" &&
+      typeof (item as { id?: unknown }).id === "string" &&
+      typeof (item as { text?: unknown }).text === "string" &&
+      typeof (item as { achieved?: unknown }).achieved === "boolean"
+    ) {
+      const o = item as { id: string; text: string; achieved: boolean };
+      out.push({ id: o.id, text: o.text, achieved: o.achieved });
+    }
+  }
+  return out;
 }
 
 /**
@@ -358,6 +430,8 @@ export interface SchedulingSettings {
   cancellationWindowHours: number; // cancellation_window_hours
   rebookingPenaltyDays: number; // rebooking_penalty_days
   prospectDurationMinutes: number; // prospect_duration_minutes (lead/eval cita default)
+  videoLink: string | null; // org-wide default video-call link (video_link)
+  remindersEnabled: boolean; // org-wide default for auto client reminders (reminders_enabled)
 }
 
 export interface MaterializeSlotsInput {

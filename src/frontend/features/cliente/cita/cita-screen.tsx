@@ -9,6 +9,7 @@ import { GradientBtn } from "@/frontend/components/brand/gradient-btn";
 import { GhostBtn } from "@/frontend/components/brand/ghost-btn";
 import { StatusPill } from "@/frontend/components/brand/status-pill";
 import { BottomSheet, Confetti, playChime } from "@/frontend/components/mobile";
+import { getBridge } from "@/frontend/platform-bridge";
 
 /**
  * Cancel action result shape — structurally identical to the app server action
@@ -83,6 +84,10 @@ export interface CitaScreenProps {
   status: "scheduled" | "completed" | "cancelled" | "no_show" | "rescheduled";
   /** Staff note shown when the appointment is completed. */
   staffNote: string | null;
+  /** Effective video-call link (org default / per-cita override); null = none yet. */
+  videoLink: string | null;
+  /** Appointment start (UTC ISO) — gates the join button to a ±10 min window. */
+  startsAtIso: string;
   /** Fire the confetti (the client just booked it). */
   celebrate: boolean;
   labels: CitaLabels;
@@ -103,6 +108,8 @@ export function CitaScreen({
   kind,
   status,
   staffNote,
+  videoLink,
+  startsAtIso,
   celebrate,
   labels,
   cancelAppointment,
@@ -113,8 +120,20 @@ export function CitaScreen({
   const [reason, setReason] = React.useState("");
   const [cancelling, setCancelling] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  // Re-evaluate the join window every 30s so the button "opens" at call time
+  // without a manual refresh (RF-CLI-040: enabled within ±10 min of the start).
+  const [nowMs, setNowMs] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
 
   const completed = status === "completed";
+  const startMs = new Date(startsAtIso).getTime();
+  // Open from 10 min before the start until 90 min after (covers a late join).
+  const joinOpen =
+    nowMs >= startMs - 10 * 60_000 && nowMs <= startMs + 90 * 60_000;
+  const canJoin = Boolean(videoLink) && joinOpen;
 
   React.useEffect(() => {
     if (!celebrate || completed) return;
@@ -228,24 +247,30 @@ export function CitaScreen({
         {/* Join / type CTA */}
         {!completed && kind === "video" && (
           <div style={{ marginTop: 18 }}>
-            <GradientBtn icon="video" disabled>
-              {labels.joinCall} · {labels.callSoon}
-            </GradientBtn>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 7,
-                marginTop: 9,
-                fontSize: 12.5,
-                color: "var(--ink-3)",
-                fontWeight: 600,
-              }}
+            <GradientBtn
+              icon="video"
+              disabled={!canJoin}
+              onClick={canJoin && videoLink ? () => getBridge().share.openExternal(videoLink) : undefined}
             >
-              <Icon name="clock" size={15} color="var(--ink-3)" />
-              {labels.callSoonNote}
-            </div>
+              {canJoin ? labels.joinCall : `${labels.joinCall} · ${labels.callSoon}`}
+            </GradientBtn>
+            {!canJoin && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 7,
+                  marginTop: 9,
+                  fontSize: 12.5,
+                  color: "var(--ink-3)",
+                  fontWeight: 600,
+                }}
+              >
+                <Icon name="clock" size={15} color="var(--ink-3)" />
+                {labels.callSoonNote}
+              </div>
+            )}
           </div>
         )}
         {!completed && kind !== "video" && (

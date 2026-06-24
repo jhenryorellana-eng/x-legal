@@ -8,6 +8,7 @@
 export {
   createContract,
   createContractAndSend,
+  resyncPartiesSnapshot,
   sendContractForSigning,
   cancelContractSending,
   resendSigningLink,

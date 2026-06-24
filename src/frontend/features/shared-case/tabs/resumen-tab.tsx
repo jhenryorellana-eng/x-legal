@@ -9,6 +9,7 @@
  */
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { Card } from "@/frontend/components/brand/card";
 import { Chip } from "@/frontend/components/brand/chip";
 import { Icon } from "@/frontend/components/brand/icon";
@@ -36,6 +37,7 @@ export function ResumenTab({
 }) {
   const t = strings.detail;
   const [busy, setBusy] = React.useState<"pay" | "resend" | null>(null);
+  const editPartyAction = vm.isAdmin ? actions.updateCaseParty : undefined;
 
   async function onRegisterPayment() {
     if (!vm.downpaymentInstallmentId) return;
@@ -95,15 +97,13 @@ export function ResumenTab({
           ) : (
             <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
               {vm.parties.map((p) => (
-                <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span aria-hidden="true" className="member-av">
-                    {p.name.charAt(0).toUpperCase()}
-                  </span>
-                  <span style={{ fontSize: 14, color: "var(--ink)" }}>
-                    <strong style={{ fontWeight: 700 }}>{p.name}</strong>
-                    {p.role && <span style={{ color: "var(--ink-3)" }}> · {p.role}</span>}
-                  </span>
-                </div>
+                <PartyRow
+                  key={p.id}
+                  party={p}
+                  caseId={vm.header.caseId}
+                  t={t}
+                  onEdit={editPartyAction}
+                />
               ))}
             </div>
           )}
@@ -187,6 +187,143 @@ export function ResumenTab({
           </div>
         </Card>
       </div>
+    </div>
+  );
+}
+
+/**
+ * One party row in "Datos clave". Read-only by default; when an edit action is
+ * provided (admin surface), shows a pencil that opens inline first/last inputs.
+ */
+function PartyRow({
+  party,
+  caseId,
+  t,
+  onEdit,
+}: {
+  party: import("../types").PartyVM;
+  caseId: string;
+  t: CasosStrings["detail"];
+  onEdit?: (input: {
+    caseId: string;
+    partyId: string;
+    firstName: string;
+    lastName: string;
+  }) => Promise<{ ok: boolean; resynced?: boolean; error?: { code: string } }>;
+}) {
+  const router = useRouter();
+  const split = party.name.trim().split(/\s+/);
+  const [editing, setEditing] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
+  const [first, setFirst] = React.useState(party.firstName ?? split[0] ?? "");
+  const [last, setLast] = React.useState(party.lastName ?? split.slice(1).join(" "));
+
+  async function save() {
+    if (!onEdit || !first.trim()) return;
+    setSaving(true);
+    const res = await onEdit({ caseId, partyId: party.id, firstName: first.trim(), lastName: last.trim() });
+    setSaving(false);
+    if (res.ok) {
+      toast.success(t.editPartySaved);
+      setEditing(false);
+      router.refresh();
+    } else {
+      toast.error(res.error?.code === "CASE_CONTRACT_LOCKED" ? t.editPartyLocked : t.editPartyError);
+    }
+  }
+
+  function cancel() {
+    setFirst(party.firstName ?? split[0] ?? "");
+    setLast(party.lastName ?? split.slice(1).join(" "));
+    setEditing(false);
+  }
+
+  const inputStyle: React.CSSProperties = {
+    flex: "1 1 110px",
+    minWidth: 90,
+    height: 36,
+    borderRadius: 9,
+    border: "1px solid var(--line)",
+    padding: "0 10px",
+    fontSize: 14,
+    color: "var(--ink)",
+    background: "var(--card)",
+  };
+  const miniBtn: React.CSSProperties = {
+    height: 36,
+    width: 36,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 9,
+    border: "1px solid var(--line)",
+    background: "var(--card)",
+    cursor: "pointer",
+  };
+
+  if (editing) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <input
+          value={first}
+          onChange={(e) => setFirst(e.target.value)}
+          placeholder={t.editPartyFirst}
+          aria-label={t.editPartyFirst}
+          maxLength={80}
+          style={inputStyle}
+        />
+        <input
+          value={last}
+          onChange={(e) => setLast(e.target.value)}
+          placeholder={t.editPartyLast}
+          aria-label={t.editPartyLast}
+          maxLength={80}
+          style={inputStyle}
+        />
+        <button
+          type="button"
+          aria-label={t.editPartySave}
+          title={t.editPartySave}
+          disabled={saving || !first.trim()}
+          onClick={save}
+          style={{ ...miniBtn, opacity: saving || !first.trim() ? 0.45 : 1 }}
+        >
+          <Icon name="check" size={16} color="var(--accent)" />
+        </button>
+        <button
+          type="button"
+          aria-label={t.editPartyCancel}
+          title={t.editPartyCancel}
+          disabled={saving}
+          onClick={cancel}
+          style={miniBtn}
+        >
+          <Icon name="x" size={16} color="var(--ink-3)" />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <span aria-hidden="true" className="member-av">
+        {party.name.charAt(0).toUpperCase()}
+      </span>
+      <span style={{ fontSize: 14, color: "var(--ink)", flex: 1 }}>
+        <strong style={{ fontWeight: 700 }}>{party.name}</strong>
+        {party.role && <span style={{ color: "var(--ink-3)" }}> · {party.role}</span>}
+      </span>
+      {onEdit && (
+        <button
+          type="button"
+          aria-label={t.editParty}
+          title={t.editParty}
+          onClick={() => setEditing(true)}
+          style={miniBtn}
+        >
+          <Icon name="edit" size={15} color="var(--ink-3)" />
+        </button>
+      )}
     </div>
   );
 }

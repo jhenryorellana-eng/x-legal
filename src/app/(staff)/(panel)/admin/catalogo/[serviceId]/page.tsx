@@ -91,6 +91,10 @@ export default async function ServiceDetailPage({
       duration_minutes: s.duration_minutes,
       kind: s.kind as WizardPhase["kind"],
       week_offset: s.week_offset,
+      objectives: (((s.objectives_i18n ?? []) as Array<{ id?: string; text?: unknown }>).map((o) => ({
+        id: o.id ?? crypto.randomUUID(),
+        text: i18n(o.text),
+      }))),
     })),
     processing_weeks: ph.processing_weeks,
     milestoneCount: ph.milestones.length,

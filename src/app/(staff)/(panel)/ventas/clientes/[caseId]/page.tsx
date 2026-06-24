@@ -112,7 +112,13 @@ export default async function VentasCasoDetailPage({
     (i) => i.isDownpayment && (i.status === "pending" || i.status === "overdue"),
   );
 
-  const parties = workspace.parties.map((p) => ({ id: p.id, name: p.name ?? "—", role: p.role }));
+  const parties = workspace.parties.map((p) => ({
+    id: p.id,
+    name: p.name ?? "—",
+    role: p.role,
+    firstName: p.firstName,
+    lastName: p.lastName,
+  }));
   const snapshotKind = (contract?.plan_snapshot as { planKind?: string } | null)?.planKind;
   const contractPlanKind: "self" | "with_lawyer" =
     snapshotKind === "with_lawyer" ? "with_lawyer" : "self";

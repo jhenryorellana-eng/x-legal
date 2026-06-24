@@ -30,6 +30,7 @@ import {
 } from "@/backend/modules/billing";
 import {
   createCaseFromContract,
+  updateCaseParty,
   reviewDocument,
   setRequirementVisibility,
   startDocumentUpload,
@@ -234,6 +235,21 @@ export async function registerPaymentAction(input: {
     const actor = await requireActor();
     await registerZellePayment(actor, { installmentId: input.installmentId });
     return { ok: true };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+export async function updateCasePartyAction(input: {
+  caseId: string;
+  partyId: string;
+  firstName: string;
+  lastName: string;
+}): Promise<{ ok: boolean; resynced?: boolean; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    const { resynced } = await updateCaseParty(actor, input);
+    return { ok: true, resynced };
   } catch (err) {
     return mapErr(err);
   }

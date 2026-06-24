@@ -72,6 +72,8 @@ export type {
   PhasePolicy,
   AppointmentStatus,
   SchedulingSettings,
+  ObjectiveTemplate,
+  ObjectiveOutcome,
 } from "./domain";
 
 // Event types

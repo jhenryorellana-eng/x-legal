@@ -901,6 +901,45 @@ export async function getCaseParties(caseId: string): Promise<CasePartyRow[]> {
   return data ?? [];
 }
 
+/**
+ * Updates the legal name of a client profile (the petitioner party is stored as
+ * a `users` row whose name lives in `client_profiles`). Service client — admin
+ * mutation gated upstream in the service.
+ */
+export async function updateClientProfileName(
+  userId: string,
+  name: { firstName: string; lastName: string },
+): Promise<void> {
+  const supabase = createServiceClient();
+  const { error } = await supabase
+    .from("client_profiles")
+    .update({ first_name: name.firstName, last_name: name.lastName, updated_at: new Date().toISOString() })
+    .eq("user_id", userId);
+
+  if (error) {
+    throw new Error(`cases.repository: updateClientProfileName failed — ${error.message}`);
+  }
+}
+
+/**
+ * Updates the name of a person_record (additional case parties — spouse, minors,
+ * etc.). Service client — admin mutation gated upstream in the service.
+ */
+export async function updatePersonRecordName(
+  personRecordId: string,
+  name: { firstName: string; lastName: string },
+): Promise<void> {
+  const supabase = createServiceClient();
+  const { error } = await supabase
+    .from("person_records")
+    .update({ first_name: name.firstName, last_name: name.lastName, updated_at: new Date().toISOString() })
+    .eq("id", personRecordId);
+
+  if (error) {
+    throw new Error(`cases.repository: updatePersonRecordName failed — ${error.message}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // List cases (paginated)
 // ---------------------------------------------------------------------------
@@ -1023,6 +1062,23 @@ export async function findClientDisplayName(
     .maybeSingle();
   if (!data) return null;
   return data.preferred_name ?? data.first_name;
+}
+
+/**
+ * Client profile FULL legal name (first_name + last_name) — RLS-scoped.
+ * Used to freeze the principal applicant into the contract parties snapshot
+ * (the public signing page renders the full name, not the display name).
+ */
+export async function findClientFullName(
+  userId: string,
+): Promise<{ first_name: string; last_name: string } | null> {
+  const supabase = await createServerClient();
+  const { data } = await supabase
+    .from("client_profiles")
+    .select("first_name, last_name")
+    .eq("user_id", userId)
+    .maybeSingle();
+  return data ?? null;
 }
 
 /**

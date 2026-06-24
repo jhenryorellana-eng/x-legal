@@ -49,6 +49,7 @@ import {
   getDocumentUrlAction,
   startDocumentUploadAction,
   confirmDocumentUploadAction,
+  updateCasePartyAction,
 } from "../actions";
 
 export const dynamic = "force-dynamic";
@@ -126,6 +127,8 @@ export default async function AdminCasoDetailPage({
     id: p.id,
     name: p.name ?? "—",
     role: p.role,
+    firstName: p.firstName,
+    lastName: p.lastName,
   }));
 
   // Plan kind drives the plan chip — read from the contract's plan_snapshot
@@ -244,6 +247,7 @@ export default async function AdminCasoDetailPage({
         getDocumentUrl: getDocumentUrlAction,
         startUpload: startDocumentUploadAction,
         confirmUpload: confirmDocumentUploadAction,
+        updateCaseParty: actor.role === "admin" ? updateCasePartyAction : undefined,
       }}
       strings={strings}
       locale={lc}

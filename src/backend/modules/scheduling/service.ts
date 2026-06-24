@@ -29,6 +29,7 @@ import {
   nextSequenceNumber,
   effectiveAppointmentCount,
   scheduleEntryForSequence,
+  resolveObjectivesOutcome,
   computeRebookingBlockedUntil,
   isRebookingBlocked,
   validateRuleSet,
@@ -38,6 +39,9 @@ import {
   type AppointmentStatus,
   type AppointmentActorKind,
   type Slot,
+  type ObjectiveOutcome,
+  type ObjectiveTemplate,
+  type AppointmentScheduleEntry,
 } from "./domain";
 
 import * as repo from "./repository";
@@ -410,6 +414,8 @@ const BookAppointmentInputSchema = z.object({
   reminder1h: z.boolean().default(false),
   notes: z.string().nullable().optional(),
   force: z.boolean().default(false),
+  /** Per-cita override for the video link; falls back to the org default. */
+  videoLink: z.string().trim().max(2000).nullable().optional(),
 });
 
 export type BookAppointmentInput = z.input<typeof BookAppointmentInputSchema>;
@@ -549,12 +555,16 @@ export async function bookAppointment(
     throw err;
   }
 
-  // Set LiveKit room ID for video appointments
-  const kind = p.kind ?? policy.kind;
-  if (kind === "video") {
+  // For video appointments: assign a LiveKit room (F7) and snapshot the video
+  // link the client will open — a per-cita override, else the org default.
+  if (apptKind === "video") {
+    const orgVideoLink = (await repo.getSettings(orgId)).videoLink;
+    const videoLink = p.videoLink ? p.videoLink : orgVideoLink;
     await repo.updateAppointment(appt.id, {
       livekitRoomId: `appt:${appt.id}`,
+      videoLink: videoLink ?? null,
     });
+    appt = { ...appt, livekit_room_id: `appt:${appt.id}`, video_link: videoLink ?? null };
   }
 
   await emit({
@@ -850,13 +860,19 @@ export async function rescheduleAppointment(
 /**
  * Marks an appointment as completed (staff only, after starts_at).
  *
- * Emits appointment.completed for cases progress tracking.
+ * Records which objectives were achieved (snapshot on the appointment, staff
+ * detail) and emits appointment.completed with a high-level summary so the cases
+ * module can project a client-visible "X de Y objetivos" timeline entry.
  *
  * @api-id API-SCH-05
  */
 export async function completeAppointment(
   actor: Actor,
-  input: { appointmentId: string; notes?: string },
+  input: {
+    appointmentId: string;
+    notes?: string;
+    objectivesOutcome?: ObjectiveOutcome[];
+  },
 ): Promise<void> {
   can(actor, "calendar", "edit");
 
@@ -868,10 +884,16 @@ export async function completeAppointment(
     throw new SchedulingError("APPT_NOT_STARTED");
   }
 
+  const outcome = input.objectivesOutcome ?? null;
   await repo.updateAppointment(a.id, {
     status: "completed",
     notes: mergeNotes(a.notes, input.notes),
+    objectivesOutcome: outcome,
   });
+
+  const objectivesSummary = outcome
+    ? { total: outcome.length, achieved: outcome.filter((o) => o.achieved).length }
+    : null;
 
   await emit({
     type: "appointment.completed",
@@ -882,6 +904,7 @@ export async function completeAppointment(
       servicePhaseId: a.service_phase_id,
       staffId: a.staff_id,
       sequenceNumber: a.sequence_number,
+      objectivesSummary,
     },
   });
 
@@ -890,7 +913,7 @@ export async function completeAppointment(
     "scheduling.appointment.completed",
     "appointment",
     a.id,
-    { after: { status: "completed" } },
+    { after: { status: "completed", objectivesSummary } },
   );
 }
 
@@ -1042,7 +1065,12 @@ export async function createProspectAppointment(
   }
 
   if (p.kind === "video") {
-    await repo.updateAppointment(appt.id, { livekitRoomId: `appt:${appt.id}` });
+    const videoLink = settings.videoLink;
+    await repo.updateAppointment(appt.id, {
+      livekitRoomId: `appt:${appt.id}`,
+      videoLink: videoLink ?? null,
+    });
+    appt = { ...appt, livekit_room_id: `appt:${appt.id}`, video_link: videoLink ?? null };
   }
 
   await emit({
@@ -1085,9 +1113,15 @@ export interface AgendaAppointment {
   sequenceNumber: number | null;
   caseId: string | null;
   leadId: string | null;
+  servicePhaseId: string | null;
   clientUserId: string | null;
   livekitRoomId: string | null;
+  videoLink: string | null;
   notes: string | null;
+  /** Objectives for this cita, resolved from the service cronograma (i18n). */
+  objectives: ObjectiveTemplate[];
+  /** Recorded objectives outcome when completed (staff detail); null otherwise. */
+  objectivesOutcome: ObjectiveOutcome[] | null;
   /** Resolved display name: client preferred_name/first_name or lead full_name. */
   clientName: string | null;
 }
@@ -1136,7 +1170,7 @@ export async function getWeekAgenda(
   const statuses = ["scheduled", "completed", "no_show"];
   const rows = await repo.findOrgAppointmentsInRange(orgId, fromUtc, toUtc, statuses);
 
-  let appts = rows.map((r) => ({
+  let appts: AgendaAppointment[] = rows.map((r) => ({
     id: r.id,
     startsAt: new Date(r.starts_at),
     endsAt: new Date(r.ends_at),
@@ -1145,9 +1179,13 @@ export async function getWeekAgenda(
     sequenceNumber: r.sequence_number,
     caseId: r.case_id,
     leadId: r.lead_id,
+    servicePhaseId: r.service_phase_id,
     clientUserId: r.client_user_id,
     livekitRoomId: r.livekit_room_id,
+    videoLink: r.video_link,
     notes: r.notes,
+    objectives: [],
+    objectivesOutcome: resolveObjectivesOutcome(r.objectives_outcome),
     clientName: null as string | null,
   }));
 
@@ -1199,15 +1237,33 @@ export async function getWeekAgenda(
     }
   }
 
-  // Merge names
-  appts = appts.map((a) => ({
-    ...a,
-    clientName: a.clientUserId != null
-      ? (clientNameMap.get(a.clientUserId) ?? null)
-      : a.leadId != null
-        ? (leadNameMap.get(a.leadId) ?? null)
-        : null,
-  }));
+  // ── Batch objectives resolution (no N+1) ───────────────────────────────────
+  // One getAppointmentSchedule per distinct phase; objectives are then matched
+  // to each appointment by its sequence_number.
+  const phaseIds = [...new Set(appts.map((a) => a.servicePhaseId).filter((id): id is string => id != null))];
+  const schedulesByPhase = new Map<string, AppointmentScheduleEntry[]>();
+  await Promise.all(
+    phaseIds.map(async (pid) => {
+      schedulesByPhase.set(pid, await repo.getAppointmentSchedule(pid));
+    }),
+  );
+
+  // Merge names + objectives
+  appts = appts.map((a) => {
+    const entry =
+      a.servicePhaseId && a.sequenceNumber != null
+        ? scheduleEntryForSequence(schedulesByPhase.get(a.servicePhaseId) ?? [], a.sequenceNumber)
+        : null;
+    return {
+      ...a,
+      objectives: entry?.objectives ?? [],
+      clientName: a.clientUserId != null
+        ? (clientNameMap.get(a.clientUserId) ?? null)
+        : a.leadId != null
+          ? (leadNameMap.get(a.leadId) ?? null)
+          : null,
+    };
+  });
 
   return { appointments: appts, staffTimezone };
 }
@@ -1239,6 +1295,10 @@ export interface AvailabilityConfigResult {
   rebookingPenaltyDays: number;
   /** Default duration (min) for prospect/initial-evaluation appointments. */
   prospectDurationMinutes: number;
+  /** Org-wide default video-call link (shown in "Reglas de la cita"). */
+  videoLink: string | null;
+  /** Org-wide default for automatic client reminders. */
+  remindersEnabled: boolean;
   staffTimezone: string;
 }
 
@@ -1303,6 +1363,8 @@ export async function getAvailabilityConfig(
     minNoticeHours: settings.minNoticeHours,
     rebookingPenaltyDays: settings.rebookingPenaltyDays,
     prospectDurationMinutes: settings.prospectDurationMinutes,
+    videoLink: settings.videoLink,
+    remindersEnabled: settings.remindersEnabled,
     staffTimezone,
   };
 }
@@ -1445,6 +1507,9 @@ const SettingsSchema = z.object({
   // Prospect/initial-evaluation cita duration (Mi disponibilidad). The view
   // sends it as `defaultDurationMinutes`; persisted to prospect_duration_minutes.
   defaultDurationMinutes: z.number().min(5).optional(),
+  // Org-wide default video-call link ("" clears it) + auto-reminders toggle.
+  videoLink: z.string().trim().max(2000).nullable().optional(),
+  remindersEnabled: z.boolean().optional(),
 });
 
 export type SettingsInput = z.input<typeof SettingsSchema>;
@@ -1471,6 +1536,10 @@ export async function updateSchedulingSettings(
     cancellationWindowHours: p.cancellationWindowHours,
     rebookingPenaltyDays: p.rebookingPenaltyDays,
     prospectDurationMinutes: p.defaultDurationMinutes,
+    // Normalize "" → null so an empty field clears the org link.
+    videoLink:
+      p.videoLink === undefined ? undefined : p.videoLink ? p.videoLink : null,
+    remindersEnabled: p.remindersEnabled,
   });
 
   await writeAudit(

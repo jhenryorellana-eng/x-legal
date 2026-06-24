@@ -81,6 +81,9 @@ export interface PartyVM {
   id: string;
   name: string;
   role: string;
+  /** Legal name parts for admin edit prefill (optional — not every surface fills them). */
+  firstName?: string | null;
+  lastName?: string | null;
 }
 
 export interface InstallmentVM {
@@ -225,4 +228,15 @@ export interface CaseDetailActions {
     partyId: string | null;
     hidden: boolean;
   }) => Promise<{ ok: boolean; error?: { code: string } }>;
+  /**
+   * Edit a case party's legal name (admin only). Updates the live truth and
+   * re-syncs the contract snapshot (unless signed → blocked). Optional — only
+   * the admin surface injects it.
+   */
+  updateCaseParty?: (input: {
+    caseId: string;
+    partyId: string;
+    firstName: string;
+    lastName: string;
+  }) => Promise<{ ok: boolean; resynced?: boolean; error?: { code: string } }>;
 }

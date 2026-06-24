@@ -121,6 +121,8 @@ export default async function CitaPage({
       kind={(appt.kind as "video" | "phone" | "presencial") ?? "video"}
       status={status}
       staffNote={staffNote}
+      videoLink={appt.video_link}
+      startsAtIso={startsAt}
       celebrate={nueva === "1"}
       cancelAppointment={cancelAppointmentAction}
       labels={{

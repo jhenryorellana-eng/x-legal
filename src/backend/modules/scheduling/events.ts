@@ -84,6 +84,8 @@ export interface AppointmentCompletedPayload {
   servicePhaseId: string | null;
   staffId: string;
   sequenceNumber: number | null;
+  /** High-level objectives result for the client-visible timeline; null when none. */
+  objectivesSummary: { total: number; achieved: number } | null;
 }
 
 export type AppointmentCompletedEvent = DomainEvent<AppointmentCompletedPayload>;

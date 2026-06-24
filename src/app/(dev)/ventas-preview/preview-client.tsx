@@ -157,6 +157,7 @@ function CitasPreview() {
       hours={MOCK_HOURS}
       events={MOCK_EVENTS}
       listItems={MOCK_EVENTS}
+      staffTz={STAFF_TZ}
       strings={{
         title: "Citas",
         sub: "Semana del 1–5 de junio · domina tu agenda y el avance de cada cliente.",
@@ -179,6 +180,20 @@ function CitasPreview() {
         completedToast: "✓ Cita marcada como completada",
         scheduledChip: "Agendada",
         completedChip: "Completada",
+        completeModalTitle: "Completar cita",
+        completeModalSub: "Marca qué objetivos se lograron. Se guardará en el caso.",
+        achieved: "Logrado",
+        notAchieved: "Pendiente",
+        completeNote: "Nota (opcional)",
+        completeNotePh: "Resumen de lo conversado…",
+        confirmComplete: "Guardar y completar",
+        noObjectives: "Sin objetivos definidos para esta cita.",
+        outcomeTitle: "Resultado de la cita",
+        rescheduleModalTitle: "Reprogramar cita",
+        rescheduleNewLabel: "Nueva fecha y hora",
+        rescheduleConfirm: "Reprogramar",
+        rescheduledToast: "✓ Cita reprogramada",
+        noVideoLink: "Sin enlace de videollamada",
       }}
       detailFor={(id) => MOCK_DETAILS[id] ?? null}
       newApptModal={{
@@ -201,7 +216,7 @@ function CitasPreview() {
         actions: { bookAppointment: ok, createProspectAppointment: ok },
       }}
       onComplete={ok}
-      onReschedule={() => {}}
+      onReschedule={ok}
       onCancel={ok}
       onNoShow={ok}
     />
@@ -257,6 +272,7 @@ function DisponibilidadPreview() {
       remindersEnabled
       noShowPenaltyDays={7}
       videoLink="https://meet.usalatinoprime.com/vanessa"
+      staffTz={STAFF_TZ}
       blockedClient={{ id: "k1", name: "Roberto Aguilar tiene bloqueo de reagendamiento activo." }}
       strings={{
         title: "Mi disponibilidad",
@@ -271,6 +287,7 @@ function DisponibilidadPreview() {
         duration: "Duración de cita",
         minNotice: "Antelación mínima para reservar",
         videoLink: "Enlace de videollamada",
+        videoLinkPh: "https://… (tu sala personal)",
         remindersTitle: "Recordatorios y reglas",
         autoReminders: "Recordatorios automáticos al cliente",
         autoRemindersSub: "1 día y 1 hora antes de la cita",
@@ -288,6 +305,10 @@ function DisponibilidadPreview() {
         blockModalTitle: "Agregar bloqueo",
         blockLabelField: "Etiqueta",
         blockReason: "Ej. Vacaciones",
+        blockFromLabel: "Desde",
+        blockToLabel: "Hasta",
+        blockInvalidRange: "La fecha de fin debe ser posterior a la de inicio.",
+        blockAffectsConfirm: "Este bloqueo afecta {n} cita(s) agendada(s). ¿Crear igualmente?",
         affectsNotice: "Afecta {n} citas agendadas.",
         liftBlock: "Levantar bloqueo de reagendamiento",
         liftBlockDone: "✓ Bloqueo levantado",

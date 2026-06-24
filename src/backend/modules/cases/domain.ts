@@ -7,6 +7,7 @@
  */
 
 import { deriveFieldState, parseConditionOrNull } from "@/shared/form-logic/conditions";
+import { PRINCIPAL_ROLE_KEY } from "@/shared/constants/party-roles";
 
 // ---------------------------------------------------------------------------
 // CaseStatus
@@ -30,6 +31,42 @@ export type ContractStatus = "draft" | "sent" | "signed" | "cancelled";
 // Role aliases used in transition guards
 // ---------------------------------------------------------------------------
 export type StaffRole = "admin" | "sales" | "paralegal" | "finance";
+
+// ---------------------------------------------------------------------------
+// Contract parties snapshot (DOC-30 §5 / DOC-41 §3.1)
+//
+// `contracts.parties_snapshot` is an informational freeze of the case parties
+// at a point in time — the live truth is `case_parties`. It MUST list the
+// principal applicant (petitioner) FIRST, then the additional parties in order.
+// Pure: name resolution (I/O) happens in the service; this only shapes the JSON.
+// ---------------------------------------------------------------------------
+
+export interface SnapshotParty {
+  role: string;
+  userId: string | null;
+  name: string | null;
+}
+
+export interface PartiesSnapshotShape {
+  parties: SnapshotParty[];
+}
+
+/**
+ * Builds the contract parties snapshot: the principal applicant (petitioner)
+ * always first, then the additional parties in the given order. Pure — callers
+ * resolve names (I/O) and pass them in.
+ */
+export function buildPartiesSnapshot(
+  principal: { userId: string; name: string | null },
+  additional: ReadonlyArray<{ role: string; userId: string | null; name: string | null }>,
+): PartiesSnapshotShape {
+  return {
+    parties: [
+      { role: PRINCIPAL_ROLE_KEY, userId: principal.userId, name: principal.name },
+      ...additional.map((a) => ({ role: a.role, userId: a.userId, name: a.name })),
+    ],
+  };
+}
 
 // ---------------------------------------------------------------------------
 // CASE_TRANSITIONS — who can transition to what

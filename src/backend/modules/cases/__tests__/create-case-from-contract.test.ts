@@ -135,6 +135,7 @@ vi.mock("../repository", async (importOriginal) => {
     listServiceMilestones: vi.fn().mockResolvedValue([]),
     findPersonRecord: vi.fn().mockResolvedValue(null),
     findClientDisplayName: vi.fn().mockResolvedValue(null),
+    findClientFullName: vi.fn().mockResolvedValue({ first_name: "Carlos", last_name: "Mendoza" }),
     findPlanKind: vi.fn().mockResolvedValue(null),
   };
 });
@@ -358,6 +359,11 @@ describe("createCaseFromContract", () => {
     expect(payload.contract).toEqual(
       expect.objectContaining({ org_id: ACTOR.orgId, status: "draft", terms_version: "v1.0" }),
     );
+    // Regression (bug fix): the parties snapshot MUST include the principal
+    // applicant (petitioner) FIRST — even with zero additional parties.
+    expect(payload.contract.parties_snapshot).toEqual({
+      parties: [{ role: "petitioner", userId: CLIENT_ID, name: "Carlos Mendoza" }],
+    });
     expect(payload.plan).toEqual(
       expect.objectContaining({ total_cents: 50000, downpayment_cents: 10000, installment_count: 3 }),
     );
@@ -393,6 +399,14 @@ describe("createCaseFromContract", () => {
       expect.objectContaining({ person_record_id: "person-record-id-1", user_id: null, party_role: "spouse", position: 1 }),
       expect.objectContaining({ party_role: "minor", position: 2 }),
     ]);
+    // The snapshot mirrors the parties: petitioner first, then additional with names.
+    expect(payload.contract.parties_snapshot).toEqual({
+      parties: [
+        { role: "petitioner", userId: CLIENT_ID, name: "Carlos Mendoza" },
+        { role: "spouse", userId: null, name: "Rosa Diaz" },
+        { role: "minor", userId: null, name: "Tito Diaz" },
+      ],
+    });
   });
 
   it("auto-adds only the applicant when there are no additional parties", async () => {
@@ -409,6 +423,27 @@ describe("createCaseFromContract", () => {
     expect(payload.parties[0]).toEqual(
       expect.objectContaining({ user_id: CLIENT_ID, party_role: "petitioner", position: 0 }),
     );
+    expect(payload.contract.parties_snapshot).toEqual({
+      parties: [{ role: "petitioner", userId: CLIENT_ID, name: "Carlos Mendoza" }],
+    });
+  });
+
+  it("freezes the principal name as null when the client has no profile yet", async () => {
+    const repo = await import("../repository");
+    vi.mocked(repo.findClientFullName).mockResolvedValueOnce(null);
+
+    await createCaseFromContract(ACTOR, {
+      primaryClientId: CLIENT_ID,
+      serviceId: SERVICE_ID,
+      servicePlanId: PLAN_ID,
+      parties: [],
+      paymentPlan: VALID_PAYMENT_PLAN,
+    });
+
+    const payload = mockCreateCaseAtomic.mock.calls[0][0];
+    expect(payload.contract.parties_snapshot).toEqual({
+      parties: [{ role: "petitioner", userId: CLIENT_ID, name: null }],
+    });
   });
 
   it("rejects an additional party whose role is not declared by the service", async () => {

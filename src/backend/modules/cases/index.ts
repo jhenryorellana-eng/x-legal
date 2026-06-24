@@ -8,6 +8,7 @@
 // Use cases
 export {
   createCaseFromContract,
+  updateCaseParty,
   onDownpaymentConfirmed,
   startDocumentUpload,
   confirmDocumentUpload,
@@ -58,6 +59,7 @@ export type {
   CreateCaseFromContractInput,
   CreateCaseFromContractResult,
   CasePartyInput,
+  UpdateCasePartyInput,
   SetRequirementVisibilityInput,
   // F4-Ola3 form types
   SaveFormDraftInput,
@@ -107,9 +109,12 @@ export {
   canTransitionDocument,
   canTransitionContract,
   computePhaseProgress,
+  buildPartiesSnapshot,
   PRODUCTION_STATUSES,
   CASE_TRANSITIONS,
 } from "./domain";
+
+export type { SnapshotParty, PartiesSnapshotShape } from "./domain";
 
 // Event types
 export type {

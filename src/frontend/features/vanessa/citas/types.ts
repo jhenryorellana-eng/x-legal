@@ -18,6 +18,17 @@ export interface CitaEvent {
   tzAbbr: string;
 }
 
+export interface CitaObjective {
+  id: string;
+  text: string;
+}
+
+export interface CitaObjectiveOutcome {
+  id: string;
+  text: string;
+  achieved: boolean;
+}
+
 export interface CitaDetail {
   id: string;
   name: string;
@@ -25,8 +36,14 @@ export interface CitaDetail {
   clientHour: string | null; // dual-hour secondary, e.g. "7:30 AM MDT (cliente)"
   typeLabel: string; // "Cita 2 · Verificación y cartas"
   isVideo: boolean;
+  /** Effective video-call link the staff opens; null when none configured. */
+  videoLink: string | null;
+  status: "scheduled" | "completed" | "cancelled" | "no_show" | "rescheduled";
   lexHtml: string;
-  objectiveItems: string[];
+  /** Objectives for this cita (from the service cronograma). */
+  objectives: CitaObjective[];
+  /** Recorded outcome when the cita was completed (shown read-only). */
+  objectivesOutcome: CitaObjectiveOutcome[] | null;
 }
 
 export interface ClientSearchResult {

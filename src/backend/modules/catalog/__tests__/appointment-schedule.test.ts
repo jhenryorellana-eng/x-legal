@@ -129,8 +129,8 @@ describe("upsertAppointmentSchedule", () => {
     const [phaseArg, itemsArg] = mocks.repo.replaceAppointmentSchedule.mock.calls[0];
     expect(phaseArg).toBe(PHASE_ID);
     expect(itemsArg).toEqual([
-      { service_phase_id: PHASE_ID, sequence_number: 1, duration_minutes: 60, kind: "video", week_offset: 1, label_i18n: null, position: 0 },
-      { service_phase_id: PHASE_ID, sequence_number: 2, duration_minutes: 45, kind: "phone", week_offset: 2, label_i18n: null, position: 1 },
+      { service_phase_id: PHASE_ID, sequence_number: 1, duration_minutes: 60, kind: "video", week_offset: 1, label_i18n: null, objectives_i18n: null, position: 0 },
+      { service_phase_id: PHASE_ID, sequence_number: 2, duration_minutes: 45, kind: "phone", week_offset: 2, label_i18n: null, objectives_i18n: null, position: 1 },
     ]);
     expect(mocks.repo.setPhaseProcessingWeeks).toHaveBeenCalledWith(PHASE_ID, 2);
     expect(result).toEqual([{ id: "row-1" }]);

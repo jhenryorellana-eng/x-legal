@@ -32,7 +32,12 @@ export interface CitasClientProps {
   actions: {
     book: NuevaCitaActions["bookAppointment"];
     prospect: NuevaCitaActions["createProspectAppointment"];
-    complete: (input: { appointmentId: string }) => Promise<{ ok: boolean }>;
+    complete: (input: {
+      appointmentId: string;
+      objectivesOutcome: { id: string; text: string; achieved: boolean }[];
+      notes: string;
+    }) => Promise<{ ok: boolean }>;
+    reschedule: (input: { appointmentId: string; startsAtIso: string }) => Promise<{ ok: boolean }>;
     cancel: (input: { appointmentId: string; reason: string }) => Promise<{ ok: boolean }>;
     noShow: (input: { appointmentId: string }) => Promise<{ ok: boolean }>;
   };
@@ -57,6 +62,7 @@ export function CitasClient({
         hours={hours}
         events={events}
         listItems={events}
+        staffTz={staffTz}
         strings={strings}
         detailFor={(id) => details[id] ?? null}
         newApptModal={{
@@ -75,9 +81,13 @@ export function CitasClient({
           strings: nuevaCitaStrings,
           actions: { bookAppointment: actions.book, createProspectAppointment: actions.prospect },
         }}
-        onComplete={(id) => actions.complete({ appointmentId: id })}
-        onReschedule={() => {}}
-        onCancel={(id) => actions.cancel({ appointmentId: id, reason: "rescheduled-by-staff" })}
+        onComplete={({ id, outcome, notes }) =>
+          actions.complete({ appointmentId: id, objectivesOutcome: outcome, notes })
+        }
+        onReschedule={({ id, startsAtIso }) =>
+          actions.reschedule({ appointmentId: id, startsAtIso })
+        }
+        onCancel={(id) => actions.cancel({ appointmentId: id, reason: "cancelled-by-staff" })}
         onNoShow={(id) => actions.noShow({ appointmentId: id })}
       />
     </LexPrefsProvider>

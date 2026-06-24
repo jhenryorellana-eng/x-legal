@@ -177,13 +177,28 @@ export function registerConsumers(): void {
   });
 
   appEvents.on("appointment.completed", async (event) => {
-    const p = event.payload as { caseId: string | null; staffId?: string };
+    const p = event.payload as {
+      caseId: string | null;
+      staffId?: string;
+      objectivesSummary?: { total: number; achieved: number } | null;
+    };
     if (!p.caseId) return;
+    // High-level summary only (the per-objective detail stays staff-internal on
+    // appointments.objectives_outcome). "X de Y objetivos logrados".
+    const s = p.objectivesSummary;
+    const bodyOverride =
+      s && s.total > 0
+        ? {
+            es: `Lograste ${s.achieved} de ${s.total} objetivos de la cita.`,
+            en: `You achieved ${s.achieved} of ${s.total} appointment objectives.`,
+          }
+        : null;
     await appendAppointmentTimeline({
       caseId: p.caseId,
       eventType: "appointment.completed",
       actorKind: "team",
       actorUserId: p.staffId ?? null,
+      bodyOverride,
     });
   });
 

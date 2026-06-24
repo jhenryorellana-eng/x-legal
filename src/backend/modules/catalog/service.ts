@@ -2374,6 +2374,7 @@ export async function upsertAppointmentSchedule(
       kind: it.kind,
       week_offset: it.week_offset,
       label_i18n: (it.label_i18n ?? null) as import("@/shared/database.types").Json,
+      objectives_i18n: (it.objectives ?? null) as import("@/shared/database.types").Json,
       position: idx,
     })),
   );

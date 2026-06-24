@@ -41,6 +41,7 @@ import {
   bookAppointment,
   createProspectAppointment,
   completeAppointment,
+  rescheduleAppointment,
   cancelAppointment,
   markNoShow,
   saveAvailabilityRules,
@@ -226,10 +227,32 @@ export async function createProspectApptAction(input: {
 
 export async function completeAppointmentAction(input: {
   appointmentId: string;
+  objectivesOutcome?: { id: string; text: string; achieved: boolean }[];
+  notes?: string;
 }): Promise<{ ok: boolean; error?: { code: string } }> {
   try {
     const actor = await requireActor();
-    await completeAppointment(actor, { appointmentId: input.appointmentId });
+    await completeAppointment(actor, {
+      appointmentId: input.appointmentId,
+      objectivesOutcome: input.objectivesOutcome,
+      notes: input.notes || undefined,
+    });
+    return { ok: true };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+export async function rescheduleAppointmentAction(input: {
+  appointmentId: string;
+  startsAtIso: string;
+}): Promise<{ ok: boolean; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    await rescheduleAppointment(actor, {
+      appointmentId: input.appointmentId,
+      newStartsAtUtc: new Date(input.startsAtIso),
+    });
     return { ok: true };
   } catch (err) {
     return mapErr(err);
@@ -290,6 +313,15 @@ export async function addExceptionAction(input: {
     });
     return { ok: true };
   } catch (err) {
+    // Surface how many scheduled appointments the block would hit so the editor
+    // can ask for explicit confirmation (DOC-52 §4 — "afecta N citas").
+    if (
+      err instanceof SchedulingError &&
+      err.code === "EXCEPTION_AFFECTS_APPOINTMENTS"
+    ) {
+      const affected = (err.meta?.affected as string[] | undefined)?.length ?? 0;
+      return { ok: false, affected, error: { code: err.code } };
+    }
     return mapErr(err);
   }
 }
@@ -310,12 +342,15 @@ export async function updateSchedulingSettingsAction(input: {
   defaultDurationMinutes: number;
   minNoticeHours: number;
   remindersEnabled: boolean;
+  videoLink?: string | null;
 }): Promise<{ ok: boolean; error?: { code: string } }> {
   try {
     const actor = await requireActor();
     await updateSchedulingSettings(actor, {
       minNoticeHours: input.minNoticeHours,
       defaultDurationMinutes: input.defaultDurationMinutes,
+      remindersEnabled: input.remindersEnabled,
+      videoLink: input.videoLink,
     });
     return { ok: true };
   } catch (err) {

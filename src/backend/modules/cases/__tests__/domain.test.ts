@@ -10,9 +10,44 @@ import {
   canTransitionDocument,
   canTransitionContract,
   computePhaseProgress,
+  buildPartiesSnapshot,
   CASE_TRANSITIONS,
   type ContractStatus,
 } from "../domain";
+
+// ---------------------------------------------------------------------------
+// buildPartiesSnapshot
+// ---------------------------------------------------------------------------
+
+describe("buildPartiesSnapshot", () => {
+  it("places the principal applicant (petitioner) first", () => {
+    const snap = buildPartiesSnapshot(
+      { userId: "u1", name: "Carlos Mendoza" },
+      [{ role: "spouse", userId: null, name: "Rosa Diaz" }],
+    );
+    expect(snap.parties[0]).toEqual({ role: "petitioner", userId: "u1", name: "Carlos Mendoza" });
+    expect(snap.parties).toHaveLength(2);
+  });
+
+  it("preserves the order of additional parties", () => {
+    const snap = buildPartiesSnapshot({ userId: "u1", name: "A" }, [
+      { role: "spouse", userId: null, name: "B" },
+      { role: "minor", userId: null, name: "C" },
+      { role: "minor", userId: null, name: "D" },
+    ]);
+    expect(snap.parties.map((p) => p.name)).toEqual(["A", "B", "C", "D"]);
+  });
+
+  it("includes only the petitioner when there are no additional parties", () => {
+    const snap = buildPartiesSnapshot({ userId: "u1", name: "Solo" }, []);
+    expect(snap.parties).toEqual([{ role: "petitioner", userId: "u1", name: "Solo" }]);
+  });
+
+  it("tolerates a null principal name (no profile yet)", () => {
+    const snap = buildPartiesSnapshot({ userId: "u1", name: null }, []);
+    expect(snap.parties[0].name).toBeNull();
+  });
+});
 
 // ---------------------------------------------------------------------------
 // canTransitionCase

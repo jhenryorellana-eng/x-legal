@@ -139,14 +139,17 @@ export const MOCK_DETAILS: Record<string, CitaDetail> = {
     clientHour: "8:00 AM MDT (cliente)",
     typeLabel: "Cita 2 · Verificación y cartas",
     isVideo: true,
+    videoLink: "https://us06web.zoom.us/j/0000000000",
+    status: "scheduled",
     lexHtml: "<b>Lex:</b> Recuerda generar las cartas antes de terminar.",
-    objectiveItems: [
-      "Auditar que la info esté completa",
-      "Corregir en vivo lo que falte",
-      "Generar cartas (testigos / abandono)",
-      "Explicar firma ante notario",
-      "Pedir subir cartas y agendar Cita 3",
+    objectives: [
+      { id: "o1", text: "Auditar que la info esté completa" },
+      { id: "o2", text: "Corregir en vivo lo que falte" },
+      { id: "o3", text: "Generar cartas (testigos / abandono)" },
+      { id: "o4", text: "Explicar firma ante notario" },
+      { id: "o5", text: "Pedir subir cartas y agendar Cita 3" },
     ],
+    objectivesOutcome: null,
   },
 };
 

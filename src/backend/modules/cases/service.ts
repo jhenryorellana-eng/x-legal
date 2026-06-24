@@ -37,10 +37,12 @@ import {
   computePhaseProgress,
   addWeeksToAnchorIso,
   validateAnswerTypes,
+  buildPartiesSnapshot,
   PRODUCTION_STATUSES,
   type CaseStatus,
   type FormResponseStatus,
   type QuestionValidationRule,
+  type PartiesSnapshotShape,
 } from "./domain";
 import {
   findCaseById,
@@ -63,11 +65,14 @@ import {
   updateRequirementOverride,
   deleteRequirementOverride,
   getCaseParties,
+  updateClientProfileName,
+  updatePersonRecordName,
   findServiceLite,
   listServicePhases,
   listServiceMilestones,
   findPersonRecord,
   findClientDisplayName,
+  findClientFullName,
   findPlanKind,
   findFormResponse,
   findFormResponseById,
@@ -121,6 +126,8 @@ export class CaseError extends Error {
       | "CASE_SERVICE_NOT_AVAILABLE"
       | "CASE_PAYMENT_PLAN_INVALID"
       | "CASE_PARTY_ROLE_INVALID"
+      | "CASE_PARTY_NOT_FOUND"
+      | "CASE_CONTRACT_LOCKED"
       | "DOC_NOT_FOUND"
       | "DOC_INVALID_STATE"
       | "DOC_REJECTION_REASON_REQUIRED"
@@ -272,6 +279,8 @@ export async function appendAppointmentTimeline(input: {
   eventType: AppointmentTimelineEventType;
   actorKind: "client" | "team" | "system";
   actorUserId?: string | null;
+  /** Overrides the default body copy (e.g. an objectives summary for completed). */
+  bodyOverride?: { es: string; en: string } | null;
 }): Promise<void> {
   const content = APPOINTMENT_TIMELINE_CONTENT[input.eventType];
   await writeTimeline({
@@ -280,7 +289,7 @@ export async function appendAppointmentTimeline(input: {
     actorKind: input.actorKind,
     actorUserId: input.actorUserId ?? null,
     titleI18n: content.titleI18n,
-    bodyI18n: content.bodyI18n ?? null,
+    bodyI18n: input.bodyOverride ?? content.bodyI18n ?? null,
     visibleToClient: true,
   });
 }
@@ -529,13 +538,22 @@ export async function createCaseFromContract(
     installmentCount: p.paymentPlan.installmentCount,
     currency: "USD",
   };
-  const partiesSnapshot: Record<string, unknown> = {
-    parties: p.parties.map((pt) => ({
+  // The principal applicant (petitioner) must be the FIRST party in the snapshot
+  // — the public signing page renders parties_snapshot.parties directly. Its
+  // full name lives in client_profiles (NOT users); resolve it here (graceful
+  // null if no profile yet). Additional parties keep their inline names.
+  const principalFullName = await findClientFullName(p.primaryClientId);
+  const principalName = principalFullName
+    ? `${principalFullName.first_name} ${principalFullName.last_name}`.trim() || null
+    : null;
+  const partiesSnapshot: Record<string, unknown> = buildPartiesSnapshot(
+    { userId: p.primaryClientId, name: principalName },
+    p.parties.map((pt) => ({
       role: pt.role,
       userId: pt.userId ?? null,
       name: pt.person ? `${pt.person.firstName} ${pt.person.lastName}`.trim() : null,
     })),
-  };
+  ) as unknown as Record<string, unknown>;
 
   // Step 4d: Installments — downpayment + monthly cuotas (billing domain math).
   // Provisional due dates anchored to today; re-anchored when the contract is signed.
@@ -633,6 +651,146 @@ export async function createCaseFromContract(
   });
 
   return { caseId, contractId, created: true };
+}
+
+// ---------------------------------------------------------------------------
+// updateCaseParty — admin renames a case party (RF-ADM / contract correction)
+// ---------------------------------------------------------------------------
+
+const UpdateCasePartySchema = z.object({
+  caseId: zUuid,
+  partyId: zUuid,
+  firstName: z.string().trim().min(1).max(80),
+  // last name optional (single-name parties), consistent with provisioning.
+  lastName: z.string().trim().max(80).default(""),
+});
+
+export type UpdateCasePartyInput = z.infer<typeof UpdateCasePartySchema>;
+
+/** Resolves a party's FULL legal name (person record OR client profile). */
+async function resolvePartyFullName(party: {
+  person_record_id: string | null;
+  user_id: string | null;
+}): Promise<string | null> {
+  if (party.person_record_id) {
+    const pr = await findPersonRecord(party.person_record_id);
+    return pr ? `${pr.first_name} ${pr.last_name}`.trim() || null : null;
+  }
+  if (party.user_id) {
+    const cp = await findClientFullName(party.user_id);
+    return cp ? `${cp.first_name} ${cp.last_name}`.trim() || null : null;
+  }
+  return null;
+}
+
+/**
+ * Rebuilds the contract parties snapshot from the live `case_parties` (the
+ * principal/petitioner first, additional in position order). Returns null when
+ * the case has no resolvable principal party.
+ */
+async function buildSnapshotFromCaseParties(
+  caseId: string,
+): Promise<PartiesSnapshotShape | null> {
+  const parties = await getCaseParties(caseId); // ordered by position
+  const principal = parties.find(
+    (p) => p.party_role === PRINCIPAL_ROLE_KEY && p.user_id,
+  );
+  if (!principal || !principal.user_id) return null;
+  const additional = parties.filter((p) => p.id !== principal.id);
+
+  const additionalResolved: Array<{ role: string; userId: string | null; name: string | null }> = [];
+  for (const a of additional) {
+    additionalResolved.push({
+      role: a.party_role,
+      userId: a.user_id,
+      name: await resolvePartyFullName(a),
+    });
+  }
+  return buildPartiesSnapshot(
+    { userId: principal.user_id, name: await resolvePartyFullName(principal) },
+    additionalResolved,
+  );
+}
+
+/**
+ * Admin-only: corrects the name of a case party. Updates the live truth
+ * (`client_profiles` for the petitioner, `person_records` for additional
+ * parties) and re-syncs the contract's `parties_snapshot`.
+ *
+ * Blocked when the contract is already `signed` (immutable legal record):
+ * throws CASE_CONTRACT_LOCKED — neither the live name nor the snapshot change.
+ *
+ * @api-id (internal) RF-ADM party correction
+ */
+export async function updateCaseParty(
+  actor: Actor,
+  input: UpdateCasePartyInput,
+): Promise<{ resynced: boolean }> {
+  can(actor, "cases", "edit");
+  // Naming is an org-data correction reserved to admin (the petitioner's profile
+  // is also their login identity). Ampliar a sales: añadir "sales" aquí + acción.
+  if (actor.kind !== "staff" || actor.role !== "admin") {
+    throw new AuthzError("forbidden_module");
+  }
+  const parsed = UpdateCasePartySchema.parse(input);
+  await requireCaseAccess(actor, parsed.caseId);
+
+  // Signed contract is an immutable legal record — block the edit entirely.
+  const { getContractForCase } = (await import("@/backend/modules/contracts")) as {
+    getContractForCase: (a: Actor, caseId: string) => Promise<{ id: string; status: string } | null>;
+  };
+  const contract = await getContractForCase(actor, parsed.caseId);
+  if (contract?.status === "signed") {
+    throw new CaseError("CASE_CONTRACT_LOCKED");
+  }
+
+  const parties = await getCaseParties(parsed.caseId);
+  const party = parties.find((p) => p.id === parsed.partyId);
+  if (!party) throw new CaseError("CASE_PARTY_NOT_FOUND");
+
+  const beforeName = await resolvePartyFullName(party);
+
+  // Write the live truth: petitioner → client_profiles; additional → person_records.
+  if (party.user_id) {
+    await updateClientProfileName(party.user_id, { firstName: parsed.firstName, lastName: parsed.lastName });
+  } else if (party.person_record_id) {
+    await updatePersonRecordName(party.person_record_id, { firstName: parsed.firstName, lastName: parsed.lastName });
+  } else {
+    throw new CaseError("CASE_PARTY_NOT_FOUND");
+  }
+
+  // Re-sync the contract snapshot (no-op when there is no contract; the signed
+  // case already threw above). cases owns the model; contracts owns the snapshot.
+  let resynced = false;
+  if (contract) {
+    const snapshot = await buildSnapshotFromCaseParties(parsed.caseId);
+    if (snapshot) {
+      const { resyncPartiesSnapshot } = (await import("@/backend/modules/contracts")) as {
+        resyncPartiesSnapshot: (
+          a: Actor,
+          caseId: string,
+          snap: Record<string, unknown>,
+        ) => Promise<{ resynced: boolean }>;
+      };
+      const r = await resyncPartiesSnapshot(actor, parsed.caseId, snapshot as unknown as Record<string, unknown>);
+      resynced = r.resynced;
+    }
+  }
+
+  await writeAudit(actor, "case.party.renamed", "case_parties", parsed.partyId, {
+    before: { name: beforeName },
+    after: { firstName: parsed.firstName, lastName: parsed.lastName, resynced },
+  });
+  await writeTimeline({
+    caseId: parsed.caseId,
+    eventType: "case.party.renamed",
+    actorKind: "team",
+    actorUserId: actor.userId,
+    visibleToClient: false,
+    titleI18n: { en: "Party name updated", es: "Nombre de parte actualizado" },
+  });
+
+  return { resynced };
 }
 
 // ---------------------------------------------------------------------------
@@ -1491,6 +1649,9 @@ export interface CaseWorkspaceParty {
   role: string;
   /** Display name (person record or client profile); null when unnamed. */
   name: string | null;
+  /** Legal name parts (for admin edit prefill); null when unnamed. */
+  firstName: string | null;
+  lastName: string | null;
 }
 
 export interface CaseWorkspaceDto {
@@ -1541,6 +1702,25 @@ async function resolvePartyName(party: {
     return findClientDisplayName(party.user_id);
   }
   return null;
+}
+
+/**
+ * Resolves a party's legal name PARTS (first/last) — for admin edit prefill.
+ * Petitioner from client_profiles, additional parties from person_records.
+ */
+async function resolvePartyNameParts(party: {
+  person_record_id: string | null;
+  user_id?: string | null;
+}): Promise<{ firstName: string | null; lastName: string | null }> {
+  if (party.person_record_id) {
+    const person = await findPersonRecord(party.person_record_id);
+    if (person) return { firstName: person.first_name, lastName: person.last_name };
+  }
+  if (party.user_id) {
+    const cp = await findClientFullName(party.user_id);
+    if (cp) return { firstName: cp.first_name, lastName: cp.last_name };
+  }
+  return { firstName: null, lastName: null };
 }
 
 interface DocsCount {
@@ -1780,10 +1960,13 @@ export async function getCaseWorkspace(
   const rawParties = await getCaseParties(caseId);
   const parties: CaseWorkspaceParty[] = [];
   for (const p of rawParties) {
+    const parts = await resolvePartyNameParts(p);
     parties.push({
       id: p.id,
       role: p.party_role,
       name: await resolvePartyName(p),
+      firstName: parts.firstName,
+      lastName: parts.lastName,
     });
   }
 

@@ -94,6 +94,7 @@ export default async function VentasDisponibilidadPage() {
     duration: t("duration"),
     minNotice: t("minNotice"),
     videoLink: t("videoLink"),
+    videoLinkPh: t("videoLinkPh"),
     remindersTitle: t("remindersTitle"),
     autoReminders: t("autoReminders"),
     autoRemindersSub: t("autoRemindersSub"),
@@ -111,6 +112,10 @@ export default async function VentasDisponibilidadPage() {
     blockModalTitle: t("blockModalTitle"),
     blockLabelField: t("blockLabelField"),
     blockReason: t("blockReason"),
+    blockFromLabel: t("blockFromLabel"),
+    blockToLabel: t("blockToLabel"),
+    blockInvalidRange: t("blockInvalidRange"),
+    blockAffectsConfirm: t("blockAffectsConfirm", { n: "{n}" }),
     affectsNotice: t("affectsNotice", { n: "{n}" }),
     liftBlock: t("liftBlock"),
     liftBlockDone: t("liftBlockDone"),
@@ -125,9 +130,10 @@ export default async function VentasDisponibilidadPage() {
         exceptions={exceptions}
         defaultDuration={prospectDuration}
         minNotice={minNotice}
-        remindersEnabled
+        remindersEnabled={config?.remindersEnabled ?? true}
         noShowPenaltyDays={noShowPenaltyDays}
-        videoLink=""
+        videoLink={config?.videoLink ?? ""}
+        staffTz={staffTz}
         blockedClient={null}
         strings={strings}
         actions={{

@@ -22,12 +22,14 @@ import type { WeekAgendaResult } from "@/backend/modules/scheduling";
 import { CitasClient } from "./client";
 import type { CalDay, CitaEvent, CitaDetail } from "@/frontend/features/vanessa";
 import { tzLabel, type Locale } from "@/frontend/lib/datetime";
+import { resolveI18n } from "@/shared/i18n";
 import {
   bookAppointmentAction,
   createProspectApptAction,
   completeAppointmentAction,
   cancelAppointmentAction,
   markNoShowAction,
+  rescheduleAppointmentAction,
 } from "../actions";
 
 export const dynamic = "force-dynamic";
@@ -239,8 +241,11 @@ export default async function VentasCitasPage({
       clientHour: null, // client TZ lookup is deferred to F4 (no client profile here)
       typeLabel: seqLabel,
       isVideo: appt.kind === "video",
+      videoLink: appt.videoLink,
+      status: appt.status as CitaDetail["status"],
       lexHtml: "",
-      objectiveItems: [],
+      objectives: appt.objectives.map((o) => ({ id: o.id, text: resolveI18n(o.text, locale) })),
+      objectivesOutcome: appt.objectivesOutcome,
     };
   }
 
@@ -270,6 +275,20 @@ export default async function VentasCitasPage({
     completedToast: t("completedToast"),
     scheduledChip: t("scheduledChip"),
     completedChip: t("completedChip"),
+    completeModalTitle: t("completeModalTitle"),
+    completeModalSub: t("completeModalSub"),
+    achieved: t("achieved"),
+    notAchieved: t("notAchieved"),
+    completeNote: t("completeNote"),
+    completeNotePh: t("completeNotePh"),
+    confirmComplete: t("confirmComplete"),
+    noObjectives: t("noObjectives"),
+    outcomeTitle: t("outcomeTitle"),
+    rescheduleModalTitle: t("rescheduleModalTitle"),
+    rescheduleNewLabel: t("rescheduleNewLabel"),
+    rescheduleConfirm: t("rescheduleConfirm"),
+    rescheduledToast: t("rescheduledToast"),
+    noVideoLink: t("noVideoLink"),
   };
 
   const nuevaCitaStrings = {
@@ -326,6 +345,7 @@ export default async function VentasCitasPage({
         book: bookAppointmentAction,
         prospect: createProspectApptAction,
         complete: completeAppointmentAction,
+        reschedule: rescheduleAppointmentAction,
         cancel: cancelAppointmentAction,
         noShow: markNoShowAction,
       }}

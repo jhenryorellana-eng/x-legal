@@ -62,6 +62,8 @@ const DEFAULT_SETTINGS: SchedulingSettings = {
   cancellationWindowHours: 24,
   rebookingPenaltyDays: 7,
   prospectDurationMinutes: 45,
+  videoLink: null,
+  remindersEnabled: true,
 };
 
 function makeRule(
@@ -521,6 +523,57 @@ describe("materializeSlots — simple weekly rule", () => {
     const inactiveRule: AvailabilityRule = { ...tuesdayRule, isActive: false };
     const input = makeSlotInput({ rules: [inactiveRule] });
     expect(materializeSlots(input)).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// materializeSlots — exceptions (availability blocks / días libres)
+// Mirrors the live "Día libre (test)" block: Monday 2026-06-29 fully blocked.
+// Monday rule 09:00–12:00 EDT = 13:00–16:00 UTC (6×30-min slots).
+// ---------------------------------------------------------------------------
+
+describe("materializeSlots — exceptions remove blocked slots", () => {
+  const mondayRule: AvailabilityRule = makeRule(1, "09:00", "12:00"); // weekday 1 = Monday
+  const windowFromUtc = new Date("2026-06-29T00:00:00Z");
+  const windowToUtc = new Date("2026-06-30T12:00:00Z"); // covers Monday Jun 29
+
+  it("offers all 6 slots when there is no block", () => {
+    const slots = materializeSlots(
+      makeSlotInput({ rules: [mondayRule], windowFromUtc, windowToUtc }),
+    );
+    expect(slots).toHaveLength(6);
+  });
+
+  it("removes EVERY slot when a full-day block covers the day (the live scenario)", () => {
+    const slots = materializeSlots(
+      makeSlotInput({
+        rules: [mondayRule],
+        windowFromUtc,
+        windowToUtc,
+        // Exactly the UTC range stored for the "Día libre (test)" block
+        // (2026-06-29 00:00 → 23:59 America/New_York).
+        exceptions: [
+          { startsAt: new Date("2026-06-29T04:00:00Z"), endsAt: new Date("2026-06-30T03:59:00Z") },
+        ],
+      }),
+    );
+    expect(slots).toHaveLength(0);
+  });
+
+  it("removes only the overlapping slots for a partial block", () => {
+    const slots = materializeSlots(
+      makeSlotInput({
+        rules: [mondayRule],
+        windowFromUtc,
+        windowToUtc,
+        // Block 09:00–10:00 EDT (13:00–14:00 UTC) → removes the first two slots.
+        exceptions: [
+          { startsAt: new Date("2026-06-29T13:00:00Z"), endsAt: new Date("2026-06-29T14:00:00Z") },
+        ],
+      }),
+    );
+    expect(slots).toHaveLength(4);
+    expect(slots[0]?.startUtc.toISOString()).toBe("2026-06-29T14:00:00.000Z");
   });
 });
 

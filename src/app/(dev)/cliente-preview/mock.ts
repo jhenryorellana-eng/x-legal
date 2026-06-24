@@ -442,6 +442,8 @@ export const citaMock: CitaScreenProps = {
   kind: "video",
   status: "scheduled",
   staffNote: null,
+  videoLink: "https://us06web.zoom.us/j/0000000000",
+  startsAtIso: "2026-06-12T18:00:00.000Z",
   celebrate: true,
   labels: citaLabels,
   cancelAppointment: async () => ({ ok: true }),
