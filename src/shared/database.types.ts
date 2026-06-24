@@ -3338,6 +3338,7 @@ export type Database = {
       }
       required_document_types: {
         Row: {
+          accepted_format: string
           ai_extract: boolean
           category_i18n: Json | null
           created_at: string
@@ -3357,6 +3358,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          accepted_format?: string
           ai_extract?: boolean
           category_i18n?: Json | null
           created_at?: string
@@ -3376,6 +3378,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          accepted_format?: string
           ai_extract?: boolean
           category_i18n?: Json | null
           created_at?: string

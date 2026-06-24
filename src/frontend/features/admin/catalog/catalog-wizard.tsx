@@ -44,6 +44,7 @@ export interface WizardDoc {
   is_per_party: boolean;
   party_roles: string[];
   ai_extract: boolean;
+  accepted_format: "pdf" | "png";
   is_active: boolean;
 }
 
@@ -1059,6 +1060,8 @@ function DocsStep({
   // Constrained to the service's roles via the multiselect below.
   const [docPartyRoles, setDocPartyRoles] = React.useState<string[]>([]);
   const [docAiExtract, setDocAiExtract] = React.useState(false);
+  // Admin-chosen upload format for this document: pdf | png (default pdf).
+  const [docFormat, setDocFormat] = React.useState<"pdf" | "png">("pdf");
   const [savingDoc, setSavingDoc] = React.useState(false);
   // null = create mode; a doc id = editing that document in place.
   const [editingDocId, setEditingDocId] = React.useState<string | null>(null);
@@ -1080,6 +1083,7 @@ function DocsStep({
     setDocPerParty(false);
     setDocPartyRoles([]);
     setDocAiExtract(false);
+    setDocFormat("pdf");
   }
 
   function startEditDoc(d: WizardDoc) {
@@ -1090,6 +1094,7 @@ function DocsStep({
     setDocPerParty(d.is_per_party);
     setDocPartyRoles(d.party_roles ?? []);
     setDocAiExtract(d.ai_extract);
+    setDocFormat(d.accepted_format ?? "pdf");
   }
 
   const docSlugFrom = (es: string) =>
@@ -1125,6 +1130,7 @@ function DocsStep({
         is_per_party: docPerParty,
         party_roles: docRoles,
         ai_extract: docAiExtract,
+        accepted_format: docFormat,
       });
       setSavingDoc(false);
       if (r.success) {
@@ -1143,6 +1149,7 @@ function DocsStep({
                           is_per_party: docPerParty,
                           party_roles: docRoles ?? [],
                           ai_extract: docAiExtract,
+                          accepted_format: docFormat,
                         }
                       : d,
                   ),
@@ -1168,6 +1175,7 @@ function DocsStep({
       is_per_party: docPerParty,
       party_roles: docRoles,
       ai_extract: docAiExtract,
+      accepted_format: docFormat,
       position: phase.docs.length,
     });
     setSavingDoc(false);
@@ -1182,6 +1190,7 @@ function DocsStep({
         is_per_party: docPerParty,
         party_roles: docRoles ?? [],
         ai_extract: docAiExtract,
+        accepted_format: docFormat,
         is_active: true,
       };
       setPhases((prev) =>
@@ -1226,6 +1235,33 @@ function DocsStep({
               placeholder="Identidad"
               onChange={(e) => setDocCategory(e.target.value)}
             />
+          </div>
+          <div style={{ maxWidth: 320 }}>
+            <FieldLabel>{t.docFormat}</FieldLabel>
+            <div style={{ display: "flex", gap: 8 }}>
+              {(["pdf", "png"] as const).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  aria-pressed={docFormat === f}
+                  onClick={() => setDocFormat(f)}
+                  style={{
+                    flex: 1,
+                    padding: "9px 14px",
+                    borderRadius: 10,
+                    border: docFormat === f ? "2px solid var(--accent)" : "1px solid var(--line)",
+                    background: docFormat === f ? "var(--blue-soft)" : "var(--card)",
+                    color: "var(--ink)",
+                    fontFamily: "var(--font-title)",
+                    fontWeight: 800,
+                    fontSize: 13.5,
+                    cursor: "pointer",
+                  }}
+                >
+                  {f === "pdf" ? t.docFormatPdf : t.docFormatPng}
+                </button>
+              ))}
+            </div>
           </div>
           <div style={{ display: "flex", gap: 22, flexWrap: "wrap", alignItems: "center" }}>
             <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer" }}>
@@ -1285,6 +1321,7 @@ function DocsStep({
                 <th style={{ ...docHead, textAlign: "center" }}>{t.docRequired}</th>
                 <th style={{ ...docHead, textAlign: "center" }}>{t.docPerParty}</th>
                 <th style={docHead}>{t.docPartiesColumn}</th>
+                <th style={{ ...docHead, textAlign: "center" }}>{t.docFormat}</th>
                 <th style={{ ...docHead, textAlign: "center" }}>{t.docAiExtract}</th>
                 <th style={{ ...docHead, textAlign: "right" }} aria-label={t.docActions} />
               </tr>
@@ -1292,7 +1329,7 @@ function DocsStep({
             <tbody>
               {phase.docs.length === 0 ? (
                 <tr>
-                  <td colSpan={7} style={{ ...docCell, textAlign: "center", color: "var(--ink-3)", padding: "26px" }}>
+                  <td colSpan={8} style={{ ...docCell, textAlign: "center", color: "var(--ink-3)", padding: "26px" }}>
                     {t.emptyTitle ?? "—"}
                   </td>
                 </tr>
@@ -1310,6 +1347,9 @@ function DocsStep({
                       {d.is_per_party && d.party_roles.length > 0
                         ? d.party_roles.map((k) => roleLabelByKey.get(k) ?? k).join(", ")
                         : "—"}
+                    </td>
+                    <td style={{ ...docCell, textAlign: "center" }}>
+                      <Chip tone="blue">{(d.accepted_format ?? "pdf").toUpperCase()}</Chip>
                     </td>
                     <td style={{ ...docCell, textAlign: "center" }}>{d.ai_extract ? <Chip tone="gold" dot>{t.docAiExtract}</Chip> : "—"}</td>
                     <td style={{ ...docCell, textAlign: "right" }}>

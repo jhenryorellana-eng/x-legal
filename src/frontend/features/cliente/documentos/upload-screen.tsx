@@ -6,7 +6,6 @@ import { Icon } from "@/frontend/components/brand/icon";
 import { IconHalo } from "@/frontend/components/brand/icon-tile";
 import { Lex } from "@/frontend/components/brand/lex";
 import { GradientBtn } from "@/frontend/components/brand/gradient-btn";
-import { GhostBtn } from "@/frontend/components/brand/ghost-btn";
 import { ProgressBar } from "@/frontend/components/brand/progress-bar";
 
 /** Results of the upload actions (structurally match the server actions). */
@@ -41,18 +40,24 @@ export interface UploadLabels {
   documentTitle: string;
   captureTitle: string;
   captureSub: string;
-  takePhoto: string;
-  uploadPdf: string;
+  /** Single upload action — everything is scanned (no camera). */
+  uploadDoc: string;
   okTitle: string;
   okSub: string;
   badTitle: string;
   badSub: string;
+  /** Format-aware note, e.g. "Aceptamos solo PDF escaneado". */
   acceptNote: string;
   uploadingTitle: string; // "Subiendo tu documento…"
   uploadingSub: string;
-  errPdfOnly: string;
+  /** Shown while the AI quality check runs during confirm. */
+  checkingQuality: string;
+  /** Format-aware client validation error. */
+  errFormat: string;
   errTooBig: string;
   errNetwork: string;
+  /** Informative anti-blur message — the document was NOT uploaded. */
+  blurMsg: string;
   back: string;
 }
 
@@ -61,6 +66,8 @@ export interface UploadScreenProps {
   requirementId: string | null;
   partyId: string | null;
   documentName: string;
+  /** Admin-configured accepted format for this document: pdf | png. */
+  acceptedFormat: "pdf" | "png";
   previousProgress: number;
   labels: UploadLabels;
   startUpload: (input: {
@@ -104,6 +111,7 @@ export function UploadScreen({
   requirementId,
   partyId,
   documentName,
+  acceptedFormat,
   previousProgress,
   labels,
   startUpload,
@@ -114,6 +122,10 @@ export function UploadScreen({
   const [pct, setPct] = React.useState(0);
   const [error, setError] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Everything is scanned (no camera). The admin picks pdf | png per document.
+  const acceptMime = acceptedFormat === "png" ? "image/png" : "application/pdf";
+  const acceptExt = acceptedFormat === "png" ? ".png" : ".pdf";
 
   // TODO(8d): migrate this hidden <input type="file"> + onFile flow to
   // getBridge().files.pickFile / getBridge().camera.capturePhoto. Left as-is for
@@ -130,12 +142,11 @@ export function UploadScreen({
     e.target.value = ""; // allow re-pick of same file
     if (!file) return;
 
-    // Client-side validation BEFORE upload (server re-validates).
-    const isPdf =
-      file.type === "application/pdf" ||
-      file.name.toLowerCase().endsWith(".pdf");
-    if (!isPdf) {
-      setError(labels.errPdfOnly);
+    // Client-side validation BEFORE upload (server re-validates + checks quality).
+    const matchesFormat =
+      file.type === acceptMime || file.name.toLowerCase().endsWith(acceptExt);
+    if (!matchesFormat) {
+      setError(labels.errFormat);
       return;
     }
     if (file.size > MAX_BYTES) {
@@ -151,7 +162,7 @@ export function UploadScreen({
       requirementId,
       partyId,
       filename: file.name,
-      mimeType: "application/pdf",
+      mimeType: file.type || acceptMime,
       sizeBytes: file.size,
     });
     if (!started.ok || !started.signedUrl || !started.uploadRef) {
@@ -178,7 +189,12 @@ export function UploadScreen({
     });
     if (!confirmed.ok) {
       setStage("idle");
-      setError(labels.errNetwork);
+      // The quality gate (first filter) rejected a clearly-blurry scan: the
+      // document was NOT stored — guide the client to re-scan and try again.
+      const code = confirmed.error?.code;
+      if (code === "DOC_NOT_LEGIBLE") setError(labels.blurMsg);
+      else if (code === "DOC_FORMAT_NOT_ALLOWED") setError(labels.errFormat);
+      else setError(labels.errNetwork);
       return;
     }
 
@@ -235,7 +251,7 @@ export function UploadScreen({
       <input
         ref={fileInputRef}
         type="file"
-        accept="application/pdf"
+        accept={acceptMime}
         onChange={onFile}
         style={{ display: "none" }}
       />
@@ -263,7 +279,7 @@ export function UploadScreen({
                 marginBottom: 12,
               }}
             >
-              {labels.uploadingTitle} {Math.round(pct)}%
+              {pct >= 100 ? labels.checkingQuality : `${labels.uploadingTitle} ${Math.round(pct)}%`}
             </div>
             <ProgressBar pct={pct} height={12} />
             <div
@@ -329,7 +345,7 @@ export function UploadScreen({
             >
               <IconHalo color="var(--accent)" size={72} opacity={0.7} />
               <span style={{ position: "relative", display: "flex" }}>
-                <Icon name="camera" size={36} color="var(--accent)" />
+                <Icon name="doc" size={36} color="var(--accent)" />
               </span>
             </div>
             <div
@@ -356,12 +372,9 @@ export function UploadScreen({
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 22 }}>
-            <GradientBtn icon="camera" onClick={pickFile}>
-              {labels.takePhoto}
+            <GradientBtn icon="doc" onClick={pickFile}>
+              {labels.uploadDoc}
             </GradientBtn>
-            <GhostBtn icon="doc" onClick={pickFile}>
-              {labels.uploadPdf}
-            </GhostBtn>
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>

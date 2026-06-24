@@ -275,6 +275,7 @@ export const RequiredDocumentTypeSchema = z.object({
   party_roles: z.array(z.string()).nullable(),
   ai_extract: z.boolean().default(false),
   extraction_schema: z.record(z.string(), z.unknown()).nullable(),
+  accepted_format: z.enum(["pdf", "png"]).default("pdf"),
   position: z.number().int().default(0),
   is_active: z.boolean().default(true),
 });
@@ -291,6 +292,7 @@ export const CreateRequiredDocDtoSchema = z.object({
   party_roles: z.array(z.string()).nullable().optional(),
   ai_extract: z.boolean().default(false),
   extraction_schema: z.record(z.string(), z.unknown()).nullable().optional(),
+  accepted_format: z.enum(["pdf", "png"]).default("pdf"),
   position: z.number().int().default(0),
 });
 export type CreateRequiredDocDto = z.infer<typeof CreateRequiredDocDtoSchema>;
@@ -521,6 +523,8 @@ export interface ExpandedRequirement {
   is_required: boolean;
   ai_extract: boolean;
   extraction_schema: Record<string, unknown> | null;
+  /** Accepted upload format for this document (admin-configured): pdf | png. */
+  accepted_format: "pdf" | "png";
   position: number;
   /**
    * True only in the staff-facing resolution (`includeHidden`): the requirement
@@ -916,6 +920,7 @@ function toExpanded(doc: RequiredDocumentType, partyId: string | null): Expanded
     is_required: doc.is_required,
     ai_extract: doc.ai_extract,
     extraction_schema: doc.extraction_schema as Record<string, unknown> | null,
+    accepted_format: doc.accepted_format,
     position: doc.position,
   };
 }
@@ -951,6 +956,7 @@ export function applyRequirementOverrides(
         is_required: ov.is_required ?? true,
         ai_extract: false,
         extraction_schema: null,
+        accepted_format: "pdf",
         position: Number.MAX_SAFE_INTEGER,
       });
       continue;

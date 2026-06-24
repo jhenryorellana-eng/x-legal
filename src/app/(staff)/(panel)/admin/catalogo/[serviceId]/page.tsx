@@ -104,6 +104,7 @@ export default async function ServiceDetailPage({
       is_per_party: d.is_per_party,
       party_roles: (d.party_roles ?? []) as string[],
       ai_extract: d.ai_extract,
+      accepted_format: (d.accepted_format ?? "pdf") as "pdf" | "png",
       is_active: d.is_active,
     })),
     forms: ph.forms.map((f) => ({
