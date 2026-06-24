@@ -793,6 +793,7 @@
         "partiesTitle": "Case parties",
         "partiesSub": "Define who takes part in the case, besides the applicant.",
         "partiesApplicantNote": "The applicant is always included automatically.",
+        "partyApplicantFixed": "Included automatically",
         "partiesAdd": "Add party",
         "partiesEmpty": "No additional parties yet. The case will only have the applicant.",
         "partyType": "Type",

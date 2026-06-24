@@ -16,7 +16,7 @@ export function buildCatalogStrings(tt: Translator): Record<string, string> {
     "step1", "step2", "step3", "step4", "step5", "step6", "step7",
     "partiesTitle", "partiesSub", "partiesApplicantNote", "partiesAdd", "partiesEmpty",
     "partyType", "partyLabel", "partyCardinality", "partySingle", "partyMultiple",
-    "partyRequired", "partyRemove", "partyNeedLabel", "partyDup",
+    "partyRequired", "partyRemove", "partyNeedLabel", "partyDup", "partyApplicantFixed",
     "docPartyApplicant", "docPartyRolesLabel", "docNeedRoles",
     "slug", "slugLocked", "category",
     "labelField", "descShort", "descLong", "benefits", "addBenefit", "appearance", "icon",

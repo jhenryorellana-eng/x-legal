@@ -793,6 +793,7 @@
         "partiesTitle": "Partes del caso",
         "partiesSub": "Define quiénes intervienen en el caso, además del solicitante.",
         "partiesApplicantNote": "El solicitante se incluye siempre de forma automática.",
+        "partyApplicantFixed": "Incluido automáticamente",
         "partiesAdd": "Agregar parte",
         "partiesEmpty": "Aún no hay partes adicionales. El caso tendrá solo al solicitante.",
         "partyType": "Tipo",
