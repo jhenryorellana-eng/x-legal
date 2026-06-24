@@ -144,6 +144,7 @@ function makeRequiredDoc(overrides: Partial<RequiredDocumentType> = {}): Require
     party_roles: null,
     ai_extract: false,
     extraction_schema: null,
+    accepted_format: "pdf",
     position: 0,
     is_active: true,
     ...overrides,
@@ -600,6 +601,18 @@ describe("expandPerPartyRequirements", () => {
     const result = expandPerPartyRequirements(docs, []);
     expect(result).toHaveLength(0);
   });
+
+  it("propagates accepted_format to every expanded item", () => {
+    const docs = [
+      makeRequiredDoc({ accepted_format: "png", is_per_party: true, party_roles: ["minor"] }),
+    ];
+    const parties = [
+      { id: "p1", party_role: "minor" },
+      { id: "p2", party_role: "minor" },
+    ];
+    const result = expandPerPartyRequirements(docs, parties);
+    expect(result.map((r) => r.accepted_format)).toEqual(["png", "png"]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -618,6 +631,7 @@ describe("applyRequirementOverrides", () => {
       is_required: true,
       ai_extract: false,
       extraction_schema: null,
+      accepted_format: "pdf",
       position: 0,
       ...overrides,
     };

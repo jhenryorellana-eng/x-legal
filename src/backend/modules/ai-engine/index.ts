@@ -21,6 +21,7 @@ export {
   translateDocument,
   translateText,
   translateAnswerText,
+  assessDocumentLegibility,
   extractRawTextFromStorage,
   completeI18n,
   reprocessExtraction,
@@ -53,6 +54,7 @@ export type {
   ProposedQuestion,
   ProposedGroup,
   SegmentationProposal,
+  DocumentLegibilityVerdict,
 } from "./service";
 
 // ---------------------------------------------------------------------------

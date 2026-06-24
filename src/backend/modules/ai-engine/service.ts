@@ -33,6 +33,7 @@ import type { Actor } from "@/backend/platform/authz";
 import { enqueueJob } from "@/backend/platform/qstash";
 import { getAnthropicClient } from "@/backend/platform/anthropic";
 import { getGeminiModels, DEFAULT_GEMINI_MODEL } from "@/backend/platform/gemini";
+import { isAiStubEnabled } from "@/backend/platform/ai-stub";
 import { createSignedDownloadUrl as _createSignedDownloadUrl } from "@/backend/platform/storage";
 import { logger } from "@/backend/platform/logger";
 import { writeAudit } from "@/backend/modules/audit";
@@ -1376,6 +1377,105 @@ export async function translateText(input: {
     return { text: translated, model };
   } catch (err) {
     throw new AiEngineError("AI_PROVIDER_UNAVAILABLE", err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// assessDocumentLegibility — pre-acceptance quality gate (Gemini Vision)
+// ---------------------------------------------------------------------------
+
+export interface DocumentLegibilityVerdict {
+  /** false ONLY when the document is clearly unreadable. */
+  legible: boolean;
+  blurLevel: "none" | "light" | "heavy";
+  reasonEs: string;
+  reasonEn: string;
+}
+
+const LEGIBILITY_SCHEMA = {
+  type: "object",
+  properties: {
+    legible: { type: "boolean" },
+    blur_level: { type: "string", enum: ["none", "light", "heavy"] },
+    reason_es: { type: "string" },
+    reason_en: { type: "string" },
+  },
+  required: ["legible", "blur_level", "reason_es", "reason_en"],
+};
+
+/**
+ * First-filter document quality check, run before a case document is accepted
+ * (DOC-41 §3.6 extension). Conservative by design: it flags a document as NOT
+ * acceptable only when the scan is CLEARLY unreadable / heavily blurred — light
+ * blur passes, because the human reviewer (Diana/Henry/Vanessa via reviewDocument)
+ * is the final word. Fail-open: any provider error returns legible=true, so an AI
+ * outage never blocks uploads. Respects the AI stub (E2E/CI) — no Gemini call.
+ *
+ * Multimodal: accepts PDF and PNG via inlineData (same pipeline as extraction).
+ */
+export async function assessDocumentLegibility(input: {
+  bytes: Uint8Array;
+  mimeType: string;
+}): Promise<DocumentLegibilityVerdict> {
+  if (isAiStubEnabled()) {
+    return { legible: true, blurLevel: "none", reasonEs: "", reasonEn: "" };
+  }
+
+  const model = process.env.AI_GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL;
+  const base64 = Buffer.from(input.bytes).toString("base64");
+
+  try {
+    const response = await getGeminiModels().generateContent({
+      model,
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { inlineData: { mimeType: input.mimeType, data: base64 } },
+            {
+              text:
+                "Eres un control de calidad de documentos escaneados para un expediente legal. " +
+                "Evalúa SOLO la legibilidad visual del documento: nitidez, enfoque, iluminación y que no esté recortado. " +
+                "Marca legible=false o blur_level='heavy' ÚNICAMENTE si el contenido es claramente ilegible " +
+                "(muy borroso, demasiado oscuro, o recortado de modo que no se puede leer). " +
+                "Ante cualquier duda, considéralo aceptable (legible=true, blur_level distinto de 'heavy'). " +
+                "Responde en JSON: {legible, blur_level, reason_es, reason_en} con motivos breves.",
+            },
+          ],
+        },
+      ],
+      config: {
+        temperature: 0,
+        maxOutputTokens: 256,
+        responseMimeType: "application/json",
+        responseSchema: LEGIBILITY_SCHEMA,
+      },
+    });
+
+    const text = response.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    const parsed = JSON.parse(text) as {
+      legible?: boolean;
+      blur_level?: string;
+      reason_es?: string;
+      reason_en?: string;
+    };
+    const blurLevel: DocumentLegibilityVerdict["blurLevel"] =
+      parsed.blur_level === "heavy" || parsed.blur_level === "light"
+        ? parsed.blur_level
+        : "none";
+    return {
+      legible: parsed.legible !== false,
+      blurLevel,
+      reasonEs: parsed.reason_es ?? "",
+      reasonEn: parsed.reason_en ?? "",
+    };
+  } catch (err) {
+    // Fail-open: never block an upload because the AI provider is unavailable.
+    logger.warn(
+      { err },
+      "ai-engine: assessDocumentLegibility failed — allowing upload (fail-open)",
+    );
+    return { legible: true, blurLevel: "none", reasonEs: "", reasonEn: "" };
   }
 }
 

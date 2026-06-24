@@ -77,6 +77,12 @@ const MAGIC_BYTES: Record<string, Buffer[]> = {
 export interface StorageValidationResult {
   ok: boolean;
   reason?: string;
+  /**
+   * The downloaded object bytes — present only on success of
+   * `validateUploadedObject`. Returned so callers (e.g. the document quality
+   * gate) can reuse them without downloading the object a second time.
+   */
+  bytes?: Buffer;
 }
 
 /**
@@ -256,7 +262,9 @@ export async function validateUploadedObject(
     return magicResult;
   }
 
-  return { ok: true };
+  // Return the downloaded bytes so the caller can run further checks (e.g. the
+  // document quality gate) without a second 25 MB download.
+  return { ok: true, bytes: buf };
 }
 
 /**
@@ -291,7 +299,7 @@ export async function uploadBytesToStorage(
   return path;
 }
 
-async function deleteObject(bucket: string, path: string): Promise<void> {
+export async function deleteObject(bucket: string, path: string): Promise<void> {
   const { error } = await createServiceClient().storage
     .from(bucket)
     .remove([path]);

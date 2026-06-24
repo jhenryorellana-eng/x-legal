@@ -28,6 +28,7 @@ export default async function SubirPage({
 
   const locale = (await getLocale()) as Locale;
   const t = await getTranslations("cliente.subir");
+  const td = await getTranslations("cliente.documentos");
 
   let matrix;
   try {
@@ -45,8 +46,13 @@ export default async function SubirPage({
 
   const baseLabel = target ? pickLocale(target.labelI18n, locale) : t("fallbackName");
   const documentName = target?.partyName
-    ? `${baseLabel} · ${target.partyName}`
+    ? `${baseLabel} ${td("partyConnector")} ${target.partyName}`
     : baseLabel;
+
+  // Admin-configured upload format for this document (pdf | png). Drives the
+  // file picker `accept`, client validation, and the format-aware copy.
+  const acceptedFormat = target?.acceptedFormat ?? "pdf";
+  const fmt = acceptedFormat.toUpperCase();
 
   return (
     <UploadScreen
@@ -54,24 +60,26 @@ export default async function SubirPage({
       requirementId={target?.requirementId ?? req ?? null}
       partyId={target?.partyId ?? party ?? null}
       documentName={documentName}
+      acceptedFormat={acceptedFormat}
       previousProgress={matrix.progress}
       labels={{
         eyebrow: t("eyebrow"),
         documentTitle: documentName,
         captureTitle: t("captureTitle"),
         captureSub: t("captureSub"),
-        takePhoto: t("takePhoto"),
-        uploadPdf: t("uploadPdf"),
+        uploadDoc: t("uploadDoc"),
         okTitle: t("okTitle"),
         okSub: t("okSub"),
         badTitle: t("badTitle"),
         badSub: t("badSub"),
-        acceptNote: t("acceptNote"),
+        acceptNote: t("acceptNote").replace("{format}", fmt),
         uploadingTitle: t("uploadingTitle"),
         uploadingSub: t("uploadingSub"),
-        errPdfOnly: t("errPdfOnly"),
+        checkingQuality: t("checkingQuality"),
+        errFormat: t("errFormat").replace("{format}", fmt),
         errTooBig: t("errTooBig"),
         errNetwork: t("errNetwork"),
+        blurMsg: t("blurMsg"),
         back: t("back"),
       }}
       startUpload={startUploadAction}

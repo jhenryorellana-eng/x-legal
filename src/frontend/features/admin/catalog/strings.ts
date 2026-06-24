@@ -29,6 +29,7 @@ export function buildCatalogStrings(tt: Translator): Record<string, string> {
     "cronogramaEmpty", "cronogramaTotal", "selectPhase",
     "docDocument", "docTip", "docCategory", "docRequired", "docPerParty", "docAiExtract",
     "docAdd", "docNeedName", "docSave", "docCancelEdit", "docEdit", "docActions", "docPartiesColumn",
+    "docFormat", "docFormatPdf", "docFormatPng",
     "docActiveCol", "docSchema", "formPdf", "formAi", "filledBy", "filledClient",
     "filledStaff", "filledBoth", "formStub", "formStubSub", "publishTitle", "publishReady",
     "activateService", "celebrate", "issueBlocking", "issueWarning", "ackWarning",

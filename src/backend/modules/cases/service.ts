@@ -19,6 +19,7 @@ import {
   createSignedUploadUrl,
   createSignedDownloadUrl,
   validateUploadedObject,
+  deleteObject,
 } from "@/backend/platform/storage";
 import { logger } from "@/backend/platform/logger";
 // Note: enqueueJob is imported dynamically in confirmDocumentUpload to avoid
@@ -127,6 +128,8 @@ export class CaseError extends Error {
       | "REQUIREMENT_NOT_OPTIONAL"
       | "DOC_PARTY_NOT_ELIGIBLE"
       | "DOC_UPLOAD_INVALID"
+      | "DOC_FORMAT_NOT_ALLOWED"
+      | "DOC_NOT_LEGIBLE"
       | "FORM_NOT_FOUND"
       | "FORM_VERSION_NOT_PUBLISHED"
       | "FORM_VERSION_MISMATCH"
@@ -809,6 +812,43 @@ export async function confirmDocumentUpload(
     webp: "image/webp",
   };
   const mimeType = extToMime[ext] ?? "application/octet-stream";
+
+  // Per-document accepted format (admin-configured, pdf | png). Only catalog
+  // requirements constrain the format; free staff uploads do not.
+  if (parsed.requirementId) {
+    const sb = createServiceClient();
+    const { data: rdt } = await sb
+      .from("required_document_types")
+      .select("accepted_format")
+      .eq("id", parsed.requirementId)
+      .maybeSingle();
+    const acceptedFormat = (rdt?.accepted_format as "pdf" | "png" | null) ?? "pdf";
+    const allowedExt = acceptedFormat === "png" ? ["png"] : ["pdf"];
+    if (!allowedExt.includes(ext)) {
+      await deleteObject("case-documents", parsed.uploadRef);
+      throw new CaseError("DOC_FORMAT_NOT_ALLOWED", { acceptedFormat });
+    }
+  }
+
+  // Quality gate (first filter): a CLEARLY illegible / heavily blurred scan is
+  // rejected BEFORE the document is registered — the object is deleted and no
+  // case_documents row / event is created. Conservative + fail-open (ai-engine).
+  // Applies to every upload to case-documents (client + staff). The human
+  // reviewer (reviewDocument) remains the final word for borderline cases.
+  if (validated.bytes) {
+    const aiEngine = await import("@/backend/modules/ai-engine");
+    const verdict = await aiEngine.assessDocumentLegibility({
+      bytes: validated.bytes,
+      mimeType,
+    });
+    if (!verdict.legible || verdict.blurLevel === "heavy") {
+      await deleteObject("case-documents", parsed.uploadRef);
+      throw new CaseError("DOC_NOT_LEGIBLE", {
+        reasonEs: verdict.reasonEs,
+        reasonEn: verdict.reasonEn,
+      });
+    }
+  }
 
   // Replace chain head if any
   const prev = await findCurrentChainHead(
@@ -1533,6 +1573,7 @@ async function buildDocumentsMatrix(
       category_i18n: unknown;
       is_required: boolean;
       is_hidden?: boolean;
+      accepted_format?: "pdf" | "png";
       position: number;
     }) => {
       const docKey = `${r.required_document_type_id ?? "free"}:${r.party_id ?? "case"}`;
@@ -1555,6 +1596,7 @@ async function buildDocumentsMatrix(
         categoryI18n: asI18n(r.category_i18n),
         isRequired: r.is_required,
         isHidden: r.is_hidden ?? false,
+        acceptedFormat: r.accepted_format ?? "pdf",
         position: r.position,
         status,
         documentId: doc?.id ?? null,
@@ -1591,6 +1633,8 @@ export interface DocumentMatrixItem {
   isRequired: boolean;
   /** Staff view only: true when an override hides this requirement from the client. */
   isHidden: boolean;
+  /** Accepted upload format for this document (admin-configured): pdf | png. */
+  acceptedFormat: "pdf" | "png";
   position: number;
   status: "pendiente" | "revision" | "aprobado" | "corregir";
   documentId: string | null;

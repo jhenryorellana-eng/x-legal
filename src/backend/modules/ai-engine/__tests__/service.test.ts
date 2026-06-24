@@ -159,6 +159,12 @@ vi.mock("@/backend/platform/gemini", () => ({
   DEFAULT_GEMINI_MODEL: "gemini-2.5-flash",
 }));
 
+// Force the non-stub (real Gemini) path for assessDocumentLegibility tests; the
+// generateContent call is mocked above, so no real provider is hit.
+vi.mock("@/backend/platform/ai-stub", () => ({
+  isAiStubEnabled: () => false,
+}));
+
 vi.mock("@/backend/platform/storage", () => ({
   createSignedDownloadUrl: mocks.storage.createSignedDownloadUrl,
 }));
@@ -236,6 +242,7 @@ import {
   getRunsForCase,
   proposeFormSegmentation,
   translateAnswerText,
+  assessDocumentLegibility,
   AiEngineError,
 } from "../service";
 
@@ -807,5 +814,37 @@ describe("translateAnswerText", () => {
     });
     const r = await translateAnswerText({ text: "hola mundo", direction: "es-en" });
     expect(r.text).toBe("hello world");
+  });
+});
+
+describe("assessDocumentLegibility", () => {
+  beforeEach(() => {
+    mocks.geminiModels.generateContent.mockReset();
+  });
+
+  it("parses a legible verdict from Gemini", async () => {
+    mocks.geminiModels.generateContent.mockResolvedValue({
+      candidates: [{ content: { parts: [{ text: JSON.stringify({ legible: true, blur_level: "none", reason_es: "ok", reason_en: "ok" }) }] } }],
+    });
+    const v = await assessDocumentLegibility({ bytes: new Uint8Array([1, 2, 3]), mimeType: "image/png" });
+    expect(v.legible).toBe(true);
+    expect(v.blurLevel).toBe("none");
+  });
+
+  it("parses a heavy-blur / illegible verdict", async () => {
+    mocks.geminiModels.generateContent.mockResolvedValue({
+      candidates: [{ content: { parts: [{ text: JSON.stringify({ legible: false, blur_level: "heavy", reason_es: "borroso", reason_en: "blurry" }) }] } }],
+    });
+    const v = await assessDocumentLegibility({ bytes: new Uint8Array([1]), mimeType: "application/pdf" });
+    expect(v.legible).toBe(false);
+    expect(v.blurLevel).toBe("heavy");
+    expect(v.reasonEs).toBe("borroso");
+  });
+
+  it("fails open (legible=true) when the provider throws", async () => {
+    mocks.geminiModels.generateContent.mockRejectedValue(new Error("RESOURCE_EXHAUSTED"));
+    const v = await assessDocumentLegibility({ bytes: new Uint8Array([1]), mimeType: "image/png" });
+    expect(v.legible).toBe(true);
+    expect(v.blurLevel).toBe("none");
   });
 });
