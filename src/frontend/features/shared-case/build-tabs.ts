@@ -2,7 +2,7 @@
  * buildTabs — role-aware, data-driven tab materialization (DOC-52 §5 / DOC-53 §3).
  *
  * Vanessa (sales + paralegal/finance) sees the asesora set; Henry (admin) sees
- * the full admin set + Bitácora. Validación only shows for with_lawyer plans.
+ * the full admin set + Historial. Validación only shows for with_lawyer plans.
  * Mensajes only shows when chat actions are wired. Adding/reordering a tab is a
  * config change here — the shell renders whatever this returns.
  */
@@ -45,7 +45,7 @@ export function buildTabs(input: BuildTabsInput): TabConfig[] {
       { id: "contrato", label: tb.contrato },
     );
     if (input.hasChat) tabs.push({ id: "mensajes", label: tb.mensajes });
-    tabs.push({ id: "historial", label: tb.bitacora });
+    tabs.push({ id: "historial", label: tb.historial });
     return tabs;
   }
 

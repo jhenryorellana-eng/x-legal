@@ -1,5 +1,5 @@
 /**
- * Historial del caso (bitácora) — `/caso/[caseId]/bitacora` · nivel CASO — DOC-51 §23.
+ * Historial del caso — `/caso/[caseId]/historial` · nivel CASO — DOC-51 §23.
  *
  * Server component. Reads the client-visible timeline (getTimeline → only
  * visible_to_client). Groups events by day in the user's timezone and maps
@@ -13,13 +13,13 @@ import { getTimeline } from "@/backend/modules/cases";
 import { type IconName } from "@/frontend/components/brand/icon";
 import { pickLocale, coerceIcon, type Locale } from "@/frontend/features/cliente/shared/i18n";
 import {
-  BitacoraScreen,
-  type BitacoraDay,
-  type BitacoraEvent,
-} from "@/frontend/features/cliente/bitacora/bitacora-screen";
+  HistorialScreen,
+  type HistorialDay,
+  type HistorialEvent,
+} from "@/frontend/features/cliente/historial/historial-screen";
 
 // event_type → filter category (DOC-51 §23 mapping).
-function categoryFor(eventType: string): BitacoraEvent["category"] {
+function categoryFor(eventType: string): HistorialEvent["category"] {
   if (eventType.startsWith("document")) return "doc";
   if (eventType.startsWith("appointment")) return "cita";
   if (eventType.startsWith("form")) return "form";
@@ -52,7 +52,7 @@ const COLOR_MAP: Record<string, string> = {
   red: "var(--red)",
 };
 
-export default async function BitacoraPage({
+export default async function HistorialPage({
   params,
 }: {
   params: Promise<{ caseId: string }>;
@@ -63,7 +63,7 @@ export default async function BitacoraPage({
 
   const locale = (await getLocale()) as Locale;
   const tz = await getTimeZone();
-  const t = await getTranslations("cliente.bitacora");
+  const t = await getTranslations("cliente.historial");
 
   let page;
   try {
@@ -95,7 +95,7 @@ export default async function BitacoraPage({
   const yesterday = dayKeyFmt.format(new Date(Date.now() - 86400000));
 
   // Group events by day key (in user TZ), preserving desc order.
-  const groups = new Map<string, BitacoraDay>();
+  const groups = new Map<string, HistorialDay>();
   for (const row of page.items) {
     const date = new Date(row.occurred_at);
     const key = dayKeyFmt.format(date);
@@ -128,10 +128,10 @@ export default async function BitacoraPage({
     });
   }
 
-  const days: BitacoraDay[] = Array.from(groups.values());
+  const days: HistorialDay[] = Array.from(groups.values());
 
   return (
-    <BitacoraScreen
+    <HistorialScreen
       caseId={caseId}
       days={days}
       labels={{

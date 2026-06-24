@@ -33,6 +33,7 @@ import {
   updateCaseParty,
   reviewDocument,
   setRequirementVisibility,
+  advanceCasePhase,
   startDocumentUpload,
   confirmDocumentUpload,
   saveFormDraft,
@@ -223,6 +224,20 @@ export async function setRequirementVisibilityAction(input: {
     const actor = await requireActor();
     await setRequirementVisibility(actor, input);
     return { ok: true };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+export async function advanceCasePhaseAction(input: {
+  caseId: string;
+  toPhaseId?: string | null;
+  note?: string | null;
+}): Promise<{ ok: boolean; phaseIndex?: number; phaseCount?: number; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    const res = await advanceCasePhase(actor, input);
+    return { ok: true, phaseIndex: res.phaseIndex, phaseCount: res.phaseCount };
   } catch (err) {
     return mapErr(err);
   }

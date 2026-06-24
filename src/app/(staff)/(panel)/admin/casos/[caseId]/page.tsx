@@ -43,6 +43,7 @@ import { mapStatusToPill } from "../view-helpers";
 import {
   reviewDocumentAction,
   setRequirementVisibilityAction,
+  advanceCasePhaseAction,
   registerPaymentAction,
   resendSigningLinkAction,
   sendContractAction,
@@ -108,6 +109,8 @@ export default async function AdminCasoDetailPage({
 
   // Visibility toggle is an admin + sales affordance (DOC-41 §3.5 decision).
   const canManageDocs = actor.role === "admin" || actor.role === "sales";
+  // Manual phase advance is an admin + paralegal affordance (hybrid progress model).
+  const canAdvancePhase = actor.role === "admin" || actor.role === "paralegal";
 
   const pill = mapStatusToPill(workspace.status);
   const installments = (plan?.installments ?? []).map((i) => ({
@@ -245,6 +248,7 @@ export default async function AdminCasoDetailPage({
       actions={{
         reviewDocument: reviewDocumentAction,
         setRequirementVisibility: canManageDocs ? setRequirementVisibilityAction : undefined,
+        advanceCasePhase: canAdvancePhase ? advanceCasePhaseAction : undefined,
         registerPayment: registerPaymentAction,
         resendSigningLink: resendSigningLinkAction,
         sendContract: sendContractAction,

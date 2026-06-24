@@ -241,4 +241,14 @@ export interface CaseDetailActions {
     firstName: string;
     lastName: string;
   }) => Promise<{ ok: boolean; resynced?: boolean; error?: { code: string } }>;
+  /**
+   * Advance the case to the next service phase (admin + paralegal only). Manual,
+   * staff-driven — the within-phase % is automatic. Optional: only surfaces that
+   * authorize it inject the action; absence hides the affordance.
+   */
+  advanceCasePhase?: (input: {
+    caseId: string;
+    toPhaseId?: string | null;
+    note?: string | null;
+  }) => Promise<{ ok: boolean; phaseIndex?: number; phaseCount?: number; error?: { code: string } }>;
 }

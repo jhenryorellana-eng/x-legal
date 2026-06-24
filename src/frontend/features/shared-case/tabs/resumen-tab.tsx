@@ -36,8 +36,28 @@ export function ResumenTab({
   locale: "es" | "en";
 }) {
   const t = strings.detail;
-  const [busy, setBusy] = React.useState<"pay" | "resend" | null>(null);
+  const router = useRouter();
+  const [busy, setBusy] = React.useState<"pay" | "resend" | "phase" | null>(null);
   const editPartyAction = vm.isAdmin ? actions.updateCaseParty : undefined;
+
+  // Manual phase advance (admin/paralegal) — only when a next phase exists.
+  const canAdvancePhase =
+    !!actions.advanceCasePhase &&
+    vm.header.phaseCount > 0 &&
+    vm.header.phaseIndex < vm.header.phaseCount;
+
+  async function onAdvancePhase() {
+    if (!actions.advanceCasePhase) return;
+    setBusy("phase");
+    const res = await actions.advanceCasePhase({ caseId: vm.header.caseId });
+    setBusy(null);
+    if (res.ok) {
+      toast.success(t.advancePhaseDone);
+      router.refresh();
+    } else {
+      toast.error(strings.errorTitle);
+    }
+  }
 
   async function onRegisterPayment() {
     if (!vm.downpaymentInstallmentId) return;
@@ -87,6 +107,19 @@ export function ResumenTab({
                 phaseWord={strings.colPhase}
               />
             </div>
+            {canAdvancePhase && (
+              <div style={{ marginTop: 14 }}>
+                <GradientBtn
+                  size="md"
+                  full
+                  icon="chevR"
+                  disabled={busy === "phase"}
+                  onClick={onAdvancePhase}
+                >
+                  {busy === "phase" ? t.advancingPhase : t.advancePhase}
+                </GradientBtn>
+              </div>
+            )}
           </Card>
         )}
 

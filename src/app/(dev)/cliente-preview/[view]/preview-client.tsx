@@ -61,16 +61,15 @@ export function ClientePreview({ view }: { view: string }) {
         {...procesoMock}
         cronograma={{
           citas: [
-            { label: "Evaluación inicial", weekLabel: "Sem. 1", dateLabel: "27 jun 2026" },
-            { label: "Cita 2", weekLabel: "Sem. 2", dateLabel: "4 jul 2026" },
+            { label: "Evaluación inicial", weekLabel: "Semana 1" },
+            { label: "Cita 2", weekLabel: "Semana 2" },
           ],
           started: true,
-          deliveryLabel: "18 jul 2026",
           totalWeeksLabel: "~4 semanas",
         }}
         labels={{
           ...procesoMock.labels,
-          cronogramaTitle: "Cronograma estimado",
+          cronogramaTitle: "Cronograma del servicio",
           deliveryEstimate: "Entrega estimada del expediente",
           cronogramaNotStarted: "Comienza al activar tu caso",
         }}

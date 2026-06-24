@@ -52,7 +52,7 @@ export default async function MasPage({
           color: "var(--gold)",
           title: t("caseHistory"),
           description: t("caseHistoryDesc"),
-          href: `/caso/${caseId}/bitacora`,
+          href: `/caso/${caseId}/historial`,
         },
         {
           icon: "user",

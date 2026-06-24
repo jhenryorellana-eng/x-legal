@@ -165,7 +165,7 @@ export const auditMessages: Record<string, string> = {
   encryptedNote: "Los campos cifrados nunca se muestran en claro.", viewRawJson: "Ver JSON crudo",
   viewEntityHistory: "Ver historial completo de esta entidad",
   emptyTitle: "Toda acción del equipo quedará registrada aquí",
-  emptySub: "Cuando alguien cree, edite o publique algo, aparecerá en esta bitácora.",
+  emptySub: "Cuando alguien cree, edite o publique algo, aparecerá en este registro.",
   emptyFiltered: "Ninguna entrada coincide con estos filtros.", loadMore: "Cargar más",
 };
 

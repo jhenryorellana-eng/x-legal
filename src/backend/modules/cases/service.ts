@@ -35,6 +35,7 @@ import {
   canTransitionCase,
   canTransitionDocument,
   computePhaseProgress,
+  resolveNextPhase,
   addWeeksToAnchorIso,
   validateAnswerTypes,
   buildPartiesSnapshot,
@@ -123,6 +124,7 @@ export class CaseError extends Error {
       | "CASE_NOT_IN_PRODUCTION"
       | "CASE_NOTE_REQUIRED"
       | "CASE_PHASE_INVALID"
+      | "CASE_ALREADY_LAST_PHASE"
       | "CASE_SERVICE_NOT_AVAILABLE"
       | "CASE_PAYMENT_PLAN_INVALID"
       | "CASE_PARTY_ROLE_INVALID"
@@ -1412,6 +1414,105 @@ export async function changeCaseStatus(
     caseRow.id,
     { before: { status: caseRow.status }, after: { status: parsed.target } },
   );
+}
+
+// ---------------------------------------------------------------------------
+// advanceCasePhase — manual phase progression (admin/paralegal)
+// ---------------------------------------------------------------------------
+
+const AdvancePhaseSchema = z.object({
+  caseId: zUuid,
+  /** Explicit later phase; when omitted, advances to the next phase by position. */
+  toPhaseId: zUuid.nullable().optional(),
+  note: z.string().trim().max(500).nullable().optional(),
+});
+
+export type AdvanceCasePhaseInput = z.infer<typeof AdvancePhaseSchema>;
+
+export interface AdvanceCasePhaseResult {
+  phaseId: string;
+  /** 1-based index of the new phase. */
+  phaseIndex: number;
+  phaseCount: number;
+  labelI18n: I18nValue | null;
+}
+
+/**
+ * Moves a case forward to the next service phase (or an explicit later phase).
+ * Manual, staff-driven — admin + paralegal only (the phase boundary tracks an
+ * external legal event the system cannot observe). The within-phase % stays
+ * automatic (computePhaseProgress). Records the transition in case_phase_history,
+ * surfaces it on the client timeline, and audits it.
+ *
+ * @api-id API-CASE-26 (advance phase)
+ */
+export async function advanceCasePhase(
+  actor: Actor,
+  input: AdvanceCasePhaseInput,
+): Promise<AdvanceCasePhaseResult> {
+  can(actor, "cases", "edit");
+  // Only admin + paralegal advance the legal phase (sales/finance excluded).
+  if (
+    actor.kind !== "staff" ||
+    (actor.role !== "admin" && actor.role !== "paralegal")
+  ) {
+    throw new AuthzError("forbidden_module");
+  }
+  const parsed = AdvancePhaseSchema.parse(input);
+  await requireCaseAccess(actor, parsed.caseId);
+
+  const caseRow = await findCaseById(parsed.caseId);
+  if (!caseRow) throw new CaseError("CASE_NOT_FOUND");
+  if (!caseRow.current_phase_id) throw new CaseError("CASE_PHASE_INVALID");
+
+  const phases = await listServicePhases(caseRow.service_id);
+  const refs = phases.map((p) => ({ id: p.id, position: p.position }));
+
+  // Resolve the target: an explicit later phase, or the immediate next one.
+  let target: { id: string; position: number } | null;
+  if (parsed.toPhaseId) {
+    const cur = refs.find((p) => p.id === caseRow.current_phase_id);
+    const tgt = refs.find((p) => p.id === parsed.toPhaseId);
+    if (!cur || !tgt || tgt.position <= cur.position) {
+      throw new CaseError("CASE_INVALID_TRANSITION");
+    }
+    target = tgt;
+  } else {
+    target = resolveNextPhase(refs, caseRow.current_phase_id);
+  }
+  if (!target) throw new CaseError("CASE_ALREADY_LAST_PHASE");
+
+  const targetPhase = phases.find((p) => p.id === target!.id)!;
+  const labelI18n = asI18n(targetPhase.label_i18n);
+  const phaseName = (l: "es" | "en") => (labelI18n ? (labelI18n[l] ?? "") : "");
+
+  await updateCase(caseRow.id, { current_phase_id: target.id });
+  await insertPhaseHistory({
+    caseId: caseRow.id,
+    phaseId: target.id,
+    enteredBy: actor.userId,
+    note: parsed.note ?? null,
+  });
+
+  await writeTimeline({
+    caseId: caseRow.id,
+    eventType: "phase.advanced",
+    actorKind: "team",
+    actorUserId: actor.userId,
+    visibleToClient: true,
+    titleI18n: {
+      es: `Tu caso avanzó a la fase: ${phaseName("es")}`,
+      en: `Your case advanced to phase: ${phaseName("en")}`,
+    },
+  });
+
+  await writeAudit(actor, "case.phase_advanced", "cases", caseRow.id, {
+    before: { phaseId: caseRow.current_phase_id },
+    after: { phaseId: target.id },
+  });
+
+  const phaseIndex = phases.findIndex((p) => p.id === target!.id) + 1;
+  return { phaseId: target.id, phaseIndex, phaseCount: phases.length, labelI18n };
 }
 
 // ---------------------------------------------------------------------------

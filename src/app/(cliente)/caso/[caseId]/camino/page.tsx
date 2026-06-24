@@ -8,7 +8,7 @@
  */
 
 import { notFound, redirect } from "next/navigation";
-import { getLocale, getTranslations } from "next-intl/server";
+import { getLocale, getTimeZone, getTranslations } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
 import {
   getCaseWorkspace,
@@ -16,6 +16,8 @@ import {
   getCaseMilestones,
   getCaseTimeline,
 } from "@/backend/modules/cases";
+import { getCaseAppointments } from "@/backend/modules/scheduling";
+import { fmtDateShort, fmtTime } from "@/frontend/lib/datetime";
 import { pickLocale, type Locale } from "@/frontend/features/cliente/shared/i18n";
 import { CaminoScreen } from "@/frontend/features/cliente/camino/camino-screen";
 
@@ -32,6 +34,7 @@ export default async function CaminoPage({
   if (!actor || actor.kind !== "client") redirect("/welcome");
 
   const locale = (await getLocale()) as Locale;
+  const tz = await getTimeZone();
   const t = await getTranslations("cliente.camino");
 
   let ws, docs, milestonesDto;
@@ -55,22 +58,26 @@ export default async function CaminoPage({
     ? pickLocale(currentMilestone.labelI18n, locale)
     : null;
 
-  // Estimated expediente delivery date (cronograma — informational).
+  // Next scheduled appointment (real) — drives the "Próxima cita" tile. The list
+  // is ordered by starts_at asc, so the first future `scheduled` one is the next.
+  const appointments = await getCaseAppointments(actor, caseId).catch(() => []);
+  const nowMs = Date.now();
+  const nextAppt =
+    appointments.find(
+      (a) => a.status === "scheduled" && new Date(a.starts_at).getTime() > nowMs,
+    ) ?? null;
+  const nextMeetingValue = nextAppt
+    ? `${fmtDateShort(nextAppt.starts_at, tz, locale)}, ${fmtTime(nextAppt.starts_at, tz)}`
+    : null;
+  const nextMeetingHref = nextAppt
+    ? `/caso/${caseId}/cita/${nextAppt.id}`
+    : `/caso/${caseId}/agendar`;
+
+  // Estimated delivery — expressed in weeks (no specific dates, §cronograma).
   const timeline = await getCaseTimeline(actor, caseId).catch(() => null);
   const deliveryLabel =
-    timeline && timeline.started && timeline.estimatedDeliveryDate
-      ? (() => {
-          try {
-            return new Intl.DateTimeFormat(locale === "en" ? "en-US" : "es-ES", {
-              day: "numeric",
-              month: "short",
-              year: "numeric",
-              timeZone: "UTC",
-            }).format(new Date(timeline.estimatedDeliveryDate));
-          } catch {
-            return null;
-          }
-        })()
+    timeline && timeline.totalWeeks > 0
+      ? t("deliveryWeeks", { n: timeline.totalWeeks })
       : null;
 
   return (
@@ -91,6 +98,8 @@ export default async function CaminoPage({
       docsComplete={docsComplete}
       firstVisit={onboarded === "1"}
       currentMilestoneLabel={currentMilestoneLabel}
+      nextMeetingValue={nextMeetingValue}
+      nextMeetingHref={nextMeetingHref}
       deliveryLabel={deliveryLabel}
       labels={{
         backCases: t("backCases"),

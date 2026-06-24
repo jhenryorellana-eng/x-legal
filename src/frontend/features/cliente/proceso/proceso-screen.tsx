@@ -46,13 +46,11 @@ export interface ProcesoLabels {
 export interface ProcesoCita {
   label: string;
   weekLabel: string;
-  dateLabel: string | null;
 }
 
 export interface ProcesoCronograma {
   citas: ProcesoCita[];
   started: boolean;
-  deliveryLabel: string | null;
   totalWeeksLabel: string;
 }
 
@@ -141,11 +139,6 @@ export function ProcesoScreen({
                 <span style={{ flex: 1, minWidth: 0, fontSize: 14.5, fontWeight: 700, color: "var(--navy)" }}>
                   {c.label}
                 </span>
-                {c.dateLabel && (
-                  <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-2)", whiteSpace: "nowrap" }}>
-                    {c.dateLabel}
-                  </span>
-                )}
               </div>
             ))}
           </div>
@@ -165,8 +158,8 @@ export function ProcesoScreen({
                 {labels.deliveryEstimate}
               </div>
               <div className="t-title" style={{ fontSize: 16.5, fontWeight: 800, color: "var(--gold-deep)" }}>
-                {cronograma.started && cronograma.deliveryLabel
-                  ? cronograma.deliveryLabel
+                {cronograma.started
+                  ? cronograma.totalWeeksLabel
                   : `${labels.cronogramaNotStarted} · ${cronograma.totalWeeksLabel}`}
               </div>
             </div>

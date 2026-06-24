@@ -243,6 +243,7 @@
       "forms": "Formularios",
       "formsValue": "{n} pendiente",
       "noMeeting": "Aún sin agendar",
+      "deliveryWeeks": "~{n} semanas",
       "tutorial": {
         "step1Title": "Empecemos por aquí",
         "step1Body": "Toca «Continuar» para subir tus documentos. Yo te guío en cada paso — no te preocupes.",
@@ -334,14 +335,14 @@
       "gotIt": "Entendido",
       "whatsNext": "¿Qué sigue?",
       "whatsNextBody": "Tu equipo está trabajando en tu caso. Te avisaremos en cuanto haya novedades.",
-      "cronogramaTitle": "Cronograma estimado",
+      "cronogramaTitle": "Cronograma del servicio",
       "deliveryEstimate": "Entrega estimada del expediente",
       "cronogramaNotStarted": "Comienza al activar tu caso",
       "citaN": "Cita {n}",
-      "weekN": "Sem. {n}",
+      "weekN": "Semana {n}",
       "totalWeeks": "~{n} semanas"
     },
-    "bitacora": {
+    "historial": {
       "back": "Más",
       "title": "Historial del caso",
       "subtitle": "Aquí queda registro de todo, con su fecha y hora.",
@@ -1058,7 +1059,7 @@
         "viewRawJson": "Ver JSON crudo",
         "viewEntityHistory": "Ver historial completo de esta entidad",
         "emptyTitle": "Toda acción del equipo quedará registrada aquí",
-        "emptySub": "Cuando alguien cree, edite o publique algo, aparecerá en esta bitácora.",
+        "emptySub": "Cuando alguien cree, edite o publique algo, aparecerá en este registro.",
         "emptyFiltered": "Ninguna entrada coincide con estos filtros."
       },
       "config": {
@@ -1229,7 +1230,6 @@
           "generaciones": "Generaciones",
           "traspaso": "Traspaso",
           "historial": "Historial",
-          "bitacora": "Bitácora",
           "pagos": "Pagos",
           "expediente": "Expediente",
           "validacion": "Validación",
@@ -1250,6 +1250,9 @@
         "editPartyLocked": "Contrato firmado: no se puede editar el nombre",
         "editPartyError": "No se pudo actualizar el nombre",
         "routeTitle": "Ruta de citas",
+        "advancePhase": "Avanzar a la siguiente fase",
+        "advancingPhase": "Avanzando…",
+        "advancePhaseDone": "El caso avanzó de fase",
         "nbaTitle": "Siguiente mejor acción",
         "nbaDefault": "Revisa los documentos pendientes y agenda la próxima cita.",
         "goAction": "Ir",

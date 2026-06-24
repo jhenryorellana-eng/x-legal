@@ -107,7 +107,7 @@ function buildCaseItems(labels: BottomNavLabels, caseId: string): NavItem[] {
       label: labels.mas,
       icon: "grid",
       href: `${base}/mas`,
-      match: [`${base}/bitacora`, `${base}/datos`, `${base}/expedientes`],
+      match: [`${base}/historial`, `${base}/datos`, `${base}/expedientes`],
     },
   ];
 }

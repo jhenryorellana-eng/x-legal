@@ -208,22 +208,66 @@ export interface PhaseProgressInput {
 /**
  * Computes a [0, 100] progress score for a phase.
  *
- * Uses weights: documents=50%, forms=30%, appointments=20%.
- * Returns 100 when all totals are 0 (nothing required = complete).
+ * Base weights: documents=50%, forms=30%, appointments=20%. Only categories that
+ * actually have requirements (total > 0) count — the weights are renormalized
+ * over the required categories. A category with nothing required does NOT count
+ * as "100% done": otherwise a documents-only phase (forms/appointments not yet
+ * wired, passed as 0/0) would show a fixed 30%+20% = 50% floor even with zero
+ * documents uploaded. When NOTHING at all is required, the phase is complete (100).
  */
 export function computePhaseProgress(input: PhaseProgressInput): number {
   const { documents: dW, forms: fW, appointments: aW } = PHASE_PROGRESS_WEIGHTS;
 
-  function pct(done: number, total: number): number {
-    if (total === 0) return 100;
-    return Math.min(100, Math.round((done / total) * 100));
-  }
+  const categories = [
+    { weight: dW, done: input.approvedDocuments, total: input.totalDocuments },
+    { weight: fW, done: input.submittedForms, total: input.totalForms },
+    { weight: aW, done: input.completedAppointments, total: input.totalAppointments },
+  ].filter((c) => c.total > 0);
 
-  const docPct   = pct(input.approvedDocuments, input.totalDocuments);
-  const formPct  = pct(input.submittedForms, input.totalForms);
-  const apptPct  = pct(input.completedAppointments, input.totalAppointments);
+  // Nothing required anywhere in the phase → complete.
+  if (categories.length === 0) return 100;
 
-  return Math.round((docPct * dW + formPct * fW + apptPct * aW) / 100);
+  const totalWeight = categories.reduce((sum, c) => sum + c.weight, 0);
+  const weighted = categories.reduce((sum, c) => {
+    const pct = Math.min(100, Math.round((c.done / c.total) * 100));
+    return sum + pct * c.weight;
+  }, 0);
+
+  return Math.round(weighted / totalWeight);
+}
+
+// ---------------------------------------------------------------------------
+// Phase advancement — manual, staff-driven (DOC-51 §13 / §22)
+//
+// The phase % within a phase is automatic (computePhaseProgress above); moving
+// the case to the NEXT phase is a deliberate staff action, because each phase
+// boundary tracks an external legal event (USCIS receipt, court order, …) the
+// system cannot observe. This pure helper only decides WHICH phase is next; the
+// service orchestrates the I/O (update + phase history + timeline + audit).
+// ---------------------------------------------------------------------------
+
+export interface ServicePhaseRef {
+  id: string;
+  position: number;
+}
+
+/**
+ * Resolves the phase a case should move to next: the phase with the smallest
+ * position strictly greater than the current phase's. Returns null when the case
+ * is already at the last phase, or when the current phase is unknown / absent
+ * from the list (caller treats null as "cannot advance"). Pure, order-independent.
+ */
+export function resolveNextPhase(
+  phases: ServicePhaseRef[],
+  currentPhaseId: string | null,
+): ServicePhaseRef | null {
+  if (!currentPhaseId) return null;
+  const current = phases.find((p) => p.id === currentPhaseId);
+  if (!current) return null;
+  const ahead = phases
+    .filter((p) => p.position > current.position)
+    .sort((a, b) => a.position - b.position);
+  return ahead[0] ?? null;
 }
 
 // ---------------------------------------------------------------------------

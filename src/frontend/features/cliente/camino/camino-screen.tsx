@@ -74,7 +74,13 @@ export interface CaminoScreenProps {
   /** First-visit (just accepted disclaimer) → fire the tutorial. */
   firstVisit: boolean;
   currentMilestoneLabel: string | null;
-  /** Estimated expediente delivery date (already formatted), or null. */
+  /** Next scheduled appointment, already formatted (e.g. "12 jun, 2:00 PM"), or
+   *  null when there is no upcoming cita. */
+  nextMeetingValue?: string | null;
+  /** Where the "Próxima cita" tile links: the cita detail when one exists,
+   *  otherwise the scheduler. */
+  nextMeetingHref?: string;
+  /** Estimated delivery in weeks (already formatted, e.g. "~12 semanas"), or null. */
   deliveryLabel?: string | null;
   labels: CaminoLabels;
   tutorialLabels: CaminoTutorialLabels;
@@ -98,6 +104,8 @@ export function CaminoScreen(props: CaminoScreenProps) {
     docsComplete,
     firstVisit,
     currentMilestoneLabel,
+    nextMeetingValue,
+    nextMeetingHref,
     deliveryLabel,
     labels,
     tutorialLabels,
@@ -453,11 +461,11 @@ export function CaminoScreen(props: CaminoScreenProps) {
       <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
         {[
           {
-            href: `/caso/${caseId}/agendar`,
+            href: nextMeetingHref ?? `/caso/${caseId}/agendar`,
             icon: "calendar" as const,
             color: "var(--accent)",
             label: labels.nextMeeting,
-            value: labels.noMeeting,
+            value: nextMeetingValue ?? labels.noMeeting,
           },
           {
             href: `/caso/${caseId}/documentos`,

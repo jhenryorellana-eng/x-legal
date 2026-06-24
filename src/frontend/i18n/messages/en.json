@@ -243,6 +243,7 @@
       "forms": "Forms",
       "formsValue": "{n} pending",
       "noMeeting": "Not scheduled yet",
+      "deliveryWeeks": "~{n} weeks",
       "tutorial": {
         "step1Title": "Let's start here",
         "step1Body": "Tap “Continue” to upload your documents. I'll guide you every step — don't worry.",
@@ -334,14 +335,14 @@
       "gotIt": "Got it",
       "whatsNext": "What's next?",
       "whatsNextBody": "Your team is working on your case. We'll let you know as soon as there's news.",
-      "cronogramaTitle": "Estimated timeline",
+      "cronogramaTitle": "Service timeline",
       "deliveryEstimate": "Estimated expediente delivery",
       "cronogramaNotStarted": "Starts when your case is activated",
       "citaN": "Appt {n}",
-      "weekN": "Wk {n}",
+      "weekN": "Week {n}",
       "totalWeeks": "~{n} weeks"
     },
-    "bitacora": {
+    "historial": {
       "back": "More",
       "title": "Case history",
       "subtitle": "Everything is recorded here, with date and time.",
@@ -1229,7 +1230,6 @@
           "generaciones": "Generations",
           "traspaso": "Handoff",
           "historial": "History",
-          "bitacora": "Log",
           "pagos": "Payments",
           "expediente": "File",
           "validacion": "Validation",
@@ -1250,6 +1250,9 @@
         "editPartyLocked": "Contract signed: the name can't be edited",
         "editPartyError": "Couldn't update the name",
         "routeTitle": "Appointment route",
+        "advancePhase": "Advance to the next phase",
+        "advancingPhase": "Advancing…",
+        "advancePhaseDone": "The case advanced to the next phase",
         "nbaTitle": "Next best action",
         "nbaDefault": "Review pending documents and schedule the next appointment.",
         "goAction": "Go",

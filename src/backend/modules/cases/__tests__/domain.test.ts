@@ -10,6 +10,7 @@ import {
   canTransitionDocument,
   canTransitionContract,
   computePhaseProgress,
+  resolveNextPhase,
   buildPartiesSnapshot,
   CASE_TRANSITIONS,
   type ContractStatus,
@@ -46,6 +47,41 @@ describe("buildPartiesSnapshot", () => {
   it("tolerates a null principal name (no profile yet)", () => {
     const snap = buildPartiesSnapshot({ userId: "u1", name: null }, []);
     expect(snap.parties[0].name).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveNextPhase
+// ---------------------------------------------------------------------------
+
+describe("resolveNextPhase", () => {
+  const phases = [
+    { id: "p0", position: 0 },
+    { id: "p1", position: 1 },
+    { id: "p2", position: 2 },
+  ];
+
+  it("returns the next phase by position", () => {
+    expect(resolveNextPhase(phases, "p0")).toEqual({ id: "p1", position: 1 });
+    expect(resolveNextPhase(phases, "p1")).toEqual({ id: "p2", position: 2 });
+  });
+
+  it("returns null at the last phase", () => {
+    expect(resolveNextPhase(phases, "p2")).toBeNull();
+  });
+
+  it("returns null when the current phase is null or unknown", () => {
+    expect(resolveNextPhase(phases, null)).toBeNull();
+    expect(resolveNextPhase(phases, "nope")).toBeNull();
+  });
+
+  it("is order-independent (sorts by position)", () => {
+    const shuffled = [
+      { id: "p2", position: 2 },
+      { id: "p0", position: 0 },
+      { id: "p1", position: 1 },
+    ];
+    expect(resolveNextPhase(shuffled, "p0")).toEqual({ id: "p1", position: 1 });
   });
 });
 
@@ -335,5 +371,59 @@ describe("computePhaseProgress", () => {
         completedAppointments: 0,
       }),
     ).toBe(100); // docs=100% (capped), forms=100% (none required), appts=100%
+  });
+
+  // Regression: a documents-only phase (no forms/appointments required) must
+  // reflect ONLY the document completion — empty categories must NOT inflate the
+  // score. Previously forms+appointments (each "100% because nothing required")
+  // contributed a fixed 30%+20%=50% floor, so a brand-new case showed 50%.
+  it("does not inflate when only documents are required (0 of 4 → 0%)", () => {
+    expect(
+      computePhaseProgress({
+        totalDocuments: 4,
+        approvedDocuments: 0,
+        totalForms: 0,
+        submittedForms: 0,
+        totalAppointments: 0,
+        completedAppointments: 0,
+      }),
+    ).toBe(0);
+  });
+
+  it("documents-only phase scales with approvals (2 of 4 → 50%, 4 of 4 → 100%)", () => {
+    expect(
+      computePhaseProgress({
+        totalDocuments: 4,
+        approvedDocuments: 2,
+        totalForms: 0,
+        submittedForms: 0,
+        totalAppointments: 0,
+        completedAppointments: 0,
+      }),
+    ).toBe(50);
+    expect(
+      computePhaseProgress({
+        totalDocuments: 4,
+        approvedDocuments: 4,
+        totalForms: 0,
+        submittedForms: 0,
+        totalAppointments: 0,
+        completedAppointments: 0,
+      }),
+    ).toBe(100);
+  });
+
+  it("renormalizes weights to required categories (docs + forms only, appts none)", () => {
+    // docs 100% (weight 50) + forms 0% (weight 30), appts none → 50/80 = 63
+    expect(
+      computePhaseProgress({
+        totalDocuments: 2,
+        approvedDocuments: 2,
+        totalForms: 2,
+        submittedForms: 0,
+        totalAppointments: 0,
+        completedAppointments: 0,
+      }),
+    ).toBe(63);
   });
 });

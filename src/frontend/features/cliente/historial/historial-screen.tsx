@@ -5,18 +5,18 @@ import Link from "next/link";
 import { Icon, type IconName } from "@/frontend/components/brand/icon";
 
 /**
- * BitacoraScreen — `/caso/[caseId]/bitacora` (DOC-51 §23, prototype `screens8.jsx
+ * HistorialScreen — `/caso/[caseId]/historial` (DOC-51 §23, prototype `screens8.jsx
  * → HistorialScreen`). Filter chips + day-grouped timeline with actor chips.
  *
  * Client component (filter chips are interactive). Events are resolved + grouped
  * server-side in the user's timezone; the client just filters by category.
  */
 
-export type BitacoraCategory = "todo" | "doc" | "cita" | "form" | "pago" | "msg";
+export type HistorialCategory = "todo" | "doc" | "cita" | "form" | "pago" | "msg";
 
-export interface BitacoraEvent {
+export interface HistorialEvent {
   id: string;
-  category: Exclude<BitacoraCategory, "todo">;
+  category: Exclude<HistorialCategory, "todo">;
   icon: IconName;
   color: string;
   text: string;
@@ -25,12 +25,12 @@ export interface BitacoraEvent {
   team: boolean; // true = "Tu equipo", false = "Tú"
 }
 
-export interface BitacoraDay {
+export interface HistorialDay {
   label: string; // "Hoy" / "Ayer" / "3 de junio"
-  events: BitacoraEvent[];
+  events: HistorialEvent[];
 }
 
-export interface BitacoraLabels {
+export interface HistorialLabels {
   back: string;
   title: string;
   subtitle: string;
@@ -45,18 +45,18 @@ export interface BitacoraLabels {
   emptyFilter: string;
 }
 
-export function BitacoraScreen({
+export function HistorialScreen({
   caseId,
   days,
   labels,
 }: {
   caseId: string;
-  days: BitacoraDay[];
-  labels: BitacoraLabels;
+  days: HistorialDay[];
+  labels: HistorialLabels;
 }) {
-  const [filter, setFilter] = React.useState<BitacoraCategory>("todo");
+  const [filter, setFilter] = React.useState<HistorialCategory>("todo");
 
-  const filters: { id: BitacoraCategory; label: string }[] = [
+  const filters: { id: HistorialCategory; label: string }[] = [
     { id: "todo", label: labels.filterAll },
     { id: "doc", label: labels.filterDocs },
     { id: "cita", label: labels.filterMeetings },

@@ -15,6 +15,7 @@ export {
   reviewDocument,
   setRequirementVisibility,
   changeCaseStatus,
+  advanceCasePhase,
   getCasesForClient,
   getCaseOverview,
   getCaseRequirements,
@@ -61,6 +62,8 @@ export type {
   CasePartyInput,
   UpdateCasePartyInput,
   SetRequirementVisibilityInput,
+  AdvanceCasePhaseInput,
+  AdvanceCasePhaseResult,
   // F4-Ola3 form types
   SaveFormDraftInput,
   SubmitFormResponseInput,

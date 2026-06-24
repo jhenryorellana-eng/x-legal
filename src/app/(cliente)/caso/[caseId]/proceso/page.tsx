@@ -37,31 +37,17 @@ export default async function ProcesoPage({
   }
   const name = (await getClientDisplayName(actor)) ?? t("fallbackName");
 
-  // Cronograma + estimated delivery (informational; anchored on opened_at).
+  // Cronograma — expressed in weeks relative to case start (no specific dates;
+  // the estimates never read as a commitment). Anchored on opened_at upstream.
   const timeline = await getCaseTimeline(actor, caseId).catch(() => null);
-  const fmtDate = (iso: string | null): string | null => {
-    if (!iso) return null;
-    try {
-      return new Intl.DateTimeFormat(locale === "en" ? "en-US" : "es-ES", {
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-        timeZone: "UTC",
-      }).format(new Date(iso));
-    } catch {
-      return null;
-    }
-  };
   const cronograma: ProcesoCronograma | null =
     timeline && timeline.citas.length > 0
       ? {
           citas: timeline.citas.map((c) => ({
             label: pickLocale(c.citaLabelI18n, locale) || t("citaN", { n: c.sequenceNumber }),
             weekLabel: t("weekN", { n: c.weekOffset }),
-            dateLabel: fmtDate(c.estDate),
           })),
           started: timeline.started,
-          deliveryLabel: fmtDate(timeline.estimatedDeliveryDate),
           totalWeeksLabel: t("totalWeeks", { n: timeline.totalWeeks }),
         }
       : null;
