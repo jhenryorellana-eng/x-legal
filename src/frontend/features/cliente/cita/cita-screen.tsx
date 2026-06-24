@@ -86,8 +86,6 @@ export interface CitaScreenProps {
   staffNote: string | null;
   /** Effective video-call link (org default / per-cita override); null = none yet. */
   videoLink: string | null;
-  /** Appointment start (UTC ISO) — gates the join button to a ±10 min window. */
-  startsAtIso: string;
   /** Fire the confetti (the client just booked it). */
   celebrate: boolean;
   labels: CitaLabels;
@@ -109,7 +107,6 @@ export function CitaScreen({
   status,
   staffNote,
   videoLink,
-  startsAtIso,
   celebrate,
   labels,
   cancelAppointment,
@@ -120,20 +117,13 @@ export function CitaScreen({
   const [reason, setReason] = React.useState("");
   const [cancelling, setCancelling] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  // Re-evaluate the join window every 30s so the button "opens" at call time
-  // without a manual refresh (RF-CLI-040: enabled within ±10 min of the start).
-  const [nowMs, setNowMs] = React.useState(() => Date.now());
-  React.useEffect(() => {
-    const id = setInterval(() => setNowMs(Date.now()), 30_000);
-    return () => clearInterval(id);
-  }, []);
 
   const completed = status === "completed";
-  const startMs = new Date(startsAtIso).getTime();
-  // Open from 10 min before the start until 90 min after (covers a late join).
-  const joinOpen =
-    nowMs >= startMs - 10 * 60_000 && nowMs <= startMs + 90 * 60_000;
-  const canJoin = Boolean(videoLink) && joinOpen;
+  // The video link is a fixed meeting room (set by staff in "Mi disponibilidad"),
+  // always reachable — so the join button is enabled whenever a link exists. The
+  // client may enter early and wait in the room; no ±10 min gate (that was for
+  // LiveKit rooms created at call time, which is F7/not used yet).
+  const canJoin = Boolean(videoLink);
 
   React.useEffect(() => {
     if (!celebrate || completed) return;

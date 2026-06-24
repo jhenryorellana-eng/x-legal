@@ -122,7 +122,6 @@ export default async function CitaPage({
       status={status}
       staffNote={staffNote}
       videoLink={appt.video_link}
-      startsAtIso={startsAt}
       celebrate={nueva === "1"}
       cancelAppointment={cancelAppointmentAction}
       labels={{
