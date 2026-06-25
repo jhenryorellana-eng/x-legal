@@ -96,6 +96,7 @@ function makeApptRow(overrides: Partial<{
   client_user_id: string | null;
   lead_id: string | null;
   case_id: string | null;
+  client_note: string | null;
 }> = {}) {
   return {
     id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -108,6 +109,7 @@ function makeApptRow(overrides: Partial<{
     sequence_number: 1,
     livekit_room_id: null,
     notes: null,
+    client_note: null,
     reminder_sent_at: null,
     client_user_id: null,
     lead_id: null,
@@ -243,6 +245,28 @@ describe("getWeekAgenda — clientName resolution", () => {
 
     expect(result.appointments[0].clientName).toBeNull();
     expect(result.appointments[0].clientName).not.toBe(CLIENT_USER_ID);
+  });
+
+  it("maps client_note → clientNote (read-only client note, distinct from notes)", async () => {
+    vi.mocked(schedulingRepo.findOrgAppointmentsInRange).mockResolvedValue([
+      makeApptRow({
+        client_user_id: CLIENT_USER_ID,
+        case_id: CASE_ID,
+        client_note: "Tengo dudas sobre mi I-765",
+      }) as never,
+    ]);
+
+    mockServiceClient.mockReturnValue(
+      makeServiceClient({
+        profileData: [{ user_id: CLIENT_USER_ID, first_name: "María", preferred_name: null }],
+      }),
+    );
+
+    const result = await getWeekAgenda(STAFF_ACTOR, { weekStartLocal: "2026-06-08" });
+
+    expect(result.appointments[0].clientNote).toBe("Tengo dudas sobre mi I-765");
+    // Staff log stays separate (null here).
+    expect(result.appointments[0].notes).toBeNull();
   });
 
   it("empty week → appointments is empty, no enrichment .in() calls made", async () => {

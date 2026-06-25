@@ -353,6 +353,7 @@ export type Database = {
         Row: {
           cancelled_reason: string | null
           case_id: string | null
+          client_note: string | null
           client_user_id: string | null
           created_at: string
           ends_at: string
@@ -378,6 +379,7 @@ export type Database = {
         Insert: {
           cancelled_reason?: string | null
           case_id?: string | null
+          client_note?: string | null
           client_user_id?: string | null
           created_at?: string
           ends_at: string
@@ -403,6 +405,7 @@ export type Database = {
         Update: {
           cancelled_reason?: string | null
           case_id?: string | null
+          client_note?: string | null
           client_user_id?: string | null
           created_at?: string
           ends_at?: string

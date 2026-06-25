@@ -244,6 +244,8 @@ export default async function VentasCitasPage({
       videoLink: appt.videoLink,
       status: appt.status as CitaDetail["status"],
       lexHtml: "",
+      clientNote: appt.clientNote,
+      notes: appt.notes,
       objectives: appt.objectives.map((o) => ({ id: o.id, text: resolveI18n(o.text, locale) })),
       objectivesOutcome: appt.objectivesOutcome,
     };
@@ -289,6 +291,20 @@ export default async function VentasCitasPage({
     rescheduleConfirm: t("rescheduleConfirm"),
     rescheduledToast: t("rescheduledToast"),
     noVideoLink: t("noVideoLink"),
+    clientNoteTitle: t("clientNoteTitle"),
+    staffNotesTitle: t("staffNotesTitle"),
+    noShowChip: t("noShowChip"),
+    cancelModalTitle: t("cancelModalTitle"),
+    cancelModalSub: t("cancelModalSub"),
+    cancelReasonLabel: t("cancelReasonLabel"),
+    cancelReasonPh: t("cancelReasonPh"),
+    cancelConfirm: t("cancelConfirm"),
+    cancelKeep: t("cancelKeep"),
+    cancelledToast: t("cancelledToast"),
+    noShowModalTitle: t("noShowModalTitle"),
+    noShowModalSub: t("noShowModalSub"),
+    noShowConfirm: t("noShowConfirm"),
+    noShowToast: t("noShowToast"),
   };
 
   const nuevaCitaStrings = {

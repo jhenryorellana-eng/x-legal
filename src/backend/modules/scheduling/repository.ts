@@ -113,6 +113,8 @@ export interface InsertAppointmentInput {
   reminder1d: boolean;
   reminder1h: boolean;
   notes: string | null;
+  /** Note the CLIENT wrote when self-booking. Distinct from `notes` (staff log). */
+  clientNote?: string | null;
   cancelledReason?: string | null;
   livekitRoomId?: string | null;
   videoLink?: string | null;
@@ -142,6 +144,7 @@ export async function insertAppointment(
     reminder_1d: input.reminder1d,
     reminder_1h: input.reminder1h,
     notes: input.notes,
+    client_note: input.clientNote ?? null,
     cancelled_reason: input.cancelledReason ?? null,
     livekit_room_id: input.livekitRoomId ?? null,
     video_link: input.videoLink ?? null,

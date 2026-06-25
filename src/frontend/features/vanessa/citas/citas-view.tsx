@@ -66,6 +66,23 @@ export interface CitasStrings {
   rescheduleConfirm: string;
   rescheduledToast: string;
   noVideoLink: string;
+  // Client note + staff internal log + status pill
+  clientNoteTitle: string;
+  staffNotesTitle: string;
+  noShowChip: string;
+  // Cancel-with-reason modal
+  cancelModalTitle: string;
+  cancelModalSub: string;
+  cancelReasonLabel: string;
+  cancelReasonPh: string;
+  cancelConfirm: string;
+  cancelKeep: string;
+  cancelledToast: string;
+  // No-show modal
+  noShowModalTitle: string;
+  noShowModalSub: string;
+  noShowConfirm: string;
+  noShowToast: string;
 }
 
 export interface CitasViewProps {
@@ -83,7 +100,7 @@ export interface CitasViewProps {
     notes: string;
   }) => Promise<{ ok: boolean }>;
   onReschedule: (input: { id: string; startsAtIso: string }) => Promise<{ ok: boolean }>;
-  onCancel: (id: string) => Promise<{ ok: boolean }>;
+  onCancel: (input: { id: string; reason: string }) => Promise<{ ok: boolean }>;
   onNoShow: (id: string) => Promise<{ ok: boolean }>;
   presetLeadId?: string | null;
 }
@@ -116,6 +133,15 @@ export function CitasView(props: CitasViewProps) {
   const [rescheduleId, setRescheduleId] = React.useState<string | null>(null);
   const [rescheduleWhen, setRescheduleWhen] = React.useState(""); // datetime-local
   const [rescheduleBusy, setRescheduleBusy] = React.useState(false);
+
+  // Cancel-with-reason modal state (destructive — reason required, DOC-53 §0.5).
+  const [cancelId, setCancelId] = React.useState<string | null>(null);
+  const [cancelReason, setCancelReason] = React.useState("");
+  const [cancelBusy, setCancelBusy] = React.useState(false);
+
+  // No-show confirmation modal state (applies the 7-day rebooking penalty).
+  const [noShowId, setNoShowId] = React.useState<string | null>(null);
+  const [noShowBusy, setNoShowBusy] = React.useState(false);
 
   const passesFilter = (e: CitaEvent) =>
     filter === "all" || (filter === "calls" ? e.kind === "call" : e.kind !== "call");
@@ -170,6 +196,36 @@ export function CitasView(props: CitasViewProps) {
       }
     } finally {
       setRescheduleBusy(false);
+    }
+  };
+
+  const submitCancel = async () => {
+    if (!cancelId || !cancelReason.trim() || cancelBusy) return;
+    setCancelBusy(true);
+    try {
+      const res = await props.onCancel({ id: cancelId, reason: cancelReason.trim() });
+      if (res.ok) {
+        setCancelId(null);
+        setOpenId(null);
+        toast.success(strings.cancelledToast);
+      }
+    } finally {
+      setCancelBusy(false);
+    }
+  };
+
+  const submitNoShow = async () => {
+    if (!noShowId || noShowBusy) return;
+    setNoShowBusy(true);
+    try {
+      const res = await props.onNoShow(noShowId);
+      if (res.ok) {
+        setNoShowId(null);
+        setOpenId(null);
+        toast.success(strings.noShowToast);
+      }
+    } finally {
+      setNoShowBusy(false);
     }
   };
 
@@ -303,7 +359,18 @@ export function CitasView(props: CitasViewProps) {
       >
         {detail && (
           <>
-            <Chip tone="blue" style={{ marginBottom: 14 }}>{detail.typeLabel}</Chip>
+            {/* Status + type — state first, read at a glance. */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+              <Chip tone={detail.status === "completed" ? "green" : detail.status === "no_show" ? "red" : "blue"}>
+                {detail.status === "completed"
+                  ? strings.completedChip
+                  : detail.status === "no_show"
+                    ? strings.noShowChip
+                    : strings.scheduledChip}
+              </Chip>
+              <Chip tone="neutral">{detail.typeLabel}</Chip>
+            </div>
+
             {detail.isVideo && (
               <button
                 type="button"
@@ -316,15 +383,28 @@ export function CitasView(props: CitasViewProps) {
                 {detail.videoLink ? strings.enterCall : strings.noVideoLink}
               </button>
             )}
-            {detail.lexHtml && (
-              <div className="vcard" style={{ padding: 14, background: "var(--accent-soft)", border: "none", marginBottom: 16 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }} dangerouslySetInnerHTML={{ __html: detail.lexHtml }} />
+
+            {/* Client note — what the client wrote for their advisor at booking. */}
+            {detail.clientNote && (
+              <div
+                className="vcard"
+                style={{ padding: 14, background: "var(--accent-soft)", border: "none", marginBottom: 16 }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 7 }}>
+                  <MSym name="chat_bubble" size={17} color="var(--accent)" />
+                  <span style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase", color: "var(--accent)" }}>
+                    {strings.clientNoteTitle}
+                  </span>
+                </div>
+                <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.5, color: "var(--ink)", whiteSpace: "pre-wrap" }}>
+                  {detail.clientNote}
+                </div>
               </div>
             )}
 
             {/* Completed: show the recorded outcome (read-only). */}
             {detail.status === "completed" && detail.objectivesOutcome && detail.objectivesOutcome.length > 0 ? (
-              <>
+              <div style={{ borderTop: "1px solid var(--line-2, var(--line))", paddingTop: 14 }}>
                 <div className="vcard-title" style={{ fontSize: 14, marginBottom: 10 }}>{strings.outcomeTitle}</div>
                 {detail.objectivesOutcome.map((o) => (
                   <div key={o.id} style={{ display: "flex", alignItems: "flex-start", gap: 9, padding: "7px 0", fontSize: 13, fontWeight: 600, color: "var(--ink-2)" }}>
@@ -336,9 +416,9 @@ export function CitasView(props: CitasViewProps) {
                     {o.text}
                   </div>
                 ))}
-              </>
+              </div>
             ) : (
-              <>
+              <div style={{ borderTop: "1px solid var(--line-2, var(--line))", paddingTop: 14 }}>
                 <div className="vcard-title" style={{ fontSize: 14, marginBottom: 10 }}>{strings.objectiveTitle}</div>
                 {detail.objectives.length === 0 ? (
                   <div style={{ fontSize: 13, color: "var(--ink-3)", fontWeight: 600 }}>{strings.noObjectives}</div>
@@ -350,16 +430,32 @@ export function CitasView(props: CitasViewProps) {
                     </div>
                   ))
                 )}
-              </>
+              </div>
             )}
 
+            {/* Staff internal log (bitácora) — secondary, only when present. */}
+            {detail.notes && (
+              <div style={{ borderTop: "1px solid var(--line-2, var(--line))", paddingTop: 14, marginTop: 14 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 7 }}>
+                  <MSym name="sticky_note_2" size={17} color="var(--ink-3)" />
+                  <span style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase", color: "var(--ink-3)" }}>
+                    {strings.staffNotesTitle}
+                  </span>
+                </div>
+                <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.5, color: "var(--ink-2)", whiteSpace: "pre-wrap" }}>
+                  {detail.notes}
+                </div>
+              </div>
+            )}
+
+            {/* Destructive actions — open a confirmation modal (never instant). */}
             {detail.status === "scheduled" && (
-              <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
-                <button type="button" className="flag-btn" onClick={async () => { const r = await props.onCancel(detail.id); if (r.ok) setOpenId(null); }}>
+              <div style={{ display: "flex", gap: 8, marginTop: 18, flexWrap: "wrap" }}>
+                <button type="button" className="flag-btn" onClick={() => { setCancelReason(""); setCancelId(detail.id); }}>
                   <MSym name="cancel" size={16} />
                   {strings.cancel}
                 </button>
-                <button type="button" className="flag-btn" onClick={async () => { const r = await props.onNoShow(detail.id); if (r.ok) setOpenId(null); }}>
+                <button type="button" className="flag-btn" onClick={() => setNoShowId(detail.id)}>
                   <MSym name="person_off" size={16} />
                   {strings.noShow}
                 </button>
@@ -443,6 +539,80 @@ export function CitasView(props: CitasViewProps) {
             value={rescheduleWhen}
             onChange={(e) => setRescheduleWhen(e.target.value)}
           />
+        </div>
+      </Modal>
+
+      {/* Cancel-with-reason modal (destructive — reason required, DOC-53 §0.5) */}
+      <Modal
+        open={cancelId !== null}
+        onOpenChange={(o) => !o && setCancelId(null)}
+        title={strings.cancelModalTitle}
+        tone="var(--brand-red)"
+        width={440}
+        footer={
+          <>
+            <button type="button" className="vbtn vbtn-ghost vbtn-sm" onClick={() => setCancelId(null)}>
+              {strings.cancelKeep}
+            </button>
+            <button
+              type="button"
+              className="vbtn vbtn-sm"
+              style={{
+                background: "var(--brand-red)",
+                color: "#fff",
+                opacity: !cancelReason.trim() || cancelBusy ? 0.5 : 1,
+              }}
+              disabled={!cancelReason.trim() || cancelBusy}
+              onClick={submitCancel}
+            >
+              <MSym name="cancel" size={18} />
+              {strings.cancelConfirm}
+            </button>
+          </>
+        }
+      >
+        <div style={{ fontSize: 12.5, color: "var(--ink-2)", fontWeight: 700, marginBottom: 14, lineHeight: 1.5 }}>
+          {strings.cancelModalSub}
+        </div>
+        <div className="vfield" style={{ marginBottom: 0 }}>
+          <label htmlFor="cancel-reason">{strings.cancelReasonLabel}</label>
+          <textarea
+            id="cancel-reason"
+            rows={3}
+            value={cancelReason}
+            onChange={(e) => setCancelReason(e.target.value)}
+            placeholder={strings.cancelReasonPh}
+          />
+        </div>
+      </Modal>
+
+      {/* No-show confirmation modal (applies the 7-day rebooking penalty) */}
+      <Modal
+        open={noShowId !== null}
+        onOpenChange={(o) => !o && setNoShowId(null)}
+        title={strings.noShowModalTitle}
+        tone="var(--brand-red)"
+        width={440}
+        footer={
+          <>
+            <button type="button" className="vbtn vbtn-ghost vbtn-sm" onClick={() => setNoShowId(null)}>
+              {strings.cancelKeep}
+            </button>
+            <button
+              type="button"
+              className="vbtn vbtn-sm"
+              style={{ background: "var(--brand-red)", color: "#fff", opacity: noShowBusy ? 0.5 : 1 }}
+              disabled={noShowBusy}
+              onClick={submitNoShow}
+            >
+              <MSym name="person_off" size={18} />
+              {strings.noShowConfirm}
+            </button>
+          </>
+        }
+      >
+        <div style={{ fontSize: 13, color: "var(--ink-2)", fontWeight: 600, lineHeight: 1.5 }}>
+          {strings.noShowModalSub}
         </div>
       </Modal>
 

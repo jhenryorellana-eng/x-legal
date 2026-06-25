@@ -194,6 +194,20 @@ function CitasPreview() {
         rescheduleConfirm: "Reprogramar",
         rescheduledToast: "✓ Cita reprogramada",
         noVideoLink: "Sin enlace de videollamada",
+        clientNoteTitle: "Nota del cliente",
+        staffNotesTitle: "Notas internas",
+        noShowChip: "No-show",
+        cancelModalTitle: "Cancelar cita",
+        cancelModalSub: "Se notificará al cliente y se liberará el horario. Indica el motivo de la cancelación.",
+        cancelReasonLabel: "Motivo (obligatorio)",
+        cancelReasonPh: "Ej. El cliente solicitó otra fecha…",
+        cancelConfirm: "Cancelar cita",
+        cancelKeep: "Volver",
+        cancelledToast: "Cita cancelada",
+        noShowModalTitle: "Marcar como no-show",
+        noShowModalSub: "El cliente no se presentó. Esto aplica un bloqueo de reprogramación de 7 días.",
+        noShowConfirm: "Confirmar no-show",
+        noShowToast: "Cita marcada como no-show",
       }}
       detailFor={(id) => MOCK_DETAILS[id] ?? null}
       newApptModal={{

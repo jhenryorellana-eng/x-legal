@@ -1,13 +1,14 @@
 /**
- * C-1: rescheduleAppointment atomicity invariant tests (TDD).
+ * C-1 (revised): rescheduleAppointment atomicity + uniqueness invariant (TDD).
  *
- * Verifies the insert-first ordering introduced in the F3 code-review fix:
- *   - If insertAppointment fails (SLOT_TAKEN_DB), old appointment stays 'scheduled'
- *     (updateAppointment to 'rescheduled' is never called).
- *   - If insertAppointment succeeds but updateAppointment to 'rescheduled' fails,
- *     both rows end up 'scheduled' (visible inconsistency, not silent data loss).
- *
- * Also covers M-7: getWeekAgenda uses DST-safe week-end UTC calculation.
+ * The partial unique index appointments_case_phase_seq_unique_idx forbids two
+ * rows sharing (case_id, service_phase_id, sequence_number) while both are
+ * 'scheduled'/'completed'. The new cita inherits the old seq, so the old slot
+ * must be FREED before inserting. The flow is therefore "free-first, compensate
+ * on failure":
+ *   - Step 1 marks the old cita 'rescheduled' (leaves the unique scope).
+ *   - Step 2 inserts the new cita; if it fails, the old cita is rolled back to
+ *     'scheduled' so the case is never silently orphaned.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -153,7 +154,7 @@ function makeSettings() {
 // C-1: insert-first ordering — insert fails → old stays 'scheduled'
 // ---------------------------------------------------------------------------
 
-describe("C-1: rescheduleAppointment — insert-first atomicity invariant", () => {
+describe("C-1: rescheduleAppointment — free-first + compensation invariant", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetSettings.mockResolvedValue(makeSettings());
@@ -162,7 +163,7 @@ describe("C-1: rescheduleAppointment — insert-first atomicity invariant", () =
     mockUpdateAppointment.mockResolvedValue({});
   });
 
-  it("does NOT call updateAppointment when insertAppointment throws SLOT_TAKEN_DB", async () => {
+  it("rolls the old cita back to 'scheduled' when insert throws SLOT_TAKEN_DB", async () => {
     // Arrange: staff reschedule (no slot availability check)
     mockFindById.mockResolvedValue(makeOldAppt());
     const slotTakenErr = Object.assign(new Error("SLOT_TAKEN_DB"), { code: "SLOT_TAKEN_DB" });
@@ -176,14 +177,16 @@ describe("C-1: rescheduleAppointment — insert-first atomicity invariant", () =
       }),
     ).rejects.toMatchObject({ code: "SLOT_TAKEN" });
 
-    // Assert: old appointment was never touched (still 'scheduled')
-    expect(mockUpdateAppointment).not.toHaveBeenCalledWith(
+    // Slot freed first (rescheduled), then compensated back to scheduled.
+    expect(mockUpdateAppointment).toHaveBeenCalledWith(
       OLD_APPT_ID,
       expect.objectContaining({ status: "rescheduled" }),
     );
+    const oldCalls = mockUpdateAppointment.mock.calls.filter((args: unknown[]) => args[0] === OLD_APPT_ID);
+    expect((oldCalls.at(-1)?.[1] as { status?: string }).status).toBe("scheduled");
   });
 
-  it("does NOT call updateAppointment when insertAppointment throws a generic DB error", async () => {
+  it("rolls the old cita back to 'scheduled' when insert throws a generic DB error", async () => {
     mockFindById.mockResolvedValue(makeOldAppt());
     mockInsertAppointment.mockRejectedValue(new Error("connection refused"));
 
@@ -194,14 +197,12 @@ describe("C-1: rescheduleAppointment — insert-first atomicity invariant", () =
       }),
     ).rejects.toThrow("connection refused");
 
-    // Old appointment was never marked rescheduled
-    expect(mockUpdateAppointment).not.toHaveBeenCalledWith(
-      OLD_APPT_ID,
-      expect.objectContaining({ status: "rescheduled" }),
-    );
+    // Final state for the old cita is 'scheduled' (compensated).
+    const oldCalls = mockUpdateAppointment.mock.calls.filter((args: unknown[]) => args[0] === OLD_APPT_ID);
+    expect((oldCalls.at(-1)?.[1] as { status?: string }).status).toBe("scheduled");
   });
 
-  it("marks old appointment 'rescheduled' ONLY after insertAppointment succeeds", async () => {
+  it("frees the old cita's slot BEFORE inserting and leaves it 'rescheduled' on success", async () => {
     const newApptRow = makeOldAppt({
       id: NEW_APPT_ID,
       starts_at: NEW_STARTS.toISOString(),
@@ -210,27 +211,30 @@ describe("C-1: rescheduleAppointment — insert-first atomicity invariant", () =
     });
     mockFindById.mockResolvedValue(makeOldAppt());
     mockInsertAppointment.mockResolvedValue(newApptRow);
-    mockUpdateAppointment.mockResolvedValue({ ...makeOldAppt(), status: "rescheduled" });
+    mockUpdateAppointment.mockResolvedValue({});
 
     await rescheduleAppointment(STAFF_ACTOR, {
       appointmentId: OLD_APPT_ID,
       newStartsAtUtc: NEW_STARTS,
     });
 
-    // Insert called before update
+    // The old cita is freed (rescheduled) BEFORE the insert runs.
+    const firstUpdateOrder = mockUpdateAppointment.mock.invocationCallOrder[0];
     const insertOrder = mockInsertAppointment.mock.invocationCallOrder[0];
-    const updateOrder = mockUpdateAppointment.mock.invocationCallOrder[0];
-    expect(insertOrder).toBeLessThan(updateOrder);
-
-    // Update called with status 'rescheduled' for the OLD appointment
+    expect(firstUpdateOrder).toBeLessThan(insertOrder);
     expect(mockUpdateAppointment).toHaveBeenCalledWith(
       OLD_APPT_ID,
       expect.objectContaining({ status: "rescheduled" }),
     );
+
+    // On success there is NO compensation: the old cita is never set back to scheduled.
+    const revertCalls = mockUpdateAppointment.mock.calls.filter(
+      (args: unknown[]) => args[0] === OLD_APPT_ID && (args[1] as { status?: string }).status === "scheduled",
+    );
+    expect(revertCalls).toHaveLength(0);
   });
 
-  it("insert fails → no silent orphan: old appointment never loses 'scheduled' status", async () => {
-    // If insert fails, updateAppointment should not be called at all for the old appt
+  it("no silent orphan: insert failure ends with the old cita restored to 'scheduled'", async () => {
     mockFindById.mockResolvedValue(makeOldAppt());
     mockInsertAppointment.mockRejectedValue(new Error("some db error"));
 
@@ -243,10 +247,9 @@ describe("C-1: rescheduleAppointment — insert-first atomicity invariant", () =
       // expected
     }
 
-    // CRITICAL: must not have called update on the old appointment
-    const updateCallsForOldAppt = mockUpdateAppointment.mock.calls.filter(
-      (args: unknown[]) => args[0] === OLD_APPT_ID,
-    );
-    expect(updateCallsForOldAppt).toHaveLength(0);
+    // The old cita is freed then restored → its FINAL status is 'scheduled'.
+    const oldCalls = mockUpdateAppointment.mock.calls.filter((args: unknown[]) => args[0] === OLD_APPT_ID);
+    expect(oldCalls.length).toBeGreaterThanOrEqual(2);
+    expect((oldCalls.at(-1)?.[1] as { status?: string }).status).toBe("scheduled");
   });
 });

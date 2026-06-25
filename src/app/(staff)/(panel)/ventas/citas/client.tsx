@@ -87,7 +87,7 @@ export function CitasClient({
         onReschedule={({ id, startsAtIso }) =>
           actions.reschedule({ appointmentId: id, startsAtIso })
         }
-        onCancel={(id) => actions.cancel({ appointmentId: id, reason: "cancelled-by-staff" })}
+        onCancel={({ id, reason }) => actions.cancel({ appointmentId: id, reason })}
         onNoShow={(id) => actions.noShow({ appointmentId: id })}
       />
     </LexPrefsProvider>

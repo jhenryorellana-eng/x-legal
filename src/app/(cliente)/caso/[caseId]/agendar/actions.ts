@@ -99,7 +99,9 @@ export async function bookAppointmentAction(input: {
       startsAtUtc: new Date(input.startsAtUtc),
       reminder1d: input.reminder1d,
       reminder1h: input.reminder1h,
-      notes: input.notes ?? null,
+      // The client's note is their own ("Nota para tu asesora") — route it to the
+      // dedicated client_note column, NOT the staff internal log (`notes`).
+      clientNote: input.notes ?? null,
     });
     if (!appointment) {
       // Clients never trigger the staff "warnings" path; treat as a generic retry.

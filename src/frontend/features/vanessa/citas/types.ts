@@ -40,6 +40,10 @@ export interface CitaDetail {
   videoLink: string | null;
   status: "scheduled" | "completed" | "cancelled" | "no_show" | "rescheduled";
   lexHtml: string;
+  /** Note the client wrote when self-booking ("Nota para tu asesora"); null if none. */
+  clientNote: string | null;
+  /** Staff internal log (bitácora). Shown as a secondary section when present. */
+  notes: string | null;
   /** Objectives for this cita (from the service cronograma). */
   objectives: CitaObjective[];
   /** Recorded outcome when the cita was completed (shown read-only). */

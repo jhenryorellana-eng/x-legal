@@ -142,6 +142,9 @@ export const MOCK_DETAILS: Record<string, CitaDetail> = {
     videoLink: "https://us06web.zoom.us/j/0000000000",
     status: "scheduled",
     lexHtml: "<b>Lex:</b> Recuerda generar las cartas antes de terminar.",
+    clientNote:
+      "Quiero confirmar si necesito traer los originales de mis documentos o basta con las copias.",
+    notes: null,
     objectives: [
       { id: "o1", text: "Auditar que la info esté completa" },
       { id: "o2", text: "Corregir en vivo lo que falte" },

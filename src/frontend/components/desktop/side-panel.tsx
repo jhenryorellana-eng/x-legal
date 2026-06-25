@@ -46,7 +46,14 @@ export function SidePanel({
           className="anim-fade-in"
         />
         <DialogPrimitive.Content
-          className="side-panel-content"
+          // `surface-staff`: the dialog portals to <body>, escaping the staff
+          // shell's `.surface-staff` scope, so its component classes (.vbtn,
+          // .flag-btn, .vcard, .chip …) would otherwise render unstyled — the
+          // exact problem already solved in modal.tsx. Keep `side-panel-content`
+          // for the slideInRight entrance (motion.css). `minHeight: 0` resets the
+          // `min-height: 100dvh` that `.surface-staff` carries for the full-page
+          // shell (harmless here since top/bottom already fix the height).
+          className="surface-staff side-panel-content"
           style={{
             position: "fixed",
             top: 0,
@@ -54,6 +61,7 @@ export function SidePanel({
             bottom: 0,
             zIndex: 61,
             width: "min(calc(100vw - 24px), " + width + "px)",
+            minHeight: 0,
             display: "flex",
             flexDirection: "column",
             background: "var(--panel, var(--card))",

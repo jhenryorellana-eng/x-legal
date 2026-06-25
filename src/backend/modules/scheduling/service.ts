@@ -434,6 +434,9 @@ const BookAppointmentInputSchema = z.object({
   reminder1d: z.boolean().default(true),
   reminder1h: z.boolean().default(false),
   notes: z.string().nullable().optional(),
+  /** Note the CLIENT writes when self-booking ("Nota para tu asesora"). Stored
+   *  separately from `notes` (staff internal log) so the two never mix. */
+  clientNote: z.string().trim().max(5000).nullable().optional(),
   force: z.boolean().default(false),
   /** Per-cita override for the video link; falls back to the org default. */
   videoLink: z.string().trim().max(2000).nullable().optional(),
@@ -571,6 +574,7 @@ export async function bookAppointment(
       reminder1d: p.reminder1d,
       reminder1h: p.reminder1h,
       notes: p.notes ?? null,
+      clientNote: p.clientNote ?? null,
     });
   } catch (err) {
     const code = (err as { code?: string }).code;
@@ -788,25 +792,30 @@ export async function rescheduleAppointment(
     }
   }
 
-  // Atomicity invariant (C-1):
-  //   Step 1 — Insert the new appointment FIRST (can fail on EXCLUDE constraint
-  //            or any DB error). If it fails, the old appointment remains
-  //            'scheduled' — no data loss, fully recoverable.
-  //   Step 2 — Only if Step 1 succeeds, mark the old appointment 'rescheduled'.
-  //            If Step 2 fails, both rows are 'scheduled' simultaneously.
-  //            This is VISIBLE (two active rows) and therefore recoverable by
-  //            support/cron, never a silent orphan.
+  // Atomicity + uniqueness invariant (C-1, revised):
+  //   The partial unique index appointments_case_phase_seq_unique_idx forbids
+  //   TWO rows sharing (case_id, service_phase_id, sequence_number) while both
+  //   are 'scheduled'/'completed'. The new cita inherits the old one's
+  //   sequence_number, so inserting it while the old row is still 'scheduled'
+  //   ALWAYS violates that index for case citas (only lead / seq-less citas
+  //   escaped it). Insert-first is therefore not viable — it 500s in prod even
+  //   though the unit mocks (no real index, service_phase_id null) never caught
+  //   it. So we FREE the slot first, then insert, then compensate on failure:
+  //     Step 1 — mark the old cita 'rescheduled' (leaves the unique scope).
+  //     Step 2 — insert the new cita. If it fails, roll the old cita back to
+  //              'scheduled' so the case is never stranded.
+  //   Worst case (insert fails AND the rollback fails — a double fault) leaves
+  //   the old cita 'rescheduled' with no replacement: VISIBLE and recoverable,
+  //   never a silent double-booking.
   //
-  // This order is strictly safer than the inverse (mark-old first) because:
-  //   - insert fail → old stays 'scheduled' (clean state, user can retry)
-  //   - mark-old fail → two 'scheduled' rows (visible, never lost)
-  //
-  // Optional improvement: replace steps 1+2 with a single Postgres RPC
-  // (reschedule_appointment_tx) defined in migration 0016_scheduling_rpcs.sql.
-  // The RPC wraps both in a BEGIN/COMMIT. Until the migration is applied, the
-  // two-step reorder below is the active implementation.
+  //   The atomic alternative is the reschedule_appointment_tx RPC
+  //   (0016_scheduling_rpcs.sql); it must also free the slot before inserting,
+  //   since the index is evaluated per-statement, not deferred to commit.
 
-  // Step 1 — Insert new appointment
+  // Step 1 — Free the unique (case, phase, seq) slot held by the old cita.
+  await repo.updateAppointment(a.id, { status: "rescheduled" });
+
+  // Step 2 — Insert the new cita; compensate the old one on any failure.
   let fresh: AppointmentRow;
   try {
     fresh = await repo.insertAppointment({
@@ -824,19 +833,22 @@ export async function rescheduleAppointment(
       reminder1d: input.reminder1d ?? a.reminder_1d,
       reminder1h: input.reminder1h ?? a.reminder_1h,
       notes: a.notes,
+      clientNote: a.client_note,
     });
   } catch (err) {
-    const code = (err as { code?: string }).code;
-    if (code === "SLOT_TAKEN_DB") {
-      // Old appointment is still 'scheduled' — no data loss.
-      throw new SchedulingError("SLOT_TAKEN");
+    // Compensation: restore the old cita so it is never silently orphaned.
+    try {
+      await repo.updateAppointment(a.id, { status: "scheduled" });
+    } catch (revertErr) {
+      logger.error(
+        { err: revertErr, appointmentId: a.id },
+        "scheduling.reschedule: failed to roll back old appointment after insert error",
+      );
     }
-    // Old appointment is still 'scheduled' — caller can retry.
+    const code = (err as { code?: string }).code;
+    if (code === "SLOT_TAKEN_DB") throw new SchedulingError("SLOT_TAKEN");
     throw err;
   }
-
-  // Step 2 — Mark old appointment as rescheduled (only reached if Step 1 ok)
-  await repo.updateAppointment(a.id, { status: "rescheduled" });
 
   // Set LiveKit room ID for video
   if (fresh.kind === "video") {
@@ -1141,6 +1153,8 @@ export interface AgendaAppointment {
   livekitRoomId: string | null;
   videoLink: string | null;
   notes: string | null;
+  /** Note the CLIENT wrote when self-booking (read-only for staff). */
+  clientNote: string | null;
   /** Objectives for this cita, resolved from the service cronograma (i18n). */
   objectives: ObjectiveTemplate[];
   /** Recorded objectives outcome when completed (staff detail); null otherwise. */
@@ -1207,6 +1221,7 @@ export async function getWeekAgenda(
     livekitRoomId: r.livekit_room_id,
     videoLink: r.video_link,
     notes: r.notes,
+    clientNote: r.client_note,
     objectives: [],
     objectivesOutcome: resolveObjectivesOutcome(r.objectives_outcome),
     clientName: null as string | null,

@@ -105,8 +105,9 @@ export default async function CitaPage({
     ? advisorProfile.displayName.charAt(0).toUpperCase()
     : "•";
 
-  // Objective: the appointment note, when present.
-  const objectiveText = appt.notes && status === "scheduled" ? appt.notes : null;
+  // Objective: the client's own note, echoed back while the cita is upcoming.
+  // (Lives in client_note since 0034 — staff bitácora `notes` is separate.)
+  const objectiveText = appt.client_note && status === "scheduled" ? appt.client_note : null;
   const staffNote = appt.notes && status === "completed" ? appt.notes : null;
 
   return (
