@@ -10,21 +10,32 @@ import { GradientBtn } from "@/frontend/components/brand/gradient-btn";
 
 /**
  * ProcesoScreen — `/caso/[caseId]/proceso` (DOC-51 §22, prototype `screens4.jsx →
- * ProcessScreen`). Vertical milestone timeline + glossary bottom sheet.
- *
- * Client component (the glossary sheet is interactive). Milestone states are
- * derived server-side (current/next/locked/completed).
+ * ProcessScreen`). Single vertical timeline that interleaves legal milestones and
+ * scheduled citas, in the prototype's visual language (48px discs + cards + states
+ * + glossary bottom sheet). Milestone/appointment states are resolved server-side.
  */
 
-export interface ProcesoMilestone {
-  id: string;
-  title: string;
-  description: string;
-  icon: IconName;
-  state: "completed" | "current" | "next" | "locked";
-  progress: number | null;
-  glossary: { term: string; body: string } | null;
-}
+export type ProcesoTimelineItem =
+  | {
+      kind: "milestone";
+      id: string;
+      title: string;
+      description: string;
+      icon: IconName;
+      state: "completed" | "current" | "next" | "locked";
+      progress: number | null;
+      weekLabel: string | null;
+      glossary: { term: string; body: string } | null;
+    }
+  | {
+      kind: "appointment";
+      id: string;
+      title: string;
+      status: "completed" | "booked" | "unbooked";
+      weekLabel: string;
+      dateLabel: string | null;
+      href: string;
+    };
 
 export interface ProcesoLabels {
   back: string;
@@ -38,33 +49,27 @@ export interface ProcesoLabels {
   gotIt: string;
   whatsNext: string;
   whatsNextBody: string;
-  cronogramaTitle: string;
+  appointmentPill: string; // "Cita"
+  appointmentDone: string; // "Cita completada"
+  book: string; // "Agendar"
   deliveryEstimate: string; // "Entrega estimada del expediente"
-  cronogramaNotStarted: string; // "Comienza al activar tu caso"
+  totalWeeksLabel: string; // "~N semanas"
+  notStarted: string | null; // "Comienza al activar tu caso" or null when started
 }
 
-export interface ProcesoCita {
-  label: string;
-  weekLabel: string;
-}
-
-export interface ProcesoCronograma {
-  citas: ProcesoCita[];
-  started: boolean;
-  totalWeeksLabel: string;
-}
+const ACCENT = "var(--accent)";
+const GREEN = "var(--green)";
 
 export function ProcesoScreen({
   caseId,
-  milestones,
+  items,
   labels,
-  cronograma,
 }: {
   caseId: string;
-  milestones: ProcesoMilestone[];
+  items: ProcesoTimelineItem[];
   labels: ProcesoLabels;
-  cronograma?: ProcesoCronograma | null;
 }) {
+  void caseId;
   const [glossary, setGlossary] = React.useState<{ term: string; body: string } | null>(null);
 
   return (
@@ -103,70 +108,6 @@ export function ProcesoScreen({
         {labels.subtitle}
       </p>
 
-      {cronograma && cronograma.citas.length > 0 && (
-        <div
-          style={{
-            marginBottom: 20,
-            background: "var(--card)",
-            borderRadius: 20,
-            padding: 18,
-            boxShadow: "var(--shadow-soft)",
-            border: "2px solid transparent",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 12 }}>
-            <Icon name="calendar" size={20} color="var(--accent)" />
-            <div className="t-title" style={{ fontSize: 16, color: "var(--navy)", fontWeight: 800 }}>
-              {labels.cronogramaTitle}
-            </div>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {cronograma.citas.map((c, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span
-                  style={{
-                    fontSize: 11.5,
-                    fontWeight: 800,
-                    color: "var(--accent)",
-                    background: "var(--blue-soft)",
-                    borderRadius: 999,
-                    padding: "3px 10px",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {c.weekLabel}
-                </span>
-                <span style={{ flex: 1, minWidth: 0, fontSize: 14.5, fontWeight: 700, color: "var(--navy)" }}>
-                  {c.label}
-                </span>
-              </div>
-            ))}
-          </div>
-          <div
-            style={{
-              marginTop: 14,
-              paddingTop: 14,
-              borderTop: "1px solid var(--line)",
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-            }}
-          >
-            <Icon name="trophy" size={20} color="var(--gold-deep)" />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-2)" }}>
-                {labels.deliveryEstimate}
-              </div>
-              <div className="t-title" style={{ fontSize: 16.5, fontWeight: 800, color: "var(--gold-deep)" }}>
-                {cronograma.started
-                  ? cronograma.totalWeeksLabel
-                  : `${labels.cronogramaNotStarted} · ${cronograma.totalWeeksLabel}`}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       <div style={{ position: "relative" }}>
         <div
           style={{
@@ -180,144 +121,15 @@ export function ProcesoScreen({
           }}
         />
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {milestones.map((m) => {
-            const curso = m.state === "current";
-            const sig = m.state === "next";
-            const bloq = m.state === "locked";
-            return (
-              <div key={m.id} style={{ display: "flex", gap: 15, position: "relative" }}>
-                <div
-                  style={{
-                    width: 48,
-                    height: 48,
-                    borderRadius: 999,
-                    flexShrink: 0,
-                    zIndex: 1,
-                    background: curso ? "var(--accent)" : "var(--card)",
-                    border: curso
-                      ? "none"
-                      : `2.5px solid ${sig ? "color-mix(in srgb, var(--accent) 33%, transparent)" : "var(--line)"}`,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    boxShadow: curso
-                      ? "0 8px 18px color-mix(in srgb, var(--accent) 33%, transparent)"
-                      : "none",
-                    animation: curso ? "ringPulse 2.4s ease-out infinite" : "none",
-                  }}
-                >
-                  {bloq ? (
-                    <Icon name="lock" size={19} color="var(--ink-3)" />
-                  ) : (
-                    <Icon
-                      name={m.icon}
-                      size={23}
-                      color={curso ? "#fff" : "var(--accent)"}
-                      stroke={2.4}
-                    />
-                  )}
-                </div>
-                <div
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    background: "var(--card)",
-                    borderRadius: 18,
-                    padding: "14px 16px",
-                    boxShadow: curso
-                      ? "0 14px 32px color-mix(in srgb, var(--accent) 15%, transparent)"
-                      : "var(--shadow-soft)",
-                    border: curso ? "2px solid var(--accent)" : "2px solid transparent",
-                    opacity: bloq ? 0.66 : 1,
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
-                    {curso && <StatusPill kind="revision">{labels.inProgress}</StatusPill>}
-                    {sig && (
-                      <span
-                        style={{
-                          fontSize: 11.5,
-                          fontWeight: 800,
-                          color: "var(--accent)",
-                          background: "var(--blue-soft)",
-                          borderRadius: 999,
-                          padding: "3px 9px",
-                        }}
-                      >
-                        {labels.next}
-                      </span>
-                    )}
-                  </div>
-                  <div
-                    className="t-title"
-                    style={{
-                      fontSize: 16.5,
-                      color: bloq ? "var(--ink-2)" : "var(--navy)",
-                      fontWeight: 700,
-                      lineHeight: 1.2,
-                      textWrap: "balance",
-                    }}
-                  >
-                    {m.title}
-                  </div>
-                  <p
-                    style={{
-                      margin: "5px 0 0",
-                      fontSize: 14,
-                      color: "var(--ink-2)",
-                      fontWeight: 500,
-                      lineHeight: 1.4,
-                    }}
-                  >
-                    {m.description}
-                  </p>
-                  {curso && m.progress != null && (
-                    <div style={{ marginTop: 12 }}>
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          marginBottom: 6,
-                        }}
-                      >
-                        <span style={{ fontSize: 13, fontWeight: 800, color: "var(--navy)" }}>
-                          {labels.progress}
-                        </span>
-                        <span style={{ fontSize: 13, fontWeight: 800, color: "var(--gold-deep)" }}>
-                          {m.progress}%
-                        </span>
-                      </div>
-                      <ProgressBar pct={m.progress} />
-                    </div>
-                  )}
-                  {m.glossary && (
-                    <button
-                      type="button"
-                      onClick={() => setGlossary(m.glossary)}
-                      className="mp-tap"
-                      style={{
-                        marginTop: 9,
-                        background: "none",
-                        border: "none",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 5,
-                        color: "var(--accent)",
-                        fontSize: 13,
-                        fontWeight: 800,
-                        cursor: "pointer",
-                        padding: 0,
-                        fontFamily: "var(--font-title)",
-                      }}
-                    >
-                      <Icon name="help" size={15} color="var(--accent)" />
-                      {labels.whatDoesThisMean}
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+          {items.map((it) =>
+            it.kind === "milestone" ? (
+              <MilestoneRow key={it.id} item={it} labels={labels} onGlossary={setGlossary} />
+            ) : (
+              <AppointmentRow key={it.id} item={it} labels={labels} />
+            ),
+          )}
+
+          {/* Trophy / delivery estimate */}
           <div style={{ display: "flex", gap: 15, alignItems: "center" }}>
             <div
               style={{
@@ -335,11 +147,19 @@ export function ProcesoScreen({
             >
               <Icon name="trophy" size={24} color="var(--gold-deep)" />
             </div>
-            <div
-              className="t-title"
-              style={{ fontSize: 18, color: "var(--gold-deep)", fontWeight: 800 }}
-            >
-              {labels.completed}
+            <div style={{ minWidth: 0 }}>
+              <div
+                className="t-title"
+                style={{ fontSize: 18, color: "var(--gold-deep)", fontWeight: 800 }}
+              >
+                {labels.completed}
+              </div>
+              <div style={{ fontSize: 13, color: "var(--ink-2)", fontWeight: 600, marginTop: 2 }}>
+                {labels.deliveryEstimate}:{" "}
+                {labels.notStarted
+                  ? `${labels.notStarted} · ${labels.totalWeeksLabel}`
+                  : labels.totalWeeksLabel}
+              </div>
             </div>
           </div>
         </div>
@@ -358,10 +178,7 @@ export function ProcesoScreen({
       >
         <Icon name="info" size={22} color="var(--accent)" />
         <div>
-          <div
-            className="t-title"
-            style={{ fontSize: 16, color: "var(--navy)", fontWeight: 700 }}
-          >
+          <div className="t-title" style={{ fontSize: 16, color: "var(--navy)", fontWeight: 700 }}>
             {labels.whatsNext}
           </div>
           <p
@@ -400,10 +217,7 @@ export function ProcesoScreen({
           >
             <Icon name="help" size={24} color="var(--accent)" />
           </div>
-          <h3
-            className="t-title"
-            style={{ margin: 0, fontSize: 20, color: "var(--navy)", fontWeight: 800 }}
-          >
+          <h3 className="t-title" style={{ margin: 0, fontSize: 20, color: "var(--navy)", fontWeight: 800 }}>
             {glossary?.term}
           </h3>
         </div>
@@ -423,6 +237,261 @@ export function ProcesoScreen({
           {labels.gotIt}
         </GradientBtn>
       </BottomSheet>
+    </div>
+  );
+}
+
+/** Shared 48px timeline disc. */
+function Disc({
+  filled,
+  ring,
+  pulse,
+  children,
+}: {
+  filled: string | null; // fill color, or null for card bg
+  ring: string | null; // border color, or null
+  pulse?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        width: 48,
+        height: 48,
+        borderRadius: 999,
+        flexShrink: 0,
+        zIndex: 1,
+        background: filled ?? "var(--card)",
+        border: ring ? `2.5px solid ${ring}` : "none",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        boxShadow: filled ? `0 8px 18px color-mix(in srgb, ${filled} 33%, transparent)` : "none",
+        animation: pulse ? "ringPulse 2.4s ease-out infinite" : "none",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function MilestoneRow({
+  item,
+  labels,
+  onGlossary,
+}: {
+  item: Extract<ProcesoTimelineItem, { kind: "milestone" }>;
+  labels: ProcesoLabels;
+  onGlossary: (g: { term: string; body: string }) => void;
+}) {
+  const curso = item.state === "current";
+  const sig = item.state === "next";
+  const bloq = item.state === "locked";
+  const done = item.state === "completed";
+
+  const disc = done ? (
+    <Disc filled={GREEN} ring={null}>
+      <Icon name="check" size={23} color="#fff" stroke={2.6} />
+    </Disc>
+  ) : curso ? (
+    <Disc filled={ACCENT} ring={null} pulse>
+      <Icon name={item.icon} size={23} color="#fff" stroke={2.4} />
+    </Disc>
+  ) : bloq ? (
+    <Disc filled={null} ring="var(--line)">
+      <Icon name="lock" size={19} color="var(--ink-3)" />
+    </Disc>
+  ) : (
+    <Disc filled={null} ring="color-mix(in srgb, var(--accent) 33%, transparent)">
+      <Icon name={item.icon} size={23} color="var(--accent)" stroke={2.4} />
+    </Disc>
+  );
+
+  return (
+    <div style={{ display: "flex", gap: 15, position: "relative" }}>
+      {disc}
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          background: "var(--card)",
+          borderRadius: 18,
+          padding: "14px 16px",
+          boxShadow: curso
+            ? "0 14px 32px color-mix(in srgb, var(--accent) 15%, transparent)"
+            : "var(--shadow-soft)",
+          border: curso ? "2px solid var(--accent)" : "2px solid transparent",
+          opacity: bloq ? 0.66 : 1,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3, flexWrap: "wrap" }}>
+          {curso && <StatusPill kind="revision">{labels.inProgress}</StatusPill>}
+          {sig && (
+            <span
+              style={{
+                fontSize: 11.5,
+                fontWeight: 800,
+                color: "var(--accent)",
+                background: "var(--blue-soft)",
+                borderRadius: 999,
+                padding: "3px 9px",
+              }}
+            >
+              {labels.next}
+            </span>
+          )}
+          {done && <StatusPill kind="aprobado">{labels.completed}</StatusPill>}
+          {item.weekLabel && (
+            <span style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-3)" }}>
+              {item.weekLabel}
+            </span>
+          )}
+        </div>
+        <div
+          className="t-title"
+          style={{
+            fontSize: 16.5,
+            color: bloq ? "var(--ink-2)" : "var(--navy)",
+            fontWeight: 700,
+            lineHeight: 1.2,
+            textWrap: "balance",
+          }}
+        >
+          {item.title}
+        </div>
+        {item.description && (
+          <p style={{ margin: "5px 0 0", fontSize: 14, color: "var(--ink-2)", fontWeight: 500, lineHeight: 1.4 }}>
+            {item.description}
+          </p>
+        )}
+        {curso && item.progress != null && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: "var(--navy)" }}>{labels.progress}</span>
+              <span style={{ fontSize: 13, fontWeight: 800, color: "var(--gold-deep)" }}>{item.progress}%</span>
+            </div>
+            <ProgressBar pct={item.progress} />
+          </div>
+        )}
+        {item.glossary && (
+          <button
+            type="button"
+            onClick={() => item.glossary && onGlossary(item.glossary)}
+            className="mp-tap"
+            style={{
+              marginTop: 9,
+              background: "none",
+              border: "none",
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              color: "var(--accent)",
+              fontSize: 13,
+              fontWeight: 800,
+              cursor: "pointer",
+              padding: 0,
+              fontFamily: "var(--font-title)",
+            }}
+          >
+            <Icon name="help" size={15} color="var(--accent)" />
+            {labels.whatDoesThisMean}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AppointmentRow({
+  item,
+  labels,
+}: {
+  item: Extract<ProcesoTimelineItem, { kind: "appointment" }>;
+  labels: ProcesoLabels;
+}) {
+  const done = item.status === "completed";
+  const booked = item.status === "booked";
+
+  const disc = done ? (
+    <Disc filled={GREEN} ring={null}>
+      <Icon name="calendar" size={22} color="#fff" stroke={2.4} />
+    </Disc>
+  ) : booked ? (
+    <Disc filled={ACCENT} ring={null}>
+      <Icon name="calendar" size={22} color="#fff" stroke={2.4} />
+    </Disc>
+  ) : (
+    <Disc filled={null} ring="color-mix(in srgb, var(--accent) 33%, transparent)">
+      <Icon name="calendar" size={22} color="var(--accent)" stroke={2.4} />
+    </Disc>
+  );
+
+  return (
+    <div style={{ display: "flex", gap: 15, position: "relative" }}>
+      {disc}
+      <Link
+        href={item.href}
+        className="mp-lift"
+        style={{
+          flex: 1,
+          minWidth: 0,
+          background: "var(--card)",
+          borderRadius: 18,
+          padding: "14px 16px",
+          boxShadow: "var(--shadow-soft)",
+          textDecoration: "none",
+          border: "2px solid transparent",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3, flexWrap: "wrap" }}>
+          <span
+            style={{
+              fontSize: 11.5,
+              fontWeight: 800,
+              color: "var(--gold-deep)",
+              background: "var(--gold-soft)",
+              borderRadius: 999,
+              padding: "3px 9px",
+            }}
+          >
+            {labels.appointmentPill}
+          </span>
+          <span style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-3)" }}>{item.weekLabel}</span>
+        </div>
+        <div
+          className="t-title"
+          style={{ fontSize: 16.5, color: "var(--navy)", fontWeight: 700, lineHeight: 1.2, textWrap: "balance" }}
+        >
+          {item.title}
+        </div>
+        <div
+          style={{
+            marginTop: 6,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            fontSize: 14,
+            fontWeight: 700,
+          }}
+        >
+          {done ? (
+            <span style={{ color: "var(--green)" }}>
+              {labels.appointmentDone}
+              {item.dateLabel ? ` · ${item.dateLabel}` : ""}
+            </span>
+          ) : booked && item.dateLabel ? (
+            <span style={{ color: "var(--accent)", display: "inline-flex", alignItems: "center", gap: 5 }}>
+              <Icon name="clock" size={14} color="var(--accent)" />
+              {item.dateLabel}
+            </span>
+          ) : (
+            <span style={{ color: "var(--accent)", display: "inline-flex", alignItems: "center", gap: 5 }}>
+              <Icon name="calendar" size={14} color="var(--accent)" />
+              {labels.book}
+            </span>
+          )}
+        </div>
+      </Link>
     </div>
   );
 }

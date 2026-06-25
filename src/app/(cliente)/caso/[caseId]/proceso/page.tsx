@@ -1,20 +1,21 @@
 /**
  * Mi proceso — `/caso/[caseId]/proceso` · nivel CASO (pestaña "Más") — DOC-51 §22.
  *
- * Server component. Reads the service milestones with case-derived states
- * (getCaseMilestones) + the client name. Glossary terms come from each
- * milestone's `glossary_i18n` (bilingual, admin-managed).
+ * Server component. Reads the unified progress timeline (getCaseProgressTimeline):
+ * legal milestones (states from the case's current milestone) interleaved with the
+ * service's citas (booked date or "Agendar"), ordered by week. Glossary terms come
+ * from each milestone's `glossary_i18n` (bilingual, admin-managed).
  */
 
 import { notFound, redirect } from "next/navigation";
-import { getLocale, getTranslations } from "next-intl/server";
+import { getLocale, getTimeZone, getTranslations } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
-import { getCaseMilestones, getClientDisplayName, getCaseTimeline } from "@/backend/modules/cases";
+import { getCaseProgressTimeline, getClientDisplayName } from "@/backend/modules/cases";
+import { fmtDateShort, fmtTime } from "@/frontend/lib/datetime";
 import { pickLocale, coerceIcon, type Locale } from "@/frontend/features/cliente/shared/i18n";
 import {
   ProcesoScreen,
-  type ProcesoMilestone,
-  type ProcesoCronograma,
+  type ProcesoTimelineItem,
 } from "@/frontend/features/cliente/proceso/proceso-screen";
 
 export default async function ProcesoPage({
@@ -27,51 +28,54 @@ export default async function ProcesoPage({
   if (!actor || actor.kind !== "client") redirect("/welcome");
 
   const locale = (await getLocale()) as Locale;
+  const tz = await getTimeZone();
   const t = await getTranslations("cliente.proceso");
 
   let dto;
   try {
-    dto = await getCaseMilestones(actor, caseId);
+    dto = await getCaseProgressTimeline(actor, caseId);
   } catch {
     notFound();
   }
   const name = (await getClientDisplayName(actor)) ?? t("fallbackName");
 
-  // Cronograma — expressed in weeks relative to case start (no specific dates;
-  // the estimates never read as a commitment). Anchored on opened_at upstream.
-  const timeline = await getCaseTimeline(actor, caseId).catch(() => null);
-  const cronograma: ProcesoCronograma | null =
-    timeline && timeline.citas.length > 0
-      ? {
-          citas: timeline.citas.map((c) => ({
-            label: pickLocale(c.citaLabelI18n, locale) || t("citaN", { n: c.sequenceNumber }),
-            weekLabel: t("weekN", { n: c.weekOffset }),
-          })),
-          started: timeline.started,
-          totalWeeksLabel: t("totalWeeks", { n: timeline.totalWeeks }),
-        }
+  const items: ProcesoTimelineItem[] = dto.items.map((it): ProcesoTimelineItem => {
+    if (it.kind === "milestone") {
+      const glossaryBody = pickLocale(it.glossaryI18n, locale);
+      const title = pickLocale(it.labelI18n, locale);
+      return {
+        kind: "milestone",
+        id: it.id,
+        title,
+        description: pickLocale(it.descriptionI18n, locale),
+        icon: coerceIcon(it.icon, "doc"),
+        state: it.state,
+        progress: it.progress,
+        weekLabel: it.weekOffset != null ? t("weekN", { n: it.weekOffset }) : null,
+        glossary: glossaryBody ? { term: title, body: glossaryBody } : null,
+      };
+    }
+    // appointment
+    const dateLabel = it.startsAt
+      ? `${fmtDateShort(it.startsAt, tz, locale)}, ${fmtTime(it.startsAt, tz)}`
       : null;
-
-  const milestones: ProcesoMilestone[] = dto.milestones.map((m) => {
-    const glossaryBody = pickLocale(m.glossaryI18n, locale);
     return {
-      id: m.id,
-      title: pickLocale(m.labelI18n, locale),
-      description: pickLocale(m.descriptionI18n, locale),
-      icon: coerceIcon(m.icon, "doc"),
-      state: m.state,
-      progress: m.progress,
-      glossary: glossaryBody
-        ? { term: pickLocale(m.labelI18n, locale), body: glossaryBody }
-        : null,
+      kind: "appointment",
+      id: it.id,
+      title: pickLocale(it.labelI18n, locale) || t("citaN", { n: it.sequenceNumber }),
+      status: it.status,
+      weekLabel: t("weekN", { n: it.weekOffset }),
+      dateLabel,
+      href: it.appointmentId
+        ? `/caso/${caseId}/cita/${it.appointmentId}`
+        : `/caso/${caseId}/agendar`,
     };
   });
 
   return (
     <ProcesoScreen
       caseId={caseId}
-      milestones={milestones}
-      cronograma={cronograma}
+      items={items}
       labels={{
         back: t("back"),
         title: t("title", { name }),
@@ -84,9 +88,12 @@ export default async function ProcesoPage({
         gotIt: t("gotIt"),
         whatsNext: t("whatsNext"),
         whatsNextBody: t("whatsNextBody"),
-        cronogramaTitle: t("cronogramaTitle"),
+        appointmentPill: t("appointmentPill"),
+        appointmentDone: t("appointmentDone"),
+        book: t("book"),
         deliveryEstimate: t("deliveryEstimate"),
-        cronogramaNotStarted: t("cronogramaNotStarted"),
+        totalWeeksLabel: t("totalWeeks", { n: dto.totalWeeks }),
+        notStarted: dto.started ? null : t("cronogramaNotStarted"),
       }}
     />
   );

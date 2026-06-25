@@ -34,6 +34,7 @@ import {
   reviewDocument,
   setRequirementVisibility,
   advanceCasePhase,
+  advanceCaseMilestone,
   startDocumentUpload,
   confirmDocumentUpload,
   saveFormDraft,
@@ -244,6 +245,20 @@ export async function advanceCasePhaseAction(input: {
     const actor = await requireActor();
     const res = await advanceCasePhase(actor, input);
     return { ok: true, phaseIndex: res.phaseIndex, phaseCount: res.phaseCount };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+export async function advanceCaseMilestoneAction(input: {
+  caseId: string;
+  toMilestoneId?: string | null;
+  note?: string | null;
+}): Promise<{ ok: boolean; phaseChanged?: boolean; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    const res = await advanceCaseMilestone(actor, input);
+    return { ok: true, phaseChanged: res.phaseChanged };
   } catch (err) {
     return mapErr(err);
   }

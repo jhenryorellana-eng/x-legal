@@ -16,7 +16,6 @@ import {
   caminoMock,
   documentosMock,
   disclaimerMock,
-  procesoMock,
   agendarMock,
   citaMock,
   citaCompletadaMock,
@@ -58,20 +57,79 @@ export function ClientePreview({ view }: { view: string }) {
   } else if (view === "proceso") {
     content = (
       <ProcesoScreen
-        {...procesoMock}
-        cronograma={{
-          citas: [
-            { label: "Evaluación inicial", weekLabel: "Semana 1" },
-            { label: "Cita 2", weekLabel: "Semana 2" },
-          ],
-          started: true,
-          totalWeeksLabel: "~4 semanas",
-        }}
+        caseId="demo"
+        items={[
+          {
+            kind: "milestone",
+            id: "m1",
+            title: "Recopilar sustentos",
+            description: "Reúne los documentos que respaldan tu caso.",
+            icon: "doc",
+            state: "current",
+            progress: 40,
+            weekLabel: "Semana 1",
+            glossary: { term: "Sustentos", body: "Los documentos que respaldan tu solicitud." },
+          },
+          {
+            kind: "appointment",
+            id: "a1",
+            title: "Cita inicial",
+            status: "booked",
+            weekLabel: "Semana 1",
+            dateLabel: "9 jul, 2:00 PM",
+            href: "#",
+          },
+          {
+            kind: "milestone",
+            id: "m2",
+            title: "Declaración preparada",
+            description: "Tu historia queda lista para enviar.",
+            icon: "edit",
+            state: "next",
+            progress: null,
+            weekLabel: "Semana 3",
+            glossary: null,
+          },
+          {
+            kind: "appointment",
+            id: "a2",
+            title: "Cita de refuerzo",
+            status: "unbooked",
+            weekLabel: "Semana 5",
+            dateLabel: null,
+            href: "#",
+          },
+          {
+            kind: "milestone",
+            id: "m3",
+            title: "I-589 enviada",
+            description: "",
+            icon: "route",
+            state: "locked",
+            progress: null,
+            weekLabel: "Semana 6",
+            glossary: null,
+          },
+        ]}
         labels={{
-          ...procesoMock.labels,
-          cronogramaTitle: "Cronograma del servicio",
+          back: "Más",
+          title: "Tu proceso avanza, María",
+          subtitle: "Estás en la Fase 1 de 2. Vas muy bien.",
+          inProgress: "En curso",
+          next: "Siguiente",
+          progress: "Progreso",
+          completed: "¡Completado!",
+          whatDoesThisMean: "¿Qué significa esto?",
+          gotIt: "Entendido",
+          whatsNext: "¿Qué sigue?",
+          whatsNextBody:
+            "Tu equipo está trabajando en tu caso. Te avisaremos en cuanto haya novedades.",
+          appointmentPill: "Cita",
+          appointmentDone: "Cita completada",
+          book: "Agendar",
           deliveryEstimate: "Entrega estimada del expediente",
-          cronogramaNotStarted: "Comienza al activar tu caso",
+          totalWeeksLabel: "~12 semanas",
+          notStarted: null,
         }}
       />
     );

@@ -24,6 +24,7 @@ export function buildCatalogStrings(tt: Translator): Record<string, string> {
     "offerPlan", "price", "currency", "installments", "downpayment", "planActive",
     "lawyerIncluded", "lawyerNote", "priceNote", "addPhase", "phaseSlug", "phaseLabel",
     "phaseDesc", "clientExplainer", "milestones", "apptPolicy", "apptCount", "apptDuration",
+    "milestonesTitle", "milestonesHelp", "milestoneN", "milestoneLabel", "milestoneGlossary", "addMilestone",
     "apptKind", "apptVideo", "apptPhone", "apptPresencial", "apptNote",
     "apptScheduleTitle", "citaN", "citaWeek", "addCita", "processingWeeks",
     "objectivesLabel", "addObjective", "objectivePh",

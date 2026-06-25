@@ -7,7 +7,6 @@
 import type { DashboardScreenProps } from "@/frontend/features/cliente/home/dashboard-screen";
 import type { CaminoScreenProps } from "@/frontend/features/cliente/camino/camino-screen";
 import type { DocItem } from "@/frontend/features/cliente/documentos/documentos-screen";
-import type { ProcesoMilestone } from "@/frontend/features/cliente/proceso/proceso-screen";
 import type {
   AgendarScreenProps,
   SlotWire,
@@ -256,70 +255,6 @@ export const disclaimerMock = {
     ready: "Firma lista",
     clear: "Borrar",
     undo: "Deshacer",
-  },
-};
-
-const procesoMilestones: ProcesoMilestone[] = [
-  {
-    id: "1",
-    title: "Orden de custodia (corte estatal)",
-    description: "El juez decide sobre la custodia y los hallazgos.",
-    icon: "scale",
-    state: "current",
-    progress: 46,
-    glossary: {
-      term: "Orden de custodia",
-      body: "Una corte estatal decide quién cuida legalmente al menor y reconoce que no puede reunirse con uno o ambos padres. Es la base de tu caso.",
-    },
-  },
-  {
-    id: "2",
-    title: "Petición I-360 enviada a USCIS",
-    description: "Enviamos tu petición especial a inmigración.",
-    icon: "send",
-    state: "next",
-    progress: null,
-    glossary: {
-      term: "I-360",
-      body: "Es la petición que se envía a inmigración (USCIS) para pedir el estatus especial de joven inmigrante.",
-    },
-  },
-  {
-    id: "3",
-    title: "Recibo de USCIS",
-    description: "USCIS confirma que recibió tu petición.",
-    icon: "doc",
-    state: "locked",
-    progress: null,
-    glossary: null,
-  },
-  {
-    id: "4",
-    title: "I-360 aprobada",
-    description: "Inmigración aprueba tu estatus especial.",
-    icon: "check",
-    state: "locked",
-    progress: null,
-    glossary: null,
-  },
-];
-
-export const procesoMock = {
-  caseId: "demo",
-  milestones: procesoMilestones,
-  labels: {
-    back: "Más",
-    title: "Tu proceso avanza, María",
-    subtitle: "Estás en la Fase 1 de 3. Vas muy bien.",
-    inProgress: "En curso",
-    next: "Siguiente",
-    progress: "Progreso",
-    completed: "¡Completado!",
-    whatDoesThisMean: "¿Qué significa esto?",
-    gotIt: "Entendido",
-    whatsNext: "¿Qué sigue?",
-    whatsNextBody:
-      "Tu abogada está preparando tu orden de custodia. Te avisaremos en cuanto haya novedades.",
   },
 };
 

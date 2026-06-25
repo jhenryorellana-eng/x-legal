@@ -271,6 +271,56 @@ export function resolveNextPhase(
 }
 
 // ---------------------------------------------------------------------------
+// Milestone advancement — manual, staff-driven (DOC-51 §22)
+//
+// Milestones are the first-class progression unit ("Mi proceso"). The case
+// points at a current milestone; the staff advances it one by one. Milestones
+// are globally ordered across phases by (phasePosition, position); advancing
+// across a phase boundary also moves the case's phase (the service syncs it).
+// This pure helper only decides WHICH milestone is next.
+// ---------------------------------------------------------------------------
+
+export interface MilestoneRef {
+  id: string;
+  /** Position of the milestone's phase within the service. */
+  phasePosition: number;
+  /** Position of the milestone within its phase. */
+  position: number;
+}
+
+/** Global order of milestones across phases: by phase, then position. */
+function orderMilestones(milestones: MilestoneRef[]): MilestoneRef[] {
+  return [...milestones].sort(
+    (a, b) => a.phasePosition - b.phasePosition || a.position - b.position,
+  );
+}
+
+/**
+ * The first milestone of the service in global order, or null when there are
+ * none (used to seed `current_milestone_id` on case activation). Pure.
+ */
+export function resolveFirstMilestone(milestones: MilestoneRef[]): MilestoneRef | null {
+  return orderMilestones(milestones)[0] ?? null;
+}
+
+/**
+ * Resolves the milestone a case should advance to next: the one immediately
+ * after the current milestone in global order (phase, then position). Returns
+ * null when already at the last milestone, or when the current milestone is
+ * unknown / absent (caller treats null as "cannot advance"). Pure, order-independent.
+ */
+export function resolveNextMilestone(
+  milestones: MilestoneRef[],
+  currentMilestoneId: string | null,
+): MilestoneRef | null {
+  if (!currentMilestoneId) return null;
+  const ordered = orderMilestones(milestones);
+  const idx = ordered.findIndex((m) => m.id === currentMilestoneId);
+  if (idx < 0 || idx === ordered.length - 1) return null;
+  return ordered[idx + 1];
+}
+
+// ---------------------------------------------------------------------------
 // Cronograma — estimated dates from the case anchor (cases.opened_at)
 // ---------------------------------------------------------------------------
 

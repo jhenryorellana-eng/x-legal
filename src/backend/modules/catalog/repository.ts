@@ -359,6 +359,35 @@ export async function deleteMilestone(id: string): Promise<void> {
   if (error) throw error;
 }
 
+/**
+ * Reorders milestones within a phase to match `orderedIds`. Two-pass (park at
+ * negative positions, then assign 0..n-1) so the per-statement unique
+ * (service_phase_id, position) constraint never sees a transient collision —
+ * separate PostgREST calls each commit independently, so a single-pass swap
+ * could violate the constraint.
+ */
+export async function reorderMilestonesTx(
+  servicePhaseId: string,
+  orderedIds: string[],
+): Promise<void> {
+  const park = orderedIds.map((id, idx) =>
+    db()
+      .from("service_phase_milestones")
+      .update({ position: -(idx + 1) })
+      .eq("id", id)
+      .eq("service_phase_id", servicePhaseId),
+  );
+  await Promise.all(park);
+  const finalize = orderedIds.map((id, idx) =>
+    db()
+      .from("service_phase_milestones")
+      .update({ position: idx })
+      .eq("id", id)
+      .eq("service_phase_id", servicePhaseId),
+  );
+  await Promise.all(finalize);
+}
+
 // ---------------------------------------------------------------------------
 // Phase appointment policy
 // ---------------------------------------------------------------------------

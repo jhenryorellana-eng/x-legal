@@ -97,7 +97,14 @@ export default async function ServiceDetailPage({
       }))),
     })),
     processing_weeks: ph.processing_weeks,
-    milestoneCount: ph.milestones.length,
+    milestones: ph.milestones.map((m) => ({
+      id: m.id,
+      slug: m.slug,
+      label: i18n(m.label_i18n),
+      glossary: i18n(m.glossary_i18n),
+      icon: m.icon ?? "route",
+      week_offset: m.week_offset ?? null,
+    })),
     docs: ph.documents.map((d) => ({
       id: d.id,
       slug: d.slug,
