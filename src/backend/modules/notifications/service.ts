@@ -2,7 +2,7 @@
  * Notifications module — service layer (F2 + F3 + onboarding).
  *
  * Onboarding flow rows (Henry's flow — overrides DOC-47 recipients per request):
- *   contract.sent         → Client ①◆ email (contract-ready) — signing link /firma/{token}
+ *   contract.sent         → Client ①②◆ push + email (contract-ready) — signing link /firma/{token}
  *   case.created          → Sales (asesora) ①② push — confirmation of the new case
  *   contract.signed       → + Client ①② push (contract.signed.client) "pay your initial"
  *   downpayment.confirmed → + Finance (Andrium) ①② push (downpayment.confirmed.finance)
@@ -90,13 +90,16 @@ interface MatrixRule {
 // Canonical matrix (DOC-47 §4.3). F2 + F3 + F7 rows in one map (extending).
 // Each rule carries its preference `category` (gates suppressible rules).
 const F2_MATRIX: Record<string, MatrixRule[]> = {
-  // contract.sent → the client (signer) gets the signing link (email primary +
-  // in-app). Unsuppressible (◆): the link must reach them regardless of prefs.
+  // contract.sent → the client (signer) gets the signing link (in-app + push +
+  // email). Unsuppressible (◆): the link must reach them regardless of prefs.
+  // Push is best-effort: it only lands if the client already has a subscription
+  // (a returning client, or one who logged in and opted in); brand-new clients
+  // still get it via in-app + email + the onboarding card on /home.
   "contract.sent": [
     {
       type: "contract.sent",
       recipients: [{ resolverKey: "clients_of_case" }],
-      channels: { push: false, email: true },
+      channels: { push: true, email: true },
       category: "case_updates",
       emailTemplateKey: "contract-ready",
       unsuppressible: true,

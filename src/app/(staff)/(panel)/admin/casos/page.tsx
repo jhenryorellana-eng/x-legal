@@ -10,7 +10,11 @@ import { redirect } from "next/navigation";
 import { getLocale } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
 import { listCasesAdmin } from "@/backend/modules/cases";
-import { listContractableServices, getServiceEditorTree } from "@/backend/modules/catalog";
+import {
+  listContractableServices,
+  listContractableServicePlans,
+  listServicePartyRoles,
+} from "@/backend/modules/catalog";
 import { resolveI18n, type Locale } from "@/shared/i18n";
 import {
   CasosListView,
@@ -73,10 +77,16 @@ export default async function AdminCasosPage({
 
   // Contractable services + their plans for the "Nuevo caso" modal.
   const services = await listContractableServices(actor.orgId);
+  // Plans + party roles for the modal. Use the sales-accessible reads
+  // (listContractableServicePlans / listServicePartyRoles — no `catalog.view`
+  // gate) instead of getServiceEditorTree, so an asesora (sales) building a case
+  // sees the plans too — not just admins. Both are non-sensitive contract config.
   const newCaseServices: NewCaseService[] = await Promise.all(
     services.map(async (s): Promise<NewCaseService> => {
-      const tree = await getServiceEditorTree(actor, s.id).catch(() => null);
-      const plans = tree?.plans ?? [];
+      const [plans, partyRoles] = await Promise.all([
+        listContractableServicePlans(s.id).catch(() => []),
+        listServicePartyRoles(s.id).catch(() => []),
+      ]);
       const encodedByKind: Record<string, string> = {};
       for (const p of plans) {
         const down = p.default_downpayment_cents ?? Math.round(p.price_cents * 0.2);
@@ -95,7 +105,7 @@ export default async function AdminCasosPage({
           installments: p.default_installments ?? 1,
         })),
         encodedByKind,
-        partyRoles: (tree?.partyRoles ?? []).map((r) => ({
+        partyRoles: partyRoles.map((r) => ({
           roleKey: r.role_key,
           label: resolveI18n(r.label_i18n, locale),
           cardinality: r.cardinality,

@@ -17,7 +17,7 @@ import { HomeBell, type RefetchUnread } from "./home-bell";
 
 export interface DashboardCase {
   caseId: string;
-  /** Destination for the card (camino for active cases, /pagos when payment is pending). */
+  /** Destination for the card (the case "camino"/path screen). */
   href: string;
   /** Service + party title, e.g. "Visa Juvenil — Mateo". */
   title: string;
@@ -29,11 +29,28 @@ export interface DashboardCase {
   pendingDocuments: number;
   /** When false, the card renders as a compact secondary row. */
   highlighted: boolean;
-  /** Onboarding gate: case is `payment_pending` → the client must pay the initial fee. */
-  paymentPending: boolean;
   /** Status text for compact cards (e.g. "En revisión"). */
   statusText?: string;
   statusKind?: "revision" | "aprobado" | "pendiente";
+}
+
+/**
+ * A case still in onboarding (`payment_pending`): the client must sign the
+ * contract and then pay the first installment before the workspace unlocks.
+ * Rendered as a dedicated step card above the active cases.
+ *
+ *  - "sign"      → contract is `sent`; show the "Firmar" CTA → `signHref` (/firma/{token}).
+ *  - "pay"       → contract is `signed`; step 1 done, show the "Pagar" CTA → /pagos.
+ *  - "preparing" → contract not yet ready to sign (draft/cancelled) — no CTA.
+ */
+export interface OnboardingCase {
+  caseId: string;
+  title: string;
+  serviceIcon: IconName;
+  serviceColor: string;
+  step: "sign" | "pay" | "preparing";
+  /** Public signing URL (/firma/{token}); present only when step === "sign". */
+  signHref: string | null;
 }
 
 export interface DashboardLabels {
@@ -43,7 +60,16 @@ export interface DashboardLabels {
   documentsLeft: string; // "{n} documents left" → uses {n}
   openCase: string;
   paymentPending: string; // "Pago inicial pendiente"
-  payNow: string; // "Pagar ahora" — CTA on a payment_pending case
+  payNow: string; // "Pagar ahora" — CTA on the onboarding "pay" step
+  // Onboarding step card (sign → pay)
+  activateTitle: string; // "Activa tu caso"
+  stepSign: string; // "Firma tu contrato"
+  stepPay: string; // "Paga tu primera cuota"
+  signCta: string; // "Firmar"
+  stepDoneLabel: string; // "Hecho"
+  stepLaterLabel: string; // "Después"
+  preparingLabel: string; // "Preparando tu contrato"
+  lockedLabel: string; // "Tu caso se activa al completar estos pasos"
   quickAccess: string;
   qServices: string;
   qServicesSub: string;
@@ -61,6 +87,8 @@ export interface DashboardScreenProps {
   displayName: string;
   avatarInitial: string;
   cases: DashboardCase[];
+  /** Cases still in onboarding (sign → pay) — rendered above the active cases. */
+  onboardingCases: OnboardingCase[];
   unreadCount: number;
   labels: DashboardLabels;
   /** Auth uid — drives the live realtime bell badge (HomeBell). */
@@ -76,6 +104,7 @@ export function DashboardScreen({
   displayName,
   avatarInitial,
   cases,
+  onboardingCases,
   unreadCount,
   labels,
   userId,
@@ -170,6 +199,12 @@ export function DashboardScreen({
           {labels.yourCases}
         </h2>
       </div>
+
+      {/* Onboarding step cards (sign → pay) — cases not yet active. Rendered
+          above the active cases so the client completes activation first. */}
+      {onboardingCases.map((oc) => (
+        <OnboardingCard key={oc.caseId} data={oc} labels={labels} />
+      ))}
 
       {/* Highlighted case */}
       {highlighted && (
@@ -285,26 +320,20 @@ export function DashboardScreen({
                 fontWeight: 700,
               }}
             >
-              {highlighted.paymentPending ? (
-                <Icon name="wallet" size={17} color="var(--gold)" />
-              ) : (
-                <span
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: 999,
-                    background: "var(--gold)",
-                    boxShadow:
-                      "0 0 0 4px color-mix(in srgb, var(--gold) 20%, transparent)",
-                  }}
-                />
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: 999,
+                  background: "var(--gold)",
+                  boxShadow:
+                    "0 0 0 4px color-mix(in srgb, var(--gold) 20%, transparent)",
+                }}
+              />
+              {labels.documentsLeft.replace(
+                "{n}",
+                String(highlighted.pendingDocuments),
               )}
-              {highlighted.paymentPending
-                ? labels.paymentPending
-                : labels.documentsLeft.replace(
-                    "{n}",
-                    String(highlighted.pendingDocuments),
-                  )}
             </div>
             <span
               className="t-title"
@@ -320,7 +349,7 @@ export function DashboardScreen({
                 fontWeight: 800,
               }}
             >
-              {highlighted.paymentPending ? labels.payNow : labels.openCase}{" "}
+              {labels.openCase}{" "}
               <Icon name="chevR" size={17} color="var(--accent)" />
             </span>
           </div>
@@ -360,7 +389,7 @@ export function DashboardScreen({
             >
               {c.title}
             </div>
-            {(c.paymentPending || c.statusText) && (
+            {c.statusText && (
               <div
                 style={{
                   fontSize: 13.5,
@@ -369,15 +398,12 @@ export function DashboardScreen({
                   marginTop: 1,
                 }}
               >
-                {c.paymentPending ? labels.paymentPending : c.statusText}
+                {c.statusText}
               </div>
             )}
           </div>
-          {c.paymentPending ? (
-            <StatusPill kind="revision">{labels.payNow}</StatusPill>
-          ) : (
-            c.statusKind &&
-            c.statusText && <StatusPill kind={c.statusKind}>{c.statusText}</StatusPill>
+          {c.statusKind && c.statusText && (
+            <StatusPill kind={c.statusKind}>{c.statusText}</StatusPill>
           )}
         </Link>
       ))}
@@ -475,6 +501,244 @@ export function DashboardScreen({
             </div>
           </Link>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// OnboardingCard — a `payment_pending` case's two-step activation (sign → pay)
+// ---------------------------------------------------------------------------
+
+const onboardingPillBtn: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
+  background: `linear-gradient(135deg, var(--accent), ${BRAND_NAVY})`,
+  color: "#fff",
+  borderRadius: 999,
+  padding: "8px 14px",
+  fontSize: 13.5,
+  fontWeight: 800,
+  textDecoration: "none",
+  flexShrink: 0,
+};
+
+const onboardingMutedTag: React.CSSProperties = {
+  fontSize: 12.5,
+  fontWeight: 700,
+  color: "var(--ink-3)",
+  flexShrink: 0,
+};
+
+function OnboardingStepRow({
+  index,
+  label,
+  done,
+  dim,
+  children,
+}: {
+  index: number;
+  label: string;
+  done: boolean;
+  dim?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        position: "relative",
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        opacity: dim ? 0.55 : 1,
+      }}
+    >
+      <div
+        style={{
+          width: 30,
+          height: 30,
+          borderRadius: 999,
+          flexShrink: 0,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontFamily: "var(--font-title)",
+          fontWeight: 800,
+          fontSize: 14,
+          color: done ? "#fff" : "var(--navy)",
+          background: done
+            ? "var(--green)"
+            : "color-mix(in srgb, var(--gold) 22%, transparent)",
+        }}
+      >
+        {done ? <Icon name="check" size={16} color="#fff" /> : index}
+      </div>
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          fontSize: 15,
+          fontWeight: 700,
+          color: "var(--navy)",
+        }}
+      >
+        {label}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function OnboardingCard({
+  data,
+  labels,
+}: {
+  data: OnboardingCase;
+  labels: DashboardLabels;
+}) {
+  // step "pay" means the contract is already signed (step 1 done).
+  const signDone = data.step === "pay";
+  const signActive = data.step === "sign";
+  const payActive = data.step === "pay";
+
+  return (
+    <div
+      className="mp-lift"
+      style={{
+        position: "relative",
+        overflow: "hidden",
+        background: "var(--card)",
+        border: "1px solid color-mix(in srgb, var(--gold) 35%, transparent)",
+        borderRadius: 24,
+        padding: 18,
+        marginBottom: 14,
+        boxShadow: "var(--shadow-soft)",
+      }}
+    >
+      <div
+        aria-hidden
+        style={{
+          position: "absolute",
+          right: -40,
+          top: -40,
+          width: 140,
+          height: 140,
+          borderRadius: "50%",
+          background:
+            "radial-gradient(circle, color-mix(in srgb, var(--gold) 22%, transparent), transparent 70%)",
+        }}
+      />
+
+      {/* Header: service tile + eyebrow + case title */}
+      <div
+        style={{
+          position: "relative",
+          display: "flex",
+          alignItems: "center",
+          gap: 13,
+          marginBottom: 16,
+        }}
+      >
+        <IconTile
+          name={data.serviceIcon}
+          color={data.serviceColor}
+          size={46}
+          radius={13}
+          iconSize={24}
+        />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontSize: 12,
+              fontWeight: 800,
+              letterSpacing: 0.4,
+              textTransform: "uppercase",
+              color: "var(--gold-deep, var(--gold))",
+            }}
+          >
+            {labels.activateTitle}
+          </div>
+          <div
+            className="t-title"
+            style={{
+              fontSize: 16.5,
+              color: "var(--navy)",
+              fontWeight: 800,
+              marginTop: 1,
+            }}
+          >
+            {data.title}
+          </div>
+        </div>
+      </div>
+
+      {/* Step 1 — sign the contract */}
+      <OnboardingStepRow index={1} label={labels.stepSign} done={signDone}>
+        {signActive && data.signHref ? (
+          <Link href={data.signHref} className="t-title" style={onboardingPillBtn}>
+            {labels.signCta} <Icon name="chevR" size={16} color="#fff" />
+          </Link>
+        ) : signDone ? (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+              fontSize: 12.5,
+              fontWeight: 700,
+              color: "var(--green)",
+              flexShrink: 0,
+            }}
+          >
+            <Icon name="check" size={14} color="var(--green)" /> {labels.stepDoneLabel}
+          </span>
+        ) : (
+          <span style={onboardingMutedTag}>{labels.preparingLabel}</span>
+        )}
+      </OnboardingStepRow>
+
+      {/* connector */}
+      <div
+        aria-hidden
+        style={{
+          marginLeft: 15,
+          height: 14,
+          borderLeft: "2px dashed color-mix(in srgb, var(--ink-3) 40%, transparent)",
+        }}
+      />
+
+      {/* Step 2 — pay the first installment */}
+      <OnboardingStepRow
+        index={2}
+        label={labels.stepPay}
+        done={false}
+        dim={!payActive}
+      >
+        {payActive ? (
+          <Link href="/pagos" className="t-title" style={onboardingPillBtn}>
+            {labels.payNow} <Icon name="chevR" size={16} color="#fff" />
+          </Link>
+        ) : (
+          <span style={onboardingMutedTag}>{labels.stepLaterLabel}</span>
+        )}
+      </OnboardingStepRow>
+
+      {/* Locked hint — the case workspace opens once both steps are done */}
+      <div
+        style={{
+          position: "relative",
+          display: "flex",
+          alignItems: "center",
+          gap: 7,
+          marginTop: 14,
+          color: "var(--ink-3)",
+          fontSize: 12.5,
+          fontWeight: 600,
+        }}
+      >
+        <Icon name="lock" size={14} color="var(--ink-3)" />
+        {labels.lockedLabel}
       </div>
     </div>
   );

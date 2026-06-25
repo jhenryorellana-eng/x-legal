@@ -18,12 +18,14 @@ import {
   getClientDisplayName,
   type CaseWorkspaceDto,
 } from "@/backend/modules/cases";
+import { getCaseOnboardingContract } from "@/backend/modules/contracts";
 import { getNotifications } from "@/backend/modules/notifications";
 import { getUnreadCountAction } from "@/backend/modules/notifications/actions";
 import { pickLocale, coerceIcon, type Locale } from "@/frontend/features/cliente/shared/i18n";
 import {
   DashboardScreen,
   type DashboardCase,
+  type OnboardingCase,
 } from "@/frontend/features/cliente/home/dashboard-screen";
 
 export default async function HomePage() {
@@ -65,7 +67,49 @@ export default async function HomePage() {
   const phaseTpl = t.raw("phaseShort") as string; // "Fase {x} de {y} · {phase}"
   const reviewLabel = t("inReview");
 
-  const cases: DashboardCase[] = workspaces.map((ws, idx) => {
+  // Split the client's cases into onboarding (payment_pending — the client must
+  // sign the contract AND pay the initial fee before the workspace unlocks) and
+  // active cases. Onboarding cases get a dedicated step card (sign → pay); active
+  // cases render as the highlighted/secondary cards exactly as before.
+  const onboardingCases: OnboardingCase[] = [];
+  const activeWorkspaces: CaseWorkspaceDto[] = [];
+  for (const ws of workspaces) {
+    if (ws.status !== "payment_pending") {
+      activeWorkspaces.push(ws);
+      continue;
+    }
+    const serviceName = pickLocale(ws.service?.labelI18n, locale);
+    const party = ws.parties[0]?.name;
+    const title = party ? `${serviceName} — ${party}` : serviceName;
+
+    // Read the contract (membership-gated via requireCaseAccess) to know which
+    // onboarding step the client is on. `sent` → still to sign; `signed` → signed,
+    // waiting on the down payment; anything else (draft/cancelled/null) → preparing.
+    let step: OnboardingCase["step"] = "preparing";
+    let signHref: string | null = null;
+    try {
+      const contract = await getCaseOnboardingContract(actor, ws.caseId);
+      if (contract?.status === "signed") {
+        step = "pay";
+      } else if (contract?.status === "sent" && contract.signingToken) {
+        step = "sign";
+        signHref = `/firma/${contract.signingToken}`;
+      }
+    } catch {
+      // Contract unreadable (rare) — leave as "preparing" (no actionable CTA).
+    }
+
+    onboardingCases.push({
+      caseId: ws.caseId,
+      title,
+      serviceIcon: coerceIcon(ws.service?.icon, "shield"),
+      serviceColor: ws.service?.color || "var(--accent)",
+      step,
+      signHref,
+    });
+  }
+
+  const cases: DashboardCase[] = activeWorkspaces.map((ws, idx) => {
     const serviceName = pickLocale(ws.service?.labelI18n, locale);
     const party = ws.parties[0]?.name;
     const title = party ? `${serviceName} — ${party}` : serviceName;
@@ -77,13 +121,9 @@ export default async function HomePage() {
           .replace("{phase}", phaseName)
       : null;
     const isInReview = ws.status === "in_validation";
-    // Onboarding gate (Henry's flow): a `payment_pending` case has not started —
-    // the client must pay the initial fee first. Surface it on the dashboard and
-    // route the card straight to the payments screen.
-    const paymentPending = ws.status === "payment_pending";
     return {
       caseId: ws.caseId,
-      href: paymentPending ? "/pagos" : `/caso/${ws.caseId}/camino`,
+      href: `/caso/${ws.caseId}/camino`,
       title,
       phaseLabel,
       serviceIcon: coerceIcon(ws.service?.icon, "shield"),
@@ -92,7 +132,6 @@ export default async function HomePage() {
       pendingDocuments: ws.pendingDocuments,
       // The first/most-recent active case is the highlighted hero card.
       highlighted: idx === 0,
-      paymentPending,
       statusText: isInReview ? reviewLabel : undefined,
       statusKind: isInReview ? ("revision" as const) : undefined,
     };
@@ -103,6 +142,7 @@ export default async function HomePage() {
       displayName={displayName || t("fallbackName")}
       avatarInitial={avatarInitial}
       cases={cases}
+      onboardingCases={onboardingCases}
       unreadCount={unreadCount}
       userId={actor.userId}
       locale={locale}
@@ -115,6 +155,15 @@ export default async function HomePage() {
         openCase: t("openCase"),
         paymentPending: t("paymentPending"),
         payNow: t("payNow"),
+        // Onboarding step card (sign → pay)
+        activateTitle: t("activateTitle"),
+        stepSign: t("stepSign"),
+        stepPay: t("stepPay"),
+        signCta: t("signCta"),
+        stepDoneLabel: t("stepDoneLabel"),
+        stepLaterLabel: t("stepLaterLabel"),
+        preparingLabel: t("preparingLabel"),
+        lockedLabel: t("lockedLabel"),
         quickAccess: t("quickAccess"),
         qServices: tNav("servicios"),
         qServicesSub: t("qServicesSub"),

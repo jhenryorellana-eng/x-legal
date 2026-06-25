@@ -29,6 +29,7 @@ import {
   findContractById,
   findBySigningToken,
   findContractByCaseId,
+  findContractByCaseIdService,
   insertContract,
   updateContract,
   getActiveTermsVersion,
@@ -649,6 +650,38 @@ export async function getContractForCase(
 ): Promise<ContractRow | null> {
   await requireCaseAccess(actor, caseId);
   return findContractByCaseId(caseId);
+}
+
+/** Onboarding-relevant contract fields for the client dashboard card. */
+export interface CaseOnboardingContract {
+  /** Contract state machine: 'draft' | 'sent' | 'signed' | 'cancelled'. */
+  status: string;
+  /** Public signing token (/firma/{token}) — present while status='sent'. */
+  signingToken: string | null;
+}
+
+/**
+ * Returns the onboarding-relevant contract fields (status + signing token) for a
+ * case the actor is a member of. Drives the client dashboard's "sign → pay"
+ * onboarding card (`/home`).
+ *
+ * Authorizes via requireCaseAccess (the actor must be a case member), then reads
+ * with the SERVICE client — the `contracts` table has no client RLS SELECT policy,
+ * so a client-context read would return null. The membership check is the
+ * authorization gate. The signing token is safe to surface to the case's own
+ * client: they are the intended signer (it already reaches them via the
+ * contract.sent notification + email).
+ *
+ * @api-id API-CTR-09
+ */
+export async function getCaseOnboardingContract(
+  actor: Actor,
+  caseId: string,
+): Promise<CaseOnboardingContract | null> {
+  await requireCaseAccess(actor, caseId);
+  const row = await findContractByCaseIdService(caseId);
+  if (!row) return null;
+  return { status: row.status, signingToken: row.signing_token };
 }
 
 /**

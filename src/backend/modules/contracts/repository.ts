@@ -76,6 +76,28 @@ export async function findContractByCaseId(
   return data ?? null;
 }
 
+/**
+ * Finds a contract by case_id using the SERVICE client (bypasses RLS).
+ *
+ * The `contracts` table has no SELECT policy for client (authenticated) users —
+ * only staff org-scoped reads and the service-role signing flow. The client
+ * dashboard still needs its own contract's onboarding state (status + token), so
+ * the caller MUST authorize access first (requireCaseAccess) and this read trusts
+ * that gate. Do NOT call without a prior membership/permission check.
+ */
+export async function findContractByCaseIdService(
+  caseId: string,
+): Promise<ContractRow | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("contracts")
+    .select("*")
+    .eq("case_id", caseId)
+    .maybeSingle();
+
+  return data ?? null;
+}
+
 // ---------------------------------------------------------------------------
 // Contract mutations
 // ---------------------------------------------------------------------------

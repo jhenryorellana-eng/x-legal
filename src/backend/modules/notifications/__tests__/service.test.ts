@@ -559,7 +559,7 @@ describe("notifyFromEvent — onboarding flow", () => {
     expect(input.actionUrl).toBe(`/ventas/clientes/${CASE_ID}`);
   });
 
-  it("contract.sent → in-app + contract-ready email to the client with /firma/{token}", async () => {
+  it("contract.sent → in-app + push + contract-ready email to the client with /firma/{token}", async () => {
     mockFindUserById.mockResolvedValue({
       id: CLIENT_USER_ID,
       email: "client@example.com",
@@ -581,5 +581,8 @@ describe("notifyFromEvent — onboarding flow", () => {
     expect(emailJob).toBeDefined();
     expect(emailJob![0].templateKey).toBe("contract-ready");
     expect(emailJob![0].recipientEmail).toBe("client@example.com");
+    // Push is now enabled for the signing link (best-effort; delivered if subscribed).
+    const pushJob = mockEnqueueJob.mock.calls.find(([p]) => p.channel === "push");
+    expect(pushJob).toBeDefined();
   });
 });

@@ -19,10 +19,11 @@ export {
   acceptTermsFromImage,
   getTermsStatusForCase,
   getContractForCase,
+  getCaseOnboardingContract,
   getSigningTokenForContract,
 } from "./service";
 
-export type { TermsStatusView } from "./service";
+export type { TermsStatusView, CaseOnboardingContract } from "./service";
 
 // Error class
 export { ContractError } from "./service";
