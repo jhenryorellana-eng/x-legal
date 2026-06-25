@@ -1209,6 +1209,58 @@ export type Database = {
           },
         ]
       }
+      case_milestone_history: {
+        Row: {
+          case_id: string
+          created_at: string
+          entered_at: string
+          entered_by: string | null
+          id: string
+          milestone_id: string
+          note: string | null
+        }
+        Insert: {
+          case_id: string
+          created_at?: string
+          entered_at?: string
+          entered_by?: string | null
+          id?: string
+          milestone_id: string
+          note?: string | null
+        }
+        Update: {
+          case_id?: string
+          created_at?: string
+          entered_at?: string
+          entered_by?: string | null
+          id?: string
+          milestone_id?: string
+          note?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_milestone_history_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_milestone_history_entered_by_fkey"
+            columns: ["entered_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_milestone_history_milestone_id_fkey"
+            columns: ["milestone_id"]
+            isOneToOne: false
+            referencedRelation: "service_phase_milestones"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       case_phase_history: {
         Row: {
           case_id: string
@@ -1396,6 +1448,7 @@ export type Database = {
           case_number: string
           completed_at: string | null
           created_at: string
+          current_milestone_id: string | null
           current_phase_id: string | null
           id: string
           internal_note: string | null
@@ -1414,6 +1467,7 @@ export type Database = {
           case_number: string
           completed_at?: string | null
           created_at?: string
+          current_milestone_id?: string | null
           current_phase_id?: string | null
           id?: string
           internal_note?: string | null
@@ -1432,6 +1486,7 @@ export type Database = {
           case_number?: string
           completed_at?: string | null
           created_at?: string
+          current_milestone_id?: string | null
           current_phase_id?: string | null
           id?: string
           internal_note?: string | null
@@ -1458,6 +1513,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "staff_profiles"
             referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "cases_current_milestone_id_fkey"
+            columns: ["current_milestone_id"]
+            isOneToOne: false
+            referencedRelation: "service_phase_milestones"
+            referencedColumns: ["id"]
           },
           {
             foreignKeyName: "cases_current_phase_id_fkey"
@@ -3672,6 +3734,7 @@ export type Database = {
           service_phase_id: string
           slug: string
           updated_at: string
+          week_offset: number | null
         }
         Insert: {
           created_at?: string
@@ -3684,6 +3747,7 @@ export type Database = {
           service_phase_id: string
           slug: string
           updated_at?: string
+          week_offset?: number | null
         }
         Update: {
           created_at?: string
@@ -3696,6 +3760,7 @@ export type Database = {
           service_phase_id?: string
           slug?: string
           updated_at?: string
+          week_offset?: number | null
         }
         Relationships: [
           {

@@ -40,20 +40,21 @@ export function ResumenTab({
   const [busy, setBusy] = React.useState<"pay" | "resend" | "phase" | null>(null);
   const editPartyAction = vm.isAdmin ? actions.updateCaseParty : undefined;
 
-  // Manual phase advance (admin/paralegal) — only when a next phase exists.
-  const canAdvancePhase =
-    !!actions.advanceCasePhase &&
-    vm.header.phaseCount > 0 &&
-    vm.header.phaseIndex < vm.header.phaseCount;
+  // Manual milestone advance (admin/paralegal). Milestones are the progression
+  // unit; advancing crosses phases automatically. Shown whenever the case has a
+  // configured service — the backend rejects once the last milestone is reached.
+  const canAdvance = !!actions.advanceCaseMilestone && vm.header.phaseCount > 0;
 
-  async function onAdvancePhase() {
-    if (!actions.advanceCasePhase) return;
+  async function onAdvanceMilestone() {
+    if (!actions.advanceCaseMilestone) return;
     setBusy("phase");
-    const res = await actions.advanceCasePhase({ caseId: vm.header.caseId });
+    const res = await actions.advanceCaseMilestone({ caseId: vm.header.caseId });
     setBusy(null);
     if (res.ok) {
-      toast.success(t.advancePhaseDone);
+      toast.success(t.advanceMilestoneDone);
       router.refresh();
+    } else if (res.error?.code === "CASE_ALREADY_LAST_MILESTONE") {
+      toast.error(t.advanceMilestoneLast);
     } else {
       toast.error(strings.errorTitle);
     }
@@ -107,16 +108,16 @@ export function ResumenTab({
                 phaseWord={strings.colPhase}
               />
             </div>
-            {canAdvancePhase && (
+            {canAdvance && (
               <div style={{ marginTop: 14 }}>
                 <GradientBtn
                   size="md"
                   full
                   icon="chevR"
                   disabled={busy === "phase"}
-                  onClick={onAdvancePhase}
+                  onClick={onAdvanceMilestone}
                 >
-                  {busy === "phase" ? t.advancingPhase : t.advancePhase}
+                  {busy === "phase" ? t.advancingMilestone : t.advanceMilestone}
                 </GradientBtn>
               </div>
             )}

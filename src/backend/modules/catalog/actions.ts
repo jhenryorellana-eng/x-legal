@@ -269,6 +269,34 @@ export async function deleteMilestoneAction(milestoneId: string): Promise<Action
   }
 }
 
+/** @api-id API-CAT-24 — bulk reorder of a phase's milestones. */
+export async function reorderMilestonesAction(
+  servicePhaseId: string,
+  orderedIds: string[],
+): Promise<ActionResult<void>> {
+  try {
+    const actor = await requireActor();
+    await svc.reorderMilestones(actor, servicePhaseId, orderedIds);
+    return ok(undefined);
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** @api-id API-CAT-24 — full-list upsert of a phase's milestones. */
+export async function upsertMilestonesAction(
+  servicePhaseId: string,
+  items: Parameters<typeof svc.upsertMilestones>[2],
+): Promise<ActionResult<void>> {
+  try {
+    const actor = await requireActor();
+    await svc.upsertMilestones(actor, servicePhaseId, items);
+    return ok(undefined);
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Required documents
 // ---------------------------------------------------------------------------

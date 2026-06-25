@@ -272,6 +272,30 @@ export async function insertPhaseHistory(row: {
   }
 }
 
+/** Inserts a case_milestone_history row. `entered_at` is the approximate
+ *  "reached" date of the milestone. */
+export async function insertMilestoneHistory(row: {
+  caseId: string;
+  milestoneId: string;
+  enteredBy: string | null;
+  note: string | null;
+}): Promise<void> {
+  const supabase = await createServiceClient();
+  const { error } = await supabase.from("case_milestone_history").insert({
+    case_id: row.caseId,
+    milestone_id: row.milestoneId,
+    entered_by: row.enteredBy,
+    note: row.note,
+    entered_at: new Date().toISOString(),
+  });
+
+  if (error) {
+    throw new Error(
+      `cases.repository: insertMilestoneHistory failed — ${error.message}`,
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Documents
 // ---------------------------------------------------------------------------

@@ -36,6 +36,8 @@ import {
   canTransitionDocument,
   computePhaseProgress,
   resolveNextPhase,
+  resolveNextMilestone,
+  resolveFirstMilestone,
   addWeeksToAnchorIso,
   validateAnswerTypes,
   buildPartiesSnapshot,
@@ -53,6 +55,7 @@ import {
   createCaseAtomic,
   updateCase,
   insertPhaseHistory,
+  insertMilestoneHistory,
   findDocumentById,
   insertCaseDocument,
   updateDocument,
@@ -125,6 +128,8 @@ export class CaseError extends Error {
       | "CASE_NOTE_REQUIRED"
       | "CASE_PHASE_INVALID"
       | "CASE_ALREADY_LAST_PHASE"
+      | "CASE_ALREADY_LAST_MILESTONE"
+      | "CASE_NO_MILESTONES"
       | "CASE_SERVICE_NOT_AVAILABLE"
       | "CASE_PAYMENT_PLAN_INVALID"
       | "CASE_PARTY_ROLE_INVALID"
@@ -171,6 +176,7 @@ function iconForEvent(eventType: string): string {
     "document.rejected": "alert-circle",
     "terms.accepted": "file-check",
     "phase.advanced": "chevrons-right",
+    "milestone.advanced": "chevrons-right",
     "appointment.booked": "calendar",
     "appointment.cancelled": "alert-circle",
     "appointment.rescheduled": "refresh-cw",
@@ -186,6 +192,7 @@ function colorForEvent(eventType: string, actorKind: string): string {
   if (eventType === "document.approved") return "green";
   if (eventType === "downpayment.confirmed") return "green";
   if (eventType === "phase.advanced") return "gold";
+  if (eventType === "milestone.advanced") return "gold";
   // Appointment lifecycle (DOC-43): booked/completed positive (green), reschedule
   // neutral (gold), cancelled soft-warning (amber), no_show is the factual record
   // (red — the historical bitácora supports it; push notifications stay amber).
@@ -825,9 +832,10 @@ export async function onDownpaymentConfirmed(payload: {
     return;
   }
 
-  // We need the first phase from catalog to set current_phase_id.
-  // getCatalogFirstPhase is added in F3; if unavailable, activate without phase.
+  // We need the first phase + milestone from catalog to seed the case pointers.
+  // If unavailable, activate without them (degrades cleanly).
   let firstPhaseId: string | null = null;
+  let firstMilestoneId: string | null = null;
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const catalogModule = await import("@/backend/modules/catalog") as any;
@@ -835,10 +843,14 @@ export async function onDownpaymentConfirmed(payload: {
       const phase = await catalogModule.getCatalogFirstPhase(caseRow.service_id);
       firstPhaseId = phase?.id ?? null;
     }
+    if (typeof catalogModule.getCatalogFirstMilestone === "function") {
+      const milestone = await catalogModule.getCatalogFirstMilestone(caseRow.service_id);
+      firstMilestoneId = milestone?.id ?? null;
+    }
   } catch (err) {
     logger.warn(
       { err, caseId: payload.caseId },
-      "cases.onDownpaymentConfirmed: could not get first phase — activating without phase",
+      "cases.onDownpaymentConfirmed: could not get first phase/milestone — activating without them",
     );
   }
 
@@ -846,12 +858,21 @@ export async function onDownpaymentConfirmed(payload: {
     status: "active",
     opened_at: new Date().toISOString(),
     current_phase_id: firstPhaseId,
+    current_milestone_id: firstMilestoneId,
   });
 
   if (firstPhaseId) {
     await insertPhaseHistory({
       caseId: caseRow.id,
       phaseId: firstPhaseId,
+      enteredBy: null,
+      note: "case opened (downpayment confirmed)",
+    });
+  }
+  if (firstMilestoneId) {
+    await insertMilestoneHistory({
+      caseId: caseRow.id,
+      milestoneId: firstMilestoneId,
       enteredBy: null,
       note: "case opened (downpayment confirmed)",
     });
@@ -1513,6 +1534,130 @@ export async function advanceCasePhase(
 
   const phaseIndex = phases.findIndex((p) => p.id === target!.id) + 1;
   return { phaseId: target.id, phaseIndex, phaseCount: phases.length, labelI18n };
+}
+
+// ---------------------------------------------------------------------------
+// advanceCaseMilestone — manual milestone progression (admin/paralegal)
+// ---------------------------------------------------------------------------
+
+const AdvanceMilestoneSchema = z.object({
+  caseId: zUuid,
+  /** Explicit milestone to jump to (must be strictly ahead); else the next one. */
+  toMilestoneId: zUuid.nullable().optional(),
+  note: z.string().trim().max(500).nullable().optional(),
+});
+
+export type AdvanceCaseMilestoneInput = z.infer<typeof AdvanceMilestoneSchema>;
+
+export interface AdvanceCaseMilestoneResult {
+  milestoneId: string;
+  labelI18n: I18nValue | null;
+  /** True when advancing crossed into a new phase (current_phase_id moved too). */
+  phaseChanged: boolean;
+}
+
+/**
+ * Advances a case to the next milestone (or an explicit later one). Manual,
+ * staff-driven (admin + paralegal). Milestones are the progression unit; when the
+ * target milestone belongs to a different phase, the case's `current_phase_id` is
+ * moved in sync (documents/forms/citas key off the phase). Records
+ * case_milestone_history (+ case_phase_history on a phase change), surfaces a
+ * client-visible timeline event, and audits it.
+ *
+ * @api-id API-CASE-27 (advance milestone)
+ */
+export async function advanceCaseMilestone(
+  actor: Actor,
+  input: AdvanceCaseMilestoneInput,
+): Promise<AdvanceCaseMilestoneResult> {
+  can(actor, "cases", "edit");
+  if (
+    actor.kind !== "staff" ||
+    (actor.role !== "admin" && actor.role !== "paralegal")
+  ) {
+    throw new AuthzError("forbidden_module");
+  }
+  const parsed = AdvanceMilestoneSchema.parse(input);
+  await requireCaseAccess(actor, parsed.caseId);
+
+  const caseRow = await findCaseById(parsed.caseId);
+  if (!caseRow) throw new CaseError("CASE_NOT_FOUND");
+
+  const milestones = await listServiceMilestones(caseRow.service_id);
+  if (milestones.length === 0) throw new CaseError("CASE_NO_MILESTONES");
+  const refs = milestones.map((m) => ({
+    id: m.id,
+    phasePosition: m.phase_position,
+    position: m.position,
+  }));
+  const ordered = [...refs].sort(
+    (a, b) => a.phasePosition - b.phasePosition || a.position - b.position,
+  );
+
+  // Seed the current pointer from the case, or the first milestone if unset.
+  const currentId = caseRow.current_milestone_id ?? resolveFirstMilestone(refs)?.id ?? null;
+
+  let target: { id: string; phasePosition: number; position: number } | null;
+  if (parsed.toMilestoneId) {
+    const curIdx = currentId ? ordered.findIndex((m) => m.id === currentId) : -1;
+    const tgtIdx = ordered.findIndex((m) => m.id === parsed.toMilestoneId);
+    if (tgtIdx < 0 || tgtIdx <= curIdx) throw new CaseError("CASE_INVALID_TRANSITION");
+    target = ordered[tgtIdx];
+  } else {
+    target = resolveNextMilestone(refs, currentId);
+  }
+  if (!target) throw new CaseError("CASE_ALREADY_LAST_MILESTONE");
+
+  const targetRow = milestones.find((m) => m.id === target!.id)!;
+  const phases = await listServicePhases(caseRow.service_id);
+  const targetPhase = phases.find((p) => p.position === target!.phasePosition) ?? null;
+  const phaseChanged = !!targetPhase && targetPhase.id !== caseRow.current_phase_id;
+
+  const updates: TablesUpdate<"cases"> = { current_milestone_id: target.id };
+  if (phaseChanged && targetPhase) updates.current_phase_id = targetPhase.id;
+  await updateCase(caseRow.id, updates);
+
+  await insertMilestoneHistory({
+    caseId: caseRow.id,
+    milestoneId: target.id,
+    enteredBy: actor.userId,
+    note: parsed.note ?? null,
+  });
+  if (phaseChanged && targetPhase) {
+    await insertPhaseHistory({
+      caseId: caseRow.id,
+      phaseId: targetPhase.id,
+      enteredBy: actor.userId,
+      note: parsed.note ?? null,
+    });
+  }
+
+  const labelI18n = asI18n(targetRow.label_i18n);
+  const name = (l: "es" | "en") => (labelI18n ? (labelI18n[l] ?? "") : "");
+  await writeTimeline({
+    caseId: caseRow.id,
+    eventType: "milestone.advanced",
+    actorKind: "team",
+    actorUserId: actor.userId,
+    visibleToClient: true,
+    titleI18n: {
+      es: `Tu caso avanzó a: ${name("es")}`,
+      en: `Your case advanced to: ${name("en")}`,
+    },
+  });
+
+  await writeAudit(actor, "case.milestone_advanced", "cases", caseRow.id, {
+    before: {
+      milestoneId: caseRow.current_milestone_id,
+      phaseId: caseRow.current_phase_id,
+    },
+    after: {
+      milestoneId: target.id,
+      phaseId: phaseChanged && targetPhase ? targetPhase.id : caseRow.current_phase_id,
+    },
+  });
+
+  return { milestoneId: target.id, labelI18n, phaseChanged };
 }
 
 // ---------------------------------------------------------------------------
@@ -2198,7 +2343,9 @@ export interface CaseMilestoneItem {
   glossaryI18n: I18nValue | null;
   icon: string;
   phasePosition: number;
-  /** Derived state relative to the case's current phase. */
+  /** Approximate week of the milestone (admin-configured), or null. */
+  weekOffset: number | null;
+  /** Derived state relative to the case's current milestone (global order). */
   state: "completed" | "current" | "next" | "locked";
   /** Phase progress for the current milestone; null otherwise. */
   progress: number | null;
@@ -2228,7 +2375,6 @@ export async function getCaseMilestones(
   const currentPhase = caseRow.current_phase_id
     ? (phases.find((p) => p.id === caseRow.current_phase_id) ?? null)
     : null;
-  const currentPos = currentPhase?.position ?? -1;
   const phaseIndex = currentPhase
     ? phases.findIndex((p) => p.id === currentPhase.id) + 1
     : 0;
@@ -2243,21 +2389,25 @@ export async function getCaseMilestones(
     completedAppointments: 0,
   });
 
-  // The first milestone of the current phase is "current"; later milestones in
-  // the same phase are "next"; earlier phases are "completed"; later "locked".
-  let currentMarked = false;
-  const items: CaseMilestoneItem[] = milestones.map((m) => {
+  // Milestones are the progression unit: state derives from current_milestone_id
+  // in global order (phase, then position). Fallback for cases activated before
+  // milestone tracking existed: the first milestone of the current phase.
+  const ordered = [...milestones].sort(
+    (a, b) => a.phase_position - b.phase_position || a.position - b.position,
+  );
+  let currentId: string | null = caseRow.current_milestone_id ?? null;
+  if (!currentId && currentPhase) {
+    currentId = ordered.find((m) => m.phase_position === currentPhase.position)?.id ?? null;
+  }
+  const currentIdx = currentId ? ordered.findIndex((m) => m.id === currentId) : -1;
+
+  const items: CaseMilestoneItem[] = ordered.map((m, idx) => {
     let state: CaseMilestoneItem["state"];
-    if (m.phase_position < currentPos) {
-      state = "completed";
-    } else if (m.phase_position === currentPos && !currentMarked) {
-      state = "current";
-      currentMarked = true;
-    } else if (m.phase_position === currentPos) {
-      state = "next";
-    } else {
-      state = "locked";
-    }
+    if (currentIdx < 0) state = "locked";
+    else if (idx < currentIdx) state = "completed";
+    else if (idx === currentIdx) state = "current";
+    else if (idx === currentIdx + 1) state = "next";
+    else state = "locked";
     return {
       id: m.id,
       labelI18n: asI18n(m.label_i18n) ?? { en: "", es: "" },
@@ -2265,12 +2415,138 @@ export async function getCaseMilestones(
       glossaryI18n: asI18n(m.glossary_i18n),
       icon: m.icon,
       phasePosition: m.phase_position,
+      weekOffset: m.week_offset ?? null,
       state,
       progress: state === "current" ? progress : null,
     };
   });
 
   return { phaseIndex, phaseCount: phases.length, milestones: items };
+}
+
+// ---------------------------------------------------------------------------
+// getCaseProgressTimeline — unified "Mi proceso" timeline (milestones + citas)
+// ---------------------------------------------------------------------------
+
+export type ProgressTimelineItem =
+  | {
+      kind: "milestone";
+      id: string;
+      labelI18n: I18nValue;
+      descriptionI18n: I18nValue | null;
+      glossaryI18n: I18nValue | null;
+      icon: string;
+      weekOffset: number | null;
+      state: "completed" | "current" | "next" | "locked";
+      progress: number | null;
+    }
+  | {
+      kind: "appointment";
+      id: string;
+      labelI18n: I18nValue | null;
+      citaKind: string;
+      weekOffset: number;
+      sequenceNumber: number;
+      status: "completed" | "booked" | "unbooked";
+      appointmentId: string | null;
+      startsAt: string | null;
+    };
+
+export interface CaseProgressTimelineDto {
+  phaseIndex: number;
+  phaseCount: number;
+  started: boolean;
+  totalWeeks: number;
+  items: ProgressTimelineItem[];
+}
+
+/**
+ * Unified client "Mi proceso" timeline: legal milestones (states from
+ * current_milestone_id) interleaved with the service's citas (cronograma
+ * template resolved against the case's real appointments), ordered by week.
+ * Catalog/scheduling are imported dynamically to avoid a static module cycle.
+ *
+ * @api-id API-CASE-28 (progress timeline)
+ */
+export async function getCaseProgressTimeline(
+  actor: Actor,
+  caseId: string,
+): Promise<CaseProgressTimelineDto> {
+  const ms = await getCaseMilestones(actor, caseId); // requireCaseAccess inside
+  const caseRow = await findCaseById(caseId);
+  if (!caseRow) throw new CaseError("CASE_NOT_FOUND");
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const catalog = (await import("@/backend/modules/catalog")) as any;
+  const cron = await catalog.getServiceCronograma(caseRow.service_id);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const scheduling = (await import("@/backend/modules/scheduling")) as any;
+  const appts: Array<{
+    id: string;
+    service_phase_id: string | null;
+    sequence_number: number | null;
+    status: string;
+    starts_at: string;
+  }> = await scheduling.getCaseAppointments(actor, caseId).catch(() => []);
+
+  const milestoneItems: ProgressTimelineItem[] = ms.milestones.map((m) => ({
+    kind: "milestone",
+    id: m.id,
+    labelI18n: m.labelI18n,
+    descriptionI18n: m.descriptionI18n,
+    glossaryI18n: m.glossaryI18n,
+    icon: m.icon,
+    weekOffset: m.weekOffset,
+    state: m.state,
+    progress: m.progress,
+  }));
+
+  const apptItems: ProgressTimelineItem[] = (
+    (cron.citas ?? []) as Array<{
+      phaseId: string;
+      sequenceNumber: number;
+      kind: string;
+      weekOffset: number;
+      labelI18n: unknown;
+    }>
+  ).map((c) => {
+    const match = appts.find(
+      (a) =>
+        a.service_phase_id === c.phaseId &&
+        a.sequence_number === c.sequenceNumber &&
+        (a.status === "scheduled" || a.status === "completed"),
+    );
+    const status: "completed" | "booked" | "unbooked" =
+      match?.status === "completed" ? "completed" : match ? "booked" : "unbooked";
+    return {
+      kind: "appointment",
+      id: `${c.phaseId}:${c.sequenceNumber}`,
+      labelI18n: asI18n(c.labelI18n),
+      citaKind: c.kind,
+      weekOffset: c.weekOffset,
+      sequenceNumber: c.sequenceNumber,
+      status,
+      appointmentId: match?.id ?? null,
+      startsAt: match?.starts_at ?? null,
+    };
+  });
+
+  // Interleave by week; same week → milestone before appointment. Milestones with
+  // no week sort to the end (admin is expected to set a week for proper ordering).
+  const items = [...milestoneItems, ...apptItems].sort((a, b) => {
+    const wa = a.weekOffset ?? Number.MAX_SAFE_INTEGER;
+    const wb = b.weekOffset ?? Number.MAX_SAFE_INTEGER;
+    if (wa !== wb) return wa - wb;
+    return (a.kind === "milestone" ? 0 : 1) - (b.kind === "milestone" ? 0 : 1);
+  });
+
+  return {
+    phaseIndex: ms.phaseIndex,
+    phaseCount: ms.phaseCount,
+    started: caseRow.opened_at != null,
+    totalWeeks: cron.totalWeeks ?? 0,
+    items,
+  };
 }
 
 /**

@@ -11,6 +11,8 @@ import {
   canTransitionContract,
   computePhaseProgress,
   resolveNextPhase,
+  resolveNextMilestone,
+  resolveFirstMilestone,
   buildPartiesSnapshot,
   CASE_TRANSITIONS,
   type ContractStatus,
@@ -82,6 +84,50 @@ describe("resolveNextPhase", () => {
       { id: "p1", position: 1 },
     ];
     expect(resolveNextPhase(shuffled, "p0")).toEqual({ id: "p1", position: 1 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveNextMilestone / resolveFirstMilestone (global order across phases)
+// ---------------------------------------------------------------------------
+
+describe("resolveNextMilestone / resolveFirstMilestone", () => {
+  // Two phases: phase 0 has m0a, m0b; phase 1 has m1a. Global order:
+  // m0a → m0b → m1a (crosses the phase boundary between m0b and m1a).
+  const milestones = [
+    { id: "m0a", phasePosition: 0, position: 0 },
+    { id: "m0b", phasePosition: 0, position: 1 },
+    { id: "m1a", phasePosition: 1, position: 0 },
+  ];
+
+  it("first milestone is the earliest in global order", () => {
+    expect(resolveFirstMilestone(milestones)).toEqual({ id: "m0a", phasePosition: 0, position: 0 });
+    expect(resolveFirstMilestone([])).toBeNull();
+  });
+
+  it("advances within a phase, then crosses the phase boundary", () => {
+    expect(resolveNextMilestone(milestones, "m0a")).toEqual({ id: "m0b", phasePosition: 0, position: 1 });
+    // m0b is the last of phase 0 → next is the first of phase 1.
+    expect(resolveNextMilestone(milestones, "m0b")).toEqual({ id: "m1a", phasePosition: 1, position: 0 });
+  });
+
+  it("returns null at the last milestone", () => {
+    expect(resolveNextMilestone(milestones, "m1a")).toBeNull();
+  });
+
+  it("returns null when the current milestone is null or unknown", () => {
+    expect(resolveNextMilestone(milestones, null)).toBeNull();
+    expect(resolveNextMilestone(milestones, "nope")).toBeNull();
+  });
+
+  it("is order-independent (sorts by phase then position)", () => {
+    const shuffled = [
+      { id: "m1a", phasePosition: 1, position: 0 },
+      { id: "m0b", phasePosition: 0, position: 1 },
+      { id: "m0a", phasePosition: 0, position: 0 },
+    ];
+    expect(resolveNextMilestone(shuffled, "m0a")).toEqual({ id: "m0b", phasePosition: 0, position: 1 });
+    expect(resolveFirstMilestone(shuffled)).toEqual({ id: "m0a", phasePosition: 0, position: 0 });
   });
 });
 

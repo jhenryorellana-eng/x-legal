@@ -21,6 +21,7 @@ import {
   deletePhaseAction,
   upsertPhasePolicyAction,
   upsertAppointmentScheduleAction,
+  upsertMilestonesAction,
   createRequiredDocumentAction,
   updateRequiredDocumentAction,
   createServicePartyRoleAction,
@@ -116,6 +117,17 @@ export async function upsertPolicyUi(input: Record<string, unknown>): Promise<Re
 export async function upsertScheduleUi(input: Record<string, unknown>): Promise<Res<unknown>> {
   const r = await upsertAppointmentScheduleAction(
     input as Parameters<typeof upsertAppointmentScheduleAction>[0],
+  );
+  return r.success ? { success: true, data: r.data } : { success: false, error: r.error };
+}
+
+export async function upsertMilestonesUi(
+  servicePhaseId: string,
+  items: Array<Record<string, unknown>>,
+): Promise<Res<unknown>> {
+  const r = await upsertMilestonesAction(
+    servicePhaseId,
+    items as unknown as Parameters<typeof upsertMilestonesAction>[1],
   );
   return r.success ? { success: true, data: r.data } : { success: false, error: r.error };
 }

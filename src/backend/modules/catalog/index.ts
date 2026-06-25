@@ -18,6 +18,7 @@ export {
   listContractableServicePlans,
   listServicePartyRoles,
   getCatalogFirstPhase,
+  getCatalogFirstMilestone,
   isServiceContractable,
   // Form runtime reads (consumed by cases/form-runtime — API-CASE-16 through API-CASE-19)
   listQuestionGroups,

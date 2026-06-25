@@ -435,6 +435,7 @@ export async function createMilestone(
     description_i18n: dto.description_i18n ?? null,
     glossary_i18n: dto.glossary_i18n ?? null,
     icon: dto.icon ?? "route",
+    week_offset: dto.week_offset ?? null,
     position,
   });
 
@@ -470,6 +471,83 @@ export async function deleteMilestone(actor: Actor, milestoneId: string): Promis
   can(actor, "catalog", "edit");
   await repo.deleteMilestone(milestoneId);
   await writeAudit(actor, "catalog.milestone.deleted", "service_phase_milestones", milestoneId, {});
+}
+
+/**
+ * @api-id API-CAT-24 — bulk reorder of a phase's milestones.
+ */
+export async function reorderMilestones(
+  actor: Actor,
+  servicePhaseId: string,
+  orderedIds: string[],
+): Promise<void> {
+  can(actor, "catalog", "edit");
+  await repo.reorderMilestonesTx(servicePhaseId, orderedIds);
+  await writeAudit(actor, "catalog.milestone.reordered", "service_phase_milestones", null, {
+    after: { servicePhaseId, orderedIds },
+  });
+}
+
+export interface UpsertMilestoneItem {
+  id?: string | null;
+  slug: string;
+  label_i18n: import("./domain").I18nTextDraft;
+  glossary_i18n?: import("./domain").I18nTextDraft | null;
+  icon?: string;
+  week_offset?: number | null;
+}
+
+/**
+ * Full-list upsert of a phase's milestones (mirrors upsertAppointmentSchedule):
+ * items with a known id are updated, new ones created, and existing milestones
+ * absent from the list are deleted. Positions follow the array order. Existing
+ * rows are first parked at negative positions so the per-statement unique
+ * (service_phase_id, position) constraint never sees a transient collision.
+ */
+export async function upsertMilestones(
+  actor: Actor,
+  servicePhaseId: string,
+  items: UpsertMilestoneItem[],
+): Promise<void> {
+  can(actor, "catalog", "edit");
+  const existing = await repo.listMilestones(servicePhaseId);
+  await Promise.all(
+    existing.map((e, k) => repo.updateMilestone(e.id, { position: -(k + 1) })),
+  );
+
+  const keep = new Set<string>();
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    const found = it.id ? existing.find((e) => e.id === it.id) : undefined;
+    if (found) {
+      await repo.updateMilestone(found.id, {
+        slug: it.slug,
+        label_i18n: it.label_i18n ?? {},
+        glossary_i18n: it.glossary_i18n ?? null,
+        icon: it.icon || "route",
+        week_offset: it.week_offset ?? null,
+        position: i,
+      });
+      keep.add(found.id);
+    } else {
+      const created = await repo.insertMilestone({
+        service_phase_id: servicePhaseId,
+        slug: it.slug,
+        label_i18n: it.label_i18n ?? {},
+        description_i18n: null,
+        glossary_i18n: it.glossary_i18n ?? null,
+        icon: it.icon || "route",
+        week_offset: it.week_offset ?? null,
+        position: i,
+      });
+      keep.add(created.id);
+    }
+  }
+  for (const e of existing) if (!keep.has(e.id)) await repo.deleteMilestone(e.id);
+
+  await writeAudit(actor, "catalog.milestone.upserted", "service_phase_milestones", null, {
+    after: { servicePhaseId, count: items.length },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -2049,6 +2127,22 @@ export async function getCatalogFirstPhase(
     : null;
   const chosen = entry ?? phases[0];
   return { id: chosen.id, position: chosen.position };
+}
+
+/**
+ * The first milestone of the service in global order (earliest phase that has
+ * milestones, then its first by position). Used to seed cases.current_milestone_id
+ * on activation. Returns null when the service has no milestones configured.
+ */
+export async function getCatalogFirstMilestone(
+  serviceId: string,
+): Promise<{ id: string } | null> {
+  const phases = await repo.listPhases(serviceId); // ordered by position asc
+  for (const ph of phases) {
+    const milestones = await repo.listMilestones(ph.id); // ordered by position asc
+    if (milestones.length > 0) return { id: milestones[0].id };
+  }
+  return null;
 }
 
 export async function getPublishedAutomationVersion(formDefinitionId: string) {

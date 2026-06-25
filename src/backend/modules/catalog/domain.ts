@@ -173,6 +173,9 @@ export const MilestoneSchema = z.object({
   glossary_i18n: I18nTextDraftSchema.nullable(),
   icon: z.string().default("route"),
   position: z.number().int(),
+  /** Approximate week (anchored on cases.opened_at) — drives the "Semana N"
+   *  label and the ordering against scheduled citas. Null = no estimate. */
+  week_offset: z.number().int().min(1).nullable(),
 });
 export type Milestone = z.infer<typeof MilestoneSchema>;
 
@@ -183,6 +186,7 @@ export const CreateMilestoneDtoSchema = z.object({
   description_i18n: I18nTextDraftSchema.nullable().optional(),
   glossary_i18n: I18nTextDraftSchema.nullable().optional(),
   icon: z.string().optional(),
+  week_offset: z.number().int().min(1).nullable().optional(),
 });
 export type CreateMilestoneDto = z.infer<typeof CreateMilestoneDtoSchema>;
 

@@ -86,6 +86,18 @@ export interface WizardScheduleItem {
   objectives: WizardObjective[];
 }
 
+/** A "Mi proceso" milestone (hito) edited in the phase step. */
+export interface WizardMilestone {
+  /** Real id when loaded from the DB; absent/temporary for newly added rows. */
+  id: string;
+  slug: string;
+  label: I18nValue;
+  glossary: I18nValue;
+  icon: string;
+  /** Approximate week (drives the "Semana N" label + ordering vs citas), or null. */
+  week_offset: number | null;
+}
+
 export interface WizardPhase {
   id: string;
   slug: string;
@@ -100,7 +112,8 @@ export interface WizardPhase {
   schedule: WizardScheduleItem[];
   /** Trailing "trámite" weeks this phase contributes to the cronograma. */
   processing_weeks: number;
-  milestoneCount: number;
+  /** Client-visible milestones ("Mi proceso") for this phase. */
+  milestones: WizardMilestone[];
   docs: WizardDoc[];
   forms: WizardForm[];
 }
@@ -141,6 +154,10 @@ export interface CatalogWizardProps {
     deletePhase: (id: string) => Promise<ActionRes<unknown>>;
     upsertPolicy: (input: Record<string, unknown>) => Promise<ActionRes<unknown>>;
     upsertSchedule: (input: Record<string, unknown>) => Promise<ActionRes<unknown>>;
+    upsertMilestones: (
+      servicePhaseId: string,
+      items: Array<Record<string, unknown>>,
+    ) => Promise<ActionRes<unknown>>;
     createRequiredDoc: (input: Record<string, unknown>) => Promise<ActionRes<{ id: string }>>;
     updateRequiredDoc: (id: string, patch: Record<string, unknown>) => Promise<ActionRes<{ id: string }>>;
     createPartyRole: (input: Record<string, unknown>) => Promise<ActionRes<{ id: string }>>;
@@ -161,6 +178,19 @@ export interface CatalogWizardProps {
 }
 
 type ActionRes<T> = { success: boolean; data?: T; error?: { code: string; message: string } };
+
+/** Stable, valid slug for a milestone: keep an existing one, else derive from the
+ *  ES label (kebab-case, accent-stripped), falling back to "hito-N". */
+function milestoneSlug(m: WizardMilestone, i: number): string {
+  if (m.slug && /^[a-z0-9]+(-[a-z0-9]+)*$/.test(m.slug)) return m.slug;
+  const base = (m.label.es || m.label.en || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return base || `hito-${i + 1}`;
+}
 
 const STEP_IDS = ["basics", "plans", "parties", "phases", "docs", "forms", "publish"] as const;
 type StepId = (typeof STEP_IDS)[number];
@@ -658,7 +688,7 @@ function PhasesStep({
     if (r.success && r.data) {
       setPhases((prev) => [
         ...prev,
-        { id: r.data!.id, slug, label: { es: "", en: "" }, description: { es: "", en: "" }, client_explainer: { es: "", en: "" }, appointment_count: 1, duration_minutes: 30, kind: "video", schedule: [], processing_weeks: 0, milestoneCount: 0, docs: [], forms: [] },
+        { id: r.data!.id, slug, label: { es: "", en: "" }, description: { es: "", en: "" }, client_explainer: { es: "", en: "" }, appointment_count: 1, duration_minutes: 30, kind: "video", schedule: [], processing_weeks: 0, milestones: [], docs: [], forms: [] },
       ]);
       setActiveIdx(phases.length);
     } else toast.error(r.error?.message ?? "Error");
@@ -695,6 +725,18 @@ function PhasesStep({
           .map((o) => ({ id: o.id, text: o.text })),
       })),
     });
+    // Persist the "Mi proceso" milestones (hitos) — full-list upsert.
+    await actions.upsertMilestones(
+      ph.id,
+      ph.milestones.map((m, i) => ({
+        id: m.id || null,
+        slug: milestoneSlug(m, i),
+        label_i18n: { es: m.label.es ?? "", en: m.label.en ?? "" },
+        glossary_i18n: { es: m.glossary.es ?? "", en: m.glossary.en ?? "" },
+        icon: m.icon || "route",
+        week_offset: m.week_offset,
+      })),
+    );
     setSavingPhase(false);
     toast.success(t.saved);
   }
@@ -743,6 +785,24 @@ function PhasesStep({
   function removeObjective(ci: number, oi: number) {
     const item = active.schedule[ci];
     updateCita(ci, { objectives: item.objectives.filter((_, i) => i !== oi) });
+  }
+  // Milestones ("Mi proceso" hitos) editor: add / edit / remove.
+  function updateMilestone(mi: number, patch: Partial<WizardMilestone>) {
+    update(activeIdx, {
+      milestones: active.milestones.map((m, i) => (i === mi ? { ...m, ...patch } : m)),
+    });
+  }
+  function removeMilestone(mi: number) {
+    update(activeIdx, { milestones: active.milestones.filter((_, i) => i !== mi) });
+  }
+  function addMilestone() {
+    const nextWeek = active.milestones.reduce((mx, m) => Math.max(mx, m.week_offset ?? 0), 0) + 1;
+    update(activeIdx, {
+      milestones: [
+        ...active.milestones,
+        { id: "", slug: "", label: { es: "", en: "" }, glossary: { es: "", en: "" }, icon: "route", week_offset: nextWeek },
+      ],
+    });
   }
   const cronoLastWeek = (active?.schedule ?? []).reduce((m, s) => Math.max(m, s.week_offset), 0);
   const cronoTotalWeeks = cronoLastWeek + (active?.processing_weeks ?? 0);
@@ -795,6 +855,66 @@ function PhasesStep({
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <I18nField label={t.phaseLabel} value={active.label} onChange={(v) => update(activeIdx, { label: v })} />
           <I18nField label={t.clientExplainer} value={active.client_explainer} onChange={(v) => update(activeIdx, { client_explainer: v })} multiline />
+
+          {/* Hitos del "Mi proceso" (DOC-53 §4.2) */}
+          <div>
+            <FieldLabel>{t.milestonesTitle}</FieldLabel>
+            <p style={{ ...subLabel, marginBottom: 8 }}>{t.milestonesHelp}</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {active.milestones.map((m, mi) => (
+                <div
+                  key={mi}
+                  style={{
+                    border: "1px solid var(--line)",
+                    borderRadius: 12,
+                    padding: 12,
+                    background: "var(--panel-2, var(--card-alt))",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 8,
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                    <span style={{ ...subLabel, margin: 0, fontWeight: 800 }}>
+                      {t.milestoneN.replace("{n}", String(mi + 1))}
+                    </span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ ...subLabel, margin: 0 }}>{t.citaWeek}</span>
+                      <div style={{ width: 80 }}>
+                        <TextInput
+                          type="number"
+                          value={m.week_offset == null ? "" : String(m.week_offset)}
+                          onChange={(e) =>
+                            updateMilestone(mi, {
+                              week_offset: e.target.value === "" ? null : Math.max(1, Number(e.target.value)),
+                            })
+                          }
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        aria-label={t.delete}
+                        onClick={() => removeMilestone(mi)}
+                        style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid var(--line)", background: "var(--panel, var(--card))", cursor: "pointer", display: "grid", placeItems: "center" }}
+                      >
+                        <Icon name="x" size={14} color="var(--ink-3)" />
+                      </button>
+                    </div>
+                  </div>
+                  <I18nField label={t.milestoneLabel} value={m.label} onChange={(v) => updateMilestone(mi, { label: v })} />
+                  <I18nField label={t.milestoneGlossary} value={m.glossary} onChange={(v) => updateMilestone(mi, { glossary: v })} multiline />
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={addMilestone}
+                aria-label={t.addMilestone}
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 10, cursor: "pointer", border: "1.5px dashed var(--line)", background: "transparent", color: "var(--accent)", fontWeight: 700, fontSize: 13 }}
+              >
+                <Icon name="plus" size={14} color="var(--accent)" /> {t.addMilestone}
+              </button>
+            </div>
+          </div>
 
           <div>
             <FieldLabel>{t.apptScheduleTitle}</FieldLabel>
