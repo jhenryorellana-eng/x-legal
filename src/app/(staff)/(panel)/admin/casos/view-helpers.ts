@@ -44,6 +44,7 @@ export function buildRutaVM(ruta: CaseRutaResult | null, locale: Locale): CaseRu
     total: ruta.total,
     currentSequence: ruta.currentSequence,
     citas: ruta.citas.map((c) => ({
+      number: c.number,
       sequenceNumber: c.sequenceNumber,
       label: c.labelI18n ? resolveI18n(c.labelI18n, locale) || null : null,
       kind: c.kind,

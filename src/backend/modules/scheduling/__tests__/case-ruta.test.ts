@@ -152,6 +152,7 @@ describe("getCaseRuta", () => {
     expect(ruta.currentSequence).toBe(2);
     expect(ruta.phaseLabelI18n).toEqual({ es: "Fase 1", en: "Phase 1" });
 
+    expect(ruta.citas[0].number).toBe(1);
     expect(ruta.citas[0].status).toBe("completed");
     expect(ruta.citas[0].objectives).toEqual([
       { id: "o1", text: { es: "A" }, achieved: true },
@@ -159,19 +160,26 @@ describe("getCaseRuta", () => {
     ]);
     expect(ruta.citas[0].appointment?.id).toBe("ap1");
 
+    expect(ruta.citas[1].number).toBe(2);
     expect(ruta.citas[1].status).toBe("current");
     expect(ruta.citas[1].objectives[0].achieved).toBeNull();
   });
 
-  it("merges per-case extras into the route (count rises)", async () => {
+  it("inserts an intermediate after its anchor and renumbers the rest (2nd → 3rd)", async () => {
+    // Cita 1 (w1,p0,s1) + Cita 2 (w2,p1,s2). An intermediate anchored to Cita 1
+    // (same week+position, higher seq=3) must sort BETWEEN them.
     mockGetAppointmentSchedule.mockResolvedValue([svcEntry(1), svcEntry(2)]);
     mockGetCaseScheduleRows.mockResolvedValue([
-      svcEntry(3, { origin: "case", id: "extra-1", position: 1, weekOffset: 1 }),
+      svcEntry(3, { origin: "case", id: "extra-1", position: 0, weekOffset: 1 }),
     ]);
 
     const ruta = await getCaseRuta(STAFF, CASE_ID);
     expect(ruta.total).toBe(3);
-    expect(ruta.citas.some((c) => c.origin === "case" && c.sequenceNumber === 3)).toBe(true);
+    // Route order: Cita1 (seq1), intermediate (seq3), old Cita2 (seq2).
+    expect(ruta.citas.map((c) => c.sequenceNumber)).toEqual([1, 3, 2]);
+    // Display numbers renumber by index: the intermediate is "Cita 2", old Cita2 "Cita 3".
+    expect(ruta.citas.map((c) => c.number)).toEqual([1, 2, 3]);
+    expect(ruta.citas[1].origin).toBe("case");
   });
 
   it("returns an empty route when the case has no current phase", async () => {
@@ -183,10 +191,17 @@ describe("getCaseRuta", () => {
 });
 
 describe("addCaseAppointment", () => {
-  it("inserts an intermediate cita with sequence = max+1 and trailing position", async () => {
-    mockGetAppointmentSchedule.mockResolvedValue([svcEntry(1), svcEntry(2)]);
+  it("anchors the new cita to the LAST COMPLETED cita (inherits its week+position)", async () => {
+    // Cita 1 & 2 completed, Cita 3 current. The new cita must follow Cita 2 (the
+    // last completed), inheriting its (weekOffset 2, position 1) so it sorts right
+    // after it — not after the whole route.
+    mockGetAppointmentSchedule.mockResolvedValue([svcEntry(1), svcEntry(2), svcEntry(3)]);
     mockGetCaseScheduleRows.mockResolvedValue([]);
     mockGetPhaseSeqNumbers.mockResolvedValue([1, 2]);
+    mockApptRows.current = [
+      { id: "a1", service_phase_id: PHASE_ID, sequence_number: 1, status: "completed", starts_at: "2026-06-01T15:00:00Z", video_link: null, objectives_outcome: [] },
+      { id: "a2", service_phase_id: PHASE_ID, sequence_number: 2, status: "completed", starts_at: "2026-06-08T15:00:00Z", video_link: null, objectives_outcome: [] },
+    ];
 
     const res = await addCaseAppointment(STAFF, {
       caseId: CASE_ID,
@@ -194,14 +209,27 @@ describe("addCaseAppointment", () => {
       objectives: [{ text: { es: "Revisar docs", en: "Review docs" } }],
     });
 
-    expect(res).toEqual({ id: "new-row-id", sequenceNumber: 3 });
+    expect(res.sequenceNumber).toBe(4); // max(1,2,3)+1
     const arg = mockInsertCaseSchedule.mock.calls[0][0];
-    expect(arg.sequenceNumber).toBe(3);
-    expect(arg.position).toBe(2); // last position (1) + 1
-    expect(arg.weekOffset).toBe(2); // follows the last cita's week
+    expect(arg.sequenceNumber).toBe(4);
+    expect(arg.weekOffset).toBe(2); // anchor = Cita 2 (week 2)
+    expect(arg.position).toBe(1); // anchor = Cita 2 (position 1)
     expect(arg.objectivesI18n).toHaveLength(1);
     expect(arg.objectivesI18n[0].id).toBeTruthy(); // id generated for the new objective
     expect(mockWriteAudit).toHaveBeenCalled();
+  });
+
+  it("anchors to the first cita when none is completed yet", async () => {
+    mockGetAppointmentSchedule.mockResolvedValue([svcEntry(1), svcEntry(2)]);
+    mockGetCaseScheduleRows.mockResolvedValue([]);
+    mockGetPhaseSeqNumbers.mockResolvedValue([]);
+    mockApptRows.current = []; // nothing completed
+
+    const res = await addCaseAppointment(STAFF, { caseId: CASE_ID, objectives: [] });
+    expect(res.sequenceNumber).toBe(3); // max(1,2)+1
+    const arg = mockInsertCaseSchedule.mock.calls[0][0];
+    expect(arg.weekOffset).toBe(1); // anchor = Cita 1 (week 1)
+    expect(arg.position).toBe(0); // anchor = Cita 1 (position 0)
   });
 
   it("takes max+1 across booked sequence numbers too", async () => {
@@ -213,16 +241,17 @@ describe("addCaseAppointment", () => {
     expect(res.sequenceNumber).toBe(6);
   });
 
-  it("defaults to sequence 1 / week 1 / position 1 when the phase has no schedule", async () => {
+  it("defaults to sequence 1 / week 1 / position 0 when the phase has no schedule", async () => {
     mockGetAppointmentSchedule.mockResolvedValue([]);
     mockGetCaseScheduleRows.mockResolvedValue([]);
     mockGetPhaseSeqNumbers.mockResolvedValue([]);
+    mockApptRows.current = [];
 
     const res = await addCaseAppointment(STAFF, { caseId: CASE_ID, objectives: [] });
     expect(res.sequenceNumber).toBe(1);
     const arg = mockInsertCaseSchedule.mock.calls[0][0];
     expect(arg.weekOffset).toBe(1);
-    expect(arg.position).toBe(1);
+    expect(arg.position).toBe(0);
   });
 });
 

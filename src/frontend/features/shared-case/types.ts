@@ -161,6 +161,9 @@ export interface RutaCitaObjectiveVM {
 
 /** One cita in the case appointment route ("Ruta de citas"). */
 export interface RutaCitaVM {
+  /** Display order in the route (1-based). The "Cita N" shown to the user. */
+  number: number;
+  /** Internal id linking to the booked instance — NOT the display number. */
   sequenceNumber: number;
   /** Resolved label, or null → the UI falls back to "Cita N". */
   label: string | null;
@@ -290,6 +293,16 @@ export interface CaseDetailActions {
     toPhaseId?: string | null;
     note?: string | null;
   }) => Promise<{ ok: boolean; phaseIndex?: number; phaseCount?: number; error?: { code: string } }>;
+  /**
+   * Advance the case to the next milestone (admin + paralegal only). Milestones
+   * are the progression unit; advancing crosses phases automatically. Optional:
+   * only surfaces that authorize it inject the action.
+   */
+  advanceCaseMilestone?: (input: {
+    caseId: string;
+    toMilestoneId?: string | null;
+    note?: string | null;
+  }) => Promise<{ ok: boolean; phaseChanged?: boolean; error?: { code: string } }>;
   /**
    * Add an intermediate cita to this case's current phase (sales + admin). The new
    * cita carries its own objectives and shows up in the route and the client's

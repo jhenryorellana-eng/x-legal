@@ -10,6 +10,7 @@ import { describe, it, expect } from "vitest";
 import {
   effectiveAppointmentCount,
   scheduleEntryForSequence,
+  nextRouteSequenceNumber,
   resolveObjectiveTemplates,
   resolveObjectivesOutcome,
   mergeCaseSchedule,
@@ -72,6 +73,32 @@ describe("resolveObjectiveTemplates", () => {
         { id: "noText" },
       ]),
     ).toEqual([{ id: "ok", text: { es: "x" } }]);
+  });
+});
+
+describe("nextRouteSequenceNumber", () => {
+  // Route order: seq 1, then the intermediate seq 3 (sorts before), then seq 2.
+  const route: AppointmentScheduleEntry[] = [
+    { sequenceNumber: 1, durationMinutes: 30, kind: "video", weekOffset: 1, labelI18n: null, objectives: [], position: 0 },
+    { sequenceNumber: 3, durationMinutes: 30, kind: "video", weekOffset: 1, labelI18n: null, objectives: [], position: 0 },
+    { sequenceNumber: 2, durationMinutes: 30, kind: "video", weekOffset: 2, labelI18n: null, objectives: [], position: 1 },
+  ];
+
+  it("returns the first ROUTE entry without an instance (not numeric max+1)", () => {
+    // seq 1 booked → next in route order is the intermediate (seq 3), NOT seq 2.
+    expect(nextRouteSequenceNumber(route, [1])).toBe(3);
+  });
+
+  it("returns the first cita when nothing is booked", () => {
+    expect(nextRouteSequenceNumber(route, [])).toBe(1);
+  });
+
+  it("falls back to max+1 when every configured cita is booked", () => {
+    expect(nextRouteSequenceNumber(route, [1, 2, 3])).toBe(4);
+  });
+
+  it("ignores null sequence numbers", () => {
+    expect(nextRouteSequenceNumber(route, [null, 1])).toBe(3);
   });
 });
 

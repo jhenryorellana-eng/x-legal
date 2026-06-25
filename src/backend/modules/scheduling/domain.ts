@@ -289,6 +289,26 @@ export function scheduleEntryForSequence(
   return schedule.find((e) => e.sequenceNumber === sequenceNumber) ?? null;
 }
 
+/**
+ * The sequence_number of the NEXT cita to book, following the ROUTE order (not
+ * the raw numeric max). With intermediate citas the route order ≠ sequence order
+ * (an intermediate keeps a high sequence_number but sorts in the middle), so the
+ * next cita to book is the first entry of the ordered effective schedule that has
+ * no active instance yet. Falls back to max+1 when every configured cita is
+ * already booked but the quota still allows another.
+ *
+ * `schedule` MUST be the ordered effective schedule (mergeCaseSchedule output).
+ */
+export function nextRouteSequenceNumber(
+  schedule: AppointmentScheduleEntry[],
+  existingSeqs: Array<number | null>,
+): number {
+  const booked = new Set(existingSeqs.filter((s): s is number => s != null));
+  const pending = schedule.find((e) => !booked.has(e.sequenceNumber));
+  if (pending) return pending.sequenceNumber;
+  return nextSequenceNumber(existingSeqs);
+}
+
 // ---------------------------------------------------------------------------
 // Rebooking penalty — DOC-43 §2.4
 // ---------------------------------------------------------------------------

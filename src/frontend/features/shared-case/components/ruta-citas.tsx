@@ -142,10 +142,10 @@ function CitaStepper({ citas, strings }: { citas: RutaCitaVM[]; strings: CasosSt
                 {c.status === "completed" ? (
                   <Icon name="check" size={18} color="#fff" />
                 ) : (
-                  c.sequenceNumber
+                  c.number
                 )}
               </div>
-              <div className="step-lbl">{interp(t.routeCita, { n: String(c.sequenceNumber) })}</div>
+              <div className="step-lbl">{interp(t.routeCita, { n: String(c.number) })}</div>
               {c.label && <div className="step-sub">{c.label}</div>}
             </div>
             {i < citas.length - 1 && (
@@ -189,11 +189,11 @@ function CitaCard({ cita, strings }: { cita: RutaCitaVM; strings: CasosStrings }
             flexShrink: 0,
           }}
         >
-          {isDone ? <Icon name="check" size={17} color="#fff" /> : cita.sequenceNumber}
+          {isDone ? <Icon name="check" size={17} color="#fff" /> : cita.number}
         </div>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontWeight: 900, fontSize: 14, color: "var(--ink)" }}>
-            {interp(t.routeCita, { n: String(cita.sequenceNumber) })}
+            {interp(t.routeCita, { n: String(cita.number) })}
           </div>
           {cita.label && (
             <div

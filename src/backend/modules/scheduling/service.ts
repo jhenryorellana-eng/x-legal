@@ -27,9 +27,9 @@ import {
   canClientReschedule,
   hasStarted,
   effectivePolicy,
-  nextSequenceNumber,
   effectiveAppointmentCount,
   scheduleEntryForSequence,
+  nextRouteSequenceNumber,
   mergeCaseSchedule,
   resolveObjectivesOutcome,
   computeRebookingBlockedUntil,
@@ -383,7 +383,9 @@ export async function getAvailableSlots(
     input.caseId,
     c.currentPhaseId,
   );
-  const sequenceNumber = nextSequenceNumber(seqNumbers);
+  // Next cita to book follows the ROUTE order, so an intermediate cita is booked
+  // before the citas it precedes (not by raw sequence_number max+1).
+  const sequenceNumber = nextRouteSequenceNumber(schedule, seqNumbers);
   const entry = scheduleEntryForSequence(schedule, sequenceNumber);
   const durationMin = entry?.durationMinutes ?? policy.durationMinutes;
   const kind = entry?.kind ?? policy.kind;
@@ -480,8 +482,10 @@ export async function bookAppointment(
   const policy = effectivePolicy(phasePolicy, caseOverride);
 
   // Sequence number first, so the cita's own duration/kind (from the cronograma
-  // schedule row) can be resolved. Staff-supplied values still win.
-  const sequenceNumber = nextSequenceNumber(
+  // schedule row) can be resolved. Staff-supplied values still win. Follows the
+  // ROUTE order so an intermediate cita is booked before the ones it precedes.
+  const sequenceNumber = nextRouteSequenceNumber(
+    schedule,
     await repo.getPhaseSequenceNumbers(p.caseId, phaseId),
   );
   const entry = scheduleEntryForSequence(schedule, sequenceNumber);
@@ -1780,6 +1784,9 @@ export interface RutaCitaObjective {
 }
 
 export interface RutaCita {
+  /** Display order in the route (1-based). The "Cita N" the user sees. */
+  number: number;
+  /** Internal id linking the planned cita to its booked instance. NOT the display number. */
   sequenceNumber: number;
   labelI18n: I18nText | null;
   kind: "video" | "phone" | "presencial";
@@ -1808,34 +1815,30 @@ export interface CaseRutaResult {
   citas: RutaCita[];
 }
 
+/** One entry of the ordered effective route + its live instance + computed status. */
+interface CaseRouteEntry {
+  entry: AppointmentScheduleEntry;
+  appt: AppointmentRow | null;
+  status: "completed" | "current" | "upcoming";
+}
+
 /**
- * The appointment route for a case's CURRENT phase: every planned cita (service
- * cronograma + per-case extras), which one the case is on, and each cita's
- * objectives (with outcome flags for completed ones). Powers the staff "Ruta de
- * citas" tab.
+ * Builds the ordered effective route of a case's phase with each cita's LIVE
+ * instance and status (completed / current / upcoming). Shared by getCaseRuta
+ * (display) and addCaseAppointment (anchor for intermediate insertion).
  *
- * Client: requireCaseAccess. Staff: cases.view (via requireCaseAccess).
- *
- * @api-id API-SCH-18
+ * The route order is the effective schedule order (mergeCaseSchedule), so the
+ * "current" cita is the first NON-completed one IN ROUTE ORDER — an intermediate
+ * cita that sorts before a later one becomes current ahead of it.
  */
-export async function getCaseRuta(
+async function computeCaseRouteEntries(
   actor: Actor,
   caseId: string,
-): Promise<CaseRutaResult> {
-  await requireCaseAccess(actor, caseId);
-
-  const cases = await getCasesModule();
-  const c = await cases.getCaseCore(caseId);
-  if (!c || !c.currentPhaseId) {
-    return { phaseId: null, phaseLabelI18n: null, total: 0, currentSequence: null, citas: [] };
-  }
-  const phaseId = c.currentPhaseId;
-
-  const supabase = createServiceClient();
-  const [schedule, appts, phaseRes] = await Promise.all([
+  phaseId: string,
+): Promise<CaseRouteEntry[]> {
+  const [schedule, appts] = await Promise.all([
     getCaseEffectiveSchedule(caseId, phaseId),
     getCaseAppointments(actor, caseId),
-    supabase.from("service_phases").select("label_i18n").eq("id", phaseId).maybeSingle(),
   ]);
 
   // Index the LIVE booked instance of THIS phase by sequence_number. We exclude
@@ -1856,28 +1859,65 @@ export async function getCaseRuta(
   }
 
   let currentAssigned = false;
-  let currentSequence: number | null = null;
-  const citas: RutaCita[] = schedule.map((entry) => {
+  return schedule.map((entry) => {
     const appt = apptBySeq.get(entry.sequenceNumber) ?? null;
     // Only a completed cita advances the route. A `no_show` deliberately stays
     // "current": the slot isn't counted against the quota (see countPhaseAppointments
     // in bookAppointment), so the cita must be rebooked before the case moves on.
     const isCompleted = appt?.status === "completed";
-
-    let status: RutaCita["status"];
+    let status: CaseRouteEntry["status"];
     if (isCompleted) {
       status = "completed";
     } else if (!currentAssigned) {
       status = "current";
       currentAssigned = true;
-      currentSequence = entry.sequenceNumber;
     } else {
       status = "upcoming";
     }
+    return { entry, appt, status };
+  });
+}
+
+/**
+ * The appointment route for a case's CURRENT phase: every planned cita (service
+ * cronograma + per-case extras), which one the case is on, and each cita's
+ * objectives (with outcome flags for completed ones). Powers the staff "Ruta de
+ * citas" tab.
+ *
+ * The "Cita N" the user sees is the 1-based ROUTE position (index), not the raw
+ * sequence_number — so an intermediate cita renumbers the ones after it.
+ *
+ * Client: requireCaseAccess. Staff: cases.view (via requireCaseAccess).
+ *
+ * @api-id API-SCH-18
+ */
+export async function getCaseRuta(
+  actor: Actor,
+  caseId: string,
+): Promise<CaseRutaResult> {
+  await requireCaseAccess(actor, caseId);
+
+  const cases = await getCasesModule();
+  const c = await cases.getCaseCore(caseId);
+  if (!c || !c.currentPhaseId) {
+    return { phaseId: null, phaseLabelI18n: null, total: 0, currentSequence: null, citas: [] };
+  }
+  const phaseId = c.currentPhaseId;
+
+  const supabase = createServiceClient();
+  const [routeEntries, phaseRes] = await Promise.all([
+    computeCaseRouteEntries(actor, caseId, phaseId),
+    supabase.from("service_phases").select("label_i18n").eq("id", phaseId).maybeSingle(),
+  ]);
+
+  let currentSequence: number | null = null;
+  const citas: RutaCita[] = routeEntries.map(({ entry, appt, status }, idx) => {
+    if (status === "current") currentSequence = entry.sequenceNumber;
 
     // Objectives: template (i18n) is the base; completed citas overlay the
     // snapshotted outcome flags (matched by id). Outcome-only objectives (removed
     // from the template after completion) are appended so nothing is lost.
+    const isCompleted = status === "completed";
     const outcome = appt ? resolveObjectivesOutcome(appt.objectives_outcome) : [];
     const outcomeById = new Map(outcome.map((o) => [o.id, o]));
     const templateIds = new Set(entry.objectives.map((t) => t.id));
@@ -1895,6 +1935,7 @@ export async function getCaseRuta(
     }
 
     return {
+      number: idx + 1,
       sequenceNumber: entry.sequenceNumber,
       labelI18n: entry.labelI18n,
       kind: entry.kind,
@@ -1973,23 +2014,33 @@ export async function addCaseAppointment(
   }
   const phaseId = c.currentPhaseId;
 
-  // Effective route → the new cita follows the current cita (intermediate).
-  const schedule = await getCaseEffectiveSchedule(p.caseId, phaseId);
-  // sequence_number is unique per (case, phase): take max over the effective
-  // route AND any booked instances so we never collide with an agendada cita.
-  const seqNumbers = await repo.getPhaseSequenceNumbers(p.caseId, phaseId);
-  const maxSeq = Math.max(
-    0,
-    ...schedule.map((e) => e.sequenceNumber),
-    ...seqNumbers.map((s) => s ?? 0),
-  );
-  const sequenceNumber = maxSeq + 1;
+  // Build the ordered route with statuses to find the ANCHOR cita the new one
+  // follows. An intermediate is inserted right after the cita whose objectives
+  // weren't met = the last COMPLETED cita (falls back to the first cita, or a
+  // fresh "Cita 1" when the phase has no cronograma yet).
+  const routeEntries = await computeCaseRouteEntries(actor, p.caseId, phaseId);
+  let anchorIdx = -1;
+  routeEntries.forEach((r, i) => {
+    if (r.status === "completed") anchorIdx = i;
+  });
+  if (anchorIdx < 0 && routeEntries.length > 0) anchorIdx = 0;
+  const anchor = anchorIdx >= 0 ? routeEntries[anchorIdx].entry : null;
 
-  // Position/weekOffset place the new cita at the end of the current route
-  // without renumbering existing entries (intermediate ordering is by position).
-  const last = schedule[schedule.length - 1] ?? null;
-  const weekOffset = last ? last.weekOffset : 1;
-  const position = (last?.position ?? last?.sequenceNumber ?? schedule.length) + 1;
+  const schedule = routeEntries.map((r) => r.entry);
+  // sequence_number is unique per (case, phase): max over the route AND any booked
+  // instances so we never collide with an agendada cita. It stays IMMUTABLE (the
+  // display number is the route index), so booked instances keep their link.
+  const seqNumbers = await repo.getPhaseSequenceNumbers(p.caseId, phaseId);
+  const sequenceNumber =
+    Math.max(0, ...schedule.map((e) => e.sequenceNumber), ...seqNumbers.map((s) => s ?? 0)) + 1;
+
+  // Place the new cita immediately AFTER the anchor: same (weekOffset, position)
+  // as the anchor + a higher sequence_number. The route sort (weekOffset, position,
+  // sequenceNumber) then lands it right after the anchor and before the next cita
+  // (higher position/weekOffset), so the rest renumber by index ("2nd becomes 3rd").
+  const last = anchor; // duration/kind defaults inherited from the anchor cita
+  const weekOffset = anchor ? anchor.weekOffset : 1;
+  const position = anchor ? (anchor.position ?? anchor.sequenceNumber) : 0;
 
   // Objectives: ensure each has a stable id (generate for new ones).
   const objectives: ObjectiveTemplate[] = p.objectives.map((o) => ({
