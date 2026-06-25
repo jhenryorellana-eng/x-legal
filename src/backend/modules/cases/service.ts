@@ -1925,19 +1925,22 @@ async function buildDocumentsMatrix(
     },
   );
 
-  // Hidden requirements are optional-only and never shown to the client, so they
-  // never contribute to the progress counts (staff sees them flagged separately).
-  const required = items.filter((i) => i.isRequired && !i.isHidden);
-  const done = required.filter(
+  // Count BOTH required and optional requirements (DOC-41: the client sees every
+  // requested document). The only way a document stops counting is when staff
+  // hides (disables) it for this specific case — case_requirement_overrides.is_hidden,
+  // which only applies to optional ones. Hidden items are flagged for staff and
+  // dropped entirely for the client, so filtering them here is correct for both.
+  const counted = items.filter((i) => !i.isHidden);
+  const done = counted.filter(
     (i) => i.status === "aprobado" || i.status === "revision",
   ).length;
-  const pending = required.filter(
+  const pending = counted.filter(
     (i) => i.status === "pendiente" || i.status === "corregir",
   ).length;
 
   return {
     items,
-    counts: { total: required.length, done, pending },
+    counts: { total: counted.length, done, pending },
   };
 }
 

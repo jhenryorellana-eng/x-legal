@@ -321,4 +321,33 @@ describe("getDocumentsMatrix party name + hidden", () => {
     // Defense in depth: client never receives hidden items even if the flag leaks.
     expect(client.items).toHaveLength(0);
   });
+
+  it("counts BOTH required and optional requirements toward the total", async () => {
+    // 1 required + 2 optional, none hidden → total must be 3 (not 1).
+    mockGetCaseRequirements.mockResolvedValue({
+      documents: [
+        expandedDoc({ key: "req:case", required_document_type_id: "req-doc", party_id: null, is_required: true }),
+        expandedDoc({ key: "opt1:case", required_document_type_id: "opt-doc-1", party_id: null, is_required: false }),
+        expandedDoc({ key: "opt2:case", required_document_type_id: "opt-doc-2", party_id: null, is_required: false }),
+      ],
+    });
+
+    const res = await getDocumentsMatrix(actor("admin"), CASE_ID, { includeHidden: true });
+    expect(res.items).toHaveLength(3);
+    expect(res.total).toBe(3); // was 1 (required-only) before the fix
+    expect(res.done).toBe(0);
+  });
+
+  it("excludes optional requirements the staff hid for this case from the total", async () => {
+    // 1 required + 1 optional-hidden → total counts only the non-hidden (1).
+    mockGetCaseRequirements.mockResolvedValue({
+      documents: [
+        expandedDoc({ key: "req:case", required_document_type_id: "req-doc", party_id: null, is_required: true }),
+        expandedDoc({ key: "opt:case", required_document_type_id: "opt-doc", party_id: null, is_required: false, is_hidden: true }),
+      ],
+    });
+
+    const res = await getDocumentsMatrix(actor("admin"), CASE_ID, { includeHidden: true });
+    expect(res.total).toBe(1);
+  });
 });
