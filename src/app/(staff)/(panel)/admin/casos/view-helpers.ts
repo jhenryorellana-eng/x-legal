@@ -4,6 +4,9 @@
  */
 
 import type { StatusKind } from "@/frontend/components/brand/status-pill";
+import { resolveI18n, type Locale } from "@/shared/i18n";
+import type { CaseRutaResult } from "@/backend/modules/scheduling";
+import type { CaseRutaVM } from "@/frontend/features/shared-case";
 
 /** Maps a cases.status to its StatusPill kind (DOC-53 §2.2). "amber" → Chip. */
 export function mapStatusToPill(status: string): { kind: StatusKind | "amber" } {
@@ -27,6 +30,34 @@ export function mapStatusToPill(status: string): { kind: StatusKind | "amber" } 
     default:
       return { kind: "pendiente" };
   }
+}
+
+/**
+ * Maps the scheduling getCaseRuta result into the locale-resolved CaseRutaVM the
+ * "Ruta de citas" tab renders. Keeps both locales on each objective (textI18n) so
+ * the "Añadir cita" modal can pre-fill unmet objectives in es/en.
+ */
+export function buildRutaVM(ruta: CaseRutaResult | null, locale: Locale): CaseRutaVM | null {
+  if (!ruta) return null;
+  return {
+    phaseLabel: ruta.phaseLabelI18n ? resolveI18n(ruta.phaseLabelI18n, locale) || null : null,
+    total: ruta.total,
+    currentSequence: ruta.currentSequence,
+    citas: ruta.citas.map((c) => ({
+      sequenceNumber: c.sequenceNumber,
+      label: c.labelI18n ? resolveI18n(c.labelI18n, locale) || null : null,
+      kind: c.kind,
+      status: c.status,
+      origin: c.origin,
+      objectives: c.objectives.map((o) => ({
+        id: o.id,
+        text: resolveI18n(o.text, locale),
+        textI18n: { es: resolveI18n(o.text, "es"), en: resolveI18n(o.text, "en") },
+        achieved: o.achieved,
+      })),
+      appointment: c.appointment,
+    })),
+  };
 }
 
 /** Coarse relative time ("hace 4 meses" / "4 months ago"). */

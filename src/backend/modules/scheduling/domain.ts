@@ -169,6 +169,35 @@ export interface AppointmentScheduleEntry {
   labelI18n: I18nText | null;
   /** Admin-defined objectives for this cita (template, ordered). */
   objectives: ObjectiveTemplate[];
+  /** Display order within the route (lower first). Defaults to sequenceNumber. */
+  position?: number;
+  /** Where the entry comes from: the service cronograma or a per-case addition. */
+  origin?: "service" | "case";
+  /** Row id (case_appointment_schedule.id) for per-case entries; null for service. */
+  id?: string | null;
+}
+
+/**
+ * Merges the service cronograma with per-case extra citas into the effective
+ * route for a case. Ordered by weekOffset, then position, then sequenceNumber —
+ * so an intermediate cita (same weekOffset as the cita it follows, higher
+ * sequence) sorts right after it without renumbering the existing entries.
+ */
+export function mergeCaseSchedule(
+  serviceEntries: AppointmentScheduleEntry[],
+  caseEntries: AppointmentScheduleEntry[],
+): AppointmentScheduleEntry[] {
+  const all = [
+    ...serviceEntries.map((e) => ({ ...e, origin: e.origin ?? ("service" as const) })),
+    ...caseEntries.map((e) => ({ ...e, origin: "case" as const })),
+  ];
+  return all.sort((a, b) => {
+    if (a.weekOffset !== b.weekOffset) return a.weekOffset - b.weekOffset;
+    const pa = a.position ?? a.sequenceNumber;
+    const pb = b.position ?? b.sequenceNumber;
+    if (pa !== pb) return pa - pb;
+    return a.sequenceNumber - b.sequenceNumber;
+  });
 }
 
 /**

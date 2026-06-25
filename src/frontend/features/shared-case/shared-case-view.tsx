@@ -194,7 +194,7 @@ export function SharedCaseView({
       <div role="tabpanel">
         {active === "resumen" && <ResumenTab vm={vm} actions={actions} strings={strings} locale={locale} />}
         {active === "contrato" && <ContratoTab vm={vm} actions={actions} strings={strings} locale={locale} />}
-        {active === "citas" && <CitasTab vm={vm} strings={strings} />}
+        {active === "citas" && <CitasTab vm={vm} actions={actions} strings={strings} />}
         {active === "documentos" && <DocumentosTab vm={vm} actions={actions} strings={strings} />}
         {active === "formularios" && <InformacionTab vm={vm} strings={strings} />}
         {active === "cartas" && <GeneracionesTab vm={vm} strings={strings} locale={locale} title={tb.cartas} />}

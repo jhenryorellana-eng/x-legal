@@ -19,6 +19,7 @@ import { appEvents } from "@/backend/platform/events";
 import { createServiceClient } from "@/backend/platform/supabase";
 import { logger } from "@/backend/platform/logger";
 import { writeAudit } from "@/backend/modules/audit";
+import type { I18nText } from "@/shared/i18n";
 
 import {
   canTransitionAppointment,
@@ -29,6 +30,7 @@ import {
   nextSequenceNumber,
   effectiveAppointmentCount,
   scheduleEntryForSequence,
+  mergeCaseSchedule,
   resolveObjectivesOutcome,
   computeRebookingBlockedUntil,
   isRebookingBlocked,
@@ -46,6 +48,23 @@ import {
 
 import * as repo from "./repository";
 import type { AppointmentRow, RuleInput } from "./repository";
+
+/**
+ * Effective cronograma for a case = the service template (service_appointment_schedule)
+ * merged with the case's own extra/intermediate citas (case_appointment_schedule).
+ * Single source for the route, the booking quota, and objective resolution so an
+ * added intermediate cita counts, schedules, shows objectives, and can be completed.
+ */
+async function getCaseEffectiveSchedule(
+  caseId: string,
+  phaseId: string,
+): Promise<AppointmentScheduleEntry[]> {
+  const [service, extras] = await Promise.all([
+    repo.getAppointmentSchedule(phaseId),
+    repo.getCaseAppointmentScheduleRows(caseId, phaseId),
+  ]);
+  return mergeCaseSchedule(service, extras);
+}
 
 // ---------------------------------------------------------------------------
 // Error class
@@ -331,7 +350,7 @@ export async function getAvailableSlots(
   const [phasePolicy, caseOverride, schedule] = await Promise.all([
     repo.getPhasePolicy(c.currentPhaseId),
     repo.getCaseOverride(input.caseId, c.currentPhaseId),
-    repo.getAppointmentSchedule(c.currentPhaseId),
+    getCaseEffectiveSchedule(input.caseId, c.currentPhaseId),
   ]);
   const policy = effectivePolicy(phasePolicy, caseOverride);
 
@@ -456,7 +475,7 @@ export async function bookAppointment(
   const [phasePolicy, caseOverride, schedule] = await Promise.all([
     repo.getPhasePolicy(phaseId),
     repo.getCaseOverride(p.caseId, phaseId),
-    repo.getAppointmentSchedule(phaseId),
+    getCaseEffectiveSchedule(p.caseId, phaseId),
   ]);
   const policy = effectivePolicy(phasePolicy, caseOverride);
 
@@ -1238,13 +1257,29 @@ export async function getWeekAgenda(
   }
 
   // ── Batch objectives resolution (no N+1) ───────────────────────────────────
-  // One getAppointmentSchedule per distinct phase; objectives are then matched
-  // to each appointment by its sequence_number.
-  const phaseIds = [...new Set(appts.map((a) => a.servicePhaseId).filter((id): id is string => id != null))];
-  const schedulesByPhase = new Map<string, AppointmentScheduleEntry[]>();
+  // One effective schedule per distinct (case, phase) so per-case intermediate
+  // citas resolve their own objectives; lead/prospect appointments (no case)
+  // fall back to the service template. Objectives are matched by sequence_number.
+  const schedKey = (caseId: string | null, phaseId: string) =>
+    caseId ? `${caseId}::${phaseId}` : `service::${phaseId}`;
+  const schedCombos = new Map<string, { caseId: string | null; phaseId: string }>();
+  for (const a of appts) {
+    if (a.servicePhaseId) {
+      schedCombos.set(schedKey(a.caseId, a.servicePhaseId), {
+        caseId: a.caseId,
+        phaseId: a.servicePhaseId,
+      });
+    }
+  }
+  const schedulesByCombo = new Map<string, AppointmentScheduleEntry[]>();
   await Promise.all(
-    phaseIds.map(async (pid) => {
-      schedulesByPhase.set(pid, await repo.getAppointmentSchedule(pid));
+    [...schedCombos].map(async ([key, { caseId, phaseId }]) => {
+      schedulesByCombo.set(
+        key,
+        caseId
+          ? await getCaseEffectiveSchedule(caseId, phaseId)
+          : await repo.getAppointmentSchedule(phaseId),
+      );
     }),
   );
 
@@ -1252,7 +1287,10 @@ export async function getWeekAgenda(
   appts = appts.map((a) => {
     const entry =
       a.servicePhaseId && a.sequenceNumber != null
-        ? scheduleEntryForSequence(schedulesByPhase.get(a.servicePhaseId) ?? [], a.sequenceNumber)
+        ? scheduleEntryForSequence(
+            schedulesByCombo.get(schedKey(a.caseId, a.servicePhaseId)) ?? [],
+            a.sequenceNumber,
+          )
         : null;
     return {
       ...a,
@@ -1720,6 +1758,306 @@ export async function getCaseAppointments(
     .eq("case_id", caseId)
     .order("starts_at");
   return data ?? [];
+}
+
+// ---------------------------------------------------------------------------
+// Case appointment route ("ruta de citas") — API-SCH-18 / API-SCH-19
+// ---------------------------------------------------------------------------
+
+const zUuidLax = z
+  .string()
+  .regex(
+    /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/,
+    "uuid",
+  );
+
+export interface RutaCitaObjective {
+  id: string;
+  /** Template text (i18n) for planned citas; outcome text wrapped for completed ones. */
+  text: I18nText;
+  /** Outcome flag once the cita is completed; null while planned/in-progress. */
+  achieved: boolean | null;
+}
+
+export interface RutaCita {
+  sequenceNumber: number;
+  labelI18n: I18nText | null;
+  kind: "video" | "phone" | "presencial";
+  weekOffset: number;
+  /** "service" = from the shared cronograma; "case" = an extra added to this case. */
+  origin: "service" | "case";
+  /** completed = the booked instance is completed; current = next pending; rest upcoming. */
+  status: "completed" | "current" | "upcoming";
+  objectives: RutaCitaObjective[];
+  /** The booked instance for this cita (by sequence_number), if any. */
+  appointment: {
+    id: string;
+    startsAt: string;
+    status: string;
+    videoLink: string | null;
+  } | null;
+}
+
+export interface CaseRutaResult {
+  phaseId: string | null;
+  phaseLabelI18n: I18nText | null;
+  /** Number of citas planned for the current phase (service + per-case extras). */
+  total: number;
+  /** Sequence number of the cita the case is currently on, or null if all done. */
+  currentSequence: number | null;
+  citas: RutaCita[];
+}
+
+/**
+ * The appointment route for a case's CURRENT phase: every planned cita (service
+ * cronograma + per-case extras), which one the case is on, and each cita's
+ * objectives (with outcome flags for completed ones). Powers the staff "Ruta de
+ * citas" tab.
+ *
+ * Client: requireCaseAccess. Staff: cases.view (via requireCaseAccess).
+ *
+ * @api-id API-SCH-18
+ */
+export async function getCaseRuta(
+  actor: Actor,
+  caseId: string,
+): Promise<CaseRutaResult> {
+  await requireCaseAccess(actor, caseId);
+
+  const cases = await getCasesModule();
+  const c = await cases.getCaseCore(caseId);
+  if (!c || !c.currentPhaseId) {
+    return { phaseId: null, phaseLabelI18n: null, total: 0, currentSequence: null, citas: [] };
+  }
+  const phaseId = c.currentPhaseId;
+
+  const supabase = createServiceClient();
+  const [schedule, appts, phaseRes] = await Promise.all([
+    getCaseEffectiveSchedule(caseId, phaseId),
+    getCaseAppointments(actor, caseId),
+    supabase.from("service_phases").select("label_i18n").eq("id", phaseId).maybeSingle(),
+  ]);
+
+  // Index the LIVE booked instance of THIS phase by sequence_number. We exclude
+  // `cancelled` and `rescheduled`: rescheduling inserts a fresh `scheduled` row
+  // with the SAME sequence_number and marks the old one `rescheduled`, so the
+  // stale row must not shadow the live one (the two would otherwise race on
+  // starts_at order). What remains is scheduled | completed | no_show.
+  const apptBySeq = new Map<number, AppointmentRow>();
+  for (const a of appts) {
+    if (
+      a.service_phase_id === phaseId &&
+      a.sequence_number != null &&
+      a.status !== "cancelled" &&
+      a.status !== "rescheduled"
+    ) {
+      apptBySeq.set(a.sequence_number, a);
+    }
+  }
+
+  let currentAssigned = false;
+  let currentSequence: number | null = null;
+  const citas: RutaCita[] = schedule.map((entry) => {
+    const appt = apptBySeq.get(entry.sequenceNumber) ?? null;
+    // Only a completed cita advances the route. A `no_show` deliberately stays
+    // "current": the slot isn't counted against the quota (see countPhaseAppointments
+    // in bookAppointment), so the cita must be rebooked before the case moves on.
+    const isCompleted = appt?.status === "completed";
+
+    let status: RutaCita["status"];
+    if (isCompleted) {
+      status = "completed";
+    } else if (!currentAssigned) {
+      status = "current";
+      currentAssigned = true;
+      currentSequence = entry.sequenceNumber;
+    } else {
+      status = "upcoming";
+    }
+
+    // Objectives: template (i18n) is the base; completed citas overlay the
+    // snapshotted outcome flags (matched by id). Outcome-only objectives (removed
+    // from the template after completion) are appended so nothing is lost.
+    const outcome = appt ? resolveObjectivesOutcome(appt.objectives_outcome) : [];
+    const outcomeById = new Map(outcome.map((o) => [o.id, o]));
+    const templateIds = new Set(entry.objectives.map((t) => t.id));
+    const objectives: RutaCitaObjective[] = entry.objectives.map((t) => ({
+      id: t.id,
+      text: t.text,
+      achieved: isCompleted ? (outcomeById.get(t.id)?.achieved ?? false) : null,
+    }));
+    if (isCompleted) {
+      for (const o of outcome) {
+        if (!templateIds.has(o.id)) {
+          objectives.push({ id: o.id, text: { es: o.text, en: o.text }, achieved: o.achieved });
+        }
+      }
+    }
+
+    return {
+      sequenceNumber: entry.sequenceNumber,
+      labelI18n: entry.labelI18n,
+      kind: entry.kind,
+      weekOffset: entry.weekOffset,
+      origin: entry.origin ?? "service",
+      status,
+      objectives,
+      appointment: appt
+        ? {
+            id: appt.id,
+            startsAt: appt.starts_at,
+            status: appt.status,
+            videoLink: appt.video_link,
+          }
+        : null,
+    };
+  });
+
+  return {
+    phaseId,
+    phaseLabelI18n: (phaseRes.data?.label_i18n as I18nText | null) ?? null,
+    total: citas.length,
+    currentSequence,
+    citas,
+  };
+}
+
+const AddCaseAppointmentInputSchema = z.object({
+  caseId: zUuidLax,
+  labelI18n: z
+    .object({ es: z.string(), en: z.string() })
+    .nullable()
+    .optional(),
+  objectives: z
+    .array(
+      z.object({
+        id: z.string().min(1).optional(),
+        text: z.object({ es: z.string(), en: z.string() }),
+      }),
+    )
+    .default([]),
+  kind: z.enum(["video", "phone", "presencial"]).optional(),
+  durationMinutes: z.number().int().positive().optional(),
+});
+
+export type AddCaseAppointmentInput = z.input<typeof AddCaseAppointmentInputSchema>;
+
+export interface AddCaseAppointmentResult {
+  id: string;
+  sequenceNumber: number;
+}
+
+/**
+ * Adds an INTERMEDIATE cita to a single case's current phase (e.g. a follow-up
+ * when the previous cita's objectives were not all met). The new cita carries
+ * its own label + objectives, raises the case's effective appointment count, and
+ * appears in both the staff "Ruta de citas" and the client's "Mi proceso"
+ * cronograma. The date/time is booked later with the normal "Nueva cita" flow.
+ *
+ * Staff only: can('calendar','edit').
+ *
+ * @api-id API-SCH-19
+ */
+export async function addCaseAppointment(
+  actor: Actor,
+  input: AddCaseAppointmentInput,
+): Promise<AddCaseAppointmentResult> {
+  can(actor, "calendar", "edit");
+  const p = AddCaseAppointmentInputSchema.parse(input);
+  await requireCaseAccess(actor, p.caseId);
+
+  const cases = await getCasesModule();
+  const c = await cases.getCaseCore(p.caseId);
+  if (!c || c.status !== "active" || !c.currentPhaseId) {
+    throw new SchedulingError("CASE_NOT_ACTIVE");
+  }
+  const phaseId = c.currentPhaseId;
+
+  // Effective route → the new cita follows the current cita (intermediate).
+  const schedule = await getCaseEffectiveSchedule(p.caseId, phaseId);
+  // sequence_number is unique per (case, phase): take max over the effective
+  // route AND any booked instances so we never collide with an agendada cita.
+  const seqNumbers = await repo.getPhaseSequenceNumbers(p.caseId, phaseId);
+  const maxSeq = Math.max(
+    0,
+    ...schedule.map((e) => e.sequenceNumber),
+    ...seqNumbers.map((s) => s ?? 0),
+  );
+  const sequenceNumber = maxSeq + 1;
+
+  // Position/weekOffset place the new cita at the end of the current route
+  // without renumbering existing entries (intermediate ordering is by position).
+  const last = schedule[schedule.length - 1] ?? null;
+  const weekOffset = last ? last.weekOffset : 1;
+  const position = (last?.position ?? last?.sequenceNumber ?? schedule.length) + 1;
+
+  // Objectives: ensure each has a stable id (generate for new ones).
+  const objectives: ObjectiveTemplate[] = p.objectives.map((o) => ({
+    id: o.id ?? crypto.randomUUID(),
+    text: o.text,
+  }));
+
+  const id = await repo.insertCaseAppointmentScheduleRow({
+    caseId: p.caseId,
+    servicePhaseId: phaseId,
+    sequenceNumber,
+    durationMinutes: p.durationMinutes ?? last?.durationMinutes ?? 30,
+    kind: p.kind ?? last?.kind ?? "video",
+    weekOffset,
+    position,
+    labelI18n: p.labelI18n ?? null,
+    objectivesI18n: objectives.length > 0 ? objectives : null,
+    createdBy: actor.userId,
+  });
+
+  await writeAudit(actor, "scheduling.case_appointment.added", "case_appointment_schedule", id, {
+    after: { case_id: p.caseId, service_phase_id: phaseId, sequence_number: sequenceNumber },
+  });
+
+  return { id, sequenceNumber };
+}
+
+/** Per-case extra cita for the client cronograma merge (cases.getCaseTimeline). */
+export interface CaseRouteExtra {
+  phaseId: string;
+  phaseLabelI18n: I18nText | null;
+  sequenceNumber: number;
+  durationMinutes: number;
+  kind: string;
+  weekOffset: number;
+  labelI18n: I18nText | null;
+}
+
+/**
+ * Per-case extra citas (every phase) enriched with their phase label, for the
+ * client-facing cronograma. No actor: called server-side by cases.getCaseTimeline
+ * AFTER it has run requireCaseAccess (established internal-read pattern, like
+ * getCaseCore). Returns [] when the table is empty or absent (clean degradation).
+ */
+export async function getCaseRouteExtras(caseId: string): Promise<CaseRouteExtra[]> {
+  const extras = await repo.getCaseAppointmentScheduleAll(caseId);
+  if (extras.length === 0) return [];
+
+  const phaseIds = [...new Set(extras.map((e) => e.servicePhaseId))];
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("service_phases")
+    .select("id, label_i18n")
+    .in("id", phaseIds);
+  const labelByPhase = new Map<string, I18nText | null>();
+  for (const r of data ?? []) {
+    labelByPhase.set(r.id, (r.label_i18n as I18nText | null) ?? null);
+  }
+
+  return extras.map((e) => ({
+    phaseId: e.servicePhaseId,
+    phaseLabelI18n: labelByPhase.get(e.servicePhaseId) ?? null,
+    sequenceNumber: e.sequenceNumber,
+    durationMinutes: e.durationMinutes,
+    kind: e.kind,
+    weekOffset: e.weekOffset,
+    labelI18n: e.labelI18n,
+  }));
 }
 
 // ---------------------------------------------------------------------------

@@ -2029,6 +2029,28 @@ export async function getCaseTimeline(
     }),
   );
 
+  // Merge per-case extra/intermediate citas (added by staff on this single case)
+  // so the client sees them as hitos in their "Mi proceso" cronograma. Degrades
+  // to a no-op when there are no extras (or the table is absent pre-migration).
+  try {
+    const scheduling = await import("@/backend/modules/scheduling");
+    const extras = await scheduling.getCaseRouteExtras(caseId);
+    for (const e of extras) {
+      citas.push({
+        sequenceNumber: e.sequenceNumber,
+        durationMinutes: e.durationMinutes,
+        kind: e.kind,
+        weekOffset: e.weekOffset,
+        phaseLabelI18n: asI18n(e.phaseLabelI18n),
+        citaLabelI18n: asI18n(e.labelI18n),
+        estDate: addWeeksToAnchorIso(anchorIso, e.weekOffset),
+      });
+    }
+    citas.sort((a, b) => a.weekOffset - b.weekOffset || a.sequenceNumber - b.sequenceNumber);
+  } catch (err) {
+    logger.warn({ err, caseId }, "cases.getCaseTimeline: route extras merge skipped");
+  }
+
   return {
     started: anchorIso != null,
     anchorDate: anchorIso,

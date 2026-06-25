@@ -42,13 +42,19 @@ import {
   CaseError,
 } from "@/backend/modules/cases";
 import { translateAnswerText } from "@/backend/modules/ai-engine";
+import { addCaseAppointment, SchedulingError } from "@/backend/modules/scheduling";
 
 type Ok<T> = { ok: true } & T;
 type Err = { ok: false; error: { code: string; message?: string } };
 
 function mapErr(err: unknown): Err {
   if (err instanceof AuthzError) return { ok: false, error: { code: err.reason } };
-  if (err instanceof ContractError || err instanceof BillingError || err instanceof CaseError) {
+  if (
+    err instanceof ContractError ||
+    err instanceof BillingError ||
+    err instanceof CaseError ||
+    err instanceof SchedulingError
+  ) {
     return { ok: false, error: { code: err.code } };
   }
   // Unexpected (non-domain) errors: surface server-side for observability.
@@ -393,6 +399,28 @@ export async function submitFormResponseAction(input: {
   } catch (err) {
     if (err instanceof CaseError) return { ok: false, error: { code: err.code, details: err.details } };
     return { ok: false, error: { code: "UNEXPECTED" } };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Ruta de citas (DOC-52 §5.5) — staff adds an intermediate cita to one case.
+// ---------------------------------------------------------------------------
+
+export async function addCaseAppointmentAction(input: {
+  caseId: string;
+  label?: { es: string; en: string } | null;
+  objectives: Array<{ id?: string; text: { es: string; en: string } }>;
+}): Promise<{ ok: boolean; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    await addCaseAppointment(actor, {
+      caseId: input.caseId,
+      labelI18n: input.label ?? null,
+      objectives: input.objectives,
+    });
+    return { ok: true };
+  } catch (err) {
+    return mapErr(err);
   }
 }
 

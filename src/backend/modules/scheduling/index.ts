@@ -29,6 +29,10 @@ export {
   getAppointmentForClient,
   getCaseAppointments,
   getAppointmentAdvisor,
+  // Case appointment route ("ruta de citas")
+  getCaseRuta,
+  addCaseAppointment,
+  getCaseRouteExtras,
   // Error class
   SchedulingError,
 } from "./service";
@@ -51,6 +55,13 @@ export type {
   CaseOverrideInput,
   BookingWarning,
   AppointmentAdvisorResult,
+  // Case appointment route
+  CaseRutaResult,
+  RutaCita,
+  RutaCitaObjective,
+  AddCaseAppointmentInput,
+  AddCaseAppointmentResult,
+  CaseRouteExtra,
 } from "./service";
 
 // Repository functions consumed by other modules via index.ts (DOC-43 §8)

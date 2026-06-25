@@ -13,6 +13,7 @@
 import { createServiceClient } from "@/backend/platform/supabase";
 import { logger } from "@/backend/platform/logger";
 import type { Json, Tables, TablesInsert, TablesUpdate } from "@/shared/database.types";
+import type { I18nText } from "@/shared/i18n";
 import { resolveObjectiveTemplates } from "./domain";
 import type {
   AvailabilityRule,
@@ -21,6 +22,7 @@ import type {
   CaseOverride,
   AppointmentScheduleEntry,
   ObjectiveOutcome,
+  ObjectiveTemplate,
 } from "./domain";
 
 // ---------------------------------------------------------------------------
@@ -814,7 +816,7 @@ export async function getAppointmentSchedule(
   const supabase = createServiceClient();
   const { data, error } = await supabase
     .from("service_appointment_schedule")
-    .select("sequence_number, duration_minutes, kind, week_offset, label_i18n, objectives_i18n")
+    .select("sequence_number, duration_minutes, kind, week_offset, label_i18n, objectives_i18n, position")
     .eq("service_phase_id", servicePhaseId)
     .order("sequence_number");
 
@@ -829,7 +831,114 @@ export async function getAppointmentSchedule(
     weekOffset: r.week_offset,
     labelI18n: (r.label_i18n as AppointmentScheduleEntry["labelI18n"]) ?? null,
     objectives: resolveObjectiveTemplates(r.objectives_i18n),
+    position: r.position,
+    origin: "service" as const,
+    id: null,
   }));
+}
+
+/**
+ * Per-case extra/intermediate citas (case_appointment_schedule), ordered by
+ * position. These are merged on top of the service cronograma for a case.
+ */
+export async function getCaseAppointmentScheduleRows(
+  caseId: string,
+  servicePhaseId: string,
+): Promise<AppointmentScheduleEntry[]> {
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("case_appointment_schedule")
+    .select("id, sequence_number, duration_minutes, kind, week_offset, label_i18n, objectives_i18n, position")
+    .eq("case_id", caseId)
+    .eq("service_phase_id", servicePhaseId)
+    .order("position");
+
+  if (error) {
+    logger.error({ err: error }, "scheduling.repo: getCaseAppointmentScheduleRows error");
+    return [];
+  }
+  return (data ?? []).map((r) => ({
+    sequenceNumber: r.sequence_number,
+    durationMinutes: r.duration_minutes,
+    kind: r.kind as "video" | "phone" | "presencial",
+    weekOffset: r.week_offset,
+    labelI18n: (r.label_i18n as AppointmentScheduleEntry["labelI18n"]) ?? null,
+    objectives: resolveObjectiveTemplates(r.objectives_i18n),
+    position: r.position,
+    origin: "case" as const,
+    id: r.id,
+  }));
+}
+
+/** All per-case extra schedule rows for a case (every phase) — for the client cronograma merge. */
+export async function getCaseAppointmentScheduleAll(
+  caseId: string,
+): Promise<Array<AppointmentScheduleEntry & { servicePhaseId: string }>> {
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("case_appointment_schedule")
+    .select("id, service_phase_id, sequence_number, duration_minutes, kind, week_offset, label_i18n, objectives_i18n, position")
+    .eq("case_id", caseId)
+    .order("position");
+
+  if (error) {
+    logger.error({ err: error }, "scheduling.repo: getCaseAppointmentScheduleAll error");
+    return [];
+  }
+  return (data ?? []).map((r) => ({
+    servicePhaseId: r.service_phase_id,
+    sequenceNumber: r.sequence_number,
+    durationMinutes: r.duration_minutes,
+    kind: r.kind as "video" | "phone" | "presencial",
+    weekOffset: r.week_offset,
+    labelI18n: (r.label_i18n as AppointmentScheduleEntry["labelI18n"]) ?? null,
+    objectives: resolveObjectiveTemplates(r.objectives_i18n),
+    position: r.position,
+    origin: "case" as const,
+    id: r.id,
+  }));
+}
+
+export interface InsertCaseScheduleInput {
+  caseId: string;
+  servicePhaseId: string;
+  sequenceNumber: number;
+  durationMinutes: number;
+  kind: string;
+  weekOffset: number;
+  position: number;
+  labelI18n: I18nText | null;
+  objectivesI18n: ObjectiveTemplate[] | null;
+  createdBy: string;
+}
+
+/** Inserts a per-case extra cita row. Returns the new row id. */
+export async function insertCaseAppointmentScheduleRow(
+  input: InsertCaseScheduleInput,
+): Promise<string> {
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("case_appointment_schedule")
+    .insert({
+      case_id: input.caseId,
+      service_phase_id: input.servicePhaseId,
+      sequence_number: input.sequenceNumber,
+      duration_minutes: input.durationMinutes,
+      kind: input.kind,
+      week_offset: input.weekOffset,
+      position: input.position,
+      label_i18n: (input.labelI18n ?? null) as Json,
+      objectives_i18n: (input.objectivesI18n ?? null) as Json,
+      created_by: input.createdBy,
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    logger.error({ err: error }, "scheduling.repo: insertCaseAppointmentScheduleRow error");
+    throw error;
+  }
+  return data.id;
 }
 
 export interface PhasePolicyPatch {

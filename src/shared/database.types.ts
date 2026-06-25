@@ -807,6 +807,76 @@ export type Database = {
           },
         ]
       }
+      case_appointment_schedule: {
+        Row: {
+          case_id: string
+          created_at: string
+          created_by: string | null
+          duration_minutes: number
+          id: string
+          kind: string
+          label_i18n: Json | null
+          objectives_i18n: Json | null
+          position: number
+          sequence_number: number
+          service_phase_id: string
+          updated_at: string
+          week_offset: number
+        }
+        Insert: {
+          case_id: string
+          created_at?: string
+          created_by?: string | null
+          duration_minutes?: number
+          id?: string
+          kind?: string
+          label_i18n?: Json | null
+          objectives_i18n?: Json | null
+          position?: number
+          sequence_number: number
+          service_phase_id: string
+          updated_at?: string
+          week_offset?: number
+        }
+        Update: {
+          case_id?: string
+          created_at?: string
+          created_by?: string | null
+          duration_minutes?: number
+          id?: string
+          kind?: string
+          label_i18n?: Json | null
+          objectives_i18n?: Json | null
+          position?: number
+          sequence_number?: number
+          service_phase_id?: string
+          updated_at?: string
+          week_offset?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_appointment_schedule_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_appointment_schedule_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_appointment_schedule_service_phase_id_fkey"
+            columns: ["service_phase_id"]
+            isOneToOne: false
+            referencedRelation: "service_phases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       case_documents: {
         Row: {
           case_id: string

@@ -24,6 +24,7 @@ import { getContractForCase } from "@/backend/modules/contracts";
 import { getRunsForCase } from "@/backend/modules/ai-engine";
 import { getValidationsForCase } from "@/backend/modules/integrations";
 import { getCaseExpedientes } from "@/backend/modules/expediente";
+import { getCaseRuta } from "@/backend/modules/scheduling";
 import { resolveI18n, type Locale } from "@/shared/i18n";
 import { SharedCaseView } from "@/frontend/features/shared-case";
 import {
@@ -39,7 +40,7 @@ import {
 } from "@/backend/modules/messaging/actions";
 import type { CaseWorkspaceVM } from "@/frontend/features/shared-case";
 import { buildCasosStrings } from "@/frontend/features/shared-case";
-import { mapStatusToPill } from "../view-helpers";
+import { mapStatusToPill, buildRutaVM } from "../view-helpers";
 import {
   reviewDocumentAction,
   setRequirementVisibilityAction,
@@ -51,6 +52,7 @@ import {
   startDocumentUploadAction,
   confirmDocumentUploadAction,
   updateCasePartyAction,
+  addCaseAppointmentAction,
 } from "../actions";
 
 export const dynamic = "force-dynamic";
@@ -77,7 +79,7 @@ export default async function AdminCasoDetailPage({
   }
 
   // Parallel reads: documents, payment plan, contract, recent timeline.
-  const [documents, plan, contract, timeline, forms, runs, validationRows, expedienteRows, matrix] = await Promise.all([
+  const [documents, plan, contract, timeline, forms, runs, validationRows, expedienteRows, matrix, rutaRaw] = await Promise.all([
     getCaseDocuments(actor, caseId).catch(() => []),
     getPaymentPlanForCase(actor, caseId).catch(() => null),
     getContractForCase(actor, caseId).catch(() => null),
@@ -91,6 +93,7 @@ export default async function AdminCasoDetailPage({
       ? getCaseExpedientes(actor, caseId).catch(() => [])
       : Promise.resolve([] as never[]),
     getDocumentsMatrix(actor, caseId, { includeHidden: true }).catch(() => null),
+    getCaseRuta(actor, caseId).catch(() => null),
   ]);
 
   const requirements = (matrix?.items ?? []).map((d) => ({
@@ -111,6 +114,8 @@ export default async function AdminCasoDetailPage({
   const canManageDocs = actor.role === "admin" || actor.role === "sales";
   // Manual phase advance is an admin + paralegal affordance (hybrid progress model).
   const canAdvancePhase = actor.role === "admin" || actor.role === "paralegal";
+  // Adding a cita to the route needs calendar:edit (the service enforces it too).
+  const canManageCalendar = actor.role === "admin" || actor.role === "sales";
 
   const pill = mapStatusToPill(workspace.status);
   const installments = (plan?.installments ?? []).map((i) => ({
@@ -181,6 +186,8 @@ export default async function AdminCasoDetailPage({
     createdAt: e.created_at,
   }));
 
+  const ruta = buildRutaVM(rutaRaw, locale);
+
   const vm: CaseWorkspaceVM = {
     header: {
       caseId,
@@ -203,6 +210,7 @@ export default async function AdminCasoDetailPage({
       contractStatus: contract?.status ?? null,
       contractId: contract?.id ?? null,
     },
+    ruta,
     role: (actor.role as "sales" | "paralegal" | "finance" | "admin") ?? "sales",
     isAdmin: actor.role === "admin",
     requiresLawyerValidation: contractPlanKind === "with_lawyer",
@@ -256,6 +264,7 @@ export default async function AdminCasoDetailPage({
         startUpload: startDocumentUploadAction,
         confirmUpload: confirmDocumentUploadAction,
         updateCaseParty: actor.role === "admin" ? updateCasePartyAction : undefined,
+        addCaseAppointment: canManageCalendar ? addCaseAppointmentAction : undefined,
       }}
       strings={strings}
       locale={lc}

@@ -23,6 +23,7 @@ import {
 import { getPaymentPlanForCase } from "@/backend/modules/billing";
 import { getContractForCase } from "@/backend/modules/contracts";
 import { getRunsForCase } from "@/backend/modules/ai-engine";
+import { getCaseRuta } from "@/backend/modules/scheduling";
 import { resolveI18n, type Locale } from "@/shared/i18n";
 import { SharedCaseView, buildCasosStrings } from "@/frontend/features/shared-case";
 import {
@@ -37,7 +38,7 @@ import {
   getAttachmentDownloadUrlAction,
 } from "@/backend/modules/messaging/actions";
 import type { CaseWorkspaceVM } from "@/frontend/features/shared-case";
-import { mapStatusToPill } from "../../../admin/casos/view-helpers";
+import { mapStatusToPill, buildRutaVM } from "../../../admin/casos/view-helpers";
 import {
   reviewDocumentAction,
   setRequirementVisibilityAction,
@@ -47,6 +48,7 @@ import {
   getDocumentUrlAction,
   startDocumentUploadAction,
   confirmDocumentUploadAction,
+  addCaseAppointmentAction,
 } from "../../../admin/casos/actions";
 
 export const dynamic = "force-dynamic";
@@ -72,7 +74,7 @@ export default async function VentasCasoDetailPage({
     throw err;
   }
 
-  const [documents, plan, contract, timeline, forms, runs, matrix] = await Promise.all([
+  const [documents, plan, contract, timeline, forms, runs, matrix, rutaRaw] = await Promise.all([
     getCaseDocuments(actor, caseId).catch(() => []),
     getPaymentPlanForCase(actor, caseId).catch(() => null),
     getContractForCase(actor, caseId).catch(() => null),
@@ -80,6 +82,7 @@ export default async function VentasCasoDetailPage({
     getClientFormsForCase(actor, caseId).catch(() => []),
     getRunsForCase(actor, caseId).catch(() => []),
     getDocumentsMatrix(actor, caseId, { includeHidden: true }).catch(() => null),
+    getCaseRuta(actor, caseId).catch(() => null),
   ]);
 
   const requirements = (matrix?.items ?? []).map((d) => ({
@@ -98,6 +101,8 @@ export default async function VentasCasoDetailPage({
 
   // Visibility toggle is an admin + sales affordance (DOC-41 §3.5 decision).
   const canManageDocs = actor.role === "admin" || actor.role === "sales";
+  // Adding a cita to the route needs calendar:edit (the service enforces it too).
+  const canManageCalendar = actor.role === "admin" || actor.role === "sales";
 
   const pill = mapStatusToPill(workspace.status);
   const installments = (plan?.installments ?? []).map((i) => ({
@@ -146,6 +151,8 @@ export default async function VentasCasoDetailPage({
       createdAt: r.created_at,
     }));
 
+  const ruta = buildRutaVM(rutaRaw, locale);
+
   const vm: CaseWorkspaceVM = {
     header: {
       caseId,
@@ -165,6 +172,7 @@ export default async function VentasCasoDetailPage({
       contractStatus: contract?.status ?? null,
       contractId: contract?.id ?? null,
     },
+    ruta,
     role: (actor.role as "sales" | "paralegal" | "finance" | "admin") ?? "sales",
     isAdmin: false,
     requiresLawyerValidation: contractPlanKind === "with_lawyer",
@@ -216,6 +224,7 @@ export default async function VentasCasoDetailPage({
         getDocumentUrl: getDocumentUrlAction,
         startUpload: startDocumentUploadAction,
         confirmUpload: confirmDocumentUploadAction,
+        addCaseAppointment: canManageCalendar ? addCaseAppointmentAction : undefined,
       }}
       strings={strings}
       locale={lc}

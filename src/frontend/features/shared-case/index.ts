@@ -11,6 +11,9 @@ export { buildTabs, type TabConfig, type BuildTabsInput } from "./build-tabs";
 export { buildCasosStrings, interp, type CasosStrings, type CasosLocale } from "./strings";
 export type {
   CaseWorkspaceVM,
+  CaseRutaVM,
+  RutaCitaVM,
+  RutaCitaObjectiveVM,
   CaseHeaderVM,
   CaseDetailActions,
   DocumentVM,

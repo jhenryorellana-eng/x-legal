@@ -148,8 +148,47 @@ export interface ExpedienteVM {
   createdAt: string;
 }
 
+/** A single objective inside a cita of the appointment route (locale-resolved). */
+export interface RutaCitaObjectiveVM {
+  id: string;
+  /** Display text resolved to the active locale. */
+  text: string;
+  /** Both locales — used to pre-fill the "Añadir cita" modal with unmet objectives. */
+  textI18n: { es: string; en: string };
+  /** Outcome flag for a completed cita; null while planned/in-progress. */
+  achieved: boolean | null;
+}
+
+/** One cita in the case appointment route ("Ruta de citas"). */
+export interface RutaCitaVM {
+  sequenceNumber: number;
+  /** Resolved label, or null → the UI falls back to "Cita N". */
+  label: string | null;
+  kind: string;
+  status: "completed" | "current" | "upcoming";
+  /** "service" = shared cronograma; "case" = an extra added to this case. */
+  origin: "service" | "case";
+  objectives: RutaCitaObjectiveVM[];
+  appointment: {
+    id: string;
+    startsAt: string;
+    status: string;
+    videoLink: string | null;
+  } | null;
+}
+
+/** The appointment route for the case's current phase (staff "Ruta de citas"). */
+export interface CaseRutaVM {
+  phaseLabel: string | null;
+  total: number;
+  currentSequence: number | null;
+  citas: RutaCitaVM[];
+}
+
 export interface CaseWorkspaceVM {
   header: CaseHeaderVM;
+  /** Appointment route for the current phase (Ruta de citas tab). Null = unavailable. */
+  ruta?: CaseRutaVM | null;
   /** Drives the role-aware tab set + admin affordances. */
   role: StaffRoleVM;
   isAdmin: boolean;
@@ -251,4 +290,14 @@ export interface CaseDetailActions {
     toPhaseId?: string | null;
     note?: string | null;
   }) => Promise<{ ok: boolean; phaseIndex?: number; phaseCount?: number; error?: { code: string } }>;
+  /**
+   * Add an intermediate cita to this case's current phase (sales + admin). The new
+   * cita carries its own objectives and shows up in the route and the client's
+   * "Mi proceso" cronograma. Optional — only surfaces that authorize it inject it.
+   */
+  addCaseAppointment?: (input: {
+    caseId: string;
+    label?: { es: string; en: string } | null;
+    objectives: Array<{ id?: string; text: { es: string; en: string } }>;
+  }) => Promise<{ ok: boolean; error?: { code: string } }>;
 }
