@@ -17,16 +17,39 @@ import {
   getCaseWorkspace,
   getClientDisplayName,
   type CaseWorkspaceDto,
+  type CaseStatus,
 } from "@/backend/modules/cases";
-import { getCaseOnboardingContract } from "@/backend/modules/contracts";
+import {
+  getCaseOnboardingContract,
+  getTermsStatusForCase,
+  type TermsStatusView,
+} from "@/backend/modules/contracts";
 import { getNotifications } from "@/backend/modules/notifications";
 import { getUnreadCountAction } from "@/backend/modules/notifications/actions";
 import { pickLocale, coerceIcon, type Locale } from "@/frontend/features/cliente/shared/i18n";
+import type { StatusKind } from "@/frontend/components/brand/status-pill";
 import {
   DashboardScreen,
   type DashboardCase,
   type OnboardingCase,
 } from "@/frontend/features/cliente/home/dashboard-screen";
+
+/**
+ * Case status → StatusPill kind for the secondary case cards (client voice).
+ * Exhaustive over CaseStatus so adding a status to the enum fails compilation.
+ * `pendiente`'s upload glyph would mis-signal "you must upload" on an in-progress
+ * case, so `active`/`on_hold` use `revision` (a neutral clock) instead.
+ */
+const STATUS_KIND: Record<CaseStatus, StatusKind> = {
+  payment_pending: "pendiente",
+  active: "revision",
+  in_validation: "revision",
+  ready_for_delivery: "aprobado",
+  delivered: "hecho",
+  completed: "hecho",
+  cancelled: "corregir",
+  on_hold: "revision",
+};
 
 export default async function HomePage() {
   const actor = await getActor();
@@ -40,16 +63,28 @@ export default async function HomePage() {
   const avatarInitial = displayName.charAt(0).toUpperCase() || "U";
 
   // List the client's cases, then enrich each with its workspace (service/phase
-  // /progress). RLS scopes the list to cases the client is a member of.
+  // /progress) AND its terms status (drives the card href). RLS scopes the list
+  // to cases the client is a member of. Parallelized per case — and the two
+  // reads per case run together — so the dashboard isn't an N+1 waterfall. A
+  // case the client can list but not fully read is dropped defensively; a terms
+  // read error fails open (the card then points at /camino).
   const casesPage = await getCasesForClient(actor, { limit: 20 });
-  const workspaces: CaseWorkspaceDto[] = [];
-  for (const c of casesPage.items) {
-    try {
-      workspaces.push(await getCaseWorkspace(actor, c.id));
-    } catch {
-      // A case the client can list but not (yet) fully read — skip defensively.
-    }
-  }
+  type EnrichedCase = { workspace: CaseWorkspaceDto; terms: TermsStatusView | null };
+  const enriched: EnrichedCase[] = (
+    await Promise.all(
+      casesPage.items.map(async (c): Promise<EnrichedCase | null> => {
+        try {
+          const [workspace, terms] = await Promise.all([
+            getCaseWorkspace(actor, c.id),
+            getTermsStatusForCase(actor, c.id).catch(() => null),
+          ]);
+          return { workspace, terms };
+        } catch {
+          return null;
+        }
+      }),
+    )
+  ).filter((e): e is EnrichedCase => e !== null);
 
   // Unread notifications: count from the first page (read_at is null).
   let unreadCount = 0;
@@ -65,17 +100,18 @@ export default async function HomePage() {
   // others). t() would try to format them and throw FORMATTING_ERROR because the
   // values aren't passed at call time — t.raw() returns the literal template.
   const phaseTpl = t.raw("phaseShort") as string; // "Fase {x} de {y} · {phase}"
-  const reviewLabel = t("inReview");
+  const tStatus = await getTranslations("cliente.home.statusByState");
 
   // Split the client's cases into onboarding (payment_pending — the client must
   // sign the contract AND pay the initial fee before the workspace unlocks) and
   // active cases. Onboarding cases get a dedicated step card (sign → pay); active
   // cases render as the highlighted/secondary cards exactly as before.
   const onboardingCases: OnboardingCase[] = [];
-  const activeWorkspaces: CaseWorkspaceDto[] = [];
-  for (const ws of workspaces) {
+  const activeEnriched: EnrichedCase[] = [];
+  for (const e of enriched) {
+    const ws = e.workspace;
     if (ws.status !== "payment_pending") {
-      activeWorkspaces.push(ws);
+      activeEnriched.push(e);
       continue;
     }
     const serviceName = pickLocale(ws.service?.labelI18n, locale);
@@ -109,7 +145,7 @@ export default async function HomePage() {
     });
   }
 
-  const cases: DashboardCase[] = activeWorkspaces.map((ws, idx) => {
+  const cases: DashboardCase[] = activeEnriched.map(({ workspace: ws, terms }, idx) => {
     const serviceName = pickLocale(ws.service?.labelI18n, locale);
     const party = ws.parties[0]?.name;
     const title = party ? `${serviceName} — ${party}` : serviceName;
@@ -120,10 +156,18 @@ export default async function HomePage() {
           .replace("{y}", String(ws.phaseCount))
           .replace("{phase}", phaseName)
       : null;
-    const isInReview = ws.status === "in_validation";
+    const status = ws.status as CaseStatus;
+    // First entry to a case (an active terms version exists and isn't yet
+    // accepted) must land on the disclaimer; afterwards — or when no terms are
+    // published — go straight to the case path. Resolving the destination here
+    // keeps the redirect off the hot path (caso/[caseId]/page.tsx is the
+    // deep-link safety net), which is what avoids the soft-nav blank screen.
+    const termsAccepted = !terms?.terms || terms.alreadyAccepted;
     return {
       caseId: ws.caseId,
-      href: `/caso/${ws.caseId}/camino`,
+      href: termsAccepted
+        ? `/caso/${ws.caseId}/camino`
+        : `/caso/${ws.caseId}/disclaimer`,
       title,
       phaseLabel,
       serviceIcon: coerceIcon(ws.service?.icon, "shield"),
@@ -132,8 +176,8 @@ export default async function HomePage() {
       pendingDocuments: ws.pendingDocuments,
       // The first/most-recent active case is the highlighted hero card.
       highlighted: idx === 0,
-      statusText: isInReview ? reviewLabel : undefined,
-      statusKind: isInReview ? ("revision" as const) : undefined,
+      statusText: tStatus(status),
+      statusKind: STATUS_KIND[status],
     };
   });
 

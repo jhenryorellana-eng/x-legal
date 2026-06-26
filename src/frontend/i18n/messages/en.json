@@ -115,6 +115,16 @@
       "qSettingsSub": "Language, theme",
       "phaseShort": "Phase {x} of {y} · {phase}",
       "inReview": "In review",
+      "statusByState": {
+        "payment_pending": "Payment pending",
+        "active": "In progress",
+        "in_validation": "In review",
+        "ready_for_delivery": "Ready for delivery",
+        "delivered": "Delivered",
+        "completed": "Completed",
+        "cancelled": "Cancelled",
+        "on_hold": "On hold"
+      },
       "paymentPending": "Initial payment pending",
       "payNow": "Pay now",
       "activateTitle": "Activate your case",

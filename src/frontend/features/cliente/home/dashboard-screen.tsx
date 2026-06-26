@@ -2,7 +2,7 @@ import * as React from "react";
 import Link from "next/link";
 import { Icon, type IconName } from "@/frontend/components/brand/icon";
 import { IconTile } from "@/frontend/components/brand/icon-tile";
-import { StatusPill } from "@/frontend/components/brand/status-pill";
+import { StatusPill, type StatusKind } from "@/frontend/components/brand/status-pill";
 import { Logo } from "@/frontend/components/brand/logo";
 import { HomeBell, type RefetchUnread } from "./home-bell";
 
@@ -29,9 +29,9 @@ export interface DashboardCase {
   pendingDocuments: number;
   /** When false, the card renders as a compact secondary row. */
   highlighted: boolean;
-  /** Status text for compact cards (e.g. "En revisión"). */
+  /** Status text + pill kind for the compact secondary cards (e.g. "En proceso"). */
   statusText?: string;
-  statusKind?: "revision" | "aprobado" | "pendiente";
+  statusKind?: StatusKind;
 }
 
 /**
@@ -385,20 +385,33 @@ export function DashboardScreen({
           <div style={{ flex: 1, minWidth: 0 }}>
             <div
               className="t-title"
-              style={{ fontSize: 16.5, color: "var(--navy)", fontWeight: 700 }}
+              style={{
+                fontSize: 16.5,
+                color: "var(--navy)",
+                fontWeight: 700,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
             >
               {c.title}
             </div>
-            {c.statusText && (
+            {/* Sub line: where the case is in its journey ("Fase 1 de 3 · …").
+                The trailing pill carries the overall status, so the sub stays on
+                the phase to avoid echoing the same word twice. */}
+            {c.phaseLabel && (
               <div
                 style={{
                   fontSize: 13.5,
                   color: "var(--ink-2)",
                   fontWeight: 600,
                   marginTop: 1,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
                 }}
               >
-                {c.statusText}
+                {c.phaseLabel}
               </div>
             )}
           </div>

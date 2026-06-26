@@ -13,12 +13,10 @@
  * (disclaimer / subir / exito) opt out of the bottom nav individually (see below).
  */
 
-import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
 import { getCaseWorkspace } from "@/backend/modules/cases";
-import { getTermsStatusForCase } from "@/backend/modules/contracts";
 import { CaseChrome } from "./case-chrome";
 
 export default async function CaseLayout({
@@ -51,22 +49,17 @@ export default async function CaseLayout({
     redirect("/home");
   }
 
-  // T&C gate (DOC-51 §12): the case is locked until the client accepts the org's
-  // active terms (signed disclaimer on first entry). Exempt the disclaimer route
-  // itself (the gate target) to avoid a redirect loop. The pathname is forwarded
-  // by middleware as `x-pathname`. Degrade open if the terms read fails.
-  const pathname = (await headers()).get("x-pathname") ?? "";
-  let mustAcceptTerms = false;
-  if (!pathname.endsWith("/disclaimer")) {
-    try {
-      const terms = await getTermsStatusForCase(actor, caseId);
-      mustAcceptTerms = !!terms.terms && !terms.alreadyAccepted;
-    } catch {
-      // Never hard-block the case on a terms read error (gate stays open).
-    }
-  }
-  // redirect() throws NEXT_REDIRECT — keep it OUTSIDE the try/catch above.
-  if (mustAcceptTerms) redirect(`/caso/${caseId}/disclaimer`);
+  // T&C gate (DOC-51 §12) deliberately does NOT live here. Gating by redirect()
+  // from this SHARED layout toward `/caso/{id}/disclaimer` — a route that
+  // re-renders under this very layout — blanks the screen on soft navigation
+  // (App Router aborts the throwing layout subtree, then commits an empty leaf;
+  // a full reload masks it). The gate now lives where the redirect is reliable:
+  //   • `home/page.tsx` resolves each card's href to /disclaimer or /camino, so
+  //     the normal flow never redirects from a layout, and
+  //   • `caso/[caseId]/page.tsx` (the bare-/caso/{id} entry) redirects from a
+  //     LEAF page (defense in depth for deep links).
+  // Do NOT reintroduce a terms redirect in this layout — it will bring the blank
+  // back. Data is RLS-gated regardless (terms is a legal/flow gate, not access).
 
   const tNav = await getTranslations("cliente.nav");
   const tTeam = await getTranslations("cliente.team");
