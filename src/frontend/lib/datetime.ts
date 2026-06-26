@@ -25,7 +25,9 @@ function dfLocale(locale: Locale) {
 const TZ_LABEL: Record<string, { es: string; en: string }> = {
   "America/New_York": { es: "Florida (ET)", en: "Florida (ET)" },
   "America/Chicago": { es: "Centro (CT)", en: "Central (CT)" },
-  "America/Denver": { es: "Montaña (MT)", en: "Mountain (MT)" },
+  // The org office lives in Utah (Mountain Time) — label the office/global
+  // reference chip "Utah (MT)" to match the client app's `cityFromTz` ("Utah").
+  "America/Denver": { es: "Utah (MT)", en: "Utah (MT)" },
   "America/Phoenix": { es: "Arizona (MST)", en: "Arizona (MST)" },
   "America/Los_Angeles": { es: "Pacífico (PT)", en: "Pacific (PT)" },
   "America/Bogota": { es: "Colombia (COT)", en: "Colombia (COT)" },

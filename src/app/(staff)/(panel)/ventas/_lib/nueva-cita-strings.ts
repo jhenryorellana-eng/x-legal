@@ -40,6 +40,7 @@ export async function buildNuevaCitaStrings(
     loadingSlots: tnc("loadingSlots"),
     noSlots: tnc("noSlots"),
     clientEquiv: tnc("clientEquiv", { hour: "{hour}" }),
+    officeEquiv: tnc("officeEquiv", { region: "{region}", hour: "{hour}" }),
     overlapWarn: tnc("overlapWarn"),
     outsideWarn: tnc("outsideWarn"),
     min: tnc("min"),

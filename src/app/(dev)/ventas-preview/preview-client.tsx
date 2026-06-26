@@ -230,6 +230,7 @@ function CitasPreview() {
             context: {
               slots: ["2026-06-12T13:00:00Z", "2026-06-12T13:30:00Z", "2026-06-12T14:00:00Z"],
               staffTimezone: STAFF_TZ,
+              viewerTimezone: STAFF_TZ,
               durationMinutes: 30,
               kind: "video" as const,
               sequenceNumber: 2,
@@ -250,6 +251,7 @@ function CitasPreview() {
             context: {
               slots: ["2026-06-12T15:00:00Z", "2026-06-12T15:30:00Z"],
               staffTimezone: STAFF_TZ,
+              viewerTimezone: STAFF_TZ,
               durationMinutes: 60,
               kind: "video" as const,
             },
@@ -294,6 +296,7 @@ const NUEVA_CITA_STRINGS = {
   loadingSlots: "Buscando horarios disponibles…",
   noSlots: "No hay horarios disponibles en las próximas semanas.",
   clientEquiv: "Para el cliente: {hour}",
+  officeEquiv: "Hora de oficina ({region}): {hour}",
   overlapWarn: "Este horario se cruza con otra cita ya agendada. ¿Crear igualmente?",
   outsideWarn: "Este horario está fuera de tu disponibilidad. ¿Crear igualmente?",
   min: "min",

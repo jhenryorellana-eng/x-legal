@@ -78,7 +78,10 @@ export interface RutaItem {
 /** Derived booking context for a CLIENT case (everything is read-only). */
 export interface CaseBookingContext {
   slots: string[]; // ISO instants
+  /** Office/global reference TZ — secondary chip only. */
   staffTimezone: string;
+  /** Requesting staff's own profile TZ — PRIMARY display zone. */
+  viewerTimezone: string;
   durationMinutes: number;
   kind: ApptModality;
   sequenceNumber: number;
@@ -89,7 +92,10 @@ export interface CaseBookingContext {
 /** Derived booking context for a PROSPECT (no case). */
 export interface ProspectSlotsContext {
   slots: string[];
+  /** Office/global reference TZ — secondary chip only. */
   staffTimezone: string;
+  /** Requesting staff's own profile TZ — PRIMARY display zone. */
+  viewerTimezone: string;
   durationMinutes: number;
   kind: ApptModality;
 }
@@ -133,6 +139,7 @@ export interface NuevaCitaStrings {
   loadingSlots: string;
   noSlots: string;
   clientEquiv: string; // "Para el cliente: {hour}"
+  officeEquiv: string; // "Hora de oficina ({region}): {hour}"
   overlapWarn: string;
   outsideWarn: string;
   min: string; // "min"

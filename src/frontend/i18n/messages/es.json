@@ -1616,6 +1616,7 @@
         "loadingSlots": "Buscando horarios disponibles…",
         "noSlots": "No hay horarios disponibles en las próximas semanas.",
         "clientEquiv": "Para el cliente: {hour}",
+        "officeEquiv": "Hora de oficina ({region}): {hour}",
         "overlapWarn": "Este horario se cruza con otra cita ya agendada. ¿Crear igualmente?",
         "outsideWarn": "Este horario está fuera de tu disponibilidad. ¿Crear igualmente?",
         "min": "min",

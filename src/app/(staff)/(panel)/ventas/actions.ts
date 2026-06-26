@@ -283,7 +283,10 @@ export async function searchCasesAction(
 
 export interface CaseBookingContext {
   slots: string[];
+  /** Office/global reference TZ — secondary chip only. */
   staffTimezone: string;
+  /** Requesting staff's own profile TZ — PRIMARY display zone. */
+  viewerTimezone: string;
   durationMinutes: number;
   kind: "video" | "phone" | "presencial";
   sequenceNumber: number;
@@ -316,6 +319,7 @@ export async function getCaseBookingContextAction(
       context: {
         slots: slotsRes.slots.map((s) => s.startUtc.toISOString()),
         staffTimezone: slotsRes.staffTimezone,
+        viewerTimezone: slotsRes.viewerTimezone,
         durationMinutes: slotsRes.durationMinutes,
         kind: slotsRes.kind,
         sequenceNumber: slotsRes.sequenceNumber,
@@ -360,7 +364,10 @@ export async function searchProspectsAction(
 
 export interface ProspectSlotsContext {
   slots: string[];
+  /** Office/global reference TZ — secondary chip only. */
   staffTimezone: string;
+  /** Requesting staff's own profile TZ — PRIMARY display zone. */
+  viewerTimezone: string;
   durationMinutes: number;
   kind: "video" | "phone" | "presencial";
 }
@@ -380,6 +387,7 @@ export async function getProspectSlotsAction(): Promise<{
       context: {
         slots: res.slots.map((s) => s.startUtc.toISOString()),
         staffTimezone: res.staffTimezone,
+        viewerTimezone: res.viewerTimezone,
         durationMinutes: res.durationMinutes,
         kind: res.kind,
       },

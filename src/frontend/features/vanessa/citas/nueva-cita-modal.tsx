@@ -17,7 +17,7 @@ import { MSym } from "../shared/msym";
 import { Chip } from "../shared/ui";
 import { useToast } from "../shared/toast-bridge";
 import { Modal } from "@/frontend/components/desktop";
-import { fmtTime, fmtTimeZoned, fmtDateShort } from "@/frontend/lib/datetime";
+import { fmtTime, fmtTimeZoned, fmtDateShort, tzLabel } from "@/frontend/lib/datetime";
 import type {
   NuevaCitaModalProps,
   ClientSearchResult,
@@ -142,7 +142,7 @@ export function NuevaCitaModal({
     setCtxLoading(false);
     if (res.ok && res.context) {
       setCtx(res.context);
-      initDaySlot(res.context.slots, res.context.staffTimezone);
+      initDaySlot(res.context.slots, res.context.viewerTimezone);
     } else {
       setCtxError(res.error?.code ?? "internal");
     }
@@ -158,7 +158,7 @@ export function NuevaCitaModal({
     setCtxLoading(false);
     if (res.ok && res.context) {
       setCtx(res.context);
-      initDaySlot(res.context.slots, res.context.staffTimezone);
+      initDaySlot(res.context.slots, res.context.viewerTimezone);
     } else {
       setCtxError(res.error?.code ?? "internal");
     }
@@ -206,7 +206,7 @@ export function NuevaCitaModal({
           setDay("");
           setSlot("");
         } else {
-          setDay(formatInTimeZone(slots[0], res.context.staffTimezone, "yyyy-MM-dd"));
+          setDay(formatInTimeZone(slots[0], res.context.viewerTimezone, "yyyy-MM-dd"));
           setSlot(slots[0]);
         }
       } else {
@@ -218,40 +218,53 @@ export function NuevaCitaModal({
     };
   }, [open, presetProspect]);
 
-  const tz = ctx?.staffTimezone ?? staffTz;
+  // PRIMARY display zone = the viewer's own profile TZ (DOC-23 §6.5). Slots are
+  // UTC; both day-grouping and hour formatting use this single zone so the picker
+  // matches /ventas/disponibilidad and the citas list. `staffTz` (the page prop,
+  // also the viewer's zone) is the fallback before a context loads.
+  const tz = ctx?.viewerTimezone ?? staffTz;
 
   const days = React.useMemo(() => {
     if (!ctx) return [] as { value: string; label: string }[];
     const seen = new Map<string, string>();
     for (const iso of ctx.slots) {
-      const key = formatInTimeZone(iso, ctx.staffTimezone, "yyyy-MM-dd");
-      if (!seen.has(key)) seen.set(key, fmtDateShort(iso, ctx.staffTimezone, locale));
+      const key = formatInTimeZone(iso, ctx.viewerTimezone, "yyyy-MM-dd");
+      if (!seen.has(key)) seen.set(key, fmtDateShort(iso, ctx.viewerTimezone, locale));
     }
     return [...seen.entries()].map(([value, label]) => ({ value, label }));
   }, [ctx, locale]);
 
   const daySlots = React.useMemo(() => {
     if (!ctx || !day) return [] as string[];
-    return ctx.slots.filter((iso) => formatInTimeZone(iso, ctx.staffTimezone, "yyyy-MM-dd") === day);
+    return ctx.slots.filter((iso) => formatInTimeZone(iso, ctx.viewerTimezone, "yyyy-MM-dd") === day);
   }, [ctx, day]);
 
   const onDayChange = (value: string) => {
     setDay(value);
     setWarning(null);
     if (!ctx) return;
-    const first = ctx.slots.find((iso) => formatInTimeZone(iso, ctx.staffTimezone, "yyyy-MM-dd") === value);
+    const first = ctx.slots.find((iso) => formatInTimeZone(iso, ctx.viewerTimezone, "yyyy-MM-dd") === value);
     setSlot(first ?? "");
   };
 
-  // The "Hora" select already shows the office time; this line shows ONLY the
+  // The "Hora" select shows the viewer's own time; this line shows ONLY the
   // client's equivalent in their own timezone (single hour — never two), and
-  // only when the client's TZ differs from the office TZ.
+  // only when the client's TZ differs from the viewer's.
   const clientHour = React.useMemo(() => {
     if (!slot) return null;
     const ctz = chosenCase?.clientTz;
     if (!ctz || ctz === tz) return null;
     return fmtTimeZoned(slot, ctz);
   }, [slot, tz, chosenCase]);
+
+  // Secondary "office/global" reference (the org office_timezone, e.g. Utah),
+  // shown only when it differs from the viewer's own zone.
+  const officeHour = React.useMemo(() => {
+    if (!slot || !ctx) return null;
+    const otz = ctx.staffTimezone;
+    if (!otz || otz === tz) return null;
+    return { hour: fmtTimeZoned(slot, otz), region: tzLabel(otz, locale) };
+  }, [slot, ctx, tz, locale]);
 
   const modalityLabel = (kind: ApptModality): string =>
     kind === "phone" ? strings.modalityPhone : kind === "presencial" ? strings.modalityPresencial : strings.modalityVideo;
@@ -540,6 +553,12 @@ export function NuevaCitaModal({
                 <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--ink-2)", fontWeight: 700, marginTop: 10 }}>
                   <MSym name="public" size={15} />
                   {strings.clientEquiv.replace("{hour}", clientHour)}
+                </div>
+              )}
+              {officeHour && (
+                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--ink-2)", fontWeight: 700, marginTop: 8 }}>
+                  <MSym name="business" size={15} />
+                  {strings.officeEquiv.replace("{region}", officeHour.region).replace("{hour}", officeHour.hour)}
                 </div>
               )}
             </>

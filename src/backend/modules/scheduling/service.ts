@@ -321,7 +321,18 @@ export interface GetSlotsResult {
   kind: "video" | "phone" | "presencial";
   sequenceNumber: number;
   staffId: string;
+  /**
+   * Agenda/office reference TZ (the serving rules' snapshot zone, or the org
+   * office TZ as fallback). Use ONLY for the secondary "office/global" chip —
+   * never as the primary display zone.
+   */
   staffTimezone: string;
+  /**
+   * The requesting actor's own profile TZ (`users.timezone`). This is the
+   * PRIMARY display zone for whoever called: staff see their own zone, clients
+   * see theirs. Slots are UTC; format them in this zone (DOC-23 §6.5).
+   */
+  viewerTimezone: string;
 }
 
 /**
@@ -414,9 +425,12 @@ export async function getAvailableSlots(
     nowUtc: now(),
   });
 
-  // The agenda timezone is the org's availability TZ (falls back to the serving
-  // staff's TZ when the org has no rules yet).
-  const staffTimezone = rules[0]?.timezone ?? (await getUserTimezone(staffId));
+  // staffTimezone = the org's office/global reference TZ (the "Utah" secondary
+  // chip); the per-rule snapshot zones are internal to materializeSlots. The
+  // viewer TZ is the requester's own profile zone — the PRIMARY display
+  // (DOC-23 §6.5).
+  const staffTimezone = await repo.getOfficeTimezone(orgId);
+  const viewerTimezone = await getUserTimezone(actor.userId);
 
   return {
     slots,
@@ -425,6 +439,7 @@ export async function getAvailableSlots(
     sequenceNumber,
     staffId,
     staffTimezone,
+    viewerTimezone,
   };
 }
 
@@ -441,7 +456,10 @@ export interface GetProspectSlotsResult {
   slots: Slot[];
   durationMinutes: number;
   kind: "video" | "phone" | "presencial";
+  /** Agenda/office reference TZ — secondary "office/global" chip only. */
   staffTimezone: string;
+  /** Requesting staff's own profile TZ — PRIMARY display zone (DOC-23 §6.5). */
+  viewerTimezone: string;
 }
 
 /**
@@ -477,9 +495,10 @@ export async function getProspectSlots(
     nowUtc: now(),
   });
 
-  const staffTimezone = rules[0]?.timezone ?? (await getUserTimezone(actor.userId));
+  const staffTimezone = await repo.getOfficeTimezone(orgId);
+  const viewerTimezone = await getUserTimezone(actor.userId);
 
-  return { slots, durationMinutes: durationMin, kind: "video", staffTimezone };
+  return { slots, durationMinutes: durationMin, kind: "video", staffTimezone, viewerTimezone };
 }
 
 // ---------------------------------------------------------------------------
@@ -1503,25 +1522,22 @@ export async function saveAvailabilityRules(
     throw new SchedulingError("AVAILABILITY_INVALID_RANGE");
   }
 
-  // The staff edits in THEIR OWN timezone (DOC-23 §6.5); rules are stored in the
-  // org's canonical office TZ. Convert each wall-time from the actor's zone to
-  // the office zone before persisting (kept stable across editors).
-  const [actorTz, officeTz] = await Promise.all([
-    getUserTimezone(actor.userId),
-    repo.getOfficeTimezone(orgId),
-  ]);
-  const ref = now();
-  const ruleRows: RuleInput[] = input.rules.map((r) => {
-    const s = convertRuleWallTime({ weekday: r.weekday, hhmm: r.startLocal }, actorTz, officeTz, ref);
-    const e = convertRuleWallTime({ weekday: r.weekday, hhmm: r.endLocal }, actorTz, officeTz, ref);
-    return {
-      weekday: s.weekday,
-      startLocal: s.hhmm,
-      endLocal: e.hhmm,
-      timezone: officeTz,
-      isActive: true,
-    };
-  });
+  // Snapshot model (DOC-23 §6.4): the staff edits in THEIR OWN timezone and the
+  // rule is persisted with that zone verbatim — NO collapse to a single office TZ.
+  // This keeps "saved exactly as I see it in my zone" literal and avoids DST drift
+  // for zones without DST (e.g. America/Lima, America/Bogota): a rule stored as
+  // "09:00 America/Lima" is always 09:00 Lima. Each rule carries its own snapshot
+  // TZ; display and materialisation translate per rule (getAvailabilityConfig +
+  // materializeSlots already read `rule.timezone`). The org `office_timezone` is
+  // only a reference/label and a fallback for rules with no snapshot.
+  const actorTz = await getUserTimezone(actor.userId);
+  const ruleRows: RuleInput[] = input.rules.map((r) => ({
+    weekday: r.weekday,
+    startLocal: r.startLocal,
+    endLocal: r.endLocal,
+    timezone: actorTz,
+    isActive: true,
+  }));
 
   await repo.replaceRules(orgId, ruleRows);
 

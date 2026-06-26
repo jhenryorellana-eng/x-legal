@@ -2,7 +2,8 @@
  * getProspectSlots — org-level slots for a lead/eval cita (no case). The slot
  * math (materializeSlots) is covered by domain.test.ts; here we lock the service
  * wiring: prospect duration drives materialization, modality is the org default
- * 'video', and the agenda timezone comes from the org rules.
+ * 'video', `staffTimezone` is the org office/global reference TZ, and
+ * `viewerTimezone` is the requesting staff's own profile TZ (PRIMARY display).
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -18,7 +19,24 @@ vi.mock("../repository.js", () => ({
   getSettings: mockGetSettings,
   getExceptionsInRange: mockGetExceptionsInRange,
   findBookedForMaterialization: mockFindBooked,
+  // Office/global reference TZ (the "Utah" secondary chip).
+  getOfficeTimezone: vi.fn().mockResolvedValue("America/Denver"),
 }));
+
+// getUserTimezone (a local service fn) reads users.timezone via a chained query;
+// the requesting staff's profile lives in America/Lima.
+vi.mock("@/backend/platform/supabase", () => {
+  const builder = {
+    from: vi.fn(() => builder),
+    select: vi.fn(() => builder),
+    eq: vi.fn(() => builder),
+    maybeSingle: vi.fn(() => Promise.resolve({ data: { timezone: "America/Lima" } })),
+  };
+  return {
+    createServiceClient: vi.fn(() => builder),
+    createServerClient: vi.fn(() => builder),
+  };
+});
 
 // Keep every real domain export, stub only materializeSlots (its own math is
 // tested in domain.test.ts).
@@ -34,10 +52,6 @@ vi.mock("@/backend/platform/authz", () => ({
   systemActor: { userId: "system", orgId: "org-system", role: "admin", kind: "staff" },
 }));
 
-vi.mock("@/backend/platform/supabase", () => ({
-  createServiceClient: vi.fn(() => ({})),
-  createServerClient: vi.fn(() => ({})),
-}));
 vi.mock("@/backend/platform/events", () => ({ appEvents: { emit: vi.fn() } }));
 vi.mock("@/backend/platform/logger", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -80,7 +94,7 @@ beforeEach(() => {
 });
 
 describe("getProspectSlots", () => {
-  it("uses prospect duration, video modality and the org rule timezone", async () => {
+  it("uses prospect duration, video modality, the office reference TZ and the viewer TZ", async () => {
     const res = await getProspectSlots(STAFF, {
       windowFromUtc: new Date("2026-07-01T00:00:00Z"),
       windowToUtc: new Date("2026-07-31T00:00:00Z"),
@@ -88,7 +102,10 @@ describe("getProspectSlots", () => {
 
     expect(res.durationMinutes).toBe(60);
     expect(res.kind).toBe("video");
-    expect(res.staffTimezone).toBe("America/New_York");
+    // staffTimezone = office/global reference (Utah), NOT the rule snapshot zone.
+    expect(res.staffTimezone).toBe("America/Denver");
+    // viewerTimezone = the requesting staff's own profile zone (PRIMARY display).
+    expect(res.viewerTimezone).toBe("America/Lima");
     expect(res.slots).toHaveLength(1);
   });
 

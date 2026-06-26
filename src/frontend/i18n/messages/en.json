@@ -1616,6 +1616,7 @@
         "loadingSlots": "Looking for available times…",
         "noSlots": "No available times in the coming weeks.",
         "clientEquiv": "For the client: {hour}",
+        "officeEquiv": "Office time ({region}): {hour}",
         "overlapWarn": "This time overlaps another scheduled appointment. Create anyway?",
         "outsideWarn": "This time is outside your availability. Create anyway?",
         "min": "min",
