@@ -44,7 +44,13 @@ import {
   getCaseDocumentDownloadUrl,
   CaseError,
 } from "@/backend/modules/cases";
-import { translateAnswerText } from "@/backend/modules/ai-engine";
+import {
+  translateAnswerText,
+  translateDocument,
+  getDocumentTranslation,
+  AiEngineError,
+  type DocumentTranslationRow,
+} from "@/backend/modules/ai-engine";
 import { addCaseAppointment, SchedulingError } from "@/backend/modules/scheduling";
 
 type Ok<T> = { ok: true } & T;
@@ -56,7 +62,8 @@ function mapErr(err: unknown): Err {
     err instanceof ContractError ||
     err instanceof BillingError ||
     err instanceof CaseError ||
-    err instanceof SchedulingError
+    err instanceof SchedulingError ||
+    err instanceof AiEngineError
   ) {
     return { ok: false, error: { code: err.code } };
   }
@@ -334,6 +341,65 @@ export async function getDocumentUrlAction(input: {
     const actor = await requireActor();
     const url = await getCaseDocumentDownloadUrl(actor, input.documentId);
     return { ok: true, url };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Document translation (API-AI-08/09) — staff translate a client document
+// (ES→EN by default) into a court-ready English PDF. The heavy work runs in a
+// QStash job; the UI polls getDocumentTranslationAction. Authorization is
+// requireCaseAccess inside the ai-engine module (staff allowed).
+// ---------------------------------------------------------------------------
+
+export type TranslationDirection = "es-en" | "en-es";
+
+export interface TranslationDto {
+  status: "processing" | "completed" | "failed";
+  translatedText: string | null;
+  hasPdf: boolean;
+}
+
+function toTranslationDto(row: DocumentTranslationRow): TranslationDto {
+  return {
+    status: row.status as TranslationDto["status"],
+    translatedText: row.translated_text ?? null,
+    hasPdf: !!row.translated_pdf_path,
+  };
+}
+
+export async function translateDocumentAction(input: {
+  caseId: string;
+  caseDocumentId: string;
+  direction?: TranslationDirection;
+}): Promise<{ ok: boolean; translation?: TranslationDto; cached?: boolean; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    const { translation, cached } = await translateDocument(actor, {
+      caseId: input.caseId,
+      caseDocumentId: input.caseDocumentId,
+      direction: input.direction ?? "es-en",
+    });
+    return { ok: true, translation: toTranslationDto(translation), cached };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+export async function getDocumentTranslationAction(input: {
+  caseId: string;
+  caseDocumentId: string;
+  direction?: TranslationDirection;
+}): Promise<{ ok: boolean; translation?: TranslationDto | null; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    const row = await getDocumentTranslation(actor, {
+      caseId: input.caseId,
+      caseDocumentId: input.caseDocumentId,
+      direction: input.direction ?? "es-en",
+    });
+    return { ok: true, translation: row ? toTranslationDto(row) : null };
   } catch (err) {
     return mapErr(err);
   }

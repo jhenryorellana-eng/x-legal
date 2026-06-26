@@ -13,7 +13,6 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { getBridge } from "@/frontend/platform-bridge";
 import { Card } from "@/frontend/components/brand/card";
 import { Chip } from "@/frontend/components/brand/chip";
 import { Icon } from "@/frontend/components/brand/icon";
@@ -26,6 +25,8 @@ import { toast } from "@/frontend/components/desktop/toast";
 import type { CaseWorkspaceVM, CaseDetailActions, DocMatrixVM } from "../types";
 import type { CasosStrings } from "../strings";
 import { SectionLabel } from "../ui";
+import { DocumentPreviewModal } from "../document-preview-modal";
+import { DocumentTranslationModal } from "../document-translation-modal";
 
 const MAX_BYTES = 20 * 1024 * 1024;
 
@@ -51,16 +52,14 @@ export function DocumentosTab({
   const [reasonEs, setReasonEs] = React.useState("");
   const [reasonEn, setReasonEn] = React.useState("");
   const [busyKey, setBusyKey] = React.useState<string | null>(null);
+  const [previewDoc, setPreviewDoc] = React.useState<{ id: string; label: string } | null>(null);
+  const [translateDoc, setTranslateDoc] = React.useState<{ id: string; label: string } | null>(null);
 
   // The visibility toggle is wired only on surfaces that pass the action
   // (admin + sales case detail). Read-only views omit it → no button.
   const canToggle = typeof actions.setRequirementVisibility === "function";
-
-  async function onView(documentId: string) {
-    const res = await actions.getDocumentUrl({ documentId });
-    if (res.ok && res.url) getBridge().share.openExternal(res.url);
-    else toast.error(strings.errorTitle);
-  }
+  // Translation is staff-only — only surfaces that wire the action show it.
+  const canTranslate = typeof actions.translateDocument === "function";
 
   async function onApprove(item: DocMatrixVM) {
     if (!item.documentId) return;
@@ -153,7 +152,9 @@ export function DocumentosTab({
       </div>
 
       {!item.isHidden && (
-        <StatusPill kind={item.status as StatusKind}>{statusLabel(item.status, t)}</StatusPill>
+        <StatusPill kind={item.status as StatusKind} variant="subtle">
+          {statusLabel(item.status, t)}
+        </StatusPill>
       )}
 
       <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
@@ -182,8 +183,23 @@ export function DocumentosTab({
               />
             )}
             {item.documentId && (
-              <GhostBtn size="md" full={false} icon="external" onClick={() => onView(item.documentId!)}>
+              <GhostBtn
+                size="md"
+                full={false}
+                icon="zoom"
+                onClick={() => setPreviewDoc({ id: item.documentId!, label: item.label })}
+              >
                 {t.view}
+              </GhostBtn>
+            )}
+            {item.documentId && canTranslate && (
+              <GhostBtn
+                size="md"
+                full={false}
+                icon="globe"
+                onClick={() => setTranslateDoc({ id: item.documentId!, label: item.label })}
+              >
+                {t.translate}
               </GhostBtn>
             )}
             {item.status === "revision" && item.documentId && (
@@ -287,6 +303,28 @@ export function DocumentosTab({
         </div>
         <p style={{ margin: "12px 0 0", fontSize: 12.5, color: "var(--ink-3)" }}>{t.rejectNote}</p>
       </Modal>
+
+      {previewDoc && (
+        <DocumentPreviewModal
+          open={previewDoc !== null}
+          onOpenChange={(o) => !o && setPreviewDoc(null)}
+          src={`/api/v1/cases/${vm.header.caseId}/documents/${previewDoc.id}/preview?kind=source`}
+          title={previewDoc.label}
+          strings={{ previewTitle: t.previewTitle, previewError: t.previewError, download: t.download }}
+        />
+      )}
+
+      {translateDoc && (
+        <DocumentTranslationModal
+          open={translateDoc !== null}
+          onOpenChange={(o) => !o && setTranslateDoc(null)}
+          caseId={vm.header.caseId}
+          documentId={translateDoc.id}
+          docLabel={translateDoc.label}
+          actions={actions}
+          strings={strings}
+        />
+      )}
     </Card>
   );
 }

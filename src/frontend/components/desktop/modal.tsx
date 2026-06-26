@@ -24,6 +24,12 @@ export interface ModalProps {
   /** Tints the title accent rail (e.g. var(--red) for destructive flows). */
   tone?: string;
   width?: number;
+  /**
+   * Full-bleed dialog: the panel spans the whole viewport width and height
+   * (used for large document previews where the content needs all the room).
+   * Overrides `width`.
+   */
+  fullWidth?: boolean;
   children: React.ReactNode;
   footer?: React.ReactNode;
 }
@@ -35,6 +41,7 @@ export function Modal({
   description,
   tone = "var(--accent)",
   width = 520,
+  fullWidth = false,
   children,
   footer,
 }: ModalProps) {
@@ -63,18 +70,18 @@ export function Modal({
             left: "50%",
             transform: "translate(-50%,-50%)",
             zIndex: 61,
-            width: "min(calc(100vw - 32px), " + width + "px)",
+            width: fullWidth ? "100vw" : "min(calc(100vw - 32px), " + width + "px)",
             // `surface-staff` (globals.css) carries `min-height: 100dvh` for the
             // full-page staff surface; on a centered dialog that forces the panel
             // to viewport height (dead space under short content). Reset it so the
             // modal sizes to its content.
             minHeight: 0,
-            maxHeight: "calc(100vh - 48px)",
+            maxHeight: fullWidth ? "100vh" : "calc(100vh - 48px)",
             overflow: "auto",
             background: "var(--panel, var(--card))",
-            borderRadius: 20,
+            borderRadius: fullWidth ? 0 : 20,
             boxShadow: "var(--shadow-lg)",
-            border: "1px solid var(--line)",
+            border: fullWidth ? "none" : "1px solid var(--line)",
             outline: "none",
           }}
         >

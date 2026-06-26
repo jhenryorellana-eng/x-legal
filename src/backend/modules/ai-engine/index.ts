@@ -19,6 +19,8 @@ export {
   retryRunSameVersion,
   getRunsForCase,
   translateDocument,
+  getDocumentTranslation,
+  getDocumentTranslationPdf,
   translateText,
   translateAnswerText,
   assessDocumentLegibility,

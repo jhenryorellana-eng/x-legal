@@ -88,6 +88,8 @@ const mocks = vi.hoisted(() => {
 
   const storage = {
     createSignedDownloadUrl: vi.fn(),
+    uploadBytesToStorage: vi.fn(),
+    downloadBytesFromStorage: vi.fn(),
   };
 
   const logger = {
@@ -167,6 +169,8 @@ vi.mock("@/backend/platform/ai-stub", () => ({
 
 vi.mock("@/backend/platform/storage", () => ({
   createSignedDownloadUrl: mocks.storage.createSignedDownloadUrl,
+  uploadBytesToStorage: mocks.storage.uploadBytesToStorage,
+  downloadBytesFromStorage: mocks.storage.downloadBytesFromStorage,
 }));
 
 vi.mock("@/backend/platform/logger", () => ({
@@ -243,6 +247,9 @@ import {
   proposeFormSegmentation,
   translateAnswerText,
   assessDocumentLegibility,
+  executeTranslationJob,
+  getDocumentTranslation,
+  getDocumentTranslationPdf,
   AiEngineError,
 } from "../service";
 
@@ -599,6 +606,169 @@ describe("markTranslationFailed", () => {
 // ---------------------------------------------------------------------------
 // getRunsForCase (API-AI-02)
 // ---------------------------------------------------------------------------
+
+describe("executeTranslationJob", () => {
+  const TRANSLATION_ID = "77777777-7777-4777-8777-777777777777";
+  const CASE_DOC_ID = "88888888-8888-4888-8888-888888888888";
+
+  const PROCESSING_ROW = {
+    id: TRANSLATION_ID,
+    case_document_id: CASE_DOC_ID,
+    direction: "es-en" as const,
+    status: "processing" as const,
+  };
+
+  const JOB = {
+    jobKey: "translate-document" as const,
+    entityId: TRANSLATION_ID,
+    attempt: 1,
+    dedupeId: `translate-document:${CASE_DOC_ID}:es-en`,
+    translationId: TRANSLATION_ID,
+    direction: "es-en" as const,
+  };
+
+  beforeEach(() => {
+    mocks.geminiModels.generateContent.mockReset();
+    mocks.repo.findTranslationById.mockReset();
+    mocks.repo.getTranslationSource.mockReset();
+    mocks.repo.getCaseDocumentForAi.mockReset();
+    mocks.repo.completeTranslation.mockReset();
+    mocks.pdf.renderMarkdownToPdf.mockReset();
+    mocks.storage.uploadBytesToStorage.mockReset();
+  });
+
+  it("renders an English PDF and stores translated_pdf_path on completion", async () => {
+    mocks.repo.findTranslationById.mockResolvedValue(PROCESSING_ROW);
+    mocks.repo.getTranslationSource.mockResolvedValue({
+      rawText: "Acta de nacimiento de Juan Pérez.",
+      storagePath: null,
+      mimeType: null,
+    });
+    mocks.geminiModels.generateContent.mockResolvedValue({
+      candidates: [{ content: { parts: [{ text: "Birth certificate of Juan Pérez." }] } }],
+      usageMetadata: { promptTokenCount: 120, candidatesTokenCount: 60 },
+    });
+    mocks.repo.getCaseDocumentForAi.mockResolvedValue({ id: CASE_DOC_ID, caseId: CASE_ID });
+    mocks.pdf.renderMarkdownToPdf.mockResolvedValue(new Uint8Array([1, 2, 3]));
+    mocks.storage.uploadBytesToStorage.mockResolvedValue("ok");
+
+    const outcome = await executeTranslationJob(JOB);
+
+    expect(outcome).toBe("completed");
+    expect(mocks.pdf.renderMarkdownToPdf).toHaveBeenCalledWith("Birth certificate of Juan Pérez.");
+    expect(mocks.storage.uploadBytesToStorage).toHaveBeenCalledWith(
+      "generated",
+      `case/${CASE_ID}/translations/${TRANSLATION_ID}.pdf`,
+      expect.any(Uint8Array),
+      "application/pdf",
+    );
+    expect(mocks.repo.completeTranslation).toHaveBeenCalledWith(
+      TRANSLATION_ID,
+      expect.objectContaining({
+        status: "completed",
+        translatedText: "Birth certificate of Juan Pérez.",
+        translatedPdfPath: `case/${CASE_ID}/translations/${TRANSLATION_ID}.pdf`,
+      }),
+    );
+  });
+
+  it("still completes (translated text kept) when the PDF render fails", async () => {
+    mocks.repo.findTranslationById.mockResolvedValue(PROCESSING_ROW);
+    mocks.repo.getTranslationSource.mockResolvedValue({ rawText: "Texto.", storagePath: null, mimeType: null });
+    mocks.geminiModels.generateContent.mockResolvedValue({
+      candidates: [{ content: { parts: [{ text: "Text." }] } }],
+      usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 },
+    });
+    mocks.repo.getCaseDocumentForAi.mockResolvedValue({ id: CASE_DOC_ID, caseId: CASE_ID });
+    mocks.pdf.renderMarkdownToPdf.mockRejectedValue(new Error("render boom"));
+
+    const outcome = await executeTranslationJob(JOB);
+
+    expect(outcome).toBe("completed");
+    expect(mocks.storage.uploadBytesToStorage).not.toHaveBeenCalled();
+    expect(mocks.repo.completeTranslation).toHaveBeenCalledWith(
+      TRANSLATION_ID,
+      expect.objectContaining({ status: "completed", translatedPdfPath: null }),
+    );
+  });
+
+  it("still completes (text kept) when the PDF upload fails", async () => {
+    mocks.repo.findTranslationById.mockResolvedValue(PROCESSING_ROW);
+    mocks.repo.getTranslationSource.mockResolvedValue({ rawText: "Texto.", storagePath: null, mimeType: null });
+    mocks.geminiModels.generateContent.mockResolvedValue({
+      candidates: [{ content: { parts: [{ text: "Text." }] } }],
+      usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 },
+    });
+    mocks.repo.getCaseDocumentForAi.mockResolvedValue({ id: CASE_DOC_ID, caseId: CASE_ID });
+    mocks.pdf.renderMarkdownToPdf.mockResolvedValue(new Uint8Array([1, 2, 3]));
+    mocks.storage.uploadBytesToStorage.mockRejectedValue(new Error("upload boom"));
+
+    const outcome = await executeTranslationJob(JOB);
+
+    expect(outcome).toBe("completed");
+    expect(mocks.repo.completeTranslation).toHaveBeenCalledWith(
+      TRANSLATION_ID,
+      expect.objectContaining({ status: "completed", translatedPdfPath: null }),
+    );
+  });
+});
+
+describe("translation cross-case guard", () => {
+  const CASE_DOC_ID = "99999999-9999-4999-8999-999999999999";
+  const OTHER_CASE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+
+  beforeEach(() => {
+    mocks.authz.requireCaseAccess.mockReset();
+    mocks.authz.requireCaseAccess.mockResolvedValue(undefined);
+    mocks.repo.getCaseDocumentForAi.mockReset();
+    mocks.repo.findTranslation.mockReset();
+  });
+
+  it("getDocumentTranslation returns null when the document belongs to another case", async () => {
+    mocks.repo.getCaseDocumentForAi.mockResolvedValue({ id: CASE_DOC_ID, caseId: OTHER_CASE_ID });
+
+    const result = await getDocumentTranslation(ADMIN_ACTOR, {
+      caseId: CASE_ID,
+      caseDocumentId: CASE_DOC_ID,
+      direction: "es-en",
+    });
+
+    expect(result).toBeNull();
+    expect(mocks.repo.findTranslation).not.toHaveBeenCalled();
+  });
+
+  it("getDocumentTranslation returns the row when the document belongs to the case", async () => {
+    mocks.repo.getCaseDocumentForAi.mockResolvedValue({ id: CASE_DOC_ID, caseId: CASE_ID });
+    mocks.repo.findTranslation.mockResolvedValue({
+      id: "t1",
+      case_document_id: CASE_DOC_ID,
+      direction: "es-en",
+      status: "completed",
+    });
+
+    const result = await getDocumentTranslation(ADMIN_ACTOR, {
+      caseId: CASE_ID,
+      caseDocumentId: CASE_DOC_ID,
+      direction: "es-en",
+    });
+
+    expect(result).not.toBeNull();
+    expect(mocks.repo.findTranslation).toHaveBeenCalledWith(CASE_DOC_ID, "es-en");
+  });
+
+  it("getDocumentTranslationPdf returns null when the document belongs to another case", async () => {
+    mocks.repo.getCaseDocumentForAi.mockResolvedValue({ id: CASE_DOC_ID, caseId: OTHER_CASE_ID });
+
+    const result = await getDocumentTranslationPdf(ADMIN_ACTOR, {
+      caseId: CASE_ID,
+      caseDocumentId: CASE_DOC_ID,
+      direction: "es-en",
+    });
+
+    expect(result).toBeNull();
+    expect(mocks.repo.findTranslation).not.toHaveBeenCalled();
+  });
+});
 
 describe("getRunsForCase", () => {
   it("requires case access (calls requireCaseAccess)", async () => {

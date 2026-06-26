@@ -34,7 +34,11 @@ import { enqueueJob } from "@/backend/platform/qstash";
 import { getAnthropicClient } from "@/backend/platform/anthropic";
 import { getGeminiModels, DEFAULT_GEMINI_MODEL } from "@/backend/platform/gemini";
 import { isAiStubEnabled } from "@/backend/platform/ai-stub";
-import { createSignedDownloadUrl as _createSignedDownloadUrl } from "@/backend/platform/storage";
+import {
+  createSignedDownloadUrl as _createSignedDownloadUrl,
+  uploadBytesToStorage,
+  downloadBytesFromStorage,
+} from "@/backend/platform/storage";
 import { logger } from "@/backend/platform/logger";
 import { writeAudit } from "@/backend/modules/audit";
 import { renderMarkdownToPdf, renderMarkdownToDocx } from "@/backend/platform/pdf";
@@ -1116,6 +1120,15 @@ export async function translateDocument(
   await requireCaseAccess(actor, input.caseId);
   const p = TranslateDocumentInputSchema.parse(input);
 
+  // Cross-case guard: requireCaseAccess authorized input.caseId, but the lookups
+  // below key on caseDocumentId via the service client (RLS bypassed). Verify the
+  // document actually belongs to the authorized case so a member of case A cannot
+  // act on (or read) a document from case B (DOC-20 §7 — single source of auth).
+  const ownerDoc = await getCaseDocumentForAi(p.caseDocumentId);
+  if (!ownerDoc || ownerDoc.caseId !== input.caseId) {
+    throw new AuthzError("forbidden_case");
+  }
+
   const existing = await findTranslation(p.caseDocumentId, p.direction);
 
   if (existing?.status === "completed") return { translation: existing, cached: true };
@@ -1173,6 +1186,48 @@ export async function translateDocument(
     }
     throw err;
   }
+}
+
+// ---------------------------------------------------------------------------
+// getDocumentTranslation — API-AI-09 (read-only status/result for polling)
+// ---------------------------------------------------------------------------
+
+/**
+ * Reads the translation row for (case_document_id, direction). Read-only — it
+ * NEVER re-enqueues, so the UI can poll it safely while a job is running.
+ *
+ * @api-id API-AI-09
+ */
+export async function getDocumentTranslation(
+  actor: Actor,
+  input: { caseId: string; caseDocumentId: string; direction: "es-en" | "en-es" },
+): Promise<DocumentTranslationRow | null> {
+  await requireCaseAccess(actor, input.caseId);
+  // Cross-case guard (see translateDocument): the document must belong to the
+  // authorized case — findTranslation keys on caseDocumentId with RLS bypassed.
+  const ownerDoc = await getCaseDocumentForAi(input.caseDocumentId);
+  if (!ownerDoc || ownerDoc.caseId !== input.caseId) return null;
+  return findTranslation(input.caseDocumentId, input.direction);
+}
+
+/**
+ * Returns the rendered translation PDF bytes (English document) once the
+ * translation has completed, or null if not ready. Authorizes via the case.
+ * Consumed by the same-origin preview route (kind=translation).
+ */
+export async function getDocumentTranslationPdf(
+  actor: Actor,
+  input: { caseId: string; caseDocumentId: string; direction: "es-en" | "en-es" },
+): Promise<{ bytes: Uint8Array; mimeType: string; filename: string } | null> {
+  await requireCaseAccess(actor, input.caseId);
+  // Cross-case guard (see translateDocument): the PDF bytes are PII-dense — make
+  // sure the document belongs to the authorized case before serving them.
+  const ownerDoc = await getCaseDocumentForAi(input.caseDocumentId);
+  if (!ownerDoc || ownerDoc.caseId !== input.caseId) return null;
+  const row = await findTranslation(input.caseDocumentId, input.direction);
+  if (!row || row.status !== "completed" || !row.translated_pdf_path) return null;
+  const bytes = await downloadBytesFromStorage("generated", row.translated_pdf_path);
+  return { bytes, mimeType: "application/pdf", filename: `traduccion-${input.direction}.pdf` };
 }
 
 // ---------------------------------------------------------------------------
@@ -1298,10 +1353,31 @@ export async function executeTranslationJob(
 
   const costUsd = computeGeminiCost({ inputTokens, outputTokens });
 
+  // Ola 2: render the translated text to a PDF so the translation becomes a
+  // court-ready document (English expediente) that staff can preview/download
+  // and later add as an expediente item. Reuses the mupdf markdown→PDF renderer
+  // (same engine as AI generations). Best-effort: if the render fails, the
+  // translated text is still persisted — a render hiccup must never strand the
+  // row in 'processing'.
+  let translatedPdfPath: string | null = null;
+  try {
+    const docMeta = await getCaseDocumentForAi(translation.case_document_id);
+    const caseId = docMeta?.caseId ?? "unknown";
+    const pdfBytes = await renderMarkdownToPdf(translatedText);
+    const pdfPath = `case/${caseId}/translations/${translation.id}.pdf`;
+    await uploadBytesToStorage("generated", pdfPath, pdfBytes, "application/pdf");
+    translatedPdfPath = pdfPath;
+  } catch (err) {
+    logger.error(
+      { err, translationId: translation.id },
+      "translate-document: PDF render failed (translated text kept)",
+    );
+  }
+
   await completeTranslation(translation.id, {
     status: "completed",
     translatedText,
-    translatedPdfPath: null, // bilingual PDF render is Ola 2 (uses renderMarkdownToPdf)
+    translatedPdfPath,
     model,
     inputTokens,
     outputTokens,

@@ -299,6 +299,28 @@ export async function uploadBytesToStorage(
   return path;
 }
 
+/**
+ * Downloads an object's raw bytes from a private bucket using the service
+ * client (bypasses RLS — callers MUST authorize before calling, e.g. with
+ * requireCaseAccess). Used to stream a document inline through a same-origin
+ * route handler without exposing a signed URL.
+ */
+export async function downloadBytesFromStorage(
+  bucket: string,
+  path: string,
+): Promise<Uint8Array> {
+  const { data, error } = await createServiceClient().storage
+    .from(bucket)
+    .download(path);
+
+  if (error || !data) {
+    logger.error({ bucket, path, err: error }, "storage: failed to download bytes");
+    throw new Error(`Failed to download bytes from storage: ${error?.message}`);
+  }
+
+  return new Uint8Array(await data.arrayBuffer());
+}
+
 export async function deleteObject(bucket: string, path: string): Promise<void> {
   const { error } = await createServiceClient().storage
     .from(bucket)

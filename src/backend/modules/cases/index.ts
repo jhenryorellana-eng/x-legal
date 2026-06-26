@@ -23,6 +23,7 @@ export {
   getCaseRequirements,
   getCaseDocuments,
   getCaseDocumentDownloadUrl,
+  getCaseDocumentBytes,
   getDocumentExtractionStatus,
   listCasesAdmin,
   searchBookableCases,

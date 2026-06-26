@@ -20,6 +20,7 @@ import {
   createSignedDownloadUrl,
   validateUploadedObject,
   deleteObject,
+  downloadBytesFromStorage,
 } from "@/backend/platform/storage";
 import { logger } from "@/backend/platform/logger";
 // Note: enqueueJob is imported dynamically in confirmDocumentUpload to avoid
@@ -2143,6 +2144,26 @@ export async function getCaseDocumentDownloadUrl(
   if (!doc) throw new CaseError("DOC_NOT_FOUND");
   await requireCaseAccess(actor, doc.case_id);
   return createSignedDownloadUrl("case-documents", doc.storage_path);
+}
+
+/**
+ * Returns a case document's raw bytes + metadata for inline preview. Authorized
+ * by case access. Streamed through a same-origin route handler so the file can
+ * be viewed (PDF/image) without exposing a signed URL or forcing a download.
+ */
+export async function getCaseDocumentBytes(
+  actor: Actor,
+  documentId: string,
+): Promise<{ bytes: Uint8Array; mimeType: string; filename: string }> {
+  const doc = await findDocumentById(documentId);
+  if (!doc) throw new CaseError("DOC_NOT_FOUND");
+  await requireCaseAccess(actor, doc.case_id);
+  const bytes = await downloadBytesFromStorage("case-documents", doc.storage_path);
+  return {
+    bytes,
+    mimeType: doc.mime_type ?? "application/octet-stream",
+    filename: doc.original_filename ?? "document",
+  };
 }
 
 /**

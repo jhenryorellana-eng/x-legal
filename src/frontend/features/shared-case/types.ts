@@ -221,6 +221,14 @@ export interface CaseWorkspaceVM {
   expedientes: ExpedienteVM[];
 }
 
+/** Client-facing view of a document translation (status + result). */
+export interface DocumentTranslationView {
+  status: "processing" | "completed" | "failed";
+  translatedText: string | null;
+  /** True once the rendered English PDF is available (preview/download). */
+  hasPdf: boolean;
+}
+
 export interface CaseDetailActions {
   /** Approve / reject a document (combined reviewDocument verdict). */
   reviewDocument: (input: {
@@ -244,6 +252,25 @@ export interface CaseDetailActions {
   getDocumentUrl: (input: {
     documentId: string;
   }) => Promise<{ ok: boolean; url?: string; error?: { code: string } }>;
+  /**
+   * Request a translation (ES→EN by default) of an uploaded document into a
+   * court-ready English PDF. Enqueues a QStash job; poll with getTranslation.
+   * Optional — only staff surfaces wire it.
+   */
+  translateDocument?: (input: {
+    caseId: string;
+    caseDocumentId: string;
+    direction?: "es-en" | "en-es";
+  }) => Promise<{ ok: boolean; translation?: DocumentTranslationView; cached?: boolean; error?: { code: string } }>;
+  /**
+   * Read the translation status/result for a document (for polling). Optional —
+   * only staff surfaces wire it.
+   */
+  getTranslation?: (input: {
+    caseId: string;
+    caseDocumentId: string;
+    direction?: "es-en" | "en-es";
+  }) => Promise<{ ok: boolean; translation?: DocumentTranslationView | null; error?: { code: string } }>;
   /**
    * Returns a short-lived signed download URL for the SIGNED contract PDF.
    * Optional — only admin/staff surfaces wire it; null url when unsigned.

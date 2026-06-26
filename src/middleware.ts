@@ -138,7 +138,10 @@ function buildCsp(nonce: string): string {
     `font-src 'self'`,
     `connect-src 'self' ${supabase} ${supabaseWss} https://*.livekit.cloud wss://*.livekit.cloud`,
     `worker-src 'self' blob:`,
-    `frame-src 'none'`,
+    // `blob:` allows the in-app document preview to frame a same-origin blob URL
+    // (PDF/image fetched through /api/v1/.../preview, never an external origin).
+    // Without it the preview <iframe> breaks once the CSP flips to enforcing.
+    `frame-src 'self' blob:`,
     `frame-ancestors 'none'`,
     `object-src 'none'`,
     `base-uri 'self'`,
