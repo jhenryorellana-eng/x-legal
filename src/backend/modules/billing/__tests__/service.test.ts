@@ -675,8 +675,8 @@ describe("getAccountStatement", () => {
 
 describe("onContractSigned", () => {
   const makeInstallments = (): InstallmentRow[] => [
-    { id: "inst-1", payment_plan_id: PLAN_ID, number: 1, amount_cents: 20000, due_date: "2026-06-01", status: "pending", is_downpayment: true, paid_at: null, waived_by: null, waived_reason: null, last_reminder_at: null, created_at: "", updated_at: "" } as InstallmentRow,
-    { id: "inst-2", payment_plan_id: PLAN_ID, number: 2, amount_cents: 20000, due_date: "2026-07-01", status: "pending", is_downpayment: false, paid_at: null, waived_by: null, waived_reason: null, last_reminder_at: null, created_at: "", updated_at: "" } as InstallmentRow,
+    { id: "inst-1", payment_plan_id: PLAN_ID, number: 0, amount_cents: 20000, due_date: "2026-06-01", status: "pending", is_downpayment: true, paid_at: null, waived_by: null, waived_reason: null, last_reminder_at: null, created_at: "", updated_at: "" } as InstallmentRow,
+    { id: "inst-2", payment_plan_id: PLAN_ID, number: 1, amount_cents: 20000, due_date: "2026-07-01", status: "pending", is_downpayment: false, paid_at: null, waived_by: null, waived_reason: null, last_reminder_at: null, created_at: "", updated_at: "" } as InstallmentRow,
   ];
 
   it("updates due dates when all installments are pending and no payments exist", async () => {

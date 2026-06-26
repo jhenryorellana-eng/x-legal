@@ -98,10 +98,11 @@ export interface BuildInstallmentsInput {
  * DOC-44 §2.1 invariants:
  *   I1. Σ amountCents === totalCents (exact)
  *   I2. downpaymentCents > 0 AND downpaymentCents <= totalCents
- *   I3. numbers 1..N contiguous
+ *   I3. the downpayment is "Cuota inicial" (number=0); the monthly cuotas are
+ *       numbered 1..(installmentCount-1) contiguous
  *   I4. dueDate non-decreasing with number
  *   I5. last installment absorbs rounding difference
- *   I6. exactly one is_downpayment=true (number=1)
+ *   I6. exactly one is_downpayment=true (number=0)
  *
  * @throws Error on invariant violation (programming error, not user error)
  */
@@ -124,16 +125,17 @@ export function buildInstallments(input: BuildInstallmentsInput): InstallmentDra
 
   const plans: InstallmentDraft[] = [];
 
-  // First installment: the downpayment
+  // The downpayment is a SEPARATE "Cuota inicial" (number 0); the monthly cuotas
+  // that follow are numbered 1, 2, … so the schedule reads inicial, 1, 2, …
   plans.push({
-    number: 1,
+    number: 0,
     amountCents: downpaymentCents,
     dueDate: startDate,
     isDownpayment: true,
   });
 
   if (installmentCount === 1) {
-    // Edge case: single installment covers everything.
+    // Edge case: single installment covers everything (inicial === total).
     // Caller is responsible for setting downpaymentCents === totalCents.
     return plans;
   }
@@ -143,7 +145,7 @@ export function buildInstallments(input: BuildInstallmentsInput): InstallmentDra
   const baseAmount = Math.floor(remainder / remainingCount);
 
   for (let i = 0; i < remainingCount; i++) {
-    const number = i + 2; // installment numbers start at 1; #1 is downpayment
+    const number = i + 1; // monthly cuotas start at 1 (the inicial is number 0)
     const isLast = i === remainingCount - 1;
     // Last installment absorbs rounding (I6)
     const alreadyAllocated = baseAmount * i;
@@ -172,8 +174,8 @@ export function buildInstallments(input: BuildInstallmentsInput): InstallmentDra
  * Re-anchors installment due dates to a new local date anchor.
  *
  * DOC-44 §2.1 (SOT-3 rule):
- *   - Cuota 1 (downpayment): dueDate = anchor
- *   - Cuota k (k=2..N): dueDate = addMonthsClamped(anchor, k-1)
+ *   - Cuota inicial (downpayment, number 0): dueDate = anchor
+ *   - Cuota k (k=1..N): dueDate = addMonthsClamped(anchor, k)
  *
  * Returns a new array; does NOT mutate the input.
  */
@@ -185,7 +187,7 @@ export function reanchorDueDates(
     ...inst,
     dueDate: inst.isDownpayment
       ? anchorLocalDate
-      : addMonthsClamped(anchorLocalDate, inst.number - 1),
+      : addMonthsClamped(anchorLocalDate, inst.number),
   }));
 }
 

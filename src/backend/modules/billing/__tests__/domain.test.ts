@@ -87,7 +87,7 @@ describe("buildInstallments", () => {
     expect(plans).toHaveLength(1);
     expect(plans[0].isDownpayment).toBe(true);
     expect(plans[0].amountCents).toBe(500_00);
-    expect(plans[0].number).toBe(1);
+    expect(plans[0].number).toBe(0);
   });
 
   it("I5 — remaining installments share floor(remainder / N-1)", () => {
@@ -144,14 +144,14 @@ describe("buildInstallments", () => {
     expect(plans.filter((p) => p.isDownpayment)).toHaveLength(1);
   });
 
-  it("I3 — installment numbers are sequential starting at 1", () => {
+  it("I3 — downpayment is number 0, monthly cuotas sequential from 1", () => {
     const plans = buildInstallments({
       totalCents: 600_00,
       downpaymentCents: 100_00,
       installmentCount: 3,
       startDate: "2024-01-01",
     });
-    expect(plans.map((p) => p.number)).toEqual([1, 2, 3]);
+    expect(plans.map((p) => p.number)).toEqual([0, 1, 2]);
   });
 
   it("I4 — due dates non-decreasing with number", () => {
@@ -218,9 +218,9 @@ describe("addMonthsClamped", () => {
 
 describe("reanchorDueDates", () => {
   const installments = [
-    { number: 1, amountCents: 100, dueDate: "2024-01-01", isDownpayment: true },
-    { number: 2, amountCents: 100, dueDate: "2024-02-01", isDownpayment: false },
-    { number: 3, amountCents: 100, dueDate: "2024-03-01", isDownpayment: false },
+    { number: 0, amountCents: 100, dueDate: "2024-01-01", isDownpayment: true },
+    { number: 1, amountCents: 100, dueDate: "2024-02-01", isDownpayment: false },
+    { number: 2, amountCents: 100, dueDate: "2024-03-01", isDownpayment: false },
   ];
 
   it("sets downpayment dueDate = anchor", () => {
@@ -228,7 +228,7 @@ describe("reanchorDueDates", () => {
     expect(anchored[0].dueDate).toBe("2024-06-15");
   });
 
-  it("cuota k → addMonthsClamped(anchor, k-1)", () => {
+  it("cuota k (monthly) → addMonthsClamped(anchor, k); inicial → anchor", () => {
     const anchored = reanchorDueDates(installments, "2024-06-15");
     expect(anchored[1].dueDate).toBe("2024-07-15"); // anchor + 1 month
     expect(anchored[2].dueDate).toBe("2024-08-15"); // anchor + 2 months
@@ -248,7 +248,7 @@ describe("reanchorDueDates", () => {
   });
 
   it("handles single installment (just downpayment)", () => {
-    const single = [{ number: 1, amountCents: 500, dueDate: "2024-01-01", isDownpayment: true }];
+    const single = [{ number: 0, amountCents: 500, dueDate: "2024-01-01", isDownpayment: true }];
     const anchored = reanchorDueDates(single, "2024-06-20");
     expect(anchored[0].dueDate).toBe("2024-06-20");
   });
