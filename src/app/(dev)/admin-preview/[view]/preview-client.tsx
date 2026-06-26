@@ -268,6 +268,7 @@ function FirmaPreview() {
         { name: "María González", role: "Titular" },
         { name: "Diego González", role: "Cónyuge" },
       ]}
+      document={null}
       termsVersion="v1.0"
       signAction={async () => ({ ok: true, outcome: "signed" as const })}
     />

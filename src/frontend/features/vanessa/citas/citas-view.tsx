@@ -616,7 +616,7 @@ export function CitasView(props: CitasViewProps) {
         </div>
       </Modal>
 
-      <NuevaCitaModal open={modalOpen} onOpenChange={setModalOpen} {...props.newApptModal} presetLeadId={props.presetLeadId} />
+      <NuevaCitaModal open={modalOpen} onOpenChange={setModalOpen} {...props.newApptModal} />
     </div>
   );
 }

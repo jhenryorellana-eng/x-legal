@@ -31,6 +31,12 @@ export const I18nTextDraftSchema = z.object({ es: z.string(), en: z.string() }).
 export type I18nText = z.infer<typeof I18nTextSchema>;
 export type I18nTextDraft = z.infer<typeof I18nTextDraftSchema>;
 
+/** Bilingual list of strings (e.g. the contract scope/stages). Draft = partial. */
+export const I18nStringListDraftSchema = z
+  .object({ es: z.array(z.string()), en: z.array(z.string()) })
+  .partial();
+export type I18nStringListDraft = z.infer<typeof I18nStringListDraftSchema>;
+
 // Enum values must match DB CHECK constraints exactly (DOC-30 §0 rule: text+CHECK, no ENUM types)
 export const ServiceCategorySchema = z.enum(["migratorio", "empresarial", "familiar"]);
 export const PlanKindSchema = z.enum(["self", "with_lawyer"]);
@@ -67,6 +73,10 @@ export const ServiceSchema = z.object({
   is_public: z.boolean().default(true),
   entry_parent_service_id: z.string().uuid().nullable(),
   entry_phase_id: z.string().uuid().nullable(),
+  // Per-service contract content (DOC-51) — rendered in the signing page + PDF.
+  contract_object_i18n: I18nTextDraftSchema.nullable(),
+  contract_scope_i18n: I18nStringListDraftSchema.nullable(),
+  contract_special_clause_i18n: I18nTextDraftSchema.nullable(),
   position: z.number().int().default(0),
 });
 export type Service = z.infer<typeof ServiceSchema>;
@@ -96,6 +106,9 @@ export const UpdateServiceDtoSchema = z.object({
   is_public: z.boolean().optional(),
   entry_parent_service_id: z.string().uuid().nullable().optional(),
   entry_phase_id: z.string().uuid().nullable().optional(),
+  contract_object_i18n: I18nTextDraftSchema.nullable().optional(),
+  contract_scope_i18n: I18nStringListDraftSchema.nullable().optional(),
+  contract_special_clause_i18n: I18nTextDraftSchema.nullable().optional(),
   position: z.number().int().optional(),
 });
 export type UpdateServiceDto = z.infer<typeof UpdateServiceDtoSchema>;
@@ -258,6 +271,10 @@ export const ServicePartyRoleSchema = z.object({
   label_i18n: I18nTextDraftSchema,
   cardinality: PartyRoleCardinalitySchema.default("single"),
   is_required: z.boolean().default(false),
+  // Whether parties of this role appear/commit in the signed contract.
+  // Independent of is_required (case data-entry) and cardinality. The implicit
+  // applicant (petitioner) is always in the contract regardless of this flag.
+  include_in_contract: z.boolean().default(true),
   position: z.number().int().default(0),
 });
 export type ServicePartyRole = z.infer<typeof ServicePartyRoleSchema>;
@@ -268,6 +285,7 @@ export const UpsertServicePartyRoleDtoSchema = z.object({
   label_i18n: I18nTextDraftSchema,
   cardinality: PartyRoleCardinalitySchema.default("single"),
   is_required: z.boolean().default(false),
+  include_in_contract: z.boolean().default(true),
   position: z.number().int().default(0),
 });
 export type UpsertServicePartyRoleDto = z.infer<typeof UpsertServicePartyRoleDtoSchema>;

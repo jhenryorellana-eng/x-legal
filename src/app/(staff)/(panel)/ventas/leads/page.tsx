@@ -10,7 +10,7 @@
 
 import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
-import { getActor } from "@/backend/modules/identity";
+import { getActor, getCurrentUserLocation } from "@/backend/modules/identity";
 import { getBoard, listLeads, listLeadCategories } from "@/backend/modules/kanban";
 import { listContractableServices, listContractableServicePlans, listServicePartyRoles } from "@/backend/modules/catalog";
 import { resolveI18n } from "@/shared/i18n";
@@ -19,11 +19,24 @@ import type { NewCaseService } from "@/frontend/features/admin/casos/new-case-mo
 import { LeadsClient } from "./client";
 import { fmtRelative, type Locale } from "@/frontend/lib/datetime";
 import { sourceMeta } from "@/frontend/features/vanessa/shared/source-meta";
+import { categoryColorHex } from "@/frontend/features/vanessa/leads/category-colors";
 import type { LeadColumnVM, LeadCardVM, SourceOption } from "@/frontend/features/vanessa";
+import { buildNuevaCitaStrings } from "../_lib/nueva-cita-strings";
 import {
   moveKanbanCardAction,
   createLeadAction,
   createLeadCategoryAction,
+  updateLeadCategoryAction,
+  deleteLeadCategoryAction,
+  reorderLeadCategoriesAction,
+  listLeadCategoriesAction,
+  searchCasesAction,
+  getCaseBookingContextAction,
+  searchProspectsAction,
+  getProspectSlotsAction,
+  createProspectInlineAction,
+  bookAppointmentAction,
+  createProspectApptAction,
 } from "../actions";
 import { createCaseAction } from "../../admin/casos/actions";
 
@@ -36,10 +49,17 @@ export default async function VentasLeadsPage() {
   const locale = (await getLocale()) as Locale;
   const t = await getTranslations("staff.ventas.leads");
   const tnl = await getTranslations("staff.ventas.newLead");
+  const tmc = await getTranslations("staff.ventas.manageCats");
 
   const board = await getBoard(actor, { kind: "leads" }).catch(() => null);
   const leadsPage = await listLeads(actor, {}).catch(() => null);
   const leadsById = new Map((leadsPage?.items ?? []).map((l) => [l.id, l]));
+
+  // Real lead categories (their UUIDs are what `createLead` stores — the modal
+  // must NOT use hardcoded slug ids, or `leads.category_id` fails the uuid cast).
+  const categoryRows = await listLeadCategories(actor).catch(() => []);
+  const categoriesById = new Map(categoryRows.map((c) => [c.id, c]));
+  const categories = categoryRows.map((c) => ({ id: c.id, label: c.label, color: c.color }));
 
   const columns: LeadColumnVM[] = (board?.columns ?? [])
     .slice()
@@ -56,8 +76,10 @@ export default async function VentasLeadsPage() {
     const lead = leadsById.get(card.ref_id);
     const sm = sourceMeta(lead?.source ?? "web");
     const uncontacted = lead ? lead.contacted_at == null : false;
+    const cat = lead?.category_id ? categoriesById.get(lead.category_id) : null;
     return {
       id: card.id,
+      leadId: card.ref_id,
       columnId: card.column_id,
       name: lead?.full_name ?? null,
       phone: lead?.phone_e164 ?? "",
@@ -65,8 +87,8 @@ export default async function VentasLeadsPage() {
       sourceLabel: sm.labelKey,
       serviceLabel: "Visa Juvenil",
       categoryId: lead?.category_id ?? null,
-      categoryLabel: null,
-      categoryColor: null,
+      categoryLabel: cat?.label ?? null,
+      categoryColor: cat ? categoryColorHex(cat.color) : null,
       uncontacted,
       ageLabel: lead?.created_at ? fmtRelative(lead.created_at, locale) : "",
       lostReason: lead?.lost_reason ?? null,
@@ -80,6 +102,7 @@ export default async function VentasLeadsPage() {
     list: t("list"),
     filters: t("filters"),
     column: t("column"),
+    manageCategories: t("manageCategories"),
     newLead: t("newLead"),
     addLead: t("addLead"),
     emptyCol: t("emptyCol"),
@@ -90,6 +113,7 @@ export default async function VentasLeadsPage() {
     notNow: t("notNow"),
     call: t("call"),
     whatsapp: t("whatsapp"),
+    agendar: t("agendar"),
     createCaseTooltip: t("createCaseTooltip"),
     lostTitle: t("lostTitle"),
     lostBody: t("lostBody"),
@@ -114,6 +138,8 @@ export default async function VentasLeadsPage() {
     service: tnl("service"),
     category: tnl("category"),
     createCat: tnl("createCat"),
+    catNamePh: tnl("catNamePh"),
+    catSave: tnl("catSave"),
     note: tnl("note"),
     notePh: tnl("notePh"),
     cancel: tnl("cancel"),
@@ -123,17 +149,34 @@ export default async function VentasLeadsPage() {
     invalidPhone: tnl("invalidPhone"),
   };
 
+  const manageCatsStrings = {
+    title: tmc("title"),
+    sub: tmc("sub"),
+    empty: tmc("empty"),
+    namePh: tmc("namePh"),
+    add: tmc("add"),
+    save: tmc("save"),
+    cancel: tmc("cancel"),
+    close: tmc("close"),
+    delete: tmc("delete"),
+    deleteConfirm: tmc("deleteConfirm", { label: "{label}" }),
+    deactivatedToast: tmc("deactivatedToast"),
+    deletedToast: tmc("deletedToast"),
+    hide: tmc("hide"),
+    show: tmc("show"),
+    moveUp: tmc("moveUp"),
+    moveDown: tmc("moveDown"),
+    errorGeneric: tmc("errorGeneric"),
+  };
+
+  // Strings for the "Nueva cita" modal launched from a lead card "Agendar cita".
+  const staffTz = (await getCurrentUserLocation(actor)).timezone;
+  const nuevaCitaStrings = await buildNuevaCitaStrings(staffTz, locale);
+
   // Catalog services for the modals (Nuevo lead + Nuevo caso).
   const catalogServices = await listContractableServices(actor.orgId).catch(() => []);
   const services = catalogServices.map((s) => ({ id: s.id, label: resolveI18n(s.label_i18n, locale) }));
 
-  // Real lead categories (their UUIDs are what `createLead` stores — the modal
-  // must NOT use hardcoded slug ids, or `leads.category_id` fails the uuid cast).
-  const categories = (await listLeadCategories(actor).catch(() => [])).map((c) => ({
-    id: c.id,
-    label: c.label,
-    color: c.color,
-  }));
   const casosStrings = buildCasosStrings(locale === "en" ? "en" : "es");
   // Real plans + encoded plan data per service for the "Nuevo caso" modal — same
   // build as /admin/casos. Previously hardcoded to `plans: []`, which left the
@@ -189,6 +232,10 @@ export default async function VentasLeadsPage() {
       cards={cards}
       strings={strings}
       newLeadStrings={newLeadStrings}
+      manageCatsStrings={manageCatsStrings}
+      nuevaCitaStrings={nuevaCitaStrings}
+      staffTz={staffTz}
+      locale={locale === "en" ? "en" : "es"}
       sources={sources}
       services={services}
       categories={categories}
@@ -198,6 +245,21 @@ export default async function VentasLeadsPage() {
       moveAction={moveKanbanCardAction}
       createLeadAction={createLeadAction}
       createCategoryAction={createLeadCategoryAction}
+      categoryActions={{
+        list: listLeadCategoriesAction,
+        update: updateLeadCategoryAction,
+        remove: deleteLeadCategoryAction,
+        reorder: reorderLeadCategoriesAction,
+      }}
+      citaActions={{
+        searchCases: searchCasesAction,
+        getCaseContext: getCaseBookingContextAction,
+        searchProspects: searchProspectsAction,
+        getProspectSlots: getProspectSlotsAction,
+        createProspectInline: createProspectInlineAction,
+        bookAppointment: bookAppointmentAction,
+        createProspectAppointment: createProspectApptAction,
+      }}
       createCaseAction={createCaseAction}
     />
   );

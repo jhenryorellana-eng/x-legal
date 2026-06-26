@@ -46,7 +46,7 @@ const ALLOWED_EXTENSIONS: Record<BucketContext, string[]> = {
   "case-documents": ["pdf", "jpg", "jpeg", "png", "heic", "webp"],
   expedientes: ["pdf"],
   generated: ["pdf", "docx", "md"],
-  contracts: ["pdf"],
+  contracts: ["pdf", "jpg", "jpeg", "png"],
   "payment-proofs": ["pdf", "jpg", "jpeg", "png", "webp"],
   avatars: ["jpg", "jpeg", "png", "webp"],
   "catalog-assets": ["pdf"],

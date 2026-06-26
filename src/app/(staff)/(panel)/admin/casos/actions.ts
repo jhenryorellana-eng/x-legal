@@ -22,6 +22,8 @@ import {
   sendContractForSigning,
   resendSigningLink,
   getSigningTokenForContract,
+  getSignedContractDownloadUrl,
+  getTermsAcceptanceForCase,
   ContractError,
 } from "@/backend/modules/contracts";
 import {
@@ -90,6 +92,13 @@ export interface CreateCaseUiInput {
   serviceId: string;
   planKind: "self" | "with_lawyer";
   parties: { name: string; role: string }[];
+  /** Per-contract payment plan override (price/downpayment/installments + note). */
+  paymentPlan?: {
+    totalCents: number;
+    downpaymentCents: number;
+    installmentCount: number;
+    note?: string;
+  };
 }
 
 /**
@@ -109,11 +118,13 @@ export async function createCaseAction(
   try {
     const actor = await requireActor();
 
-    // Parse the encoded serviceId field from the modal selector
+    // Parse the encoded serviceId field from the modal selector (serviceId|planId
+    // resolution). The price/downpayment/installments come from the per-contract
+    // payment plan override when present, else the encoded service-plan defaults.
     const [serviceId, planId, priceStr, downStr, instStr] = input.serviceId.split("|");
-    const priceCents = Number(priceStr);
-    const downCents = Number(downStr);
-    const installments = Number(instStr);
+    const priceCents = input.paymentPlan ? input.paymentPlan.totalCents : Number(priceStr);
+    const downCents = input.paymentPlan ? input.paymentPlan.downpaymentCents : Number(downStr);
+    const installments = input.paymentPlan ? input.paymentPlan.installmentCount : Number(instStr);
 
     // M-3 FIX: fail fast if any numeric plan field is NaN or non-positive.
     // `Number(x) || 0` masked malformed input and could produce zero-value contracts.
@@ -181,6 +192,7 @@ export async function createCaseAction(
         totalCents: priceCents,
         downpaymentCents: downCents,
         installmentCount: installments,
+        notes: input.paymentPlan?.note?.trim() || null,
       },
     });
 
@@ -322,6 +334,30 @@ export async function getDocumentUrlAction(input: {
     const actor = await requireActor();
     const url = await getCaseDocumentDownloadUrl(actor, input.documentId);
     return { ok: true, url };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+export async function downloadSignedContractAction(input: {
+  caseId: string;
+}): Promise<{ ok: boolean; url?: string | null; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    const url = await getSignedContractDownloadUrl(actor, input.caseId);
+    return { ok: true, url };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+export async function getTermsAcceptanceAction(input: {
+  caseId: string;
+}): Promise<{ ok: boolean; accepted?: boolean; acceptedAt?: string | null; url?: string | null; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    const acc = await getTermsAcceptanceForCase(actor, input.caseId);
+    return { ok: true, accepted: !!acc, acceptedAt: acc?.acceptedAt ?? null, url: acc?.signatureDownloadUrl ?? null };
   } catch (err) {
     return mapErr(err);
   }

@@ -80,6 +80,7 @@ function card(o: Partial<LeadCardVM> & { id: string; phone: string; columnId: st
   const cat = o.categoryId ? CAT[o.categoryId as keyof typeof CAT] : null;
   return {
     id: o.id,
+    leadId: o.leadId ?? o.id,
     columnId: o.columnId,
     name: o.name ?? null,
     phone: o.phone,

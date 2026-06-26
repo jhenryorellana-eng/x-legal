@@ -2349,6 +2349,7 @@ function mapPartyRoleRow(r: repo.ServicePartyRoleRow): ServicePartyRole {
     label_i18n: (r.label_i18n ?? {}) as ServicePartyRole["label_i18n"],
     cardinality: r.cardinality as ServicePartyRole["cardinality"],
     is_required: r.is_required,
+    include_in_contract: r.include_in_contract,
     position: r.position,
   };
 }
@@ -2384,6 +2385,7 @@ export async function createServicePartyRole(
     label_i18n: dto.label_i18n as import("@/shared/database.types").Json,
     cardinality: dto.cardinality,
     is_required: dto.is_required,
+    include_in_contract: dto.include_in_contract,
     position: dto.position,
   });
   await writeAudit(actor, "catalog.service_party_role.created", "service_party_roles", row.id, {
@@ -2412,6 +2414,9 @@ export async function updateServicePartyRole(
       : {}),
     ...(patch.cardinality !== undefined ? { cardinality: patch.cardinality } : {}),
     ...(patch.is_required !== undefined ? { is_required: patch.is_required } : {}),
+    ...(patch.include_in_contract !== undefined
+      ? { include_in_contract: patch.include_in_contract }
+      : {}),
     ...(patch.position !== undefined ? { position: patch.position } : {}),
   });
   await writeAudit(actor, "catalog.service_party_role.updated", "service_party_roles", id, {

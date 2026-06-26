@@ -244,6 +244,20 @@ export interface CaseDetailActions {
   getDocumentUrl: (input: {
     documentId: string;
   }) => Promise<{ ok: boolean; url?: string; error?: { code: string } }>;
+  /**
+   * Returns a short-lived signed download URL for the SIGNED contract PDF.
+   * Optional — only admin/staff surfaces wire it; null url when unsigned.
+   */
+  downloadSignedContract?: (input: {
+    caseId: string;
+  }) => Promise<{ ok: boolean; url?: string | null; error?: { code: string } }>;
+  /**
+   * Returns the client's in-app T&C acceptance (signed consent) for a case.
+   * Optional — only admin/staff surfaces wire it. accepted=false when pending.
+   */
+  getTermsAcceptance?: (input: {
+    caseId: string;
+  }) => Promise<{ ok: boolean; accepted?: boolean; acceptedAt?: string | null; url?: string | null; error?: { code: string } }>;
   /** Start a staff upload (signed PUT URL) for a requirement slot (RF-ADM-008). */
   startUpload: (input: {
     caseId: string;

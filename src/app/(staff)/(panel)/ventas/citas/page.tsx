@@ -17,13 +17,19 @@ import { formatInTimeZone, toZonedTime } from "date-fns-tz";
 import { startOfISOWeek, addDays, format } from "date-fns";
 import { es as esLocale, enUS } from "date-fns/locale";
 import { getActor, getCurrentUserLocation } from "@/backend/modules/identity";
-import { getWeekAgenda, getAvailabilityConfig } from "@/backend/modules/scheduling";
+import { getWeekAgenda } from "@/backend/modules/scheduling";
 import type { WeekAgendaResult } from "@/backend/modules/scheduling";
 import { CitasClient } from "./client";
 import type { CalDay, CitaEvent, CitaDetail } from "@/frontend/features/vanessa";
 import { tzLabel, type Locale } from "@/frontend/lib/datetime";
 import { resolveI18n } from "@/shared/i18n";
+import { buildNuevaCitaStrings } from "../_lib/nueva-cita-strings";
 import {
+  searchCasesAction,
+  getCaseBookingContextAction,
+  searchProspectsAction,
+  getProspectSlotsAction,
+  createProspectInlineAction,
   bookAppointmentAction,
   createProspectApptAction,
   completeAppointmentAction,
@@ -86,7 +92,6 @@ export default async function VentasCitasPage({
 
   const locale = (await getLocale()) as Locale;
   const t = await getTranslations("staff.ventas.citas");
-  const tnc = await getTranslations("staff.ventas.nuevaCita");
   const dfLoc = locale === "en" ? enUS : esLocale;
 
   // --------------------------------------------------------------------------
@@ -119,10 +124,6 @@ export default async function VentasCitasPage({
   }
 
   const { appointments, staffTimezone } = agendaResult;
-
-  // Default duration for the "Nueva cita" prospect modal (Mi disponibilidad).
-  const availCfg = await getAvailabilityConfig(actor).catch(() => null);
-  const prospectDuration = availCfg?.prospectDurationMinutes ?? 45;
 
   // --------------------------------------------------------------------------
   // 3. Recalculate weekStart with the real staffTimezone (handles race where
@@ -205,15 +206,13 @@ export default async function VentasCitasPage({
     const si = slotIndex.get(slotLabel) ?? 0;
 
     const kind = seqToKind(appt.sequenceNumber, appt.leadId != null);
-    const KIND_TO_KEY: Record<string, "legendC1" | "legendC2" | "legendC3"> = {
-      c1: "legendC1",
-      c2: "legendC2",
-      c3: "legendC3",
-    };
+    // kind drives the color class; the label is "Cita {n}" (never duplicate the
+    // number — the legend labels already read "Cita 1/2/3", so appending the
+    // sequence produced "Cita 1 1").
     const seqLabel =
       kind === "call"
         ? t("legendCall")
-        : `${t(KIND_TO_KEY[kind] ?? "legendC1")} ${appt.sequenceNumber ?? ""}`.trim();
+        : t("citaShort", { n: appt.sequenceNumber ?? 0 });
 
     const timeStr = formatInTimeZone(appt.startsAt, staffTimezone, "h:mm a");
     const tzAbbr  = formatInTimeZone(appt.startsAt, staffTimezone, "zzz");
@@ -307,44 +306,7 @@ export default async function VentasCitasPage({
     noShowToast: t("noShowToast"),
   };
 
-  const nuevaCitaStrings = {
-    title: tnc("title"),
-    sub: tnc("sub"),
-    tzChip: tnc("tzChip", { region: tzLabel(staffTimezone, locale) }),
-    modeClient: tnc("modeClient"),
-    modeProspect: tnc("modeProspect"),
-    clientHint: tnc("clientHint"),
-    prospectHint: tnc("prospectHint"),
-    searchClient: tnc("searchClient"),
-    searchClientPh: tnc("searchClientPh"),
-    emptyClients: tnc("emptyClients"),
-    searchProspect: tnc("searchProspect"),
-    searchProspectPh: tnc("searchProspectPh"),
-    apptType: tnc("apptType"),
-    apptTypeHint: tnc("apptTypeHint"),
-    callType: tnc("callType"),
-    date: tnc("date"),
-    hour: tnc("hour"),
-    clientEquiv: tnc("clientEquiv", { hour: "{hour}" }),
-    overlapWarn: tnc("overlapWarn"),
-    outsideWarn: tnc("outsideWarn"),
-    duration: tnc("duration"),
-    durationHint: tnc("durationHint"),
-    modality: tnc("modality"),
-    video: tnc("video"),
-    phone: tnc("phone"),
-    videoHint: tnc("videoHint"),
-    remind1d: tnc("remind1d"),
-    remind1h: tnc("remind1h"),
-    note: tnc("note"),
-    notePh: tnc("notePh"),
-    cancel: tnc("cancel"),
-    create: tnc("create"),
-    createAnyway: tnc("createAnyway"),
-    createdClient: tnc("createdClient", { name: "{name}", type: "{type}" }),
-    createdProspect: tnc("createdProspect", { name: "{name}" }),
-    change: tnc("change"),
-  };
+  const nuevaCitaStrings = await buildNuevaCitaStrings(staffTimezone, locale);
 
   return (
     <CitasClient
@@ -356,8 +318,12 @@ export default async function VentasCitasPage({
       locale={locale}
       strings={strings}
       nuevaCitaStrings={nuevaCitaStrings}
-      prospectDuration={prospectDuration}
       actions={{
+        searchCases: searchCasesAction,
+        getCaseContext: getCaseBookingContextAction,
+        searchProspects: searchProspectsAction,
+        getProspectSlots: getProspectSlotsAction,
+        createProspectInline: createProspectInlineAction,
         book: bookAppointmentAction,
         prospect: createProspectApptAction,
         complete: completeAppointmentAction,

@@ -17,6 +17,7 @@ import { headers } from "next/headers";
 import {
   getContractBySigningToken,
   ContractError,
+  type ContractDocument,
 } from "@/backend/modules/contracts";
 import { SigningView } from "./signing-view";
 import { LinkUnavailable } from "./link-unavailable";
@@ -58,6 +59,13 @@ export default async function FirmaPage({
   const plan = asPlanSnapshot(view.planSnapshot);
   const parties = asPartiesSnapshot(view.partiesSnapshot);
 
+  // Frozen bilingual contract document (DOC-51). Pick the page locale; fall back
+  // to es, then null (legacy contracts → the view renders the canonical notice).
+  const docSnap = view.documentSnapshot as
+    | { es?: ContractDocument; en?: ContractDocument }
+    | null;
+  const document = docSnap ? (docSnap[locale] ?? docSnap.es ?? null) : null;
+
   // T&C body: the active terms_versions for the org is referenced by
   // contracts.terms_version. The public read returns only the version string;
   // the full body lives in terms_versions (org-scoped, no anon RLS). For F2-W2-b
@@ -80,6 +88,7 @@ export default async function FirmaPage({
         name: p.name,
         role: readI18nLoose(p.role, locale),
       }))}
+      document={document}
       termsVersion={view.termsVersion}
       signAction={signContractAction}
     />

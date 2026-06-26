@@ -114,6 +114,7 @@ function buildConfigStrings(
   const keys = [
     "title", "sub", "tabGeneral", "tabCovers", "tabTerms", "orgName", "logo",
     "contactPhones", "phoneLabel", "phoneNumber", "addPhone", "timezone",
+    "representativeName", "representativePlaceholder", "paymentZelle", "paymentZellePlaceholder",
     "invalidPhone", "generalNote", "coversEmptyTitle", "coversEmptySub",
     "coverActive", "coverInactive", "coverInactiveNote", "coverEditNote",
     "termsCurrent", "termsCurrentChip", "termsHistory", "termsNewVersion",

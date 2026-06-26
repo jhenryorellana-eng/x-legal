@@ -1,16 +1,20 @@
 "use client";
 
 /**
- * Leads client wrapper — provides the Lex prefs context and wires the two
- * modals (Nuevo lead = Vanessa's, Nuevo caso = reused admin NewCaseModal). The
- * board view raises onNewLead / onNewCase; this shell opens the right modal with
- * the preset. Column CRUD / filters are F3-deferred to a toast (degradation).
+ * Leads client wrapper — provides the Lex prefs context and wires the three
+ * modals (Nuevo lead = Vanessa's, Nuevo caso = reused admin NewCaseModal,
+ * Gestionar categorías = category CRUD). The board view raises onNewLead /
+ * onNewCase / onManageCategories; this shell opens the right modal. After a
+ * category mutation it refreshes the route so chips + cards re-hydrate.
  */
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import {
   LeadsView,
   NuevoLeadModal,
+  CategoryManager,
+  NuevaCitaModal,
   LexPrefsProvider,
   type LeadColumnVM,
   type LeadCardVM,
@@ -19,6 +23,11 @@ import {
   type SourceOption,
   type ServiceOption,
   type CategoryOption,
+  type CategoryManagerStrings,
+  type CategoryManagerActions,
+  type NuevaCitaStrings,
+  type NuevaCitaActions,
+  type ProspectSearchResult,
 } from "@/frontend/features/vanessa";
 import {
   NewCaseModal,
@@ -32,6 +41,10 @@ export interface LeadsClientProps {
   cards: LeadCardVM[];
   strings: LeadsStrings;
   newLeadStrings: NuevoLeadStrings;
+  manageCatsStrings: CategoryManagerStrings;
+  nuevaCitaStrings: NuevaCitaStrings;
+  staffTz: string;
+  locale: "es" | "en";
   sources: SourceOption[];
   services: ServiceOption[];
   categories: CategoryOption[];
@@ -41,6 +54,8 @@ export interface LeadsClientProps {
   moveAction: LeadsViewMove;
   createLeadAction: CreateLead;
   createCategoryAction: CreateCategory;
+  categoryActions: Omit<CategoryManagerActions, "create">;
+  citaActions: NuevaCitaActions;
   createCaseAction: NewCaseActions["createCase"];
 }
 
@@ -53,6 +68,10 @@ export function LeadsClient({
   cards,
   strings,
   newLeadStrings,
+  manageCatsStrings,
+  nuevaCitaStrings,
+  staffTz,
+  locale,
   sources,
   services,
   categories,
@@ -62,10 +81,15 @@ export function LeadsClient({
   moveAction,
   createLeadAction,
   createCategoryAction,
+  categoryActions,
+  citaActions,
   createCaseAction,
 }: LeadsClientProps) {
+  const router = useRouter();
   const [leadModal, setLeadModal] = React.useState<{ open: boolean; columnId?: string }>({ open: false });
   const [caseModal, setCaseModal] = React.useState(false);
+  const [catsOpen, setCatsOpen] = React.useState(false);
+  const [scheduleProspect, setScheduleProspect] = React.useState<ProspectSearchResult | null>(null);
 
   return (
     <LexPrefsProvider>
@@ -76,8 +100,10 @@ export function LeadsClient({
         actions={{ moveCard: moveAction }}
         onNewLead={(columnId) => setLeadModal({ open: true, columnId })}
         onNewCase={() => setCaseModal(true)}
+        onScheduleLead={(lead) => setScheduleProspect({ ...lead })}
         onOpenColumnMenu={() => {}}
         onOpenFilters={() => {}}
+        onManageCategories={() => setCatsOpen(true)}
       />
 
       <NuevoLeadModal
@@ -88,6 +114,24 @@ export function LeadsClient({
         categories={categories}
         strings={newLeadStrings}
         actions={{ createLead: createLeadAction, createCategory: createCategoryAction }}
+      />
+
+      <CategoryManager
+        open={catsOpen}
+        onOpenChange={setCatsOpen}
+        strings={manageCatsStrings}
+        actions={{ ...categoryActions, create: createCategoryAction }}
+        onChanged={() => router.refresh()}
+      />
+
+      <NuevaCitaModal
+        open={scheduleProspect != null}
+        onOpenChange={(o) => { if (!o) setScheduleProspect(null); }}
+        staffTz={staffTz}
+        locale={locale}
+        strings={nuevaCitaStrings}
+        actions={citaActions}
+        presetProspect={scheduleProspect}
       />
 
       <NewCaseModal

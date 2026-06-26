@@ -50,12 +50,13 @@ export interface CitaDetail {
   objectivesOutcome: CitaObjectiveOutcome[] | null;
 }
 
+export type ApptModality = "video" | "phone" | "presencial";
+
 export interface ClientSearchResult {
   caseId: string;
   name: string;
   serviceLabel: string;
-  seqLabel: string; // "Cita 2 de 3"
-  phone: string;
+  phone: string | null;
   clientTz: string | null;
 }
 
@@ -64,24 +65,45 @@ export interface ProspectSearchResult {
   name: string | null;
   phone: string;
   source: string;
-  sourceLabel: string;
+}
+
+/** One cita of the case's route, for the read-only "Ruta de citas" summary. */
+export interface RutaItem {
+  number: number;
+  label: string | null;
+  kind: string;
+  status: string;
+}
+
+/** Derived booking context for a CLIENT case (everything is read-only). */
+export interface CaseBookingContext {
+  slots: string[]; // ISO instants
+  staffTimezone: string;
+  durationMinutes: number;
+  kind: ApptModality;
+  sequenceNumber: number;
+  seqLabel: string; // "{n}/{total}"
+  ruta: RutaItem[];
+}
+
+/** Derived booking context for a PROSPECT (no case). */
+export interface ProspectSlotsContext {
+  slots: string[];
+  staffTimezone: string;
+  durationMinutes: number;
+  kind: ApptModality;
 }
 
 export interface NuevaCitaModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  presetLeadId?: string | null;
   staffTz: string;
   locale: "es" | "en";
-  slots: string[]; // ISO instants available (30-min)
-  daysOptions: { value: string; label: string }[];
-  clientResults: ClientSearchResult[];
-  prospectResults: ProspectSearchResult[];
-  apptTypeOptions: { value: ApptKind; label: string }[];
-  /** Default duration (min) for prospect/evaluation citas (Mi disponibilidad). */
-  prospectDuration?: number;
   strings: NuevaCitaStrings;
   actions: NuevaCitaActions;
+  /** When set, the modal opens in Prospecto mode with this lead pre-selected and
+   *  its slots loaded (used by the "Agendar cita" button on a lead card). */
+  presetProspect?: ProspectSearchResult | null;
 }
 
 export interface NuevaCitaStrings {
@@ -97,41 +119,59 @@ export interface NuevaCitaStrings {
   emptyClients: string;
   searchProspect: string;
   searchProspectPh: string;
-  apptType: string;
-  apptTypeHint: string;
-  callType: string;
+  emptyProspects: string;
+  createProspect: string;
+  prospectNamePh: string;
+  prospectPhonePh: string;
+  createProspectConfirm: string;
+  rutaTitle: string;
+  citaLabel: string; // "Cita {n} de {m}"
+  prospectCita: string; // "Llamada informativa"
   date: string;
   hour: string;
-  clientEquiv: string; // "Para el cliente, en {state}: {hour}"
+  pickCaseFirst: string;
+  loadingSlots: string;
+  noSlots: string;
+  clientEquiv: string; // "Para el cliente: {hour}"
   overlapWarn: string;
   outsideWarn: string;
-  duration: string;
-  durationHint: string;
-  modality: string;
-  video: string;
-  phone: string;
-  videoHint: string;
-  remind1d: string;
-  remind1h: string;
+  min: string; // "min"
+  modalityVideo: string;
+  modalityPhone: string;
+  modalityPresencial: string;
+  remindersInfo: string;
   note: string;
   notePh: string;
   cancel: string;
   create: string;
   createAnyway: string;
-  createdClient: string; // "✓ Cita creada · {name} · {type}"
+  createdClient: string; // "✓ Cita creada · {name}"
   createdProspect: string;
   change: string;
 }
 
 export interface NuevaCitaActions {
+  searchCases: (
+    query: string,
+  ) => Promise<{ ok: boolean; results?: ClientSearchResult[]; error?: { code: string } }>;
+  getCaseContext: (
+    caseId: string,
+  ) => Promise<{ ok: boolean; context?: CaseBookingContext; error?: { code: string } }>;
+  searchProspects: (
+    query: string,
+  ) => Promise<{ ok: boolean; results?: ProspectSearchResult[]; error?: { code: string } }>;
+  getProspectSlots: () => Promise<{
+    ok: boolean;
+    context?: ProspectSlotsContext;
+    error?: { code: string };
+  }>;
+  createProspectInline: (input: {
+    phone: string;
+    name: string | null;
+  }) => Promise<{ ok: boolean; leadId?: string; error?: { code: string } }>;
   bookAppointment: (input: {
     caseId: string;
-    apptType: ApptKind;
     startsAtIso: string;
-    durationMinutes: number;
-    modality: "video" | "phone";
-    reminder1d: boolean;
-    reminder1h: boolean;
     note: string;
     force: boolean;
   }) => Promise<{ ok: boolean; error?: { code: string } }>;
@@ -139,7 +179,7 @@ export interface NuevaCitaActions {
     leadId: string;
     startsAtIso: string;
     durationMinutes: number;
-    modality: "video" | "phone";
     note: string;
+    force: boolean;
   }) => Promise<{ ok: boolean; error?: { code: string } }>;
 }

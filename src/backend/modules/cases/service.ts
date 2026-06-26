@@ -41,6 +41,8 @@ import {
   addWeeksToAnchorIso,
   validateAnswerTypes,
   buildPartiesSnapshot,
+  selectContractAdditionalParties,
+  findCardinalityViolation,
   PRODUCTION_STATUSES,
   type CaseStatus,
   type FormResponseStatus,
@@ -72,6 +74,7 @@ import {
   updateClientProfileName,
   updatePersonRecordName,
   findServiceLite,
+  findServiceContractRow,
   listServicePhases,
   listServiceMilestones,
   findPersonRecord,
@@ -96,6 +99,7 @@ import {
   findCasesWithLawyerCorrections,
   findCasesWithGenerationFailed,
   findCasesWithRfeOverdue,
+  getActiveCasesEnriched,
   type CaseRow,
   type CaseDocumentRow,
   type CaseFormResponseRow,
@@ -133,6 +137,7 @@ export class CaseError extends Error {
       | "CASE_SERVICE_NOT_AVAILABLE"
       | "CASE_PAYMENT_PLAN_INVALID"
       | "CASE_PARTY_ROLE_INVALID"
+      | "CASE_PARTY_CARDINALITY"
       | "CASE_PARTY_NOT_FOUND"
       | "CASE_CONTRACT_LOCKED"
       | "DOC_NOT_FOUND"
@@ -479,23 +484,57 @@ export async function createCaseFromContract(
       ) => Promise<string>;
     };
 
+  // Role keys whose parties appear in the contract snapshot (the implicit
+  // petitioner is always included separately). Populated from the service config.
+  const contractIncludedRoles = new Set<string>();
+  // role_key → bilingual label, used to render the committed parties in the contract.
+  const roleLabelByKey = new Map<string, { es?: string; en?: string }>();
   if (p.parties.length > 0) {
-    let allowed: Set<string>;
+    let roles: Array<{
+      role_key: string;
+      cardinality: string;
+      include_in_contract: boolean;
+      label_i18n: { es?: string; en?: string } | null;
+    }>;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const catalogModule = await import("@/backend/modules/catalog") as any;
-      const roles = await catalogModule.listServicePartyRoles(p.serviceId);
-      allowed = new Set((roles as Array<{ role_key: string }>).map((r) => r.role_key));
+      const catalogModule = (await import("@/backend/modules/catalog")) as {
+        listServicePartyRoles: (
+          id: string,
+        ) => Promise<
+          Array<{
+            role_key: string;
+            cardinality: string;
+            include_in_contract: boolean;
+            label_i18n: { es?: string; en?: string } | null;
+          }>
+        >;
+      };
+      roles = await catalogModule.listServicePartyRoles(p.serviceId);
     } catch {
       // Transient catalog failure — surface a retryable error, NOT a false
       // "invalid role" (the roles may well be valid; we just couldn't load them).
       throw new CaseError("CASE_SERVICE_NOT_AVAILABLE");
     }
+    const allowed = new Set(roles.map((r) => r.role_key));
+    const singleRoleKeys = new Set(
+      roles.filter((r) => r.cardinality === "single").map((r) => r.role_key),
+    );
+    for (const r of roles) {
+      if (r.include_in_contract) contractIncludedRoles.add(r.role_key);
+      roleLabelByKey.set(r.role_key, r.label_i18n ?? {});
+    }
+
     for (const party of p.parties) {
       if (party.role === PRINCIPAL_ROLE_KEY || !allowed.has(party.role)) {
         throw new CaseError("CASE_PARTY_ROLE_INVALID", { role: party.role });
       }
     }
+    // Cardinality: a 'single' role may be supplied at most once.
+    const violation = findCardinalityViolation(
+      p.parties.map((party) => party.role),
+      singleRoleKeys,
+    );
+    if (violation) throw new CaseError("CASE_PARTY_CARDINALITY", { role: violation });
   }
 
   const partiesPayload: Array<{
@@ -546,6 +585,8 @@ export async function createCaseFromContract(
     downpaymentCents: p.paymentPlan.downpaymentCents,
     installmentCount: p.paymentPlan.installmentCount,
     currency: "USD",
+    // Optional per-contract discount/promo reason, frozen for the record.
+    discountNote: p.paymentPlan.notes ?? null,
   };
   // The principal applicant (petitioner) must be the FIRST party in the snapshot
   // — the public signing page renders parties_snapshot.parties directly. Its
@@ -555,13 +596,20 @@ export async function createCaseFromContract(
   const principalName = principalFullName
     ? `${principalFullName.first_name} ${principalFullName.last_name}`.trim() || null
     : null;
-  const partiesSnapshot: Record<string, unknown> = buildPartiesSnapshot(
-    { userId: p.primaryClientId, name: principalName },
+  // The contract commits only the parties whose role is `include_in_contract`
+  // (the petitioner is always added by buildPartiesSnapshot). All parties are
+  // still inserted into case_parties above — this filter shapes ONLY the snapshot.
+  const contractAdditional = selectContractAdditionalParties(
     p.parties.map((pt) => ({
       role: pt.role,
       userId: pt.userId ?? null,
       name: pt.person ? `${pt.person.firstName} ${pt.person.lastName}`.trim() : null,
     })),
+    contractIncludedRoles,
+  );
+  const partiesSnapshot: Record<string, unknown> = buildPartiesSnapshot(
+    { userId: p.primaryClientId, name: principalName },
+    contractAdditional,
   ) as unknown as Record<string, unknown>;
 
   // Step 4d: Installments — downpayment + monthly cuotas (billing domain math).
@@ -583,6 +631,29 @@ export async function createCaseFromContract(
     due_date: d.dueDate,
     status: "pending",
   }));
+
+  // Step 4d-bis: Freeze the assembled bilingual contract document (DOC-51). Built
+  // from the service content + EL CONSULTOR org config + plan + the FILTERED
+  // committed parties. Immutable legal record: editing the service/org later never
+  // alters this contract. Rendered by the signing page + PDF (self-contained).
+  const documentSnapshot = await buildContractDocumentSnapshot({
+    orgId: actor.orgId,
+    serviceRow,
+    clientName: principalName,
+    committed: contractAdditional,
+    roleLabelByKey,
+    fees: {
+      totalCents: p.paymentPlan.totalCents,
+      downpaymentCents: p.paymentPlan.downpaymentCents,
+      installmentCount: p.paymentPlan.installmentCount,
+    },
+    schedule: installmentsPayload.map((d) => ({
+      number: d.number,
+      amountCents: d.amount_cents,
+      dueDate: d.due_date,
+      isDownpayment: d.is_downpayment,
+    })),
+  });
 
   // Step 4e: ATOMIC write (migration 0026). case + member + parties + contract +
   // payment_plan + installments in ONE transaction — on failure nothing persists,
@@ -609,6 +680,7 @@ export async function createCaseFromContract(
       status: "draft",
       plan_snapshot: planSnapshot,
       parties_snapshot: partiesSnapshot,
+      document_snapshot: documentSnapshot,
       created_by: actor.userId,
       terms_version: termsVersion,
       signing_token: null,
@@ -705,20 +777,205 @@ async function buildSnapshotFromCaseParties(
     (p) => p.party_role === PRINCIPAL_ROLE_KEY && p.user_id,
   );
   if (!principal || !principal.user_id) return null;
-  const additional = parties.filter((p) => p.id !== principal.id);
+
+  // Filter the additional parties to those whose role is included in the contract
+  // (same rule as createCaseFromContract). Resolve the service from the case.
+  const caseRow = await findCaseById(caseId);
+  const includedRoles = caseRow
+    ? await loadContractIncludedRoles(caseRow.service_id)
+    : new Set<string>();
+  const additional = selectContractAdditionalParties(
+    parties
+      .filter((p) => p.id !== principal.id)
+      .map((p) => ({ role: p.party_role, userId: p.user_id, party: p })),
+    includedRoles,
+  );
 
   const additionalResolved: Array<{ role: string; userId: string | null; name: string | null }> = [];
   for (const a of additional) {
     additionalResolved.push({
-      role: a.party_role,
-      userId: a.user_id,
-      name: await resolvePartyFullName(a),
+      role: a.role,
+      userId: a.userId,
+      name: await resolvePartyFullName(a.party),
     });
   }
   return buildPartiesSnapshot(
     { userId: principal.user_id, name: await resolvePartyFullName(principal) },
     additionalResolved,
   );
+}
+
+/**
+ * Loads the set of role_keys whose parties are included in the contract for a
+ * service (`service_party_roles.include_in_contract`). The implicit petitioner
+ * is always in the contract and is NOT a row here. Throws a retryable error on
+ * a transient catalog failure (never silently drops parties).
+ */
+async function loadContractIncludedRoles(serviceId: string): Promise<Set<string>> {
+  try {
+    const catalogModule = (await import("@/backend/modules/catalog")) as {
+      listServicePartyRoles: (
+        id: string,
+      ) => Promise<Array<{ role_key: string; include_in_contract: boolean }>>;
+    };
+    const roles = await catalogModule.listServicePartyRoles(serviceId);
+    return new Set(roles.filter((r) => r.include_in_contract).map((r) => r.role_key));
+  } catch {
+    throw new CaseError("CASE_SERVICE_NOT_AVAILABLE");
+  }
+}
+
+type I18nMaybe = { es?: string; en?: string } | null | undefined;
+type I18nListMaybe = { es?: string[]; en?: string[] } | null | undefined;
+
+/**
+ * Assembles + freezes the bilingual contract document (DOC-51). Built from the
+ * service content (object/scope/special), EL CONSULTOR org config, the plan and
+ * the ALREADY-FILTERED committed parties. Returns `{ es, en }` so the anonymous
+ * signing page can render either locale without a live lookup. Resilient: a
+ * failure to load org/contracts degrades to null (the signing page falls back).
+ */
+async function buildContractDocumentSnapshot(input: {
+  orgId: string;
+  serviceRow: unknown;
+  clientName: string | null;
+  committed: ReadonlyArray<{ role: string; name: string | null }>;
+  roleLabelByKey: Map<string, { es?: string; en?: string }>;
+  fees: { totalCents: number; downpaymentCents: number; installmentCount: number };
+  schedule: Array<{ number: number; amountCents: number; dueDate: string; isDownpayment: boolean }>;
+}): Promise<Record<string, unknown> | null> {
+  try {
+    const [{ buildContractDocument }, { getOrgContractInfo }] = await Promise.all([
+      import("@/backend/modules/contracts") as Promise<{
+        buildContractDocument: (i: unknown) => unknown;
+      }>,
+      import("@/backend/modules/org") as Promise<{
+        getOrgContractInfo: (orgId: string) => Promise<{
+          companyName: string;
+          representativeName: string | null;
+          phone: string | null;
+          zelleEmail: string | null;
+        }>;
+      }>,
+    ]);
+    const consultor = await getOrgContractInfo(input.orgId);
+    const svc = input.serviceRow as {
+      label_i18n?: I18nMaybe;
+      contract_object_i18n?: I18nMaybe;
+      contract_scope_i18n?: I18nListMaybe;
+      contract_special_clause_i18n?: I18nMaybe;
+    };
+    const dateIso = new Date().toISOString().slice(0, 10);
+
+    const docFor = (locale: "es" | "en") => {
+      const pick = (v: I18nMaybe): string | null => (v ? (v[locale] ?? v.es ?? v.en ?? null) : null);
+      const pickList = (v: I18nListMaybe): string[] | null =>
+        v ? (v[locale] ?? v.es ?? v.en ?? null) : null;
+      return buildContractDocument({
+        locale,
+        dateIso,
+        consultor,
+        serviceLabel: pick(svc.label_i18n) ?? "",
+        client: { name: input.clientName },
+        committedParties: input.committed.map((a) => ({
+          roleLabel: pick(input.roleLabelByKey.get(a.role)) ?? a.role,
+          name: a.name ?? "",
+        })),
+        objeto: pick(svc.contract_object_i18n),
+        alcance: pickList(svc.contract_scope_i18n),
+        especial: pick(svc.contract_special_clause_i18n),
+        fees: { ...input.fees, currency: "USD" },
+        schedule: input.schedule,
+      });
+    };
+
+    return { es: docFor("es"), en: docFor("en") };
+  } catch (err) {
+    // Non-fatal: the contract still has plan_snapshot + parties_snapshot; the
+    // signing page can fall back. Never block case creation on doc assembly —
+    // but log it so a silent degradation is visible in production.
+    logger.warn(
+      { err, orgId: input.orgId },
+      "cases: buildContractDocumentSnapshot failed — degrading to null",
+    );
+    return null;
+  }
+}
+
+/**
+ * Re-assembles the frozen contract `document_snapshot` from CURRENT case data —
+ * used after a party name is corrected before signing, so the document the client
+ * sees on /firma stays in sync. Fees come from the contract's plan_snapshot; the
+ * schedule is provisional (re-anchored on signing) so it is rebuilt from the plan.
+ * Returns null (degrades to no-op) on any missing piece.
+ */
+async function buildDocumentSnapshotForResync(
+  orgId: string,
+  caseId: string,
+  planSnapshot: Record<string, unknown> | null | undefined,
+): Promise<Record<string, unknown> | null> {
+  try {
+    const caseRow = await findCaseById(caseId);
+    if (!caseRow) return null;
+    const serviceRow = await findServiceContractRow(caseRow.service_id);
+    if (!serviceRow) return null;
+
+    const parties = await getCaseParties(caseId);
+    const principal = parties.find((p) => p.party_role === PRINCIPAL_ROLE_KEY && p.user_id);
+    if (!principal || !principal.user_id) return null;
+
+    // Service party roles → included set + label map (single load).
+    const includedRoles = new Set<string>();
+    const roleLabelByKey = new Map<string, { es?: string; en?: string }>();
+    const catalogModule = (await import("@/backend/modules/catalog")) as {
+      listServicePartyRoles: (
+        id: string,
+      ) => Promise<Array<{ role_key: string; include_in_contract: boolean; label_i18n: { es?: string; en?: string } | null }>>;
+    };
+    for (const r of await catalogModule.listServicePartyRoles(caseRow.service_id)) {
+      if (r.include_in_contract) includedRoles.add(r.role_key);
+      roleLabelByKey.set(r.role_key, r.label_i18n ?? {});
+    }
+
+    const committedRaw = selectContractAdditionalParties(
+      parties.filter((p) => p.id !== principal.id).map((p) => ({ role: p.party_role, party: p })),
+      includedRoles,
+    );
+    const committed: Array<{ role: string; name: string | null }> = [];
+    for (const c of committedRaw) committed.push({ role: c.role, name: await resolvePartyFullName(c.party) });
+
+    const plan = (planSnapshot ?? {}) as { totalCents?: number; downpaymentCents?: number; installmentCount?: number };
+    const fees = {
+      totalCents: Number(plan.totalCents) || 0,
+      downpaymentCents: Number(plan.downpaymentCents) || 0,
+      installmentCount: Number(plan.installmentCount) || 1,
+    };
+    const { buildInstallments } = (await import("@/backend/modules/billing")) as {
+      buildInstallments: (i: {
+        totalCents: number; downpaymentCents: number; installmentCount: number; startDate: string;
+      }) => Array<{ number: number; amountCents: number; dueDate: string; isDownpayment: boolean }>;
+    };
+    const schedule = buildInstallments({ ...fees, startDate: new Date().toISOString().slice(0, 10) }).map((d) => ({
+      number: d.number,
+      amountCents: d.amountCents,
+      dueDate: d.dueDate,
+      isDownpayment: d.isDownpayment,
+    }));
+
+    return buildContractDocumentSnapshot({
+      orgId,
+      serviceRow,
+      clientName: await resolvePartyFullName(principal),
+      committed,
+      roleLabelByKey,
+      fees,
+      schedule,
+    });
+  } catch (err) {
+    // Best-effort: a regen failure must never block the party-name correction.
+    logger.warn({ err, caseId }, "cases: buildDocumentSnapshotForResync failed — skipping doc resync");
+    return null;
+  }
 }
 
 /**
@@ -746,7 +1003,10 @@ export async function updateCaseParty(
 
   // Signed contract is an immutable legal record — block the edit entirely.
   const { getContractForCase } = (await import("@/backend/modules/contracts")) as {
-    getContractForCase: (a: Actor, caseId: string) => Promise<{ id: string; status: string } | null>;
+    getContractForCase: (
+      a: Actor,
+      caseId: string,
+    ) => Promise<{ id: string; status: string; plan_snapshot?: Record<string, unknown> } | null>;
   };
   const contract = await getContractForCase(actor, parsed.caseId);
   if (contract?.status === "signed") {
@@ -774,8 +1034,13 @@ export async function updateCaseParty(
   if (contract) {
     const snapshot = await buildSnapshotFromCaseParties(parsed.caseId);
     if (snapshot) {
-      const { resyncPartiesSnapshot } = (await import("@/backend/modules/contracts")) as {
+      const { resyncPartiesSnapshot, resyncDocumentSnapshot } = (await import("@/backend/modules/contracts")) as {
         resyncPartiesSnapshot: (
+          a: Actor,
+          caseId: string,
+          snap: Record<string, unknown>,
+        ) => Promise<{ resynced: boolean }>;
+        resyncDocumentSnapshot: (
           a: Actor,
           caseId: string,
           snap: Record<string, unknown>,
@@ -783,6 +1048,19 @@ export async function updateCaseParty(
       };
       const r = await resyncPartiesSnapshot(actor, parsed.caseId, snapshot as unknown as Record<string, unknown>);
       resynced = r.resynced;
+      // Also regenerate the FROZEN document_snapshot the signing page renders, so
+      // a pre-signature name correction is reflected in the contract the client
+      // sees (best-effort: a failure must not block the name correction).
+      try {
+        const docSnap = await buildDocumentSnapshotForResync(
+          actor.orgId,
+          parsed.caseId,
+          contract.plan_snapshot,
+        );
+        if (docSnap) await resyncDocumentSnapshot(actor, parsed.caseId, docSnap);
+      } catch (err) {
+        logger.warn({ err, caseId: parsed.caseId }, "cases: document_snapshot resync failed — skipping");
+      }
     }
   }
 
@@ -1758,6 +2036,53 @@ export async function listCasesAdmin(
   );
 
   return { items, nextCursor: page.nextCursor };
+}
+
+export interface BookableCaseResult {
+  caseId: string;
+  name: string;
+  phone: string | null;
+  clientTz: string | null;
+  serviceLabel: string;
+}
+
+/**
+ * Searches the org's ACTIVE cases for the staff "Nueva cita" client picker.
+ * Matches the query (case-insensitive) against the client's display/legal name,
+ * the case number, or the client's phone. Enrichment is batched in the repo
+ * (no N+1). Returns up to `limit` results. Empty query → most-recent active.
+ *
+ * @api-id API-SCH-13
+ */
+export async function searchBookableCases(
+  actor: Actor,
+  query: string,
+  locale: "es" | "en" = "es",
+  limit = 20,
+): Promise<BookableCaseResult[]> {
+  can(actor, "cases", "view");
+
+  const rows = await getActiveCasesEnriched(actor.orgId);
+  const q = query.trim().toLowerCase();
+  const results: BookableCaseResult[] = [];
+
+  for (const r of rows) {
+    const legal = [r.firstName, r.lastName].filter(Boolean).join(" ").trim();
+    const name = r.preferredName ?? (legal || r.caseNumber);
+    const label = asI18n(r.serviceLabelI18n);
+    const haystack = `${name} ${legal} ${r.caseNumber} ${r.phone ?? ""}`.toLowerCase();
+    if (q && !haystack.includes(q)) continue;
+    results.push({
+      caseId: r.caseId,
+      name,
+      phone: r.phone,
+      clientTz: r.timezone,
+      serviceLabel: label?.[locale] ?? label?.es ?? label?.en ?? "",
+    });
+    if (results.length >= limit) break;
+  }
+
+  return results;
 }
 
 /**

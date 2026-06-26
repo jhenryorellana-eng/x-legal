@@ -14,6 +14,8 @@ import {
   resolveNextMilestone,
   resolveFirstMilestone,
   buildPartiesSnapshot,
+  selectContractAdditionalParties,
+  findCardinalityViolation,
   CASE_TRANSITIONS,
   type ContractStatus,
 } from "../domain";
@@ -49,6 +51,59 @@ describe("buildPartiesSnapshot", () => {
   it("tolerates a null principal name (no profile yet)", () => {
     const snap = buildPartiesSnapshot({ userId: "u1", name: null }, []);
     expect(snap.parties[0].name).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// selectContractAdditionalParties
+// ---------------------------------------------------------------------------
+
+describe("selectContractAdditionalParties", () => {
+  const parties = [
+    { role: "minor", name: "Hijo 1" },
+    { role: "minor", name: "Hijo 2" },
+    { role: "minor", name: "Hijo 3" },
+    { role: "spouse", name: "Cónyuge" },
+  ];
+
+  it("keeps only parties whose role is included in the contract", () => {
+    // minor included, spouse excluded → the 3 children remain, no spouse.
+    const kept = selectContractAdditionalParties(parties, new Set(["minor"]));
+    expect(kept.map((p) => p.name)).toEqual(["Hijo 1", "Hijo 2", "Hijo 3"]);
+  });
+
+  it("keeps multiple included roles and preserves order", () => {
+    const kept = selectContractAdditionalParties(parties, new Set(["minor", "spouse"]));
+    expect(kept).toHaveLength(4);
+  });
+
+  it("returns empty when no role is included", () => {
+    expect(selectContractAdditionalParties(parties, new Set())).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// findCardinalityViolation
+// ---------------------------------------------------------------------------
+
+describe("findCardinalityViolation", () => {
+  it("returns null when every single-role appears at most once", () => {
+    expect(
+      findCardinalityViolation(["petitioner", "spouse", "minor", "minor"], new Set(["spouse"])),
+    ).toBeNull();
+  });
+
+  it("flags a single-role that appears twice", () => {
+    expect(
+      findCardinalityViolation(["spouse", "spouse"], new Set(["spouse"])),
+    ).toBe("spouse");
+  });
+
+  it("ignores cardinality of multiple-roles (minors can repeat)", () => {
+    // 'minor' is NOT in the single set → repeating it is allowed.
+    expect(
+      findCardinalityViolation(["minor", "minor", "minor"], new Set(["spouse"])),
+    ).toBeNull();
   });
 });
 

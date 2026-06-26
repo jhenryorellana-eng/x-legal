@@ -25,6 +25,7 @@ export {
   getCaseDocumentDownloadUrl,
   getDocumentExtractionStatus,
   listCasesAdmin,
+  searchBookableCases,
   getTimeline,
   // Client-surface enriched reads (F2 — read-only DTOs, DOC-51)
   getCaseWorkspace,
@@ -56,6 +57,9 @@ export {
 
 // Timeline projection types
 export type { AppointmentTimelineEventType } from "./service";
+
+// Bookable-case search (staff "Nueva cita")
+export type { BookableCaseResult } from "./service";
 
 // createCaseFromContract types
 export type {

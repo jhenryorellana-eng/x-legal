@@ -502,14 +502,17 @@ export async function findLeadCategory(
   return data;
 }
 
-export async function listLeadCategories(orgId: string): Promise<CategoryRow[]> {
+export async function listLeadCategories(
+  orgId: string,
+  opts?: { includeInactive?: boolean },
+): Promise<CategoryRow[]> {
   const client = createServiceClient();
-  const { data, error } = await client
+  let query = client
     .from("lead_categories")
     .select("*")
-    .eq("org_id", orgId)
-    .eq("is_active", true)
-    .order("position", { ascending: true });
+    .eq("org_id", orgId);
+  if (!opts?.includeInactive) query = query.eq("is_active", true);
+  const { data, error } = await query.order("position", { ascending: true });
   if (error) throw new Error(`kanban: listLeadCategories: ${error.message}`);
   return data ?? [];
 }
@@ -538,6 +541,68 @@ export async function maxCategoryPosition(orgId: string): Promise<number> {
     .maybeSingle();
   if (error) throw new Error(`kanban: maxCategoryPosition: ${error.message}`);
   return data?.position ?? 0;
+}
+
+export async function updateLeadCategory(
+  categoryId: string,
+  patch: TablesUpdate<"lead_categories">,
+): Promise<CategoryRow> {
+  const client = createServiceClient();
+  const { data, error } = await client
+    .from("lead_categories")
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq("id", categoryId)
+    .select()
+    .single();
+  if (error || !data) throw new Error(`kanban: updateLeadCategory: ${error?.message}`);
+  return data;
+}
+
+export async function deleteLeadCategory(categoryId: string): Promise<void> {
+  const client = createServiceClient();
+  const { error } = await client
+    .from("lead_categories")
+    .delete()
+    .eq("id", categoryId);
+  if (error) throw new Error(`kanban: deleteLeadCategory: ${error.message}`);
+}
+
+/** Number of leads (active or not) that still reference a category. */
+export async function countLeadsByCategory(
+  orgId: string,
+  categoryId: string,
+): Promise<number> {
+  const client = createServiceClient();
+  const { count, error } = await client
+    .from("leads")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", orgId)
+    .eq("category_id", categoryId);
+  if (error) throw new Error(`kanban: countLeadsByCategory: ${error.message}`);
+  return count ?? 0;
+}
+
+/**
+ * Persists a new display order for the org's categories. `orderedIds` is the
+ * full list of category ids in the desired order; each row's `position` is set
+ * to its index. Scoped by org so a foreign id can never be touched.
+ */
+export async function reorderLeadCategories(
+  orgId: string,
+  orderedIds: string[],
+): Promise<void> {
+  const client = createServiceClient();
+  const stamp = new Date().toISOString();
+  // Small list (a handful of categories per org) — sequential scoped updates are
+  // fine and keep each write authorized by (org_id, id).
+  for (let i = 0; i < orderedIds.length; i++) {
+    const { error } = await client
+      .from("lead_categories")
+      .update({ position: i, updated_at: stamp })
+      .eq("org_id", orgId)
+      .eq("id", orderedIds[i]);
+    if (error) throw new Error(`kanban: reorderLeadCategories: ${error.message}`);
+  }
 }
 
 // ---------------------------------------------------------------------------

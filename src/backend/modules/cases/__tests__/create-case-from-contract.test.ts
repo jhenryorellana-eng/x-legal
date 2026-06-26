@@ -34,6 +34,8 @@ const {
   mockBuildInstallments,
   mockListContractableServices,
   mockListServicePartyRoles,
+  mockBuildContractDocument,
+  mockGetOrgContractInfo,
 } = vi.hoisted(() => {
   const client = {
     from: vi.fn(),
@@ -66,7 +68,21 @@ const {
     mockListContractableServices: vi.fn().mockResolvedValue([]),
     mockListServicePartyRoles: vi
       .fn()
-      .mockResolvedValue([{ role_key: "spouse" }, { role_key: "minor" }]),
+      .mockResolvedValue([
+      { role_key: "spouse", cardinality: "single", include_in_contract: true, label_i18n: { es: "Cónyuge", en: "Spouse" } },
+      { role_key: "minor", cardinality: "multiple", include_in_contract: true, label_i18n: { es: "Hijo/a", en: "Child" } },
+    ]),
+    // Returns a recognizable sentinel echoing the inputs that matter for the freeze.
+    mockBuildContractDocument: vi.fn((i: { locale: string; committedParties: unknown[] }) => ({
+      locale: i.locale,
+      committedParties: i.committedParties,
+    })),
+    mockGetOrgContractInfo: vi.fn().mockResolvedValue({
+      companyName: "USA LATINO PRIME",
+      representativeName: "Jimy Henry Orellana Domínguez",
+      phone: "801-941-3479",
+      zelleEmail: "Henryorellana@usalatinoprime.com",
+    }),
   };
 });
 
@@ -161,9 +177,15 @@ vi.mock("@/backend/modules/contracts", () => ({
   createContract: vi.fn(),
   getActiveTermsVersion: mockGetActiveTermsVersion,
   sendContractForSigning: vi.fn().mockResolvedValue(undefined),
+  buildContractDocument: mockBuildContractDocument,
   ContractError: class ContractError extends Error {
     constructor(public readonly code: string) { super(code); }
   },
+}));
+
+// Org module — EL CONSULTOR data for freezing the contract document.
+vi.mock("@/backend/modules/org", () => ({
+  getOrgContractInfo: mockGetOrgContractInfo,
 }));
 
 // Billing module — buildInstallments (pure domain math) is used to size cuotas.
@@ -255,7 +277,10 @@ describe("createCaseFromContract", () => {
       { number: 3, amountCents: 20000, dueDate: "2026-08-23", isDownpayment: false },
     ]);
     mockListContractableServices.mockResolvedValue([]);
-    mockListServicePartyRoles.mockResolvedValue([{ role_key: "spouse" }, { role_key: "minor" }]);
+    mockListServicePartyRoles.mockResolvedValue([
+      { role_key: "spouse", cardinality: "single", include_in_contract: true },
+      { role_key: "minor", cardinality: "multiple", include_in_contract: true },
+    ]);
     mockUpsertPersonRecord.mockResolvedValue("person-record-id-1");
     mockNextCaseNumber.mockResolvedValue("ULP-2026-0001");
     setupDbQueryMocks();
@@ -407,6 +432,93 @@ describe("createCaseFromContract", () => {
         { role: "minor", userId: null, name: "Tito Diaz" },
       ],
     });
+  });
+
+  it("excludes from the contract snapshot the parties whose role is not include_in_contract", async () => {
+    // Spouse is OPTIONAL for the contract (include_in_contract: false); minors are in.
+    mockListServicePartyRoles.mockResolvedValueOnce([
+      { role_key: "spouse", cardinality: "single", include_in_contract: false },
+      { role_key: "minor", cardinality: "multiple", include_in_contract: true },
+    ]);
+
+    await createCaseFromContract(ACTOR, {
+      primaryClientId: CLIENT_ID,
+      serviceId: SERVICE_ID,
+      servicePlanId: PLAN_ID,
+      parties: [
+        { role: "spouse", person: { firstName: "Rosa", lastName: "Diaz" } },
+        { role: "minor", person: { firstName: "Hijo Uno", lastName: "Diaz" } },
+        { role: "minor", person: { firstName: "Hijo Dos", lastName: "Diaz" } },
+        { role: "minor", person: { firstName: "Hijo Tres", lastName: "Diaz" } },
+      ],
+      paymentPlan: VALID_PAYMENT_PLAN,
+    });
+
+    const payload = mockCreateCaseAtomic.mock.calls[0][0];
+    // case_parties keeps ALL parties (spouse is still a real case party).
+    expect(payload.parties.map((p: { party_role: string }) => p.party_role)).toEqual([
+      "petitioner",
+      "spouse",
+      "minor",
+      "minor",
+      "minor",
+    ]);
+    // But the contract snapshot commits ONLY the petitioner + the 3 children.
+    expect(payload.contract.parties_snapshot).toEqual({
+      parties: [
+        { role: "petitioner", userId: CLIENT_ID, name: "Carlos Mendoza" },
+        { role: "minor", userId: null, name: "Hijo Uno Diaz" },
+        { role: "minor", userId: null, name: "Hijo Dos Diaz" },
+        { role: "minor", userId: null, name: "Hijo Tres Diaz" },
+      ],
+    });
+  });
+
+  it("freezes a bilingual document_snapshot committing only petitioner + children", async () => {
+    mockListServicePartyRoles.mockResolvedValueOnce([
+      { role_key: "spouse", cardinality: "single", include_in_contract: false, label_i18n: { es: "Cónyuge", en: "Spouse" } },
+      { role_key: "minor", cardinality: "multiple", include_in_contract: true, label_i18n: { es: "Hijo/a", en: "Child" } },
+    ]);
+
+    await createCaseFromContract(ACTOR, {
+      primaryClientId: CLIENT_ID,
+      serviceId: SERVICE_ID,
+      servicePlanId: PLAN_ID,
+      parties: [
+        { role: "spouse", person: { firstName: "Rosa", lastName: "Diaz" } },
+        { role: "minor", person: { firstName: "Hijo Uno", lastName: "Diaz" } },
+        { role: "minor", person: { firstName: "Hijo Dos", lastName: "Diaz" } },
+      ],
+      paymentPlan: VALID_PAYMENT_PLAN,
+    });
+
+    const payload = mockCreateCaseAtomic.mock.calls[0][0];
+    const snap = payload.contract.document_snapshot as { es?: { committedParties?: { name: string }[] }; en?: unknown };
+    expect(snap).toBeTruthy();
+    expect(snap.es).toBeTruthy();
+    expect(snap.en).toBeTruthy();
+    // The assembler received only the children (spouse excluded from the contract).
+    expect(snap.es?.committedParties?.map((p) => p.name)).toEqual(["Hijo Uno Diaz", "Hijo Dos Diaz"]);
+    // EL CONSULTOR data was resolved from the org config.
+    expect(mockGetOrgContractInfo).toHaveBeenCalledWith(ACTOR.orgId);
+    // Built once per locale.
+    expect(mockBuildContractDocument).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a second party for a single-cardinality role (CASE_PARTY_CARDINALITY)", async () => {
+    await expect(
+      createCaseFromContract(ACTOR, {
+        primaryClientId: CLIENT_ID,
+        serviceId: SERVICE_ID,
+        servicePlanId: PLAN_ID,
+        parties: [
+          { role: "spouse", person: { firstName: "Rosa", lastName: "Diaz" } },
+          { role: "spouse", person: { firstName: "Otra", lastName: "Persona" } },
+        ],
+        paymentPlan: VALID_PAYMENT_PLAN,
+      }),
+    ).rejects.toMatchObject({ code: "CASE_PARTY_CARDINALITY" });
+    expect(mockCreateCaseAtomic).not.toHaveBeenCalled();
   });
 
   it("auto-adds only the applicant when there are no additional parties", async () => {

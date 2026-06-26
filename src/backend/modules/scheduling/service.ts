@@ -289,7 +289,13 @@ async function computeBookingWarnings(
     windowFromUtc: new Date(startsAt.getTime() - 60_000),
     windowToUtc: new Date(endsAt.getTime() + 60_000),
     durationMin: durationMinutes({ starts_at: startsAt.toISOString(), ends_at: endsAt.toISOString() } as AppointmentRow),
-    nowUtc: new Date(startsAt.getTime() - 86_400_000 * 60), // far past to avoid min_notice clipping
+    // Neutralize BOTH window clips so this only tests "is the slot inside an
+    // availability rule" (min_notice / max_advance are checked separately above).
+    // Must sit in [startsAt − maxAdvance, startsAt − minNotice]: park it just
+    // before the min_notice boundary. Using a far-past value would push
+    // `nowUtc + maxAdvanceDays` BEFORE the slot, collapsing the window to empty
+    // and flagging every booking as OUTSIDE_AVAILABILITY.
+    nowUtc: new Date(startsAt.getTime() - fullSettings.minNoticeHours * 3_600_000 - 60_000),
   });
   const slotObj = { startUtc: startsAt, endUtc: endsAt };
   if (!isSlotInSet(slotObj, slots)) {
@@ -420,6 +426,60 @@ export async function getAvailableSlots(
     staffId,
     staffTimezone,
   };
+}
+
+// ---------------------------------------------------------------------------
+// getProspectSlots — org-level slots for a lead/evaluation cita (no case)
+// ---------------------------------------------------------------------------
+
+export interface GetProspectSlotsInput {
+  windowFromUtc: Date;
+  windowToUtc: Date;
+}
+
+export interface GetProspectSlotsResult {
+  slots: Slot[];
+  durationMinutes: number;
+  kind: "video" | "phone" | "presencial";
+  staffTimezone: string;
+}
+
+/**
+ * Materialises slots for a prospect (lead) cita. There is no case/phase, so the
+ * duration comes from the org's `prospect_duration_minutes` and the modality is
+ * the org default ('video'). Availability/anti-overlap are org-level, exactly
+ * like {@link getAvailableSlots}. Staff only.
+ */
+export async function getProspectSlots(
+  actor: Actor,
+  input: GetProspectSlotsInput,
+): Promise<GetProspectSlotsResult> {
+  can(actor, "calendar", "view");
+
+  const orgId = actor.orgId;
+  const [rules, settings, exceptions, booked] = await Promise.all([
+    repo.getActiveRules(orgId),
+    repo.getSettings(orgId),
+    repo.getExceptionsInRange(orgId, input.windowFromUtc, input.windowToUtc),
+    repo.findBookedForMaterialization(orgId, input.windowFromUtc, input.windowToUtc),
+  ]);
+
+  const durationMin = settings.prospectDurationMinutes;
+
+  const slots = materializeSlots({
+    rules,
+    settings,
+    exceptions,
+    booked,
+    windowFromUtc: input.windowFromUtc,
+    windowToUtc: input.windowToUtc,
+    durationMin,
+    nowUtc: now(),
+  });
+
+  const staffTimezone = rules[0]?.timezone ?? (await getUserTimezone(actor.userId));
+
+  return { slots, durationMinutes: durationMin, kind: "video", staffTimezone };
 }
 
 // ---------------------------------------------------------------------------

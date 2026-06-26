@@ -37,6 +37,10 @@ export const OrgSettingsSchema = z.object({
   default_timezone: z.string().min(1).default("America/New_York"),
   /** Logo URL shown in app footer + emails. */
   logo_url: z.string().nullable().default(null),
+  /** "EL CONSULTOR" signatory shown on the contract (DOC-51). */
+  representative_name: z.string().max(160).nullable().default(null),
+  /** Zelle payment email shown in the contract's fees/payment section. */
+  payment_zelle_email: z.string().max(160).nullable().default(null),
   /** Free-form goals/notes used by the dashboard targets (meta).
    *  Keys capped at 60 chars, values capped at 1 000 chars (M-3: bounded, no unlimited input). */
   goals: z.record(z.string().max(60), z.string().max(1000)).default({}),
@@ -50,6 +54,8 @@ export const UpdateOrgSettingsDtoSchema = z.object({
     .optional(),
   default_timezone: z.string().min(1).optional(),
   logo_url: z.string().nullable().optional(),
+  representative_name: z.string().max(160).nullable().optional(),
+  payment_zelle_email: z.string().max(160).nullable().optional(),
   /** Keys capped at 60 chars, values capped at 1 000 chars (M-3). */
   goals: z.record(z.string().max(60), z.string().max(1000)).optional(),
 });

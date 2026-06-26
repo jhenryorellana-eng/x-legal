@@ -28,6 +28,8 @@ import {
 import { BrandBar, formatCents } from "./brand-bar";
 import { SigningSuccess } from "./signing-success";
 import { CONTRACT_SECTIONS } from "./contract-text";
+import { ContractBody } from "./contract-body";
+import type { ContractDocument } from "@/backend/modules/contracts";
 import type { SigningStrings, SigningLocale } from "./strings";
 import type { SignResult } from "./actions";
 
@@ -53,6 +55,8 @@ export interface SigningViewProps {
   currency: string;
   installments: Installment[];
   parties: Party[];
+  /** Frozen assembled contract document (DOC-51). Null → legacy canonical notice. */
+  document: ContractDocument | null;
   termsVersion: string | null;
   signAction: (token: string, signatureJpegDataUrl: string) => Promise<SignResult>;
 }
@@ -312,24 +316,28 @@ export function SigningView(props: SigningViewProps) {
             WebkitOverflowScrolling: "touch",
           }}
         >
-          {CONTRACT_SECTIONS[locale].map((sec, i) => (
-            <div key={i} style={{ marginBottom: 16 }}>
-              <h3
-                style={{
-                  margin: "0 0 6px",
-                  fontFamily: "var(--font-title)",
-                  fontWeight: 800,
-                  fontSize: 15.5,
-                  color: "var(--navy)",
-                }}
-              >
-                {sec.title}
-              </h3>
-              <p style={{ margin: 0, fontSize: 15, lineHeight: 1.65, color: "var(--ink-2)" }}>
-                {sec.body}
-              </p>
-            </div>
-          ))}
+          {props.document ? (
+            <ContractBody document={props.document} />
+          ) : (
+            CONTRACT_SECTIONS[locale].map((sec, i) => (
+              <div key={i} style={{ marginBottom: 16 }}>
+                <h3
+                  style={{
+                    margin: "0 0 6px",
+                    fontFamily: "var(--font-title)",
+                    fontWeight: 800,
+                    fontSize: 15.5,
+                    color: "var(--navy)",
+                  }}
+                >
+                  {sec.title}
+                </h3>
+                <p style={{ margin: 0, fontSize: 15, lineHeight: 1.65, color: "var(--ink-2)" }}>
+                  {sec.body}
+                </p>
+              </div>
+            ))
+          )}
           {props.termsVersion && (
             <p style={{ margin: "10px 0 0", fontSize: 12, color: "var(--ink-3)" }}>
               {props.termsVersion}

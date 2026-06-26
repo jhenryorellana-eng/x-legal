@@ -19,6 +19,8 @@ export async function saveOrgSettings(patch: {
   name?: string;
   contact_phones?: { label: string; phone: string }[];
   default_timezone?: string;
+  representative_name?: string | null;
+  payment_zelle_email?: string | null;
 }) {
   const r = await updateOrgSettingsAction(patch);
   return r.success ? { success: true } : { success: false, error: r.error };

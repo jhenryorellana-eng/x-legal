@@ -18,6 +18,7 @@ import { appEvents } from "@/backend/platform/events";
 import { createServiceClient } from "@/backend/platform/supabase";
 import { logger } from "@/backend/platform/logger";
 import { writeAudit } from "@/backend/modules/audit";
+import type { TablesUpdate } from "@/shared/database.types";
 
 import {
   seedColumnsFor,
@@ -55,6 +56,9 @@ export class KanbanError extends Error {
       | "LEAD_LOST_REASON_REQUIRED"
       | "LEAD_NOT_WON"
       | "LEAD_CASE_ALREADY_CREATED"
+      | "CATEGORY_NOT_FOUND"
+      | "CATEGORY_LABEL_REQUIRED"
+      | "CATEGORY_INVALID_COLOR"
       | "TASK_NOT_FOUND",
     public readonly meta?: Record<string, unknown>,
   ) {
@@ -130,6 +134,13 @@ export interface UpdateLeadInput {
 export interface CreateLeadCategoryInput {
   label: string;
   color?: string;
+}
+
+export interface UpdateLeadCategoryInput {
+  categoryId: string;
+  label?: string;
+  color?: string;
+  isActive?: boolean;
 }
 
 export interface CreateCaseFromLeadInput {
@@ -1033,12 +1044,21 @@ export async function createLeadCategory(
 ): Promise<CategoryRow> {
   can(actor, "leads", "edit");
 
+  const label = input.label?.trim();
+  if (!label) throw new KanbanError("CATEGORY_LABEL_REQUIRED");
+  const color = input.color ?? "accent";
+  if (!isColumnColorValid(color)) throw new KanbanError("CATEGORY_INVALID_COLOR");
+
   const maxPos = await repo.maxCategoryPosition(actor.orgId);
   const cat = await repo.insertLeadCategory({
     org_id: actor.orgId,
-    label: input.label,
-    color: input.color ?? "accent",
+    label,
+    color,
     position: maxPos + 1,
+  });
+
+  await writeAudit(actor, "kanban.lead_category.created", "lead_categories", cat.id, {
+    after: { label: cat.label, color: cat.color },
   });
 
   return cat;
@@ -1049,9 +1069,97 @@ export async function createLeadCategory(
  * Their real UUIDs are what `createLead` stores in `leads.category_id`.
  * @throws AuthzError('wrong_kind') if `actor` is not a staff actor.
  */
-export async function listLeadCategories(actor: Actor): Promise<CategoryRow[]> {
+export async function listLeadCategories(
+  actor: Actor,
+  opts?: { includeInactive?: boolean },
+): Promise<CategoryRow[]> {
   can(actor, "leads", "view");
-  return repo.listLeadCategories(actor.orgId);
+  return repo.listLeadCategories(actor.orgId, opts);
+}
+
+/**
+ * Renames / recolors / (de)activates a category. Org-scoped: a category from
+ * another org is reported as not found (anti-enumeration). @API-LEAD-09
+ */
+export async function updateLeadCategory(
+  actor: Actor,
+  input: UpdateLeadCategoryInput,
+): Promise<CategoryRow> {
+  can(actor, "leads", "edit");
+
+  const existing = await repo.findLeadCategory(input.categoryId);
+  if (!existing || existing.org_id !== actor.orgId) {
+    throw new KanbanError("CATEGORY_NOT_FOUND");
+  }
+
+  const patch: TablesUpdate<"lead_categories"> = {};
+  if (input.label !== undefined) {
+    const label = input.label.trim();
+    if (!label) throw new KanbanError("CATEGORY_LABEL_REQUIRED");
+    patch.label = label;
+  }
+  if (input.color !== undefined) {
+    if (!isColumnColorValid(input.color)) throw new KanbanError("CATEGORY_INVALID_COLOR");
+    patch.color = input.color;
+  }
+  if (input.isActive !== undefined) patch.is_active = input.isActive;
+
+  const updated = await repo.updateLeadCategory(input.categoryId, patch);
+
+  await writeAudit(actor, "kanban.lead_category.updated", "lead_categories", updated.id, {
+    before: { label: existing.label, color: existing.color, is_active: existing.is_active },
+    after: { label: updated.label, color: updated.color, is_active: updated.is_active },
+  });
+
+  return updated;
+}
+
+/**
+ * Deletes a category. If any lead still references it the row is soft-deleted
+ * (is_active=false) to preserve referential history; otherwise it is removed.
+ * @API-LEAD-10
+ */
+export async function deleteLeadCategory(
+  actor: Actor,
+  categoryId: string,
+): Promise<{ softDeleted: boolean }> {
+  can(actor, "leads", "edit");
+
+  const existing = await repo.findLeadCategory(categoryId);
+  if (!existing || existing.org_id !== actor.orgId) {
+    throw new KanbanError("CATEGORY_NOT_FOUND");
+  }
+
+  const refs = await repo.countLeadsByCategory(actor.orgId, categoryId);
+  if (refs > 0) {
+    await repo.updateLeadCategory(categoryId, { is_active: false });
+    await writeAudit(actor, "kanban.lead_category.deactivated", "lead_categories", categoryId, {
+      before: { label: existing.label, is_active: existing.is_active },
+      after: { is_active: false, referencedBy: refs },
+    });
+    return { softDeleted: true };
+  }
+
+  await repo.deleteLeadCategory(categoryId);
+  await writeAudit(actor, "kanban.lead_category.deleted", "lead_categories", categoryId, {
+    before: { label: existing.label, color: existing.color },
+  });
+  return { softDeleted: false };
+}
+
+/**
+ * Persists a new display order for the org's categories. Ids not belonging to
+ * the org are ignored (the repo update is org-scoped). @API-LEAD-11
+ */
+export async function reorderLeadCategories(
+  actor: Actor,
+  orderedIds: string[],
+): Promise<void> {
+  can(actor, "leads", "edit");
+  await repo.reorderLeadCategories(actor.orgId, orderedIds);
+  await writeAudit(actor, "kanban.lead_category.reordered", "lead_categories", actor.orgId, {
+    after: { order: orderedIds },
+  });
 }
 
 // ---------------------------------------------------------------------------

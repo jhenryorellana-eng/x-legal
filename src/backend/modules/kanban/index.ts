@@ -41,6 +41,9 @@ export {
   createCaseFromLead,
   createLeadCategory,
   listLeadCategories,
+  updateLeadCategory,
+  deleteLeadCategory,
+  reorderLeadCategories,
   expressServiceInterest,
   listLeads,
 } from "./service";
@@ -73,6 +76,7 @@ export type {
   CreateLeadResult,
   UpdateLeadInput,
   CreateLeadCategoryInput,
+  UpdateLeadCategoryInput,
   CreateCaseFromLeadInput,
   ExpressServiceInterestInput,
   CreateTaskInput,

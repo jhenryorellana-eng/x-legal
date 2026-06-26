@@ -57,6 +57,7 @@ export interface WizardPartyRole {
   label: I18nValue;
   cardinality: "single" | "multiple";
   is_required: boolean;
+  include_in_contract: boolean;
   position: number;
 }
 
@@ -128,6 +129,10 @@ export interface WizardService {
   color: string;
   is_public: boolean;
   is_active: boolean;
+  /** Per-service contract content (DOC-51). scope is newline-joined per locale for editing. */
+  contract_object: I18nValue;
+  contract_scope: I18nValue;
+  contract_special: I18nValue;
 }
 
 export interface PublicationIssueVM {
@@ -192,7 +197,7 @@ function milestoneSlug(m: WizardMilestone, i: number): string {
   return base || `hito-${i + 1}`;
 }
 
-const STEP_IDS = ["basics", "plans", "parties", "phases", "docs", "forms", "publish"] as const;
+const STEP_IDS = ["basics", "plans", "parties", "phases", "docs", "forms", "contract", "publish"] as const;
 type StepId = (typeof STEP_IDS)[number];
 
 const COLOR_SWATCHES: { id: string; value: string }[] = [
@@ -250,6 +255,17 @@ export function CatalogWizard({
   // Step 4 phases
   const [phases, setPhases] = React.useState<WizardPhase[]>(initialPhases);
   const [activePhaseIdx, setActivePhaseIdx] = React.useState(0);
+
+  // Step "contract" — per-service contract content
+  const [contractObject, setContractObject] = React.useState<I18nValue>(
+    service?.contract_object ?? { es: "", en: "" },
+  );
+  const [contractScope, setContractScope] = React.useState<I18nValue>(
+    service?.contract_scope ?? { es: "", en: "" },
+  );
+  const [contractSpecial, setContractSpecial] = React.useState<I18nValue>(
+    service?.contract_special ?? { es: "", en: "" },
+  );
 
   // Step 6 publish
   const [pubIssues, setPubIssues] = React.useState<PublicationIssueVM[] | null>(null);
@@ -311,6 +327,11 @@ export function CatalogWizard({
       setStep("parties");
       return;
     }
+    if (step === "contract") {
+      const ok = await saveContract();
+      if (ok) setStep("publish");
+      return;
+    }
     const order: StepId[] = [...STEP_IDS];
     const i = order.indexOf(step);
     if (i < order.length - 1) setStep(order[i + 1]);
@@ -338,6 +359,29 @@ export function CatalogWizard({
       });
     }
     setSaving(false);
+  }
+
+  /** Persists the per-service contract content (object/scope/special). */
+  async function saveContract(): Promise<boolean> {
+    if (!serviceId) return false;
+    setSaving(true);
+    const toList = (s?: string) =>
+      (s ?? "")
+        .split("\n")
+        .map((x) => x.trim())
+        .filter(Boolean);
+    const r = await actions.updateService(serviceId, {
+      contract_object_i18n: { es: contractObject.es ?? "", en: contractObject.en ?? "" },
+      contract_scope_i18n: { es: toList(contractScope.es), en: toList(contractScope.en) },
+      contract_special_clause_i18n: { es: contractSpecial.es ?? "", en: contractSpecial.en ?? "" },
+    });
+    setSaving(false);
+    if (!r.success) {
+      toast.error(r.error?.message ?? "Error");
+      return false;
+    }
+    toast.success(t.saved);
+    return true;
   }
 
   async function publish() {
@@ -415,6 +459,17 @@ export function CatalogWizard({
           <DocsStep phases={phases} setPhases={setPhases} partyRoles={partyRoles} actions={actions} t={t} />
         )}
         {step === "forms" && <FormsStep t={t} serviceId={serviceId} phases={phases} setPhases={setPhases} actions={actions} />}
+        {step === "contract" && (
+          <ContractStep
+            object={contractObject}
+            setObject={setContractObject}
+            scope={contractScope}
+            setScope={setContractScope}
+            special={contractSpecial}
+            setSpecial={setContractSpecial}
+            t={t}
+          />
+        )}
         {step === "publish" && <PublishStep issues={pubIssues} published={published} label={label.es ?? slug} t={t} onGoToStep={setStep} />}
       </Card>
 
@@ -432,6 +487,44 @@ export function CatalogWizard({
             {t.next}
           </GradientBtn>
         )}
+      </div>
+    </div>
+  );
+}
+
+/* ───────────────────────── Step: Contract content ───────────────────────── */
+
+function ContractStep({
+  object,
+  setObject,
+  scope,
+  setScope,
+  special,
+  setSpecial,
+  t,
+}: {
+  object: I18nValue;
+  setObject: (v: I18nValue) => void;
+  scope: I18nValue;
+  setScope: (v: I18nValue) => void;
+  special: I18nValue;
+  setSpecial: (v: I18nValue) => void;
+  t: Record<string, string>;
+}) {
+  return (
+    <div>
+      <ViewHead title={t.contractStepTitle} sub={t.contractStepSub} />
+      <div style={bannerStyle}>
+        <Icon name="info" size={16} color="var(--gold-deep)" />
+        {t.contractStepNote}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 18, marginTop: 12, maxWidth: 720 }}>
+        <I18nField label={t.contractObject} value={object} onChange={setObject} multiline />
+        <div>
+          <I18nField label={t.contractScope} value={scope} onChange={setScope} multiline />
+          <p style={{ color: "var(--ink-3)", fontSize: 12.5, marginTop: 6 }}>{t.contractScopeHint}</p>
+        </div>
+        <I18nField label={t.contractSpecial} value={special} onChange={setSpecial} multiline />
       </div>
     </div>
   );
@@ -1049,6 +1142,7 @@ function PartiesStep({
   );
   const [cardinality, setCardinality] = React.useState<"single" | "multiple">("single");
   const [required, setRequired] = React.useState(false);
+  const [includeInContract, setIncludeInContract] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
 
   function pickRole(k: string) {
@@ -1078,6 +1172,7 @@ function PartiesStep({
       label_i18n: { es: label.es ?? "", en: label.en ?? "" },
       cardinality,
       is_required: required,
+      include_in_contract: includeInContract,
       position: nextPos,
     });
     setSaving(false);
@@ -1088,6 +1183,7 @@ function PartiesStep({
         label: { es: label.es ?? "", en: label.en ?? "" },
         cardinality,
         is_required: required,
+        include_in_contract: includeInContract,
         position: nextPos,
       };
       setPartyRoles((prev) => [...prev, created]);
@@ -1101,6 +1197,7 @@ function PartiesStep({
       setLabel(nextAvailable[0] ? { ...DEFAULT_PARTY_ROLE_LABELS[nextAvailable[0]] } : { es: "", en: "" });
       setCardinality("single");
       setRequired(false);
+      setIncludeInContract(true);
       toast.success(t.saved);
     } else {
       toast.error(r.error?.message ?? "Error");
@@ -1113,6 +1210,23 @@ function PartiesStep({
       setPartyRoles((prev) => prev.filter((x) => x.id !== id));
       toast.success(t.saved);
     } else {
+      toast.error(r.error?.message ?? "Error");
+    }
+  }
+
+  // Inline toggle: whether parties of this role are committed in the contract.
+  // Optimistic update + rollback on failure (the only per-row editable field).
+  async function toggleContract(id: string, next: boolean) {
+    setPartyRoles((prev) =>
+      prev.map((x) => (x.id === id ? { ...x, include_in_contract: next } : x)),
+    );
+    const r = await actions.updatePartyRole(id, { include_in_contract: next });
+    if (r.success) {
+      toast.success(t.saved);
+    } else {
+      setPartyRoles((prev) =>
+        prev.map((x) => (x.id === id ? { ...x, include_in_contract: !next } : x)),
+      );
       toast.error(r.error?.message ?? "Error");
     }
   }
@@ -1161,6 +1275,14 @@ function PartiesStep({
               <Switch checked={required} onCheckedChange={setRequired} aria-label={t.partyRequired} />
               {t.partyRequired}
             </label>
+            <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer", paddingBottom: 8 }}>
+              <Switch
+                checked={includeInContract}
+                onCheckedChange={setIncludeInContract}
+                aria-label={t.partyInContract}
+              />
+              {t.partyInContract}
+            </label>
           </div>
           <I18nField label={t.partyLabel} value={label} onChange={setLabel} />
           <div>
@@ -1191,6 +1313,7 @@ function PartiesStep({
           </span>
           <Chip tone="gold">{t.partySingle}</Chip>
           <Chip tone="green">{t.partyRequired}</Chip>
+          <Chip tone="blue">{t.partyInContract}</Chip>
           <span
             style={{
               marginLeft: "auto",
@@ -1224,12 +1347,30 @@ function PartiesStep({
               {r.cardinality === "multiple" ? t.partyMultiple : t.partySingle}
             </Chip>
             {r.is_required && <Chip tone="green">{t.partyRequired}</Chip>}
+            <label
+              style={{
+                marginLeft: "auto",
+                display: "flex",
+                gap: 8,
+                alignItems: "center",
+                cursor: "pointer",
+                fontSize: 12.5,
+                fontWeight: 700,
+                color: "var(--ink-3)",
+              }}
+            >
+              <Switch
+                checked={r.include_in_contract}
+                onCheckedChange={(v) => toggleContract(r.id, v)}
+                aria-label={t.partyInContract}
+              />
+              {t.partyInContract}
+            </label>
             <button
               type="button"
               onClick={() => removeRole(r.id)}
               aria-label={t.partyRemove}
               style={{
-                marginLeft: "auto",
                 background: "none",
                 border: "none",
                 cursor: "pointer",

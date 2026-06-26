@@ -28,6 +28,12 @@ function i18n(v: unknown): I18nValue {
   return { es: o.es ?? "", en: o.en ?? "" };
 }
 
+/** Joins a bilingual string-list jsonb ({es:[],en:[]}) into newline-per-line text for the editor. */
+function i18nList(v: unknown): I18nValue {
+  const o = (v ?? {}) as { es?: string[]; en?: string[] };
+  return { es: (o.es ?? []).join("\n"), en: (o.en ?? []).join("\n") };
+}
+
 export default async function ServiceDetailPage({
   params,
 }: {
@@ -53,6 +59,9 @@ export default async function ServiceDetailPage({
     color: tree.service.color ?? "accent",
     is_public: tree.service.is_public,
     is_active: tree.service.is_active,
+    contract_object: i18n(tree.service.contract_object_i18n),
+    contract_scope: i18nList(tree.service.contract_scope_i18n),
+    contract_special: i18n(tree.service.contract_special_clause_i18n),
   };
 
   const plans: WizardPlan[] = (["self", "with_lawyer"] as const).map((kind) => {
@@ -74,6 +83,7 @@ export default async function ServiceDetailPage({
     label: i18n(r.label_i18n),
     cardinality: r.cardinality,
     is_required: r.is_required,
+    include_in_contract: r.include_in_contract,
     position: r.position,
   }));
 

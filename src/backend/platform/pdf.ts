@@ -443,9 +443,9 @@ export interface CoverData {
 const NAVY = "#0b1f3a";
 const GOLD = "#c8a24a";
 
-/** Internal: mupdf html→pdf (US Letter), shared by cover + TOC renders.
+/** mupdf html→pdf (US Letter), shared by cover/TOC/contract renders.
  * Mirrors renderMarkdownToPdf: prefer toPDFDocument(), else DocumentWriter. */
-async function htmlToPdf(html: string): Promise<Uint8Array> {
+export async function htmlToPdf(html: string): Promise<Uint8Array> {
   const mupdf = await import("mupdf");
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const M = mupdf as any;

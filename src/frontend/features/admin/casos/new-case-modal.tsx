@@ -69,6 +69,17 @@ export interface NewCaseInput {
   serviceId: string;
   planKind: "self" | "with_lawyer";
   parties: { name: string; role: string }[];
+  /**
+   * Per-contract payment plan override (price/downpayment/installments + note).
+   * Defaults come from the service plan but Vanessa/Henry can adjust them here so
+   * the contract is correct and immutable from the start (e.g. a promo price).
+   */
+  paymentPlan: {
+    totalCents: number;
+    downpaymentCents: number;
+    installmentCount: number;
+    note?: string;
+  };
 }
 
 export interface NewCaseActions {
@@ -92,7 +103,7 @@ export function NewCaseModal({
   actions: NewCaseActions;
   signingBaseUrl: string;
 }) {
-  const [step, setStep] = React.useState<1 | 2 | 3>(1);
+  const [step, setStep] = React.useState<1 | 2 | 3 | 4>(1);
   const [name, setName] = React.useState("");
   const [clientEmail, setClientEmail] = React.useState("");
   const [phone, setPhone] = React.useState("");
@@ -103,6 +114,12 @@ export function NewCaseModal({
   const [zip, setZip] = React.useState("");
   const [serviceId, setServiceId] = React.useState("");
   const [planKind, setPlanKind] = React.useState<"self" | "with_lawyer" | "">("");
+  // Editable payment plan (dollars as strings for the inputs; default-seeded from
+  // the chosen plan, then overridable for a promo/discount before freezing).
+  const [priceDollars, setPriceDollars] = React.useState("");
+  const [downDollars, setDownDollars] = React.useState("");
+  const [installmentsCount, setInstallmentsCount] = React.useState("");
+  const [discountNote, setDiscountNote] = React.useState("");
   // Additional parties keyed by the service's role_key → list of names. The
   // applicant is implicit (auto-added by the backend), so it is NOT here.
   const [partyNames, setPartyNames] = React.useState<Record<string, string[]>>({});
@@ -119,6 +136,15 @@ export function NewCaseModal({
     const init: Record<string, string[]> = {};
     for (const r of svc?.partyRoles ?? []) init[r.roleKey] = [""];
     setPartyNames(init);
+  }
+
+  /** Selects a plan and seeds the editable payment fields from its defaults. */
+  function selectPlan(p: NewCasePlan) {
+    setPlanKind(p.kind);
+    setPriceDollars(centsToInput(p.priceCents));
+    setDownDollars(centsToInput(p.downpaymentCents ?? 0));
+    setInstallmentsCount(String(p.installments || 1));
+    setDiscountNote("");
   }
 
   function setPartyName(roleKey: string, idx: number, value: string) {
@@ -150,6 +176,10 @@ export function NewCaseModal({
     setZip("");
     setServiceId("");
     setPlanKind("");
+    setPriceDollars("");
+    setDownDollars("");
+    setInstallmentsCount("");
+    setDiscountNote("");
     setPartyNames({});
     setSigningLink(null);
   }
@@ -172,8 +202,21 @@ export function NewCaseModal({
   );
   const step2Valid = !!serviceId && !!planKind && rolesValid;
 
+  // Editable payment plan (parsed from the dollar inputs). Downpayment must be
+  // > 0 and ≤ total; installments ≥ 1 (matches the backend contract).
+  const priceCents = parseDollarsToCents(priceDollars);
+  const downCents = parseDollarsToCents(downDollars);
+  const instCount = Number.parseInt(installmentsCount, 10);
+  const paymentValid =
+    Number.isFinite(priceCents) && priceCents > 0 &&
+    Number.isFinite(downCents) && downCents > 0 && downCents <= priceCents &&
+    Number.isInteger(instCount) && instCount >= 1;
+  // Monthly preview: balance after downpayment spread over the remaining cuotas.
+  const monthlyCount = instCount > 1 ? instCount - 1 : 0;
+  const monthlyCents = monthlyCount > 0 ? Math.round((priceCents - downCents) / monthlyCount) : 0;
+
   async function submit() {
-    if (!step2Valid) return;
+    if (!step2Valid || !paymentValid) return;
     setSubmitting(true);
     const encoded = service?.encodedByKind[planKind] ?? serviceId;
     // Additional parties only — the applicant is auto-added by the backend.
@@ -196,11 +239,17 @@ export function NewCaseModal({
       serviceId: encoded,
       planKind: planKind as "self" | "with_lawyer",
       parties,
+      paymentPlan: {
+        totalCents: priceCents,
+        downpaymentCents: downCents,
+        installmentCount: instCount,
+        note: discountNote.trim() || undefined,
+      },
     });
     setSubmitting(false);
     if (res.ok && res.signingToken) {
       setSigningLink(`${signingBaseUrl}/firma/${res.signingToken}`);
-      setStep(3);
+      setStep(4);
     } else {
       toast.error(res.error?.message ?? strings.errorTitle);
     }
@@ -214,7 +263,13 @@ export function NewCaseModal({
   }
 
   const title =
-    step === 1 ? strings.newCaseStep1 : step === 2 ? strings.newCaseStep2 : strings.linkTitle;
+    step === 1
+      ? strings.newCaseStep1
+      : step === 2
+        ? strings.newCaseStep2
+        : step === 3
+          ? strings.newCaseStep3
+          : strings.linkTitle;
 
   return (
     <Modal
@@ -223,7 +278,7 @@ export function NewCaseModal({
       title={title}
       width={560}
       footer={
-        step === 3 ? (
+        step === 4 ? (
           <GradientBtn size="md" full={false} icon="check" onClick={() => close(false)}>
             {strings.done}
           </GradientBtn>
@@ -242,7 +297,7 @@ export function NewCaseModal({
               {strings.next}
             </GradientBtn>
           </>
-        ) : (
+        ) : step === 2 ? (
           <>
             <GhostBtn size="md" full={false} icon="chevL" onClick={() => setStep(1)}>
               {strings.back}
@@ -250,8 +305,23 @@ export function NewCaseModal({
             <GradientBtn
               size="md"
               full={false}
+              icon="chevR"
+              disabled={!step2Valid}
+              onClick={() => setStep(3)}
+            >
+              {strings.next}
+            </GradientBtn>
+          </>
+        ) : (
+          <>
+            <GhostBtn size="md" full={false} icon="chevL" onClick={() => setStep(2)}>
+              {strings.back}
+            </GhostBtn>
+            <GradientBtn
+              size="md"
+              full={false}
               icon="lock"
-              disabled={!step2Valid || submitting}
+              disabled={!paymentValid || submitting}
               onClick={submit}
             >
               {submitting ? strings.creating : strings.createCase}
@@ -261,9 +331,9 @@ export function NewCaseModal({
       }
     >
       {/* Step indicator */}
-      {step !== 3 && (
+      {step !== 4 && (
         <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
-          {[1, 2].map((n) => (
+          {[1, 2, 3].map((n) => (
             <div
               key={n}
               style={{
@@ -381,7 +451,7 @@ export function NewCaseModal({
                     <button
                       key={p.kind}
                       type="button"
-                      onClick={() => setPlanKind(p.kind)}
+                      onClick={() => selectPlan(p)}
                       style={{
                         flex: "1 1 200px",
                         textAlign: "left",
@@ -499,7 +569,69 @@ export function NewCaseModal({
         </div>
       )}
 
-      {step === 3 && signingLink && (
+      {step === 3 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "10px 12px",
+              borderRadius: 12,
+              background: "var(--blue-soft)",
+            }}
+          >
+            <Icon name="info" size={15} color="var(--accent)" />
+            <span style={{ fontSize: 13, color: "var(--ink-2)" }}>{strings.payHint}</span>
+          </div>
+
+          <LabeledInput
+            label={strings.payPrice}
+            value={priceDollars}
+            onChange={(v) => setPriceDollars(v.replace(/[^\d.]/g, ""))}
+            inputMode="decimal"
+            placeholder="3500"
+          />
+          <div style={{ display: "flex", gap: 10 }}>
+            <div style={{ flex: 1 }}>
+              <LabeledInput
+                label={strings.payDownpayment}
+                value={downDollars}
+                onChange={(v) => setDownDollars(v.replace(/[^\d.]/g, ""))}
+                inputMode="decimal"
+                placeholder="500"
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <LabeledInput
+                label={strings.payInstallments}
+                value={installmentsCount}
+                onChange={(v) => setInstallmentsCount(v.replace(/\D/g, ""))}
+                inputMode="numeric"
+                placeholder="12"
+              />
+            </div>
+          </div>
+
+          {paymentValid && monthlyCount > 0 && (
+            <p style={{ margin: 0, fontSize: 13, color: "var(--ink-2)" }}>
+              {interpStr(strings.payMonthlyPreview, {
+                count: String(monthlyCount),
+                amount: formatUsd(monthlyCents),
+              })}
+            </p>
+          )}
+
+          <LabeledInput
+            label={strings.payNote}
+            value={discountNote}
+            onChange={setDiscountNote}
+            placeholder={strings.payNotePlaceholder}
+          />
+        </div>
+      )}
+
+      {step === 4 && signingLink && (
         <div
           style={{
             display: "flex",
@@ -576,6 +708,29 @@ export function NewCaseModal({
       )}
     </Modal>
   );
+}
+
+/** Whole-dollar string for an input from integer cents (e.g. 350000 → "3500"). */
+function centsToInput(cents: number): string {
+  if (!Number.isFinite(cents) || cents <= 0) return "";
+  return String(Math.round(cents / 100));
+}
+
+/** Parses a dollar string ("3500" / "3500.50") to integer cents; NaN if invalid. */
+function parseDollarsToCents(s: string): number {
+  const n = Number(s);
+  if (!Number.isFinite(n)) return Number.NaN;
+  return Math.round(n * 100);
+}
+
+function formatUsd(cents: number): string {
+  return new Intl.NumberFormat("es-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(
+    cents / 100,
+  );
+}
+
+function interpStr(s: string, vars: Record<string, string>): string {
+  return s.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? `{${k}}`);
 }
 
 const inputStyle: React.CSSProperties = {

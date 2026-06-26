@@ -11,6 +11,7 @@
 // Page-initial reads (consumed by admin config server pages)
 export {
   getOrgConfig,
+  getOrgContractInfo,
   listCoverTemplates,
   getTermsOverview,
 } from "./service";
@@ -18,6 +19,7 @@ export {
 // Result types needed by the UI layer
 export type {
   OrgConfig,
+  OrgContractInfo,
   TermsOverview,
 } from "./service";
 

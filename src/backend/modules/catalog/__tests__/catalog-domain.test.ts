@@ -51,6 +51,9 @@ function makeService(overrides: Partial<Service> = {}): Service {
     is_public: true,
     entry_parent_service_id: null,
     entry_phase_id: null,
+    contract_object_i18n: null,
+    contract_scope_i18n: null,
+    contract_special_clause_i18n: null,
     position: 0,
     ...overrides,
   };

@@ -22,6 +22,7 @@ import { Modal } from "@/frontend/components/desktop";
 
 export interface LeadCardVM {
   id: string;
+  leadId: string;
   columnId: string;
   name: string | null;
   phone: string;
@@ -51,6 +52,7 @@ export interface LeadsStrings {
   list: string;
   filters: string;
   column: string;
+  manageCategories: string;
   newLead: string;
   addLead: string;
   emptyCol: string;
@@ -61,6 +63,7 @@ export interface LeadsStrings {
   notNow: string;
   call: string;
   whatsapp: string;
+  agendar: string;
   createCaseTooltip: string;
   lostTitle: string;
   lostBody: string;
@@ -88,8 +91,10 @@ export interface LeadsViewProps {
   actions: LeadsActions;
   onNewLead: (columnId?: string) => void;
   onNewCase: (preset: { name: string | null; phone: string }) => void;
+  onScheduleLead: (lead: { leadId: string; name: string | null; phone: string; source: string }) => void;
   onOpenColumnMenu: () => void;
   onOpenFilters: () => void;
+  onManageCategories: () => void;
 }
 
 export function LeadsView({
@@ -99,8 +104,10 @@ export function LeadsView({
   actions,
   onNewLead,
   onNewCase,
+  onScheduleLead,
   onOpenColumnMenu,
   onOpenFilters,
+  onManageCategories,
 }: LeadsViewProps) {
   const toast = useToast();
   const [cards, setCards] = React.useState(initialCards);
@@ -189,6 +196,10 @@ export function LeadsView({
           <button type="button" className="vbtn vbtn-ghost vbtn-sm" onClick={onOpenColumnMenu}>
             <MSym name="add" size={18} />
             {strings.column}
+          </button>
+          <button type="button" className="vbtn vbtn-ghost vbtn-sm" onClick={onManageCategories}>
+            <MSym name="label" size={18} />
+            {strings.manageCategories}
           </button>
           <button type="button" className="vbtn vbtn-primary vbtn-sm" onClick={() => onNewLead()}>
             <MSym name="add" size={18} />
@@ -296,6 +307,10 @@ export function LeadsView({
                         <button type="button" className="kmini" title={strings.whatsapp} aria-label={`${strings.whatsapp} ${c.name ?? c.phone}`}
                           onClick={(e) => { e.stopPropagation(); getBridge().share.openExternal(`https://wa.me/${c.phone.replace(/[^\d]/g, "")}`); }}>
                           <MSym name="chat" size={15} />
+                        </button>
+                        <button type="button" className="kmini" title={strings.agendar} aria-label={`${strings.agendar} ${c.name ?? c.phone}`}
+                          onClick={(e) => { e.stopPropagation(); onScheduleLead({ leadId: c.leadId, name: c.name, phone: c.phone, source: c.source }); }}>
+                          <MSym name="event" size={15} />
                         </button>
                         <button type="button" className="kmini" title={strings.createCaseTooltip} aria-label={strings.createCaseTooltip}
                           onClick={(e) => { e.stopPropagation(); onNewCase({ name: c.name, phone: c.phone }); }}>

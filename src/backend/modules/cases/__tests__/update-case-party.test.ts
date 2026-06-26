@@ -25,6 +25,8 @@ const {
   mockUpdatePersonRecordName,
   mockGetContractForCase,
   mockResyncPartiesSnapshot,
+  mockFindCaseById,
+  mockListServicePartyRoles,
 } = vi.hoisted(() => ({
   mockCan: vi.fn(),
   mockWriteAudit: vi.fn().mockResolvedValue(undefined),
@@ -36,6 +38,8 @@ const {
   mockUpdatePersonRecordName: vi.fn().mockResolvedValue(undefined),
   mockGetContractForCase: vi.fn(),
   mockResyncPartiesSnapshot: vi.fn().mockResolvedValue({ resynced: true }),
+  mockFindCaseById: vi.fn(),
+  mockListServicePartyRoles: vi.fn(),
 }));
 
 vi.mock("@/backend/platform/authz", () => ({
@@ -74,20 +78,27 @@ vi.mock("../repository", async (importOriginal) => {
     updateClientProfileName: mockUpdateClientProfileName,
     updatePersonRecordName: mockUpdatePersonRecordName,
     findClientDisplayName: vi.fn().mockResolvedValue(null),
+    findCaseById: mockFindCaseById,
   };
 });
 
 vi.mock("@/backend/modules/contracts", () => ({
   getContractForCase: mockGetContractForCase,
   resyncPartiesSnapshot: mockResyncPartiesSnapshot,
+  resyncDocumentSnapshot: vi.fn().mockResolvedValue({ resynced: true }),
   ContractError: class ContractError extends Error {
     constructor(public readonly code: string) { super(code); }
   },
 }));
 
+vi.mock("@/backend/modules/catalog", () => ({
+  listServicePartyRoles: mockListServicePartyRoles,
+}));
+
 import { updateCaseParty } from "../service";
 
 const CASE_ID = "c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1";
+const SERVICE_ID = "11111111-1111-4111-8111-111111111111";
 const CLIENT_ID = "33333333-3333-4333-8333-333333333333";
 const PETITIONER_PARTY_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const SPOUSE_PARTY_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -113,6 +124,12 @@ describe("updateCaseParty", () => {
     mockFindClientFullName.mockResolvedValue({ first_name: "Carlos", last_name: "Mendoza" });
     mockGetContractForCase.mockResolvedValue({ id: "contract-1", status: "draft" });
     mockResyncPartiesSnapshot.mockResolvedValue({ resynced: true });
+    mockFindCaseById.mockResolvedValue({ id: CASE_ID, service_id: SERVICE_ID });
+    // Spouse role declared by the service and included in the contract → resync
+    // keeps the spouse in the snapshot (consistent with the existing fixtures).
+    mockListServicePartyRoles.mockResolvedValue([
+      { role_key: "spouse", cardinality: "single", include_in_contract: true },
+    ]);
   });
 
   it("rejects a non-admin staff actor", async () => {

@@ -119,6 +119,7 @@ function LeadsPreview() {
         list: "Lista",
         filters: "Filtros",
         column: "Columna",
+        manageCategories: "Categorías",
         newLead: "Nuevo lead",
         addLead: "Agregar lead",
         emptyCol: "Arrastra leads aquí",
@@ -131,6 +132,7 @@ function LeadsPreview() {
         notNow: "Ahora no",
         call: "Llamar",
         whatsapp: "WhatsApp",
+        agendar: "Agendar cita",
         createCaseTooltip: "Crear caso (genera el contrato)",
         lostTitle: "Marcar como perdido",
         lostBody: "Indica el motivo. La tarjeta lo mostrará como chip rojo.",
@@ -144,8 +146,10 @@ function LeadsPreview() {
       actions={{ moveCard: ok }}
       onNewLead={() => {}}
       onNewCase={() => {}}
+      onScheduleLead={() => {}}
       onOpenColumnMenu={() => {}}
       onOpenFilters={() => {}}
+      onManageCategories={() => {}}
     />
   );
 }
@@ -213,21 +217,47 @@ function CitasPreview() {
       newApptModal={{
         staffTz: STAFF_TZ,
         locale: "es",
-        slots: ["2026-06-12T13:00:00Z", "2026-06-12T13:30:00Z", "2026-06-12T14:00:00Z"],
-        daysOptions: [{ value: "2026-06-12", label: "Jueves 12 jun" }],
-        clientResults: [
-          { caseId: "k1", name: "Sofía Cabrera", serviceLabel: "Visa Juvenil", seqLabel: "Cita 2 de 3", phone: "+1 (305) 889‑4410", clientTz: "America/Denver" },
-        ],
-        prospectResults: [
-          { leadId: "l1", name: "Lucía Hernández", phone: "+1 (305) 412‑8890", source: "tiktok", sourceLabel: "TikTok" },
-        ],
-        apptTypeOptions: [
-          { value: "c1", label: "Cita 1 · Inducción" },
-          { value: "c2", label: "Cita 2 · Verificación" },
-          { value: "c3", label: "Cita 3 · Validación" },
-        ],
         strings: NUEVA_CITA_STRINGS,
-        actions: { bookAppointment: ok, createProspectAppointment: ok },
+        actions: {
+          searchCases: async () => ({
+            ok: true,
+            results: [
+              { caseId: "k1", name: "Sofía Cabrera", serviceLabel: "Visa Juvenil", phone: "+1 (305) 889‑4410", clientTz: "America/Denver" },
+            ],
+          }),
+          getCaseContext: async () => ({
+            ok: true,
+            context: {
+              slots: ["2026-06-12T13:00:00Z", "2026-06-12T13:30:00Z", "2026-06-12T14:00:00Z"],
+              staffTimezone: STAFF_TZ,
+              durationMinutes: 30,
+              kind: "video" as const,
+              sequenceNumber: 2,
+              seqLabel: "2/3",
+              ruta: [
+                { number: 1, label: "Inducción", kind: "video", status: "completed" },
+                { number: 2, label: "Verificación", kind: "video", status: "current" },
+                { number: 3, label: "Validación", kind: "video", status: "upcoming" },
+              ],
+            },
+          }),
+          searchProspects: async () => ({
+            ok: true,
+            results: [{ leadId: "l1", name: "Lucía Hernández", phone: "+1 (305) 412‑8890", source: "tiktok" }],
+          }),
+          getProspectSlots: async () => ({
+            ok: true,
+            context: {
+              slots: ["2026-06-12T15:00:00Z", "2026-06-12T15:30:00Z"],
+              staffTimezone: STAFF_TZ,
+              durationMinutes: 60,
+              kind: "video" as const,
+            },
+          }),
+          createProspectInline: async () => ({ ok: true, leadId: "l-new" }),
+          bookAppointment: ok,
+          createProspectAppointment: ok,
+        },
       }}
       onComplete={ok}
       onReschedule={ok}
@@ -250,28 +280,33 @@ const NUEVA_CITA_STRINGS = {
   emptyClients: 'Sin clientes con caso activo. Prueba con otro nombre o usa "Prospecto".',
   searchProspect: "Buscar prospecto (teléfono / nombre)",
   searchProspectPh: "Ej. Carlos o +1 786…",
-  apptType: "Tipo de cita",
-  apptTypeHint: "Sugerida automáticamente · hereda el caso",
-  callType: "Llamada informativa",
+  emptyProspects: "Sin prospectos. Crea uno nuevo abajo.",
+  createProspect: "Crear prospecto",
+  prospectNamePh: "Nombre (opcional)",
+  prospectPhonePh: "Teléfono",
+  createProspectConfirm: "Crear y continuar",
+  rutaTitle: "Ruta de citas",
+  citaLabel: "Cita {n} de {m}",
+  prospectCita: "Llamada informativa",
   date: "Fecha",
-  hour: "Hora (ET)",
+  hour: "Hora",
+  pickCaseFirst: "Selecciona un caso para ver los horarios.",
+  loadingSlots: "Buscando horarios disponibles…",
+  noSlots: "No hay horarios disponibles en las próximas semanas.",
   clientEquiv: "Para el cliente: {hour}",
   overlapWarn: "Este horario se cruza con otra cita ya agendada. ¿Crear igualmente?",
   outsideWarn: "Este horario está fuera de tu disponibilidad. ¿Crear igualmente?",
-  duration: "Duración",
-  durationHint: 'Prellenada con tu regla de "Mi disponibilidad".',
-  modality: "Modalidad",
-  video: "Videollamada",
-  phone: "Llamada telefónica",
-  videoHint: "Se generará el enlace de la videollamada automáticamente.",
-  remind1d: "1 día antes",
-  remind1h: "1 hora antes",
+  min: "min",
+  modalityVideo: "Video",
+  modalityPhone: "Llamada",
+  modalityPresencial: "Presencial",
+  remindersInfo: "Recordatorios: 1 día y 1 hora antes",
   note: "Nota (opcional)",
   notePh: "Contexto de la cita…",
   cancel: "Cancelar",
   create: "Crear cita",
   createAnyway: "Crear igualmente",
-  createdClient: "✓ Cita creada · {name} · {type}",
+  createdClient: "✓ Cita creada · {name}",
   createdProspect: "✓ Llamada agendada · {name} · enlazada a Leads",
   change: "Cambiar",
 };

@@ -199,6 +199,26 @@ export async function findAcceptance(
 }
 
 /**
+ * Returns the most recent terms acceptance for a case (any user), via the
+ * SERVICE client — staff (admin) read it for the case detail. RLS on the table
+ * is client-scoped, so the service client is required; the caller authorizes
+ * via requireCaseAccess.
+ */
+export async function latestAcceptanceForCaseService(
+  caseId: string,
+): Promise<ContractTermsAcceptanceRow | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("contract_terms_acceptances")
+    .select("*")
+    .eq("case_id", caseId)
+    .order("accepted_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data ?? null;
+}
+
+/**
  * Inserts a terms acceptance row.
  */
 export async function insertAcceptance(row: {

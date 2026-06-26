@@ -229,6 +229,8 @@ export const orgMock: OrgConfigVM = {
     ],
     default_timezone: "America/New_York",
     logo_url: null,
+    representative_name: "Jimy Henry Orellana Domínguez",
+    payment_zelle_email: "pagos@usalatinoprime.com",
     goals: {},
   },
 };

@@ -160,6 +160,9 @@ function reqHeadersWithNonce(request: NextRequest, nonce: string, csp: string): 
   const h = new Headers(request.headers);
   h.set("x-nonce", nonce);
   h.set("content-security-policy", csp);
+  // Expose the current pathname to Server Components (layouts can't read it
+  // otherwise) — used by the case shell to gate on T&C acceptance (DOC-51 §12).
+  h.set("x-pathname", request.nextUrl.pathname);
   return h;
 }
 

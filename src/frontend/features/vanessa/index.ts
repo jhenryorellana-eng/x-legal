@@ -33,6 +33,13 @@ export type {
   ServiceOption,
   SourceOption,
 } from "./leads/nuevo-lead-modal";
+export { CategoryManager } from "./leads/category-manager";
+export type {
+  CategoryManagerProps,
+  CategoryManagerStrings,
+  CategoryManagerActions,
+  CategoryItem,
+} from "./leads/category-manager";
 
 export { CitasView } from "./citas/citas-view";
 export type { CitasViewProps, CitasStrings, CalDay } from "./citas/citas-view";

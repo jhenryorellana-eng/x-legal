@@ -33,11 +33,19 @@ import {
   moveCard,
   createLead,
   createLeadCategory,
+  updateLeadCategory,
+  deleteLeadCategory,
+  reorderLeadCategories,
+  listLeadCategories,
   updateLead,
+  listLeads,
   toggleTaskDone,
   KanbanError,
 } from "@/backend/modules/kanban";
 import {
+  getAvailableSlots,
+  getProspectSlots,
+  getCaseRuta,
   bookAppointment,
   createProspectAppointment,
   completeAppointment,
@@ -51,6 +59,8 @@ import {
   liftRebookingBlock,
   SchedulingError,
 } from "@/backend/modules/scheduling";
+import { searchBookableCases } from "@/backend/modules/cases";
+import type { I18nText } from "@/shared/i18n";
 
 type Ok<T> = { ok: true } & T;
 type Err = { ok: false; error: { code: string } };
@@ -63,6 +73,16 @@ function mapErr(err: unknown): Err {
   // H-5: log only the message, never the raw Error object (may carry PII in stack/metadata)
   console.error("[ventas action] unexpected:", (err as Error)?.message ?? String(err));
   return { ok: false, error: { code: "internal" } };
+}
+
+async function currentLocale(): Promise<"es" | "en"> {
+  const jar = await cookies();
+  return jar.get("ulp-locale")?.value === "en" ? "en" : "es";
+}
+
+function pickI18n(text: I18nText | null | undefined, locale: "es" | "en"): string | null {
+  if (!text) return null;
+  return text[locale] ?? text.es ?? text.en ?? null;
 }
 
 // --------------------------------------------------------------------------
@@ -139,6 +159,76 @@ export async function createLeadCategoryAction(input: {
   }
 }
 
+export interface LeadCategoryItem {
+  id: string;
+  label: string;
+  color: string;
+  position: number;
+  isActive: boolean;
+}
+
+export async function listLeadCategoriesAction(): Promise<{
+  ok: boolean;
+  categories?: LeadCategoryItem[];
+  error?: { code: string };
+}> {
+  try {
+    const actor = await requireActor();
+    const cats = await listLeadCategories(actor, { includeInactive: true });
+    return {
+      ok: true,
+      categories: cats.map((c) => ({
+        id: c.id,
+        label: c.label,
+        color: c.color,
+        position: c.position,
+        isActive: c.is_active,
+      })),
+    };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+export async function updateLeadCategoryAction(input: {
+  categoryId: string;
+  label?: string;
+  color?: string;
+  isActive?: boolean;
+}): Promise<{ ok: boolean; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    await updateLeadCategory(actor, input);
+    return { ok: true };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+export async function deleteLeadCategoryAction(input: {
+  categoryId: string;
+}): Promise<{ ok: boolean; softDeleted?: boolean; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    const res = await deleteLeadCategory(actor, input.categoryId);
+    return { ok: true, softDeleted: res.softDeleted };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+export async function reorderLeadCategoriesAction(input: {
+  orderedIds: string[];
+}): Promise<{ ok: boolean; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    await reorderLeadCategories(actor, input.orderedIds);
+    return { ok: true };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
 export async function contactLeadAction(input: {
   leadId: string;
   channel: "call" | "whatsapp";
@@ -167,29 +257,173 @@ export async function toggleTaskDoneAction(input: {
 }
 
 // --------------------------------------------------------------------------
-// Scheduling
+// Scheduling — Nueva cita modal (search + on-demand context)
 // --------------------------------------------------------------------------
+
+export interface ClientCaseResult {
+  caseId: string;
+  name: string;
+  phone: string | null;
+  serviceLabel: string;
+  clientTz: string | null;
+}
+
+export async function searchCasesAction(
+  query: string,
+): Promise<{ ok: boolean; results?: ClientCaseResult[]; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    const locale = await currentLocale();
+    const results = await searchBookableCases(actor, query, locale);
+    return { ok: true, results };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+export interface CaseBookingContext {
+  slots: string[];
+  staffTimezone: string;
+  durationMinutes: number;
+  kind: "video" | "phone" | "presencial";
+  sequenceNumber: number;
+  seqLabel: string;
+  ruta: { number: number; label: string | null; kind: string; status: string }[];
+}
+
+/**
+ * On selecting a case: returns its available slots (window now..+max) plus the
+ * derived duration/modality/sequence and the display route. Everything the modal
+ * shows as read-only is computed here from the route — single source of truth.
+ */
+export async function getCaseBookingContextAction(
+  caseId: string,
+): Promise<{ ok: boolean; context?: CaseBookingContext; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    const locale = await currentLocale();
+    const from = new Date();
+    const to = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
+    const [slotsRes, ruta] = await Promise.all([
+      getAvailableSlots(actor, { caseId, windowFromUtc: from, windowToUtc: to }),
+      getCaseRuta(actor, caseId),
+    ]);
+    const current = ruta.citas.find((c) => c.sequenceNumber === slotsRes.sequenceNumber)
+      ?? ruta.citas.find((c) => c.status === "current");
+    const displayNumber = current?.number ?? slotsRes.sequenceNumber;
+    return {
+      ok: true,
+      context: {
+        slots: slotsRes.slots.map((s) => s.startUtc.toISOString()),
+        staffTimezone: slotsRes.staffTimezone,
+        durationMinutes: slotsRes.durationMinutes,
+        kind: slotsRes.kind,
+        sequenceNumber: slotsRes.sequenceNumber,
+        seqLabel: `${displayNumber}/${ruta.total}`,
+        ruta: ruta.citas.map((c) => ({
+          number: c.number,
+          label: pickI18n(c.labelI18n, locale),
+          kind: c.kind,
+          status: c.status,
+        })),
+      },
+    };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+export interface ProspectResult {
+  leadId: string;
+  name: string | null;
+  phone: string;
+  source: string;
+}
+
+export async function searchProspectsAction(
+  query: string,
+): Promise<{ ok: boolean; results?: ProspectResult[]; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    const { items } = await listLeads(actor, { limit: 200 });
+    const q = query.trim().toLowerCase();
+    const results = items
+      .filter((l) => l.status !== "won")
+      .map((l) => ({ leadId: l.id, name: l.full_name, phone: l.phone_e164, source: l.source }))
+      .filter((l) => !q || (l.name ?? "").toLowerCase().includes(q) || l.phone.includes(q))
+      .slice(0, 20);
+    return { ok: true, results };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+export interface ProspectSlotsContext {
+  slots: string[];
+  staffTimezone: string;
+  durationMinutes: number;
+  kind: "video" | "phone" | "presencial";
+}
+
+export async function getProspectSlotsAction(): Promise<{
+  ok: boolean;
+  context?: ProspectSlotsContext;
+  error?: { code: string };
+}> {
+  try {
+    const actor = await requireActor();
+    const from = new Date();
+    const to = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
+    const res = await getProspectSlots(actor, { windowFromUtc: from, windowToUtc: to });
+    return {
+      ok: true,
+      context: {
+        slots: res.slots.map((s) => s.startUtc.toISOString()),
+        staffTimezone: res.staffTimezone,
+        durationMinutes: res.durationMinutes,
+        kind: res.kind,
+      },
+    };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+export async function createProspectInlineAction(input: {
+  phone: string;
+  name: string | null;
+}): Promise<{ ok: boolean; leadId?: string; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    const res = await createLead(actor, {
+      phone: input.phone,
+      fullName: input.name ?? undefined,
+      source: "manual",
+      confirmDuplicate: true, // staff is explicitly creating a prospect to book now
+    });
+    if (res.type === "lead") return { ok: true, leadId: res.lead.id };
+    return { ok: false, error: { code: "LEAD_DUPLICATE_WARNING" } };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
 
 export async function bookAppointmentAction(input: {
   caseId: string;
-  apptType: "c1" | "c2" | "c3" | "call";
   startsAtIso: string;
-  durationMinutes: number;
-  modality: "video" | "phone";
-  reminder1d: boolean;
-  reminder1h: boolean;
   note: string;
   force: boolean;
 }): Promise<{ ok: boolean; error?: { code: string } }> {
   try {
     const actor = await requireActor();
+    // Duration/kind are intentionally omitted: bookAppointment derives them from
+    // the case route (case_overrides > phase policy > cronograma). Reminders are
+    // always on (1 day + 1 hour) per product decision.
     const res = await bookAppointment(actor, {
       caseId: input.caseId,
       startsAtUtc: new Date(input.startsAtIso),
-      durationMinutes: input.durationMinutes,
-      kind: input.modality,
-      reminder1d: input.reminder1d,
-      reminder1h: input.reminder1h,
+      reminder1d: true,
+      reminder1h: true,
       notes: input.note || null,
       force: input.force,
     });
@@ -207,18 +441,25 @@ export async function createProspectApptAction(input: {
   leadId: string;
   startsAtIso: string;
   durationMinutes: number;
-  modality: "video" | "phone";
   note: string;
+  force?: boolean;
 }): Promise<{ ok: boolean; error?: { code: string } }> {
   try {
     const actor = await requireActor();
-    await createProspectAppointment(actor, {
+    const res = await createProspectAppointment(actor, {
       leadId: input.leadId,
       startsAtUtc: new Date(input.startsAtIso),
       durationMinutes: input.durationMinutes,
-      kind: input.modality,
+      kind: "video", // org default modality for prospect/eval citas
+      reminder1d: true,
+      reminder1h: true,
       notes: input.note || null,
+      force: input.force ?? false,
     });
+    if (!input.force && res.warnings && res.warnings.length > 0) {
+      const w = res.warnings[0];
+      return { ok: false, error: { code: w.code ?? "OUTSIDE_AVAILABILITY" } };
+    }
     return { ok: true };
   } catch (err) {
     return mapErr(err);

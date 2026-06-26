@@ -202,6 +202,7 @@ export interface CreateCaseAtomicPayload {
     status: string;
     plan_snapshot: unknown;
     parties_snapshot: unknown;
+    document_snapshot: unknown;
     created_by: string | null;
     terms_version: string | null;
     signing_token: string | null;
@@ -1012,6 +1013,23 @@ export async function findServiceLite(
   return data ?? null;
 }
 
+/** Service row with the contract-content columns — for re-assembling the frozen
+ *  contract document when a case party is corrected before signing (DOC-51). */
+export async function findServiceContractRow(serviceId: string): Promise<{
+  label_i18n: unknown;
+  contract_object_i18n: unknown;
+  contract_scope_i18n: unknown;
+  contract_special_clause_i18n: unknown;
+} | null> {
+  const supabase = await createServerClient();
+  const { data } = await supabase
+    .from("services")
+    .select("label_i18n, contract_object_i18n, contract_scope_i18n, contract_special_clause_i18n")
+    .eq("id", serviceId)
+    .maybeSingle();
+  return data ?? null;
+}
+
 export type ServicePhaseRow = Tables<"service_phases">;
 
 /** Returns all phases of a service ordered by position (for "Phase x of y"). */
@@ -1160,6 +1178,91 @@ export async function listCases(filters: ListCasesFilters): Promise<CasesPage> {
     nextCursor:
       hasMore && items.length > 0 ? items[items.length - 1].created_at : null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Bookable-case search (staff "Nueva cita" modal) — batched, no N+1
+// ---------------------------------------------------------------------------
+
+export interface EnrichedBookableCaseRow {
+  caseId: string;
+  caseNumber: string;
+  serviceId: string;
+  primaryClientId: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  preferredName: string | null;
+  phone: string | null;
+  timezone: string | null;
+  serviceLabelI18n: Tables<"services">["label_i18n"] | null;
+}
+
+/**
+ * Active cases of an org enriched with client name/phone/timezone and service
+ * label, resolved in 4 batched queries (cases → users, client_profiles,
+ * services by id-IN) so the staff "Nueva cita" search never does N+1.
+ * `scanLimit` bounds the active-case scan; the service filters/limits results.
+ */
+export async function getActiveCasesEnriched(
+  orgId: string,
+  scanLimit = 300,
+): Promise<EnrichedBookableCaseRow[]> {
+  const supabase = createServiceClient();
+
+  const { data: cases, error } = await supabase
+    .from("cases")
+    .select("id, case_number, service_id, primary_client_id")
+    .eq("org_id", orgId)
+    .eq("status", "active")
+    .order("created_at", { ascending: false })
+    .limit(scanLimit);
+  if (error) throw new Error(`cases.repository: getActiveCasesEnriched — ${error.message}`);
+  if (!cases || cases.length === 0) return [];
+
+  const clientIds = [...new Set(cases.map((c) => c.primary_client_id).filter(Boolean) as string[])];
+  const serviceIds = [...new Set(cases.map((c) => c.service_id).filter(Boolean) as string[])];
+
+  const [usersRes, profilesRes, servicesRes] = await Promise.all([
+    clientIds.length
+      ? supabase.from("users").select("id, phone_e164, timezone").in("id", clientIds)
+      : Promise.resolve({ data: [] as { id: string; phone_e164: string | null; timezone: string | null }[], error: null }),
+    clientIds.length
+      ? supabase
+          .from("client_profiles")
+          .select("user_id, first_name, last_name, preferred_name")
+          .in("user_id", clientIds)
+      : Promise.resolve({ data: [] as { user_id: string; first_name: string | null; last_name: string | null; preferred_name: string | null }[], error: null }),
+    serviceIds.length
+      ? supabase.from("services").select("id, label_i18n").in("id", serviceIds)
+      : Promise.resolve({ data: [] as { id: string; label_i18n: Tables<"services">["label_i18n"] }[], error: null }),
+  ]);
+  // Fail loudly rather than degrade silently to blank names/labels (a transient
+  // sub-query error must not surface as a case with no client/service).
+  if (usersRes.error) throw new Error(`cases.repository: getActiveCasesEnriched(users) — ${usersRes.error.message}`);
+  if (profilesRes.error) throw new Error(`cases.repository: getActiveCasesEnriched(profiles) — ${profilesRes.error.message}`);
+  if (servicesRes.error) throw new Error(`cases.repository: getActiveCasesEnriched(services) — ${servicesRes.error.message}`);
+
+  const userById = new Map((usersRes.data ?? []).map((u) => [u.id, u]));
+  const profileByUser = new Map((profilesRes.data ?? []).map((p) => [p.user_id, p]));
+  const serviceById = new Map((servicesRes.data ?? []).map((s) => [s.id, s]));
+
+  return cases.map((c) => {
+    const user = c.primary_client_id ? userById.get(c.primary_client_id) : undefined;
+    const profile = c.primary_client_id ? profileByUser.get(c.primary_client_id) : undefined;
+    const service = c.service_id ? serviceById.get(c.service_id) : undefined;
+    return {
+      caseId: c.id,
+      caseNumber: c.case_number,
+      serviceId: c.service_id,
+      primaryClientId: c.primary_client_id,
+      firstName: profile?.first_name ?? null,
+      lastName: profile?.last_name ?? null,
+      preferredName: profile?.preferred_name ?? null,
+      phone: user?.phone_e164 ?? null,
+      timezone: user?.timezone ?? null,
+      serviceLabelI18n: service?.label_i18n ?? null,
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------

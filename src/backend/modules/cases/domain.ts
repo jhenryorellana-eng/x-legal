@@ -68,6 +68,41 @@ export function buildPartiesSnapshot(
   };
 }
 
+/**
+ * Keeps only the additional parties whose role is included in the contract
+ * (`service_party_roles.include_in_contract`). The principal applicant
+ * (petitioner) is ALWAYS in the contract and is added separately by
+ * buildPartiesSnapshot — it must NOT be in `additional`.
+ *
+ * Pure. The `case_parties` table still stores ALL parties (e.g. an optional
+ * spouse remains a real case party); this filter only shapes the contract
+ * snapshot that the signing page + PDF render.
+ */
+export function selectContractAdditionalParties<T extends { role: string }>(
+  additional: ReadonlyArray<T>,
+  includedRoleKeys: ReadonlySet<string>,
+): T[] {
+  return additional.filter((a) => includedRoleKeys.has(a.role));
+}
+
+/**
+ * Validates per-role cardinality: a role declared `single` may appear at most
+ * once among the case parties. Returns the FIRST role_key that violates the
+ * rule, or null when all roles are within their cardinality. Pure.
+ */
+export function findCardinalityViolation(
+  partyRoles: ReadonlyArray<string>,
+  singleRoleKeys: ReadonlySet<string>,
+): string | null {
+  const seen = new Set<string>();
+  for (const role of partyRoles) {
+    if (!singleRoleKeys.has(role)) continue;
+    if (seen.has(role)) return role;
+    seen.add(role);
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // CASE_TRANSITIONS — who can transition to what
 // ---------------------------------------------------------------------------

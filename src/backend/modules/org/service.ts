@@ -62,6 +62,34 @@ export async function getOrgConfig(actor: Actor): Promise<OrgConfig> {
   };
 }
 
+/** EL CONSULTOR data for the contract (DOC-51). */
+export interface OrgContractInfo {
+  companyName: string;
+  representativeName: string | null;
+  phone: string | null;
+  zelleEmail: string | null;
+}
+
+/**
+ * Reads the org's "EL CONSULTOR" data for assembling a contract document. No
+ * actor gate: this is non-sensitive org config consumed internally by the cases
+ * module during contract creation (the caller is already authorized). Returns
+ * safe defaults if the org is missing.
+ *
+ * @api-id (internal) contract assembly
+ */
+export async function getOrgContractInfo(orgId: string): Promise<OrgContractInfo> {
+  const org = await repo.findOrgById(orgId);
+  if (!org) return { companyName: "", representativeName: null, phone: null, zelleEmail: null };
+  const settings = parseSettings(org.settings);
+  return {
+    companyName: org.name,
+    representativeName: settings.representative_name,
+    phone: settings.contact_phones[0]?.phone ?? null,
+    zelleEmail: settings.payment_zelle_email,
+  };
+}
+
 /**
  * Updates the org name + typed settings. Validates contact phones server-side.
  *
@@ -92,6 +120,14 @@ export async function updateOrgSettings(
     contact_phones: contactPhones,
     default_timezone: dto.default_timezone ?? before.settings.default_timezone,
     logo_url: dto.logo_url !== undefined ? dto.logo_url : before.settings.logo_url,
+    representative_name:
+      dto.representative_name !== undefined
+        ? dto.representative_name
+        : before.settings.representative_name,
+    payment_zelle_email:
+      dto.payment_zelle_email !== undefined
+        ? dto.payment_zelle_email
+        : before.settings.payment_zelle_email,
     goals: dto.goals ?? before.settings.goals,
   };
 

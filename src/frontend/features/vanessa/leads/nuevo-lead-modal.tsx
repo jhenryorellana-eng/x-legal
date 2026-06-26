@@ -12,6 +12,7 @@ import * as React from "react";
 import { MSym } from "../shared/msym";
 import { useToast } from "../shared/toast-bridge";
 import { Modal } from "@/frontend/components/desktop";
+import { CATEGORY_COLOR_TOKENS, categoryColorHex } from "./category-colors";
 
 export interface CategoryOption {
   id: string;
@@ -40,6 +41,8 @@ export interface NuevoLeadStrings {
   service: string;
   category: string;
   createCat: string;
+  catNamePh: string;
+  catSave: string;
   note: string;
   notePh: string;
   cancel: string;
@@ -98,9 +101,39 @@ export function NuevoLeadModal({
   const [phoneError, setPhoneError] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
 
+  // Categories can be created inline; keep a local copy so a freshly created one
+  // appears as a chip without a full page refresh.
+  const [cats, setCats] = React.useState<CategoryOption[]>(categories);
+  const [creatingCat, setCreatingCat] = React.useState(false);
+  const [newCatLabel, setNewCatLabel] = React.useState("");
+  const [newCatColor, setNewCatColor] = React.useState<string>(CATEGORY_COLOR_TOKENS[0]);
+  const [savingCat, setSavingCat] = React.useState(false);
+
+  React.useEffect(() => {
+    setCats(categories);
+  }, [categories]);
+
   React.useEffect(() => {
     if (open) setPhone(presetPhone);
   }, [open, presetPhone]);
+
+  const submitNewCategory = async () => {
+    const label = newCatLabel.trim();
+    if (!label || savingCat) return;
+    setSavingCat(true);
+    const res = await actions.createCategory({ label, color: newCatColor });
+    setSavingCat(false);
+    if (res.ok && res.id) {
+      const created = { id: res.id, label, color: newCatColor };
+      setCats((cur) => [...cur, created]);
+      setCategoryId(res.id);
+      setCreatingCat(false);
+      setNewCatLabel("");
+      setNewCatColor(CATEGORY_COLOR_TOKENS[0]);
+    } else {
+      toast.error(strings.catSave);
+    }
+  };
 
   const submit = async () => {
     if (!phone.trim() || submitting) return;
@@ -195,30 +228,100 @@ export function NuevoLeadModal({
       <div className="vfield">
         <label>{strings.category}</label>
         <div className="cat-chips">
-          {categories.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              className={`cat-chip${categoryId === c.id ? " sel" : ""}`}
-              style={categoryId === c.id ? { background: c.color } : undefined}
-              onClick={() => setCategoryId((cur) => (cur === c.id ? null : c.id))}
-            >
-              <span className="cat-dot" style={{ background: categoryId === c.id ? "#fff" : c.color }} />
-              {c.label}
+          {cats.map((c) => {
+            const hex = categoryColorHex(c.color);
+            const sel = categoryId === c.id;
+            return (
+              <button
+                key={c.id}
+                type="button"
+                className={`cat-chip${sel ? " sel" : ""}`}
+                style={sel ? { background: hex, borderColor: hex } : undefined}
+                onClick={() => setCategoryId((cur) => (cur === c.id ? null : c.id))}
+              >
+                <span className="cat-dot" style={{ background: sel ? "#fff" : hex }} />
+                {c.label}
+              </button>
+            );
+          })}
+          {!creatingCat && (
+            <button type="button" className="cat-chip" onClick={() => setCreatingCat(true)}>
+              <MSym name="add" size={15} />
+              {strings.createCat}
             </button>
-          ))}
-          <button
-            type="button"
-            className="cat-chip"
-            onClick={async () => {
-              const res = await actions.createCategory({ label: strings.createCat, color: "#5B8CFF" });
-              if (res.ok && res.id) setCategoryId(res.id);
+          )}
+        </div>
+
+        {creatingCat && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              marginTop: 10,
+              padding: 10,
+              borderRadius: 11,
+              background: "var(--panel-2)",
+              border: "1px solid var(--line)",
+              flexWrap: "wrap",
             }}
           >
-            <MSym name="add" size={15} />
-            {strings.createCat}
-          </button>
-        </div>
+            <input
+              value={newCatLabel}
+              onChange={(e) => setNewCatLabel(e.target.value)}
+              placeholder={strings.catNamePh}
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void submitNewCategory();
+                }
+              }}
+              style={{ flex: "1 1 140px", minWidth: 120 }}
+            />
+            <div style={{ display: "flex", gap: 6 }}>
+              {CATEGORY_COLOR_TOKENS.map((tok) => {
+                const hex = categoryColorHex(tok);
+                return (
+                  <button
+                    key={tok}
+                    type="button"
+                    aria-label={tok}
+                    onClick={() => setNewCatColor(tok)}
+                    style={{
+                      width: 22,
+                      height: 22,
+                      borderRadius: "50%",
+                      background: hex,
+                      border: newCatColor === tok ? "2px solid var(--ink)" : "2px solid transparent",
+                      boxShadow: newCatColor === tok ? "0 0 0 2px #fff inset" : undefined,
+                      cursor: "pointer",
+                    }}
+                  />
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              className="vbtn vbtn-primary vbtn-sm"
+              disabled={!newCatLabel.trim() || savingCat}
+              onClick={() => void submitNewCategory()}
+            >
+              <MSym name="check" size={16} />
+              {strings.catSave}
+            </button>
+            <button
+              type="button"
+              className="vbtn vbtn-ghost vbtn-sm"
+              onClick={() => {
+                setCreatingCat(false);
+                setNewCatLabel("");
+              }}
+            >
+              {strings.cancel}
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="vfield" style={{ marginBottom: 0 }}>

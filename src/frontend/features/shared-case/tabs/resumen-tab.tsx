@@ -17,6 +17,7 @@ import { GradientBtn } from "@/frontend/components/brand/gradient-btn";
 import { GhostBtn } from "@/frontend/components/brand/ghost-btn";
 import { ProgressRing } from "@/frontend/components/brand/progress-ring";
 import { toast } from "@/frontend/components/desktop/toast";
+import { getBridge } from "@/frontend/platform-bridge";
 import type { CaseWorkspaceVM, CaseDetailActions } from "../types";
 import type { CasosStrings } from "../strings";
 import { interp } from "../strings";
@@ -37,7 +38,7 @@ export function ResumenTab({
 }) {
   const t = strings.detail;
   const router = useRouter();
-  const [busy, setBusy] = React.useState<"pay" | "resend" | "phase" | null>(null);
+  const [busy, setBusy] = React.useState<"pay" | "resend" | "phase" | "contract" | "consent" | null>(null);
   const editPartyAction = vm.isAdmin ? actions.updateCaseParty : undefined;
 
   // Manual milestone advance (admin/paralegal). Milestones are the progression
@@ -78,8 +79,29 @@ export function ResumenTab({
     else toast.error(strings.errorTitle);
   }
 
+  async function onDownloadContract() {
+    if (!actions.downloadSignedContract) return;
+    setBusy("contract");
+    const res = await actions.downloadSignedContract({ caseId: vm.header.caseId });
+    setBusy(null);
+    if (res.ok && res.url) getBridge().share.openExternal(res.url);
+    else toast.error(strings.errorTitle);
+  }
+
+  async function onDownloadConsent() {
+    if (!actions.getTermsAcceptance) return;
+    setBusy("consent");
+    const res = await actions.getTermsAcceptance({ caseId: vm.header.caseId });
+    setBusy(null);
+    if (res.ok && res.url) getBridge().share.openExternal(res.url);
+    else if (res.ok && !res.accepted) toast.error(t.consentPending);
+    else toast.error(strings.errorTitle);
+  }
+
   const downAmount = vm.downpaymentAmountCents ?? 0;
   const canResend = vm.header.contractStatus === "sent" && !!vm.header.contractId;
+  const canDownloadContract =
+    vm.header.contractStatus === "signed" && !!actions.downloadSignedContract;
   const docsPct = vm.docsTotal > 0 ? Math.round((vm.docsApproved / vm.docsTotal) * 100) : 0;
   const formsPct = vm.formsTotal > 0 ? Math.round((vm.formsDone / vm.formsTotal) * 100) : 0;
 
@@ -205,6 +227,22 @@ export function ResumenTab({
             <div style={{ marginTop: 12 }}>
               <GhostBtn size="md" full icon="send" disabled={busy === "resend"} onClick={onResend}>
                 {t.resendLink}
+              </GhostBtn>
+            </div>
+          )}
+
+          {canDownloadContract && (
+            <div style={{ marginTop: 12 }}>
+              <GhostBtn size="md" full icon="doc" disabled={busy === "contract"} onClick={onDownloadContract}>
+                {t.downloadContract}
+              </GhostBtn>
+            </div>
+          )}
+
+          {actions.getTermsAcceptance && (
+            <div style={{ marginTop: 12 }}>
+              <GhostBtn size="md" full icon="doc" disabled={busy === "consent"} onClick={onDownloadConsent}>
+                {t.downloadConsent}
               </GhostBtn>
             </div>
           )}

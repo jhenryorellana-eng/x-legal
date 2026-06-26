@@ -2,9 +2,9 @@
 
 /**
  * Citas client wrapper — provides Lex prefs and adapts the page-level scheduling
- * actions to the CitasView shape (complete/cancel/no-show return { ok }; book /
- * prospect feed the Nueva cita modal). Reschedule is a placeholder navigation in
- * F3 (opens the modal pre-filled is the next iteration).
+ * actions to the CitasView shape. The Nueva cita modal is now search-driven and
+ * on-demand: it receives the search/context/booking actions and loads everything
+ * (clients, prospects, slots, route) lazily — no precomputed arrays.
  */
 
 import * as React from "react";
@@ -28,8 +28,12 @@ export interface CitasClientProps {
   locale: "es" | "en";
   strings: CitasStrings;
   nuevaCitaStrings: NuevaCitaStrings;
-  prospectDuration?: number;
   actions: {
+    searchCases: NuevaCitaActions["searchCases"];
+    getCaseContext: NuevaCitaActions["getCaseContext"];
+    searchProspects: NuevaCitaActions["searchProspects"];
+    getProspectSlots: NuevaCitaActions["getProspectSlots"];
+    createProspectInline: NuevaCitaActions["createProspectInline"];
     book: NuevaCitaActions["bookAppointment"];
     prospect: NuevaCitaActions["createProspectAppointment"];
     complete: (input: {
@@ -52,7 +56,6 @@ export function CitasClient({
   locale,
   strings,
   nuevaCitaStrings,
-  prospectDuration,
   actions,
 }: CitasClientProps) {
   return (
@@ -68,18 +71,16 @@ export function CitasClient({
         newApptModal={{
           staffTz,
           locale,
-          slots: [],
-          daysOptions: [],
-          clientResults: [],
-          prospectResults: [],
-          apptTypeOptions: [
-            { value: "c1", label: strings.legend.c1 + " · Inducción" },
-            { value: "c2", label: strings.legend.c2 + " · Verificación" },
-            { value: "c3", label: strings.legend.c3 + " · Validación" },
-          ],
-          prospectDuration,
           strings: nuevaCitaStrings,
-          actions: { bookAppointment: actions.book, createProspectAppointment: actions.prospect },
+          actions: {
+            searchCases: actions.searchCases,
+            getCaseContext: actions.getCaseContext,
+            searchProspects: actions.searchProspects,
+            getProspectSlots: actions.getProspectSlots,
+            createProspectInline: actions.createProspectInline,
+            bookAppointment: actions.book,
+            createProspectAppointment: actions.prospect,
+          },
         }}
         onComplete={({ id, outcome, notes }) =>
           actions.complete({ appointmentId: id, objectivesOutcome: outcome, notes })

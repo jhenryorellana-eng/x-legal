@@ -10,6 +10,7 @@
 // Use cases
 export {
   getAvailableSlots,
+  getProspectSlots,
   bookAppointment,
   cancelAppointment,
   rescheduleAppointment,
@@ -41,6 +42,8 @@ export {
 export type {
   GetSlotsInput,
   GetSlotsResult,
+  GetProspectSlotsInput,
+  GetProspectSlotsResult,
   BookAppointmentInput,
   BookAppointmentResult,
   RescheduleInput,

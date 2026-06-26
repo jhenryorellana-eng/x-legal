@@ -1811,6 +1811,7 @@ export type Database = {
           case_id: string | null
           created_at: string
           created_by: string | null
+          document_snapshot: Json | null
           id: string
           lead_id: string | null
           org_id: string
@@ -1832,6 +1833,7 @@ export type Database = {
           case_id?: string | null
           created_at?: string
           created_by?: string | null
+          document_snapshot?: Json | null
           id?: string
           lead_id?: string | null
           org_id: string
@@ -1853,6 +1855,7 @@ export type Database = {
           case_id?: string | null
           created_at?: string
           created_by?: string | null
+          document_snapshot?: Json | null
           id?: string
           lead_id?: string | null
           org_id?: string
@@ -3686,6 +3689,7 @@ export type Database = {
           cardinality: string
           created_at: string
           id: string
+          include_in_contract: boolean
           is_required: boolean
           label_i18n: Json
           position: number
@@ -3697,6 +3701,7 @@ export type Database = {
           cardinality?: string
           created_at?: string
           id?: string
+          include_in_contract?: boolean
           is_required?: boolean
           label_i18n: Json
           position?: number
@@ -3708,6 +3713,7 @@ export type Database = {
           cardinality?: string
           created_at?: string
           id?: string
+          include_in_contract?: boolean
           is_required?: boolean
           label_i18n?: Json
           position?: number
@@ -3878,6 +3884,9 @@ export type Database = {
           benefits_i18n: Json | null
           category: string
           color: string
+          contract_object_i18n: Json | null
+          contract_scope_i18n: Json | null
+          contract_special_clause_i18n: Json | null
           created_at: string
           description_i18n: Json | null
           entry_parent_service_id: string | null
@@ -3898,6 +3907,9 @@ export type Database = {
           benefits_i18n?: Json | null
           category: string
           color?: string
+          contract_object_i18n?: Json | null
+          contract_scope_i18n?: Json | null
+          contract_special_clause_i18n?: Json | null
           created_at?: string
           description_i18n?: Json | null
           entry_parent_service_id?: string | null
@@ -3918,6 +3930,9 @@ export type Database = {
           benefits_i18n?: Json | null
           category?: string
           color?: string
+          contract_object_i18n?: Json | null
+          contract_scope_i18n?: Json | null
+          contract_special_clause_i18n?: Json | null
           created_at?: string
           description_i18n?: Json | null
           entry_parent_service_id?: string | null

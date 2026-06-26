@@ -16,6 +16,8 @@ export interface OrgConfigVM {
     contact_phones: { label: string; phone: string }[];
     default_timezone: string;
     logo_url: string | null;
+    representative_name: string | null;
+    payment_zelle_email: string | null;
     goals: Record<string, unknown>;
   };
 }
@@ -46,6 +48,8 @@ export interface ConfigViewProps {
       name?: string;
       contact_phones?: { label: string; phone: string }[];
       default_timezone?: string;
+      representative_name?: string | null;
+      payment_zelle_email?: string | null;
     }) => Promise<{ success: boolean; error?: { code: string; message: string } }>;
     setCoverActive: (
       id: string,
@@ -119,6 +123,8 @@ function GeneralTab({
     org.settings.contact_phones.length ? org.settings.contact_phones : [{ label: "", phone: "" }],
   );
   const [tz, setTz] = React.useState(org.settings.default_timezone);
+  const [representative, setRepresentative] = React.useState(org.settings.representative_name ?? "");
+  const [zelle, setZelle] = React.useState(org.settings.payment_zelle_email ?? "");
   const [saving, setSaving] = React.useState(false);
   const [savedAt, setSavedAt] = React.useState<boolean>(false);
 
@@ -128,6 +134,8 @@ function GeneralTab({
       name,
       contact_phones: phones.filter((p) => p.phone.trim()),
       default_timezone: tz,
+      representative_name: representative.trim() || null,
+      payment_zelle_email: zelle.trim() || null,
     });
     setSaving(false);
     if (r.success) {
@@ -209,6 +217,24 @@ function GeneralTab({
               </option>
             ))}
           </SelectInput>
+        </div>
+
+        <div>
+          <FieldLabel>{t.representativeName}</FieldLabel>
+          <TextInput
+            value={representative}
+            placeholder={t.representativePlaceholder}
+            onChange={(e) => setRepresentative(e.target.value)}
+          />
+        </div>
+
+        <div>
+          <FieldLabel>{t.paymentZelle}</FieldLabel>
+          <TextInput
+            value={zelle}
+            placeholder={t.paymentZellePlaceholder}
+            onChange={(e) => setZelle(e.target.value)}
+          />
         </div>
 
         <p

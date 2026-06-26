@@ -17,6 +17,7 @@ import { limitSigningTokenIp } from "@/backend/platform/ratelimit";
 import {
   validateUploadedObject,
   createSignedUploadUrl,
+  createSignedDownloadUrl,
 } from "@/backend/platform/storage";
 import { writeAudit, appendCaseTimeline } from "@/backend/modules/audit";
 import { jpegDataUrlToPdf } from "./signature-pdf";
@@ -35,6 +36,7 @@ import {
   getActiveTermsVersion,
   findAcceptance,
   insertAcceptance,
+  latestAcceptanceForCaseService,
   type ContractRow,
   type ContractTermsAcceptanceRow,
 } from "./repository";
@@ -50,7 +52,8 @@ export class ContractError extends Error {
       | "CONTRACT_TOKEN_INVALID"
       | "CONTRACT_INVALID_TRANSITION"
       | "CONTRACT_ALREADY_SIGNED"
-      | "TERMS_VERSION_INACTIVE",
+      | "TERMS_VERSION_INACTIVE"
+      | "SIGNATURE_UPLOAD_FAILED",
     public readonly details?: Record<string, unknown>,
   ) {
     super(code);
@@ -163,6 +166,32 @@ export async function resyncPartiesSnapshot(
 
   await updateContract(contract.id, {
     parties_snapshot: partiesSnapshot as unknown as import("@/shared/database.types").Json,
+  });
+  return { resynced: true };
+}
+
+/**
+ * Re-writes a contract's frozen `document_snapshot` (the bilingual assembled
+ * document the signing page renders) from a freshly assembled snapshot built by
+ * the cases module. No-op when there is no contract or it is already `signed`
+ * (immutable). Keeps the rendered contract in sync with pre-signature party edits.
+ *
+ * @api-id (internal) called by cases.updateCaseParty
+ */
+export async function resyncDocumentSnapshot(
+  actor: Actor,
+  caseId: string,
+  documentSnapshot: Record<string, unknown>,
+): Promise<{ resynced: boolean }> {
+  can(actor, "cases", "edit");
+  await requireCaseAccess(actor, caseId);
+
+  const contract = await findContractByCaseId(caseId);
+  if (!contract) return { resynced: false };
+  if (contract.status === "signed") return { resynced: false };
+
+  await updateContract(contract.id, {
+    document_snapshot: documentSnapshot as unknown as import("@/shared/database.types").Json,
   });
   return { resynced: true };
 }
@@ -307,6 +336,8 @@ export interface ContractSigningView {
   contractId: string;
   planSnapshot: Record<string, unknown>;
   partiesSnapshot: Record<string, unknown>;
+  /** Frozen bilingual assembled document ({es,en}); null for legacy contracts. */
+  documentSnapshot: Record<string, unknown> | null;
   termsVersion: string | null;
 }
 
@@ -332,6 +363,7 @@ export async function getContractBySigningToken(
     contractId: contract.id,
     planSnapshot: contract.plan_snapshot as Record<string, unknown>,
     partiesSnapshot: contract.parties_snapshot as Record<string, unknown>,
+    documentSnapshot: (contract.document_snapshot ?? null) as Record<string, unknown> | null,
     termsVersion: contract.terms_version,
   };
 }
@@ -358,25 +390,34 @@ export type SignContractInput = z.infer<typeof SignContractSchema>;
 export async function signContract(
   token: string,
   input: SignContractInput,
+  opts: { skipRateLimit?: boolean; skipValidation?: boolean } = {},
 ): Promise<{ caseId: string | null }> {
-  await limitSigningTokenIp(input.ip ?? "unknown");
+  // Skip when called as a subroutine of signContractFromImage, which already
+  // spent a rate-limit token on this request (avoid double-counting).
+  if (!opts.skipRateLimit) await limitSigningTokenIp(input.ip ?? "unknown");
 
   const parsed = SignContractSchema.parse(input);
 
   const contract = await findBySigningToken(token);
   if (!contract) throw new ContractError("CONTRACT_TOKEN_INVALID");
 
-  // Validate the uploaded signature image
-  const validated = await validateUploadedObject(
-    "contracts",
-    parsed.signatureUploadRef,
-    "contracts",
-  );
-  if (!validated.ok) {
-    throw new ContractError("CONTRACT_TOKEN_INVALID");
+  // Validate the uploaded signature artifact (skipped when the caller already
+  // generated + uploaded it server-side — signContractFromImage).
+  if (!opts.skipValidation) {
+    const validated = await validateUploadedObject(
+      "contracts",
+      parsed.signatureUploadRef,
+      "contracts",
+    );
+    if (!validated.ok) {
+      throw new ContractError("SIGNATURE_UPLOAD_FAILED");
+    }
   }
 
-  // Single-use: set signing_token=null in the same update as status=signed
+  // Single-use: set signing_token=null in the same update as status=signed.
+  // signature_image_path is the raw signature image; the full assembled contract
+  // PDF (signed_pdf_path) is rendered LAZILY on the first admin download so the
+  // client's "Firmar" action stays fast (no synchronous mupdf render here).
   await updateContract(contract.id, {
     status: "signed",
     signed_at: new Date().toISOString(),
@@ -412,41 +453,63 @@ export async function signContract(
 /**
  * Signs a contract from a signature image data URL (the public signing page).
  *
- * The `contracts` bucket is PDF-only and signContract validates PDF magic
- * bytes; the signature is wrapped into a minimal one-page PDF here (the module
- * owns platform/storage). The signature image is the legal artifact stored at
- * `contracts/signatures/{token}-{ts}.pdf`.
+ * FAST PATH: stores the signature IMAGE (JPEG/PNG) in the contracts bucket and
+ * marks the contract signed. The full assembled contract PDF (with the signature
+ * embedded) is rendered LAZILY on the first admin download — so the client's
+ * "Firmar" action never waits on the (heavy) mupdf render.
  *
- * PUBLIC ENDPOINT — no Actor. Rate limited via limitSigningTokenIp.
+ * PUBLIC ENDPOINT — no Actor. Rate limited via limitSigningTokenIp (once here;
+ * signContract is told to skip its own limit).
  *
  * @api-id API-CTR-06 (image variant)
  */
 export async function signContractFromImage(
   token: string,
-  /** JPEG data URL — the client re-encodes the SignaturePad PNG to JPEG. */
+  /** Image data URL — the client re-encodes the SignaturePad PNG to JPEG. */
   signatureJpegDataUrl: string,
   ip: string,
 ): Promise<{ caseId: string | null }> {
   await limitSigningTokenIp(ip);
 
-  // Wrap the JPEG into a minimal PDF and upload it to the contracts bucket.
-  const pdfBytes = jpegDataUrlToPdf(signatureJpegDataUrl);
-  const path = `signatures/${token}-${Date.now()}.pdf`;
-  const { signedUrl, path: uploadRef } = await createSignedUploadUrl(
-    "contracts",
-    path,
+  const contract = await findBySigningToken(token);
+  if (!contract) throw new ContractError("CONTRACT_TOKEN_INVALID");
+
+  // Store the raw signature IMAGE (contracts bucket allows image/jpeg|png) so it
+  // can be embedded in the contract PDF on demand. Trusted server-side upload →
+  // signContract skips re-validation.
+  const { bytes, mime, ext } = decodeImageDataUrl(signatureJpegDataUrl);
+  const signatureUploadRef = await uploadContractObject(
+    `signatures/${token}-${Date.now()}.${ext}`,
+    bytes,
+    mime,
   );
 
+  return signContract(token, { signatureUploadRef, ip }, { skipRateLimit: true, skipValidation: true });
+}
+
+/** Decodes a base64 image data URL into bytes + mime + file extension. */
+function decodeImageDataUrl(dataUrl: string): { bytes: Buffer; mime: string; ext: string } {
+  const m = /^data:(image\/(png|jpeg|jpg));base64,(.*)$/i.exec(dataUrl);
+  const mime = m ? m[1].toLowerCase() : "image/jpeg";
+  const b64 = m ? m[3] : dataUrl.slice(dataUrl.indexOf(",") + 1);
+  const ext = mime.includes("png") ? "png" : "jpg";
+  return { bytes: Buffer.from(b64, "base64"), mime, ext };
+}
+
+/** Uploads bytes to the contracts bucket at `path` with the given content-type. */
+async function uploadContractObject(
+  path: string,
+  bytes: Uint8Array,
+  contentType: string,
+): Promise<string> {
+  const { signedUrl, path: uploadRef } = await createSignedUploadUrl("contracts", path);
   const putRes = await fetch(signedUrl, {
     method: "PUT",
-    headers: { "content-type": "application/pdf" },
-    body: pdfBytes as unknown as BodyInit,
+    headers: { "content-type": contentType },
+    body: bytes as unknown as BodyInit,
   });
-  if (!putRes.ok) {
-    throw new ContractError("CONTRACT_TOKEN_INVALID");
-  }
-
-  return signContract(token, { signatureUploadRef: uploadRef, ip });
+  if (!putRes.ok) throw new ContractError("SIGNATURE_UPLOAD_FAILED");
+  return uploadRef;
 }
 
 // ---------------------------------------------------------------------------
@@ -518,7 +581,7 @@ export async function acceptTermsInApp(
     "contracts",
   );
   if (!validated.ok) {
-    throw new ContractError("TERMS_VERSION_INACTIVE"); // repurpose for signature missing
+    throw new ContractError("SIGNATURE_UPLOAD_FAILED");
   }
 
   const acceptance = await insertAcceptance({
@@ -572,7 +635,7 @@ export async function acceptTermsFromImage(
     body: pdfBytes as unknown as BodyInit,
   });
   if (!putRes.ok) {
-    throw new ContractError("TERMS_VERSION_INACTIVE"); // repurpose for upload failure
+    throw new ContractError("SIGNATURE_UPLOAD_FAILED");
   }
 
   return acceptTermsInApp(actor, {
@@ -650,6 +713,95 @@ export async function getContractForCase(
 ): Promise<ContractRow | null> {
   await requireCaseAccess(actor, caseId);
   return findContractByCaseId(caseId);
+}
+
+/**
+ * Returns a short-lived signed download URL for a case's SIGNED contract PDF
+ * (the full assembled document with the embedded signature). Null when unsigned.
+ *
+ * The PDF is rendered LAZILY: on the first call after signing it assembles the
+ * frozen document_snapshot + the stored signature image into a PDF (mupdf),
+ * caches it at signed_pdf_path, and serves it; later calls return the cached one.
+ * This keeps the client's signing fast — the heavy render happens here, once.
+ *
+ * @api-id API-CTR-10
+ */
+export async function getSignedContractDownloadUrl(
+  actor: Actor,
+  caseId: string,
+): Promise<string | null> {
+  await requireCaseAccess(actor, caseId);
+  const row = await findContractByCaseId(caseId);
+  if (!row || row.status !== "signed") return null;
+
+  // Cached on a previous download.
+  if (row.signed_pdf_path) return createSignedDownloadUrl("contracts", row.signed_pdf_path);
+
+  // Lazy render from the frozen bilingual document + the signature image.
+  const docSnap = row.document_snapshot as
+    | { es?: import("./contract-document").ContractDocument; en?: import("./contract-document").ContractDocument }
+    | null;
+  const doc = docSnap?.es ?? docSnap?.en ?? null;
+  if (!doc) return null;
+
+  let signatureImageDataUrl: string | undefined;
+  if (row.signature_image_path) {
+    try {
+      const sigUrl = await createSignedDownloadUrl("contracts", row.signature_image_path);
+      const resp = await fetch(sigUrl);
+      if (resp.ok) {
+        const ct = resp.headers.get("content-type") ?? "image/jpeg";
+        // Only embed actual images (signatures stored as image/*); skip legacy PDFs.
+        if (ct.startsWith("image/")) {
+          const buf = Buffer.from(await resp.arrayBuffer());
+          signatureImageDataUrl = `data:${ct};base64,${buf.toString("base64")}`;
+        }
+      }
+    } catch {
+      // Render without the embedded image if the signature fetch fails.
+    }
+  }
+
+  const { renderContractPdf } = await import("./contract-pdf");
+  const pdf = await renderContractPdf(doc, {
+    signatureImageDataUrl,
+    signedOnLabel: row.signed_at ? `Firmado el ${row.signed_at.slice(0, 10)}` : null,
+  });
+  const uploadRef = await uploadContractObject(`signed/${row.id}.pdf`, pdf, "application/pdf");
+  await updateContract(row.id, { signed_pdf_path: uploadRef });
+  return createSignedDownloadUrl("contracts", uploadRef);
+}
+
+/** The client's in-app T&C acceptance for a case (DOC-51 §12), for the admin. */
+export interface TermsAcceptanceView {
+  acceptedAt: string;
+  termsVersion: string;
+  /** Short-lived signed URL for the acceptance signature (PDF), or null. */
+  signatureDownloadUrl: string | null;
+}
+
+/**
+ * Returns the latest in-app Terms acceptance for a case (signature + date),
+ * with a short-lived download URL for the signed acceptance. Null when the
+ * client has not accepted yet. Authorizes via case access (staff allowed).
+ *
+ * @api-id API-CTR-11
+ */
+export async function getTermsAcceptanceForCase(
+  actor: Actor,
+  caseId: string,
+): Promise<TermsAcceptanceView | null> {
+  await requireCaseAccess(actor, caseId);
+  const row = await latestAcceptanceForCaseService(caseId);
+  if (!row) return null;
+  const signatureDownloadUrl = row.signature_image_path
+    ? await createSignedDownloadUrl("contracts", row.signature_image_path)
+    : null;
+  return {
+    acceptedAt: row.accepted_at,
+    termsVersion: row.terms_version,
+    signatureDownloadUrl,
+  };
 }
 
 /** Onboarding-relevant contract fields for the client dashboard card. */
