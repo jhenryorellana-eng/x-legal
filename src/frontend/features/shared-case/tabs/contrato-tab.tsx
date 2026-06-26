@@ -13,6 +13,7 @@ import { Icon } from "@/frontend/components/brand/icon";
 import { GradientBtn } from "@/frontend/components/brand/gradient-btn";
 import { GhostBtn } from "@/frontend/components/brand/ghost-btn";
 import { toast } from "@/frontend/components/desktop/toast";
+import { getBridge } from "@/frontend/platform-bridge";
 import type { CaseWorkspaceVM, CaseDetailActions } from "../types";
 import type { CasosStrings } from "../strings";
 import { interp } from "../strings";
@@ -32,7 +33,8 @@ export function ContratoTab({
   const t = strings.detail;
   const status = vm.header.contractStatus;
   const contractId = vm.header.contractId;
-  const [busy, setBusy] = React.useState<"send" | "resend" | null>(null);
+  const caseId = vm.header.caseId;
+  const [busy, setBusy] = React.useState<"send" | "resend" | "contract" | "consent" | null>(null);
   const [sent, setSent] = React.useState(status);
 
   async function onSend() {
@@ -52,6 +54,25 @@ export function ContratoTab({
     const res = await actions.resendSigningLink({ contractId });
     setBusy(null);
     if (res.ok) toast.success(t.linkResent);
+    else toast.error(strings.errorTitle);
+  }
+
+  async function onDownloadContract() {
+    if (!actions.downloadSignedContract) return;
+    setBusy("contract");
+    const res = await actions.downloadSignedContract({ caseId });
+    setBusy(null);
+    if (res.ok && res.url) getBridge().share.openExternal(res.url);
+    else toast.error(strings.errorTitle);
+  }
+
+  async function onDownloadConsent() {
+    if (!actions.getTermsAcceptance) return;
+    setBusy("consent");
+    const res = await actions.getTermsAcceptance({ caseId });
+    setBusy(null);
+    if (res.ok && res.url) getBridge().share.openExternal(res.url);
+    else if (res.ok && !res.accepted) toast.error(t.consentPending);
     else toast.error(strings.errorTitle);
   }
 
@@ -134,10 +155,22 @@ export function ContratoTab({
         <SectionLabel icon="bolt">{t.contractActions}</SectionLabel>
         <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 12 }}>
           {eff === "signed" ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 10, background: "var(--green-soft)", borderRadius: 12, padding: "12px 14px" }}>
-              <Icon name="check" size={18} color="var(--green)" />
-              <span style={{ fontSize: 13.5, fontWeight: 700, color: "var(--green)" }}>{t.contractSigned}</span>
-            </div>
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, background: "var(--green-soft)", borderRadius: 12, padding: "12px 14px" }}>
+                <Icon name="check" size={18} color="var(--green)" />
+                <span style={{ fontSize: 13.5, fontWeight: 700, color: "var(--green)" }}>{t.contractSigned}</span>
+              </div>
+              {actions.downloadSignedContract && (
+                <GradientBtn size="md" full icon="doc" disabled={busy === "contract"} onClick={onDownloadContract}>
+                  {t.downloadContract}
+                </GradientBtn>
+              )}
+              {actions.getTermsAcceptance && (
+                <GhostBtn size="md" full icon="doc" disabled={busy === "consent"} onClick={onDownloadConsent}>
+                  {t.downloadConsent}
+                </GhostBtn>
+              )}
+            </>
           ) : eff === "sent" ? (
             <>
               <div style={{ display: "flex", alignItems: "center", gap: 10, background: "var(--gold-soft)", borderRadius: 12, padding: "12px 14px" }}>
