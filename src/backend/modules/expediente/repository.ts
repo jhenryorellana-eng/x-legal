@@ -8,6 +8,7 @@
  */
 
 import { createServiceClient } from "@/backend/platform/supabase";
+import { deleteObject } from "@/backend/platform/storage";
 import type { Tables, TablesInsert, TablesUpdate } from "@/shared/database.types";
 
 // ---------------------------------------------------------------------------
@@ -465,9 +466,17 @@ export async function countCoverItemRefs(coverRenderId: string): Promise<number>
   return count ?? 0;
 }
 
-/** Deletes a cover render (only call when no expediente_item references it). */
+/** Deletes a cover render (only call when no expediente_item references it).
+ *  Also removes the rendered cover PDF from the 'generated' bucket so we don't
+ *  leave orphaned files behind (best-effort — never blocks the row delete). */
 export async function deleteCoverRender(id: string): Promise<void> {
   const supabase = createServiceClient();
+  const { data: row } = await supabase
+    .from("cover_renders")
+    .select("pdf_path")
+    .eq("id", id)
+    .maybeSingle();
+  if (row?.pdf_path) await deleteObject("generated", row.pdf_path);
   const { error } = await supabase.from("cover_renders").delete().eq("id", id);
   if (error) throw new Error(`expediente.repository: deleteCoverRender — ${error.message}`);
 }

@@ -165,7 +165,11 @@ export function CaseFormsManager({
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 {reviewBasePath && it.kind !== "ai_letter" && (
                   <a
-                    href={`${reviewBasePath}/${it.formDefinitionId}${it.partyId ? `?party=${it.partyId}` : ""}`}
+                    href={`${reviewBasePath}/${it.formDefinitionId}${
+                      it.partyId
+                        ? `?party=${it.partyId}${it.partyName ? `&name=${encodeURIComponent(it.partyName)}` : ""}`
+                        : ""
+                    }`}
                     style={{ fontSize: 13, fontWeight: 700, color: "var(--accent)", textDecoration: "none", border: "1px solid var(--line)", borderRadius: 999, padding: "6px 14px" }}
                   >
                     Revisar ⟷

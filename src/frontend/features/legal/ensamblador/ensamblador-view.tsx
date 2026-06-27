@@ -530,6 +530,7 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
 
   // ---- Remove item ----
   async function handleRemoveItem(itemId: string) {
+    if (!window.confirm(t("itemRemoveConfirm"))) return;
     setBusyItem(itemId + ":remove");
     const r = await actions.removeItem({ itemId });
     setBusyItem(null);

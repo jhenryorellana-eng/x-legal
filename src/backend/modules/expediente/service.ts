@@ -539,10 +539,11 @@ export async function autoAssembleWithAi(
       coversCreated += 1;
       await addItemDirect(section.refType, section.refId, section.title);
     } else {
-      const subtitle =
-        section.kind === "party" && validPartyIds.has(section.partyId)
-          ? partyName.get(section.partyId)
-          : undefined;
+      // Only trust a partyId the AI returned if it belongs to this case; otherwise
+      // treat the section as a generic group (null party, no subtitle) so we never
+      // persist a hallucinated party reference in the cover render metadata.
+      const validParty = section.kind === "party" && validPartyIds.has(section.partyId);
+      const subtitle = validParty ? partyName.get(section.partyId) : undefined;
       const cover = await renderInsertCover(
         caseId,
         ctx,
@@ -550,7 +551,7 @@ export async function autoAssembleWithAi(
         {
           title: section.title,
           subtitle,
-          partyId: section.kind === "party" ? section.partyId : null,
+          partyId: validParty ? section.partyId : null,
           sectionKind: section.kind,
           aiGenerated: true,
         },

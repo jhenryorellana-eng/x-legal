@@ -2295,9 +2295,9 @@ export async function proposeExpedienteAssembly(
       "",
       "Return JSON with EXACTLY this shape (no code fences):",
       '{ "sections": [',
-      '  { "kind": "document", "title": "Formulario I-589", "refType": "automated_form", "refId": "<id>" },',
-      '  { "kind": "party", "title": "Documentos del menor: Juan Pérez", "partyId": "<id>", "documentIds": ["<docId>", "<docId>"] },',
-      '  { "kind": "other", "title": "Documentos de testigos", "documentIds": ["<docId>"] }',
+      '  { "kind": "document", "title": "Form I-589", "refType": "automated_form", "refId": "<id>" },',
+      '  { "kind": "party", "title": "Documents of the Minor: Juan Pérez", "partyId": "<id>", "documentIds": ["<docId>", "<docId>"] },',
+      '  { "kind": "other", "title": "Witness Documents", "documentIds": ["<docId>"] }',
       "] }",
     ];
     if (feedback) {

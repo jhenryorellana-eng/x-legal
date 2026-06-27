@@ -103,8 +103,11 @@ export function FormReviewScreen({
   const [responseId, setResponseId] = React.useState<string | null>(form.responseId);
   const [rightTab, setRightTab] = React.useState<"answers" | "docs">("answers");
 
-  // LEFT — official filled PDF (blob URL). Reloaded after approve/generate.
+  // LEFT — official filled PDF. The iframe needs a blob URL (CSP frame-src), but
+  // "open externally" must use the remote signed URL: a blob: URL can't be opened
+  // outside this document (and would fail in a Capacitor/native shell).
   const [officialUrl, setOfficialUrl] = React.useState<string | null>(null);
+  const [officialRemoteUrl, setOfficialRemoteUrl] = React.useState<string | null>(null);
   const [officialLoading, setOfficialLoading] = React.useState(false);
   const [officialBump, setOfficialBump] = React.useState(0);
 
@@ -130,10 +133,12 @@ export function FormReviewScreen({
       const r = await actions.getFilledPdfUrl({ responseId });
       if (!alive) return;
       if (r.ok && r.url) {
+        setOfficialRemoteUrl(r.url);
         obj = await toBlobUrl(r.url);
         if (alive) setOfficialUrl(obj);
       } else {
         setOfficialUrl(null);
+        setOfficialRemoteUrl(null);
       }
     })().finally(() => {
       if (alive) setOfficialLoading(false);
@@ -327,8 +332,8 @@ export function FormReviewScreen({
           <GradientBtn size="md" full={false} disabled={approving || !responseId} onClick={handleApprove}>
             {approving ? strings.approving : strings.approveBtn}
           </GradientBtn>
-          {officialUrl && (
-            <GhostBtn size="md" full={false} onClick={() => getBridge().share.openExternal(officialUrl)}>
+          {officialUrl && officialRemoteUrl && (
+            <GhostBtn size="md" full={false} onClick={() => getBridge().share.openExternal(officialRemoteUrl)}>
               {strings.viewPdf}
             </GhostBtn>
           )}
