@@ -15,6 +15,7 @@ import { can, requireCaseAccess, AuthzError } from "@/backend/platform/authz";
 import type { Actor } from "@/backend/platform/authz";
 import { appEvents } from "@/backend/platform/events";
 import { createServiceClient } from "@/backend/platform/supabase";
+import { toDownloadFilename } from "@/shared/strings";
 import {
   createSignedUploadUrl,
   createSignedDownloadUrl,
@@ -68,6 +69,7 @@ import {
   findDocumentById,
   insertCaseDocument,
   updateDocument,
+  deleteCaseDocumentRow,
   findCurrentChainHead,
   getTimelinePage,
   listCases,
@@ -162,6 +164,10 @@ export class CaseError extends Error {
       | "DOC_UPLOAD_INVALID"
       | "DOC_FORMAT_NOT_ALLOWED"
       | "DOC_NOT_LEGIBLE"
+      | "DOC_NAME_REQUIRED"
+      | "DOC_ALREADY_APPROVED"
+      | "DOC_LOCKED"
+      | "DOC_REVIEWED"
       | "FORM_NOT_FOUND"
       | "FORM_VERSION_NOT_PUBLISHED"
       | "FORM_VERSION_MISMATCH"
@@ -1264,6 +1270,13 @@ const ConfirmUploadSchema = z.object({
   requirementId: zUuid.nullable().optional(),
   partyId: zUuid.nullable().optional(),
   originalFilename: z.string().min(1),
+  /**
+   * Client-chosen name for the document. Used (and required) only for
+   * `allow_multiple` requirements and free uploads; for single required slots
+   * the server derives the name from the requirement label + party and ignores
+   * this value.
+   */
+  displayName: z.string().max(200).nullable().optional(),
 });
 
 export type ConfirmUploadInput = z.infer<typeof ConfirmUploadSchema>;
@@ -1311,20 +1324,37 @@ export async function confirmDocumentUpload(
   };
   const mimeType = extToMime[ext] ?? "application/octet-stream";
 
-  // Per-document accepted format (admin-configured, pdf | png). Only catalog
-  // requirements constrain the format; free staff uploads do not.
+  // Resolve the requirement ONCE: drives the format check, the semantic name,
+  // the multiple-vs-single replace logic, and the ai_extract enqueue below.
+  let requirement:
+    | {
+        accepted_format: "pdf" | "png";
+        ai_extract: boolean;
+        allow_multiple: boolean;
+        label_i18n: unknown;
+      }
+    | null = null;
   if (parsed.requirementId) {
     const sb = createServiceClient();
     const { data: rdt } = await sb
       .from("required_document_types")
-      .select("accepted_format")
+      .select("accepted_format, ai_extract, allow_multiple, label_i18n")
       .eq("id", parsed.requirementId)
       .maybeSingle();
-    const acceptedFormat = (rdt?.accepted_format as "pdf" | "png" | null) ?? "pdf";
-    const allowedExt = acceptedFormat === "png" ? ["png"] : ["pdf"];
+    requirement = {
+      accepted_format: (rdt?.accepted_format as "pdf" | "png" | null) ?? "pdf",
+      ai_extract: rdt?.ai_extract ?? false,
+      allow_multiple: rdt?.allow_multiple ?? false,
+      label_i18n: rdt?.label_i18n ?? null,
+    };
+    // Per-document accepted format (admin-configured, pdf | png). Free staff
+    // uploads (no requirement) are unconstrained.
+    const allowedExt = requirement.accepted_format === "png" ? ["png"] : ["pdf"];
     if (!allowedExt.includes(ext)) {
       await deleteObject("case-documents", parsed.uploadRef);
-      throw new CaseError("DOC_FORMAT_NOT_ALLOWED", { acceptedFormat });
+      throw new CaseError("DOC_FORMAT_NOT_ALLOWED", {
+        acceptedFormat: requirement.accepted_format,
+      });
     }
   }
 
@@ -1348,12 +1378,49 @@ export async function confirmDocumentUpload(
     }
   }
 
-  // Replace chain head if any
-  const prev = await findCurrentChainHead(
-    parsed.caseId,
-    parsed.requirementId ?? null,
-    parsed.partyId ?? null,
-  );
+  // Semantic display name (drives the download filename):
+  //  - single required slot → derived from the requirement label (ES) + party
+  //    name ("Pasaporte de Juan"); the client cannot override it.
+  //  - multiple / free upload → client-typed (required for multiple).
+  const allowMultiple = requirement?.allow_multiple ?? false;
+  let displayName: string;
+  if (parsed.requirementId && !allowMultiple) {
+    const labelEs = asI18n(requirement?.label_i18n)?.es?.trim() || "Documento";
+    let partyName: string | null = null;
+    if (parsed.partyId) {
+      const party = (await getCaseParties(parsed.caseId)).find(
+        (p) => p.id === parsed.partyId,
+      );
+      if (party) partyName = await resolvePartyName(party);
+    }
+    displayName = partyName ? `${labelEs} de ${partyName}` : labelEs;
+  } else {
+    const typed = parsed.displayName?.trim() ?? "";
+    if (allowMultiple && !typed) {
+      await deleteObject("case-documents", parsed.uploadRef);
+      throw new CaseError("DOC_NAME_REQUIRED");
+    }
+    // Free staff upload with no name → fall back to the raw filename (sans ext).
+    displayName = typed || parsed.originalFilename.replace(/\.[^.]+$/, "");
+  }
+
+  // Re-upload / overwrite semantics. Multiple slots: every file coexists (no
+  // head lookup). Single slot, by the previous document's status:
+  //  - approved → locked: no replacement allowed.
+  //  - uploaded → never reviewed: hard-delete the previous file + row.
+  //  - rejected → reviewed: keep as a traceable 'replaced' link (correction).
+  let prev: CaseDocumentRow | null = null;
+  if (!allowMultiple) {
+    prev = await findCurrentChainHead(
+      parsed.caseId,
+      parsed.requirementId ?? null,
+      parsed.partyId ?? null,
+    );
+    if (prev?.status === "approved") {
+      await deleteObject("case-documents", parsed.uploadRef);
+      throw new CaseError("DOC_ALREADY_APPROVED");
+    }
+  }
 
   const doc = await insertCaseDocument({
     case_id: parsed.caseId,
@@ -1362,50 +1429,46 @@ export async function confirmDocumentUpload(
     uploaded_by: actor.userId,
     storage_path: parsed.uploadRef,
     original_filename: parsed.originalFilename,
+    display_name: displayName,
     mime_type: mimeType,
     size_bytes: 0, // size validated by storage, exact value not critical here
     status: "uploaded",
-    replaces_document_id: prev?.id ?? null,
+    // Only the rejected→correction case keeps a traceable chain link; a
+    // hard-overwritten 'uploaded' predecessor is deleted, so no link remains.
+    replaces_document_id: prev?.status === "rejected" ? prev.id : null,
     reviewed_by: null,
     reviewed_at: null,
     rejection_reason_i18n: null,
     correction_due_at: null,
   });
 
-  // Mark previous as replaced
-  if (prev) {
+  if (prev?.status === "uploaded") {
+    await deleteObject("case-documents", prev.storage_path);
+    await deleteCaseDocumentRow(prev.id);
+  } else if (prev?.status === "rejected") {
     await updateDocument(prev.id, { status: "replaced" });
   }
 
   // Hook F4: auto-enqueue extraction if the requirement has ai_extract=true (DOC-26 §2.2)
-  if (parsed.requirementId) {
+  if (parsed.requirementId && requirement?.ai_extract) {
     try {
-      const supabase = createServiceClient();
-      const { data: rdt } = await supabase
-        .from("required_document_types")
-        .select("ai_extract")
-        .eq("id", parsed.requirementId)
-        .maybeSingle();
-
-      if (rdt?.ai_extract) {
-        const { enqueueJob } = await import("@/backend/platform/qstash");
-        await enqueueJob(
-          {
-            jobKey: "extract-document",
-            entityId: doc.id,
-            attempt: 1,
-            // Canonical dedupe key (DOC-26 §4.2) — no version suffix; reprocess uses :retry-N.
-            dedupeId: `extract-document:${doc.id}`,
-            caseDocumentId: doc.id,
-            orgId: actor.orgId,
-          },
-          { retries: 3 },
-        );
-        logger.info(
-          { caseDocumentId: doc.id, requirementId: parsed.requirementId },
-          "cases: enqueued extract-document job (ai_extract=true)",
-        );
-      }
+      const { enqueueJob } = await import("@/backend/platform/qstash");
+      await enqueueJob(
+        {
+          jobKey: "extract-document",
+          entityId: doc.id,
+          attempt: 1,
+          // Canonical dedupe key (DOC-26 §4.2) — no version suffix; reprocess uses :retry-N.
+          dedupeId: `extract-document:${doc.id}`,
+          caseDocumentId: doc.id,
+          orgId: actor.orgId,
+        },
+        { retries: 3 },
+      );
+      logger.info(
+        { caseDocumentId: doc.id, requirementId: parsed.requirementId },
+        "cases: enqueued extract-document job (ai_extract=true)",
+      );
     } catch (err) {
       // Non-fatal: extraction is async assistance, never blocks the upload confirmation
       logger.warn({ err, docId: doc.id }, "cases: failed to enqueue extract-document — continuing");
@@ -1441,6 +1504,91 @@ export async function confirmDocumentUpload(
   }
 
   return doc;
+}
+
+/**
+ * Deletes a never-reviewed ('uploaded') case document — the client (or staff)
+ * removing a mistaken upload, or freeing a single slot before re-uploading.
+ * Hard delete: Storage object + DB row. Reviewed documents are immutable:
+ *   approved → DOC_LOCKED · rejected → DOC_REVIEWED (use the correction flow).
+ *
+ * @api-id API-CASE-09
+ */
+export async function deleteCaseDocument(
+  actor: Actor,
+  documentId: string,
+): Promise<void> {
+  const doc = await findDocumentById(documentId);
+  if (!doc) throw new CaseError("DOC_NOT_FOUND");
+  await requireCaseAccess(actor, doc.case_id);
+
+  if (doc.status === "approved") throw new CaseError("DOC_LOCKED");
+  if (doc.status === "rejected") throw new CaseError("DOC_REVIEWED");
+  if (doc.status !== "uploaded") throw new CaseError("DOC_INVALID_STATE");
+
+  await deleteObject("case-documents", doc.storage_path);
+  await deleteCaseDocumentRow(doc.id);
+
+  await writeTimeline({
+    caseId: doc.case_id,
+    eventType: "document.deleted",
+    actorKind: actor.kind === "client" ? "client" : "team",
+    actorUserId: actor.userId,
+    visibleToClient: true,
+    titleI18n: { en: "Document removed", es: "Documento eliminado" },
+  });
+
+  if (actor.kind === "staff") {
+    await writeAudit(actor, "case.document.deleted_by_staff", "case_documents", doc.id, {
+      before: { caseId: doc.case_id, documentId: doc.id },
+    });
+  }
+}
+
+const RenameDocumentSchema = z.object({
+  documentId: zUuid,
+  displayName: z.string().max(200),
+});
+export type RenameDocumentInput = z.infer<typeof RenameDocumentSchema>;
+
+/**
+ * Renames a case document's human/semantic name (display_name). Staff use this
+ * to fix a non-fitting name the client typed on a multiple-file slot — it drives
+ * the download filename (e.g. "reporte-policial.pdf"). The file content and the
+ * raw original_filename are untouched (audit trail intact).
+ *
+ * @api-id API-CASE-10
+ */
+export async function renameCaseDocument(
+  actor: Actor,
+  input: RenameDocumentInput,
+): Promise<CaseDocumentRow> {
+  const parsed = RenameDocumentSchema.parse(input);
+  const doc = await findDocumentById(parsed.documentId);
+  if (!doc) throw new CaseError("DOC_NOT_FOUND");
+  await requireCaseAccess(actor, doc.case_id);
+
+  const name = parsed.displayName.trim();
+  if (!name) throw new CaseError("DOC_NAME_REQUIRED");
+
+  await updateDocument(doc.id, { display_name: name });
+
+  await writeTimeline({
+    caseId: doc.case_id,
+    eventType: "document.renamed",
+    actorKind: actor.kind === "client" ? "client" : "team",
+    actorUserId: actor.userId,
+    visibleToClient: false,
+    titleI18n: { en: "Document renamed", es: "Documento renombrado" },
+  });
+
+  if (actor.kind === "staff") {
+    await writeAudit(actor, "case.document.renamed", "case_documents", doc.id, {
+      after: { displayName: name },
+    });
+  }
+
+  return (await findDocumentById(doc.id)) ?? { ...doc, display_name: name };
 }
 
 // ---------------------------------------------------------------------------
@@ -2197,10 +2345,26 @@ export async function getCaseDocumentBytes(
   if (!doc) throw new CaseError("DOC_NOT_FOUND");
   await requireCaseAccess(actor, doc.case_id);
   const bytes = await downloadBytesFromStorage("case-documents", doc.storage_path);
+
+  // Semantic download filename: slugified display name + the real extension.
+  // display_name is set on every new upload; legacy rows fall back to the raw
+  // original filename base (still slugified for a clean, intuitive download).
+  const extFromPath = doc.storage_path.includes(".")
+    ? doc.storage_path.split(".").pop()!
+    : "";
+  const extFromOriginal = doc.original_filename?.includes(".")
+    ? doc.original_filename.split(".").pop()!
+    : "";
+  const ext = (extFromPath || extFromOriginal || "").toLowerCase();
+  const baseName =
+    doc.display_name?.trim() ||
+    doc.original_filename?.replace(/\.[^.]+$/, "") ||
+    "documento";
+
   return {
     bytes,
     mimeType: doc.mime_type ?? "application/octet-stream",
-    filename: doc.original_filename ?? "document",
+    filename: toDownloadFilename(baseName, ext),
   };
 }
 
@@ -2359,6 +2523,27 @@ interface DocsCount {
   pending: number;
 }
 
+/** Maps a stored case document row to the per-file view-model used by the
+ *  documents matrix (one entry per uploaded file within a requirement slot). */
+function toUploadVM(d: CaseDocumentRow): UploadedDocVM {
+  return {
+    documentId: d.id,
+    displayName: d.display_name ?? d.original_filename,
+    originalFilename: d.original_filename,
+    status:
+      d.status === "approved"
+        ? "aprobado"
+        : d.status === "rejected"
+          ? "corregir"
+          : "revision",
+    mimeType: d.mime_type,
+    createdAt: d.created_at,
+    rejectionReasonI18n: asI18n(d.rejection_reason_i18n),
+    correctionDueAt: d.correction_due_at,
+    translationNotRequired: d.translation_not_required ?? false,
+  };
+}
+
 /**
  * Derives the documents matrix for the case's current phase and a doc count.
  * Internal helper shared by getCaseWorkspace + getDocumentsMatrix.
@@ -2396,12 +2581,15 @@ async function buildDocumentsMatrix(
     include_hidden: opts.includeHidden ?? false,
   });
 
-  // Latest doc per (requirement, party): documents is desc by created_at.
-  const latest = new Map<string, CaseDocumentRow>();
+  // All non-replaced docs per (requirement, party) key — `documents` is desc by
+  // created_at. Single slots use the head (first); multiple slots expose the list.
+  const byKey = new Map<string, CaseDocumentRow[]>();
   for (const d of documents) {
     if (d.status === "replaced") continue;
     const key = `${d.required_document_type_id ?? "free"}:${d.party_id ?? "case"}`;
-    if (!latest.has(key)) latest.set(key, d);
+    const list = byKey.get(key);
+    if (list) list.push(d);
+    else byKey.set(key, [d]);
   }
 
   const partyNameById = new Map<string, string | null>();
@@ -2421,18 +2609,37 @@ async function buildDocumentsMatrix(
       is_hidden?: boolean;
       accepted_format?: "pdf" | "png";
       ai_extract?: boolean;
+      allow_multiple?: boolean;
       position: number;
     }) => {
       const docKey = `${r.required_document_type_id ?? "free"}:${r.party_id ?? "case"}`;
-      const doc = latest.get(docKey);
-      const status =
-        doc == null
-          ? ("pendiente" as const)
-          : doc.status === "approved"
-            ? ("aprobado" as const)
-            : doc.status === "rejected"
-              ? ("corregir" as const)
-              : ("revision" as const);
+      const slotDocs = byKey.get(docKey) ?? [];
+      const allowMultiple = r.allow_multiple ?? false;
+      const uploads: UploadedDocVM[] = slotDocs.map(toUploadVM);
+      const head = slotDocs[0];
+
+      // Slot status. Single slot: mirrors the head document. Multiple slot is a
+      // container — pendiente if empty, aprobado when every file is approved,
+      // otherwise revision (per-file states live in `uploads`).
+      let status: DocumentMatrixItem["status"];
+      if (allowMultiple) {
+        status =
+          uploads.length === 0
+            ? "pendiente"
+            : uploads.every((u) => u.status === "aprobado")
+              ? "aprobado"
+              : "revision";
+      } else {
+        status =
+          head == null
+            ? "pendiente"
+            : head.status === "approved"
+              ? "aprobado"
+              : head.status === "rejected"
+                ? "corregir"
+                : "revision";
+      }
+
       return {
         key: r.key,
         requirementId: r.required_document_type_id,
@@ -2445,12 +2652,14 @@ async function buildDocumentsMatrix(
         isHidden: r.is_hidden ?? false,
         acceptedFormat: r.accepted_format ?? "pdf",
         aiExtract: r.ai_extract ?? false,
+        allowMultiple,
         position: r.position,
         status,
-        documentId: doc?.id ?? null,
-        rejectionReasonI18n: doc ? asI18n(doc.rejection_reason_i18n) : null,
-        correctionDueAt: doc?.correction_due_at ?? null,
-        translationNotRequired: doc?.translation_not_required ?? false,
+        documentId: head?.id ?? null,
+        uploads,
+        rejectionReasonI18n: head ? asI18n(head.rejection_reason_i18n) : null,
+        correctionDueAt: head?.correction_due_at ?? null,
+        translationNotRequired: head?.translation_not_required ?? false,
       };
     },
   );
@@ -2474,6 +2683,20 @@ async function buildDocumentsMatrix(
   };
 }
 
+/** One uploaded file within a requirement slot (the unit a multiple slot lists). */
+export interface UploadedDocVM {
+  documentId: string;
+  /** Semantic/human name (display_name, falling back to the raw filename). */
+  displayName: string;
+  originalFilename: string;
+  status: "revision" | "aprobado" | "corregir";
+  mimeType: string;
+  createdAt: string;
+  rejectionReasonI18n: I18nValue | null;
+  correctionDueAt: string | null;
+  translationNotRequired: boolean;
+}
+
 export interface DocumentMatrixItem {
   key: string;
   requirementId: string | null;
@@ -2489,9 +2712,14 @@ export interface DocumentMatrixItem {
   acceptedFormat: "pdf" | "png";
   /** True when the document has AI extraction enabled (ai_extract=true). */
   aiExtract: boolean;
+  /** Admin-configured: the client may upload more than one file for this slot. */
+  allowMultiple: boolean;
   position: number;
   status: "pendiente" | "revision" | "aprobado" | "corregir";
+  /** Head/latest document id (single slot), or latest of the list (multiple). */
   documentId: string | null;
+  /** All current (non-replaced) files for this slot. 0/1 for single, N for multiple. */
+  uploads: UploadedDocVM[];
   rejectionReasonI18n: I18nValue | null;
   correctionDueAt: string | null;
   /** Staff marked this document as already-English (excluded from translation gating). */

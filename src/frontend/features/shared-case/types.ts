@@ -77,6 +77,20 @@ export interface DocMatrixVM {
   rejectionReason: string | null;
   /** Staff marked this uploaded document as already-English (no translation needed). */
   translationNotRequired?: boolean;
+  /** Admin-configured: the client may upload more than one file for this slot. */
+  allowMultiple: boolean;
+  /** All current (non-replaced) files for this slot (0/1 for single, N for multiple). */
+  uploads: DocUploadVM[];
+}
+
+/** One uploaded file within a requirement slot (the unit a multiple slot lists). */
+export interface DocUploadVM {
+  documentId: string;
+  /** Semantic/human name (display_name, falling back to the raw filename). */
+  displayName: string;
+  status: "revision" | "aprobado" | "corregir";
+  rejectionReason: string | null;
+  mimeType: string;
 }
 
 export interface PartyVM {
@@ -274,6 +288,16 @@ export interface CaseDetailActions {
     verdict: "approve" | "reject";
     reason?: { es: string; en: string } | null;
   }) => Promise<{ ok: boolean; error?: { code: string } }>;
+  /**
+   * Rename a document's semantic name (staff only) — fixes a non-fitting name a
+   * client typed on a multiple-file slot. Drives the .pdf download filename.
+   * Optional — only staff surfaces wire it.
+   */
+  renameDocument?: (input: {
+    caseId: string;
+    documentId: string;
+    displayName: string;
+  }) => Promise<{ ok: boolean; error?: { code: string } }>;
   /** Register the manual Zelle payment of an installment (gate → active). */
   registerPayment: (input: {
     installmentId: string;
@@ -339,6 +363,7 @@ export interface CaseDetailActions {
     requirementId: string | null;
     partyId: string | null;
     originalFilename: string;
+    displayName?: string | null;
   }) => Promise<{ ok: boolean; error?: { code: string } }>;
   /**
    * Hide / restore an OPTIONAL document requirement for this case so it stops

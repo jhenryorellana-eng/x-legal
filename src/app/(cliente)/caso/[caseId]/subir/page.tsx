@@ -62,6 +62,7 @@ export default async function SubirPage({
       documentName={documentName}
       acceptedFormat={acceptedFormat}
       aiExtract={target?.aiExtract ?? false}
+      allowMultiple={target?.allowMultiple ?? false}
       previousProgress={matrix.progress}
       labels={{
         eyebrow: t("eyebrow"),
@@ -91,6 +92,9 @@ export default async function SubirPage({
         reviewEmpty: t("reviewEmpty"),
         reviewFailedTitle: t("reviewFailedTitle"),
         reviewFailedSub: t("reviewFailedSub"),
+        nameLabel: t("nameLabel"),
+        namePlaceholder: t("namePlaceholder"),
+        nameRequired: t("nameRequired"),
       }}
       startUpload={startUploadAction}
       confirmUpload={confirmUploadAction}

@@ -128,7 +128,7 @@ export const caminoMock: CaminoScreenProps = {
   },
 };
 
-const docItems: DocItem[] = [
+const docItems: DocItem[] = ([
   {
     key: "1",
     label: "Acta de nacimiento del menor",
@@ -185,7 +185,11 @@ const docItems: DocItem[] = [
     rejectionReason: null,
     query: "req=7",
   },
-];
+] as Omit<DocItem, "allowMultiple" | "uploads">[]).map((d) => ({
+  ...d,
+  allowMultiple: false,
+  uploads: [],
+}));
 
 export const documentosMock = {
   items: docItems,
@@ -204,6 +208,10 @@ export const documentosMock = {
     inReview: "En revisión",
     upload: "Subir",
     fix: "Corregir",
+    addFile: "Agregar archivo",
+    remove: "Eliminar",
+    confirm: "Confirmar",
+    cancel: "Cancelar",
   },
 };
 

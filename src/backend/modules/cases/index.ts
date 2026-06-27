@@ -12,6 +12,8 @@ export {
   onDownpaymentConfirmed,
   startDocumentUpload,
   confirmDocumentUpload,
+  deleteCaseDocument,
+  renameCaseDocument,
   reviewDocument,
   setRequirementVisibility,
   changeCaseStatus,

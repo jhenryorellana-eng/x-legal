@@ -39,6 +39,7 @@ import {
   advanceCaseMilestone,
   startDocumentUpload,
   confirmDocumentUpload,
+  renameCaseDocument,
   saveFormDraft,
   submitFormResponse,
   getCaseDocumentDownloadUrl,
@@ -463,10 +464,31 @@ export async function confirmDocumentUploadAction(input: {
   requirementId: string | null;
   partyId: string | null;
   originalFilename: string;
+  displayName?: string | null;
 }): Promise<{ ok: boolean; error?: { code: string } }> {
   try {
     const actor = await requireActor();
     await confirmDocumentUpload(actor, input);
+    return { ok: true };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+/** Rename a document's semantic name (staff only) — fixes a non-fitting name a
+ *  client typed on a multiple-file slot; drives the .pdf download filename. */
+export async function renameDocumentAction(input: {
+  caseId: string;
+  documentId: string;
+  displayName: string;
+}): Promise<{ ok: boolean; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    if (actor.kind !== "staff") return { ok: false, error: { code: "FORBIDDEN" } };
+    await renameCaseDocument(actor, {
+      documentId: input.documentId,
+      displayName: input.displayName,
+    });
     return { ok: true };
   } catch (err) {
     return mapErr(err);

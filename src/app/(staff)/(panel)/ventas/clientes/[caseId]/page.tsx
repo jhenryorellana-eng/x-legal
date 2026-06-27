@@ -51,6 +51,7 @@ import {
   getTermsAcceptanceAction,
   startDocumentUploadAction,
   confirmDocumentUploadAction,
+  renameDocumentAction,
   addCaseAppointmentAction,
   transferCaseAction,
   setDocumentTranslationNotRequiredAction,
@@ -108,6 +109,14 @@ export default async function VentasCasoDetailPage({
     documentId: d.documentId,
     rejectionReason: d.rejectionReasonI18n ? resolveI18n(d.rejectionReasonI18n, locale) : null,
     translationNotRequired: d.translationNotRequired,
+    allowMultiple: d.allowMultiple,
+    uploads: d.uploads.map((u) => ({
+      documentId: u.documentId,
+      displayName: u.displayName,
+      status: u.status,
+      rejectionReason: u.rejectionReasonI18n ? resolveI18n(u.rejectionReasonI18n, locale) : null,
+      mimeType: u.mimeType,
+    })),
   }));
 
   // Visibility toggle is an admin + sales affordance (DOC-41 §3.5 decision).
@@ -238,6 +247,7 @@ export default async function VentasCasoDetailPage({
         getTermsAcceptance: getTermsAcceptanceAction,
         startUpload: startDocumentUploadAction,
         confirmUpload: confirmDocumentUploadAction,
+        renameDocument: renameDocumentAction,
         addCaseAppointment: canManageCalendar ? addCaseAppointmentAction : undefined,
         transferCase: transferCaseAction,
         setDocumentTranslationNotRequired: canManageDocs ? setDocumentTranslationNotRequiredAction : undefined,

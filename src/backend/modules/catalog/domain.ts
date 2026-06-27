@@ -307,6 +307,7 @@ export const RequiredDocumentTypeSchema = z.object({
   ai_extract: z.boolean().default(false),
   extraction_schema: z.record(z.string(), z.unknown()).nullable(),
   accepted_format: z.enum(["pdf", "png"]).default("pdf"),
+  allow_multiple: z.boolean().default(false),
   position: z.number().int().default(0),
   is_active: z.boolean().default(true),
 });
@@ -324,6 +325,7 @@ export const CreateRequiredDocDtoSchema = z.object({
   ai_extract: z.boolean().default(false),
   extraction_schema: z.record(z.string(), z.unknown()).nullable().optional(),
   accepted_format: z.enum(["pdf", "png"]).default("pdf"),
+  allow_multiple: z.boolean().default(false),
   position: z.number().int().default(0),
 });
 export type CreateRequiredDocDto = z.infer<typeof CreateRequiredDocDtoSchema>;
@@ -556,6 +558,8 @@ export interface ExpandedRequirement {
   extraction_schema: Record<string, unknown> | null;
   /** Accepted upload format for this document (admin-configured): pdf | png. */
   accepted_format: "pdf" | "png";
+  /** Admin-configured: client may upload more than one file for this requirement. */
+  allow_multiple: boolean;
   position: number;
   /**
    * True only in the staff-facing resolution (`includeHidden`): the requirement
@@ -952,6 +956,7 @@ function toExpanded(doc: RequiredDocumentType, partyId: string | null): Expanded
     ai_extract: doc.ai_extract,
     extraction_schema: doc.extraction_schema as Record<string, unknown> | null,
     accepted_format: doc.accepted_format,
+    allow_multiple: doc.allow_multiple,
     position: doc.position,
   };
 }
@@ -988,6 +993,7 @@ export function applyRequirementOverrides(
         ai_extract: false,
         extraction_schema: null,
         accepted_format: "pdf",
+        allow_multiple: false,
         position: Number.MAX_SAFE_INTEGER,
       });
       continue;

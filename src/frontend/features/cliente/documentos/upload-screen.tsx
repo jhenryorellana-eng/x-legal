@@ -80,6 +80,13 @@ export interface UploadLabels {
   /** Friendly message when extraction failed / timed out (non-blocking). */
   reviewFailedTitle: string;
   reviewFailedSub: string;
+  // --- Multiple documents (allow_multiple): the client names each file ---
+  /** Field label asking the client to name this file, e.g. "¿Cómo se llama este documento?". */
+  nameLabel: string;
+  /** Placeholder for the name field, e.g. "Ej. reporte policial". */
+  namePlaceholder: string;
+  /** Error shown when the client tries to upload a multiple file without a name. */
+  nameRequired: string;
 }
 
 export interface UploadScreenProps {
@@ -91,6 +98,8 @@ export interface UploadScreenProps {
   acceptedFormat: "pdf" | "png";
   /** True when this document has AI extraction enabled (ai_extract=true). */
   aiExtract: boolean;
+  /** True when the requirement allows multiple files: the client names each one. */
+  allowMultiple: boolean;
   previousProgress: number;
   labels: UploadLabels;
   startUpload: (input: {
@@ -107,6 +116,7 @@ export interface UploadScreenProps {
     requirementId: string | null;
     partyId: string | null;
     originalFilename: string;
+    displayName?: string | null;
     previousProgress: number;
   }) => Promise<ConfirmUploadResult>;
   getExtractionStatus: (input: { caseDocumentId: string }) => Promise<ExtractionStatusResult>;
@@ -304,6 +314,7 @@ export function UploadScreen({
   documentName,
   acceptedFormat,
   aiExtract,
+  allowMultiple,
   previousProgress,
   labels,
   startUpload,
@@ -314,6 +325,8 @@ export function UploadScreen({
   const [stage, setStage] = React.useState<"idle" | "uploading" | "analyzing" | "review">("idle");
   const [pct, setPct] = React.useState(0);
   const [error, setError] = React.useState<string | null>(null);
+  // Multiple documents: the client names each file before uploading.
+  const [docName, setDocName] = React.useState("");
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   // AI extraction (ai_extract documents): after confirm we poll the extraction
@@ -380,6 +393,11 @@ export function UploadScreen({
   // and this upload path is the verified-working one — not worth the risk in 8d.
   const pickFile = () => {
     setError(null);
+    // Multiple documents require a client-chosen name before picking the file.
+    if (allowMultiple && !docName.trim()) {
+      setError(labels.nameRequired);
+      return;
+    }
     fileInputRef.current?.click();
   };
 
@@ -431,6 +449,7 @@ export function UploadScreen({
       requirementId,
       partyId,
       originalFilename: file.name,
+      displayName: allowMultiple ? docName.trim() : null,
       previousProgress,
     });
     if (!confirmed.ok) {
@@ -440,6 +459,7 @@ export function UploadScreen({
       const code = confirmed.error?.code;
       if (code === "DOC_NOT_LEGIBLE") setError(labels.blurMsg);
       else if (code === "DOC_FORMAT_NOT_ALLOWED") setError(labels.errFormat);
+      else if (code === "DOC_NAME_REQUIRED") setError(labels.nameRequired);
       else setError(labels.errNetwork);
       return;
     }
@@ -640,6 +660,37 @@ export function UploadScreen({
               {labels.captureSub}
             </div>
           </div>
+
+          {allowMultiple && (
+            <div style={{ marginBottom: 14 }}>
+              <label
+                htmlFor="doc-name"
+                style={{ display: "block", fontSize: 14, fontWeight: 700, color: "var(--navy)", marginBottom: 6 }}
+              >
+                {labels.nameLabel}
+              </label>
+              <input
+                id="doc-name"
+                type="text"
+                value={docName}
+                onChange={(e) => setDocName(e.target.value)}
+                placeholder={labels.namePlaceholder}
+                maxLength={120}
+                style={{
+                  width: "100%",
+                  height: 48,
+                  borderRadius: 14,
+                  border: "1.5px solid var(--line)",
+                  background: "var(--card)",
+                  padding: "0 14px",
+                  fontSize: 15,
+                  color: "var(--ink)",
+                  outline: "none",
+                  boxSizing: "border-box",
+                }}
+              />
+            </div>
+          )}
 
           <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 22 }}>
             <GradientBtn icon="doc" onClick={pickFile}>

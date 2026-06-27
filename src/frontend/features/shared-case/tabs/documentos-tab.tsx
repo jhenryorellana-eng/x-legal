@@ -22,13 +22,20 @@ import { StatusPill, type StatusKind } from "@/frontend/components/brand/status-
 import { Modal } from "@/frontend/components/desktop/modal";
 import { EmptyState } from "@/frontend/components/desktop/empty-state";
 import { toast } from "@/frontend/components/desktop/toast";
-import type { CaseWorkspaceVM, CaseDetailActions, DocMatrixVM } from "../types";
+import type { CaseWorkspaceVM, CaseDetailActions, DocMatrixVM, DocUploadVM } from "../types";
 import type { CasosStrings } from "../strings";
 import { SectionLabel } from "../ui";
 import { DocumentPreviewModal } from "../document-preview-modal";
 import { DocumentTranslationModal } from "../document-translation-modal";
+import { toDownloadFilename } from "@/shared/strings";
 
 const MAX_BYTES = 20 * 1024 * 1024;
+
+/** Semantic download filename for a document: slugified name + real extension. */
+function downloadNameFor(displayName: string, mimeType: string): string {
+  const ext = mimeType === "image/png" ? "png" : "pdf";
+  return toDownloadFilename(displayName, ext);
+}
 
 function statusLabel(s: DocMatrixVM["status"], t: CasosStrings["detail"]): string {
   if (s === "pendiente") return t.docPending;
@@ -48,12 +55,14 @@ export function DocumentosTab({
 }) {
   const t = strings.detail;
   const router = useRouter();
-  const [rejecting, setRejecting] = React.useState<DocMatrixVM | null>(null);
+  const [rejecting, setRejecting] = React.useState<{ documentId: string } | null>(null);
   const [reasonEs, setReasonEs] = React.useState("");
   const [reasonEn, setReasonEn] = React.useState("");
   const [busyKey, setBusyKey] = React.useState<string | null>(null);
-  const [previewDoc, setPreviewDoc] = React.useState<{ id: string; label: string } | null>(null);
+  const [previewDoc, setPreviewDoc] = React.useState<{ id: string; label: string; downloadName: string } | null>(null);
   const [translateDoc, setTranslateDoc] = React.useState<{ id: string; label: string } | null>(null);
+  const [renamingDoc, setRenamingDoc] = React.useState<{ documentId: string } | null>(null);
+  const [renameValue, setRenameValue] = React.useState("");
 
   // The visibility toggle is wired only on surfaces that pass the action
   // (admin + sales case detail). Read-only views omit it → no button.
@@ -62,11 +71,12 @@ export function DocumentosTab({
   const canTranslate = typeof actions.translateDocument === "function";
   // Toggle "already English / no translation needed" — staff-only.
   const canMarkTranslation = typeof actions.setDocumentTranslationNotRequired === "function";
+  // Rename a document's semantic name — staff-only (fixes client-typed names).
+  const canRename = typeof actions.renameDocument === "function";
 
-  async function onApprove(item: DocMatrixVM) {
-    if (!item.documentId) return;
-    setBusyKey(item.key);
-    const res = await actions.reviewDocument({ documentId: item.documentId, verdict: "approve" });
+  async function onApprove(documentId: string) {
+    setBusyKey(documentId);
+    const res = await actions.reviewDocument({ documentId, verdict: "approve" });
     setBusyKey(null);
     if (res.ok) {
       toast.success(t.approved);
@@ -77,7 +87,7 @@ export function DocumentosTab({
   async function onConfirmReject() {
     if (!rejecting?.documentId) return;
     if (!reasonEs.trim() && !reasonEn.trim()) return;
-    setBusyKey(rejecting.key);
+    setBusyKey(rejecting.documentId);
     const res = await actions.reviewDocument({
       documentId: rejecting.documentId,
       verdict: "reject",
@@ -89,6 +99,25 @@ export function DocumentosTab({
       setRejecting(null);
       setReasonEs("");
       setReasonEn("");
+      router.refresh();
+    } else toast.error(strings.errorTitle);
+  }
+
+  async function onConfirmRename() {
+    if (!renamingDoc || !actions.renameDocument) return;
+    const name = renameValue.trim();
+    if (!name) return;
+    setBusyKey(renamingDoc.documentId);
+    const res = await actions.renameDocument({
+      caseId: vm.header.caseId,
+      documentId: renamingDoc.documentId,
+      displayName: name,
+    });
+    setBusyKey(null);
+    if (res.ok) {
+      toast.success(t.renameDone);
+      setRenamingDoc(null);
+      setRenameValue("");
       router.refresh();
     } else toast.error(strings.errorTitle);
   }
@@ -141,6 +170,122 @@ export function DocumentosTab({
     (e): e is [string, DocMatrixVM[]] => e[0] != null,
   );
   const generalGroup = groups.get(null) ?? [];
+
+  // One uploaded file inside a multiple slot: name + status + view/approve/reject.
+  const renderFileRow = (u: DocUploadVM) => (
+    <div key={u.documentId} className="doc-row" style={{ paddingLeft: 12 }}>
+      <span aria-hidden="true" className="doc-ico">
+        <Icon name="doc" size={18} color="var(--brand-red)" />
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p className="doc-name" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {u.displayName}
+        </p>
+        {u.status === "corregir" && u.rejectionReason && (
+          <p className="doc-meta" style={{ color: "var(--brand-red)" }}>
+            {t.docReason}: {u.rejectionReason}
+          </p>
+        )}
+      </div>
+      <StatusPill kind={u.status as StatusKind} variant="subtle">
+        {statusLabel(u.status, t)}
+      </StatusPill>
+      <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+        <GhostBtn
+          size="md"
+          full={false}
+          icon="zoom"
+          onClick={() =>
+            setPreviewDoc({
+              id: u.documentId,
+              label: u.displayName,
+              downloadName: downloadNameFor(u.displayName, u.mimeType),
+            })
+          }
+        >
+          {t.view}
+        </GhostBtn>
+        {canRename && (
+          <GhostBtn
+            size="md"
+            full={false}
+            icon="edit"
+            onClick={() => {
+              setRenameValue(u.displayName);
+              setRenamingDoc({ documentId: u.documentId });
+            }}
+          >
+            {t.rename}
+          </GhostBtn>
+        )}
+        {u.status === "revision" && (
+          <>
+            <GradientBtn size="sm" full={false} icon="check" disabled={busyKey === u.documentId} onClick={() => onApprove(u.documentId)}>
+              {t.approve}
+            </GradientBtn>
+            <GhostBtn
+              size="md"
+              full={false}
+              icon="x"
+              onClick={() => {
+                setReasonEs("");
+                setReasonEn("");
+                setRejecting({ documentId: u.documentId });
+              }}
+            >
+              {t.reject}
+            </GhostBtn>
+          </>
+        )}
+      </div>
+    </div>
+  );
+
+  // Multiple requirement: a header row (label + add-file) followed by one row
+  // per uploaded file. Hidden multiples fall back to the single renderer below.
+  const renderMultipleRow = (item: DocMatrixVM) => (
+    <div key={item.key} style={{ marginBottom: 4 }}>
+      <div className="doc-row">
+        <span aria-hidden="true" className="doc-ico">
+          <Icon name="doc" size={20} color="var(--brand-red)" />
+        </span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p className="doc-name">
+            {item.label}
+            {!item.isRequired && (
+              <span style={{ marginLeft: 8 }}>
+                <Chip tone="blue">{t.optional}</Chip>
+              </span>
+            )}
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+          <UploadButton
+            item={item}
+            caseId={vm.header.caseId}
+            actions={actions}
+            strings={strings}
+            busy={busyKey === item.key}
+            setBusy={(b) => setBusyKey(b ? item.key : null)}
+            onDone={() => router.refresh()}
+            allowMultiple
+          />
+          {canToggle && !item.isRequired && (
+            <GhostBtn
+              size="md"
+              full={false}
+              icon="lock"
+              disabled={busyKey === item.key}
+              onClick={() => onToggleVisibility(item, true)}
+            >
+              {t.hideForClient}
+            </GhostBtn>
+          )}
+        </div>
+      </div>
+      {item.uploads.map(renderFileRow)}
+    </div>
+  );
 
   const renderRow = (item: DocMatrixVM) => (
     <div key={item.key} className="doc-row" style={item.isHidden ? { opacity: 0.55 } : undefined}>
@@ -209,7 +354,15 @@ export function DocumentosTab({
                 size="md"
                 full={false}
                 icon="zoom"
-                onClick={() => setPreviewDoc({ id: item.documentId!, label: item.label })}
+                onClick={() =>
+                  setPreviewDoc({
+                    id: item.documentId!,
+                    label: item.label,
+                    downloadName: item.uploads[0]
+                      ? downloadNameFor(item.uploads[0].displayName, item.uploads[0].mimeType)
+                      : downloadNameFor(item.label, "application/pdf"),
+                  })
+                }
               >
                 {t.view}
               </GhostBtn>
@@ -237,7 +390,7 @@ export function DocumentosTab({
             )}
             {item.status === "revision" && item.documentId && (
               <>
-                <GradientBtn size="sm" full={false} icon="check" disabled={busyKey === item.key} onClick={() => onApprove(item)}>
+                <GradientBtn size="sm" full={false} icon="check" disabled={busyKey === item.documentId} onClick={() => onApprove(item.documentId!)}>
                   {t.approve}
                 </GradientBtn>
                 <GhostBtn
@@ -247,7 +400,7 @@ export function DocumentosTab({
                   onClick={() => {
                     setReasonEs("");
                     setReasonEn("");
-                    setRejecting(item);
+                    setRejecting({ documentId: item.documentId! });
                   }}
                 >
                   {t.reject}
@@ -289,7 +442,7 @@ export function DocumentosTab({
                 </span>
                 {party}
               </div>
-              {list.map(renderRow)}
+              {list.map((it) => (it.allowMultiple && !it.isHidden ? renderMultipleRow(it) : renderRow(it)))}
             </div>
           ))}
 
@@ -301,7 +454,7 @@ export function DocumentosTab({
                 </span>
                 {t.docsNoPartyGroup}
               </div>
-              {generalGroup.map(renderRow)}
+              {generalGroup.map((it) => (it.allowMultiple && !it.isHidden ? renderMultipleRow(it) : renderRow(it)))}
             </div>
           )}
         </div>
@@ -337,12 +490,54 @@ export function DocumentosTab({
         <p style={{ margin: "12px 0 0", fontSize: 12.5, color: "var(--ink-3)" }}>{t.rejectNote}</p>
       </Modal>
 
+      <Modal
+        open={renamingDoc !== null}
+        onOpenChange={(o) => !o && setRenamingDoc(null)}
+        title={t.renameTitle}
+        footer={
+          <>
+            <GhostBtn size="md" full={false} onClick={() => setRenamingDoc(null)}>
+              {strings.cancel}
+            </GhostBtn>
+            <GradientBtn
+              size="md"
+              full={false}
+              disabled={!renameValue.trim() || busyKey !== null}
+              onClick={onConfirmRename}
+            >
+              {t.renameConfirm}
+            </GradientBtn>
+          </>
+        }
+      >
+        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <span style={{ fontSize: 12.5, fontWeight: 800, color: "var(--ink-2)" }}>{t.renameLabel}</span>
+          <input
+            type="text"
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            placeholder={t.renamePlaceholder}
+            maxLength={120}
+            style={{
+              borderRadius: 12,
+              border: "1px solid var(--line)",
+              background: "var(--card)",
+              color: "var(--ink)",
+              padding: "10px 12px",
+              fontSize: 14,
+              fontFamily: "var(--font-body)",
+            }}
+          />
+        </label>
+      </Modal>
+
       {previewDoc && (
         <DocumentPreviewModal
           open={previewDoc !== null}
           onOpenChange={(o) => !o && setPreviewDoc(null)}
           src={`/api/v1/cases/${vm.header.caseId}/documents/${previewDoc.id}/preview?kind=source`}
           title={previewDoc.label}
+          downloadName={previewDoc.downloadName}
           strings={{ previewTitle: t.previewTitle, previewError: t.previewError, download: t.download }}
         />
       )}
@@ -370,6 +565,7 @@ function UploadButton({
   busy,
   setBusy,
   onDone,
+  allowMultiple = false,
 }: {
   item: DocMatrixVM;
   caseId: string;
@@ -378,6 +574,8 @@ function UploadButton({
   busy: boolean;
   setBusy: (b: boolean) => void;
   onDone: () => void;
+  /** Multiple slot: send a display name (filename base) so the server accepts the file. */
+  allowMultiple?: boolean;
 }) {
   const t = strings.detail;
   const inputRef = React.useRef<HTMLInputElement>(null);
@@ -420,6 +618,8 @@ function UploadButton({
       requirementId: item.requirementId,
       partyId: item.partyId,
       originalFilename: file.name,
+      // Multiple slots require a name; staff uploads use the file's base name.
+      displayName: allowMultiple ? file.name.replace(/\.[^.]+$/, "") : undefined,
     });
     setBusy(false);
     if (!confirmed.ok) return toast.error(t.uploadErr);

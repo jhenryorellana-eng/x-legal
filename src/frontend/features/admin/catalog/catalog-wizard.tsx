@@ -15,6 +15,7 @@ import {
 } from "@/frontend/components/brand";
 import { ViewHead, FieldLabel, TextInput, SelectInput } from "../shared/chrome";
 import { I18nField, type I18nValue } from "../shared/i18n-field";
+import { slugify } from "@/shared/strings";
 import { ExtractionSchemaModal, schemaFieldCount } from "./extraction-schema-modal";
 import {
   PARTY_ROLE_KEYS,
@@ -48,6 +49,8 @@ export interface WizardDoc {
   /** JSON Schema (Gemini-portable subset) of the fields the AI extracts. null = not configured. */
   extraction_schema: Record<string, unknown> | null;
   accepted_format: "pdf" | "png";
+  /** Admin-configured: client may upload more than one file for this requirement. */
+  allow_multiple: boolean;
   is_active: boolean;
 }
 
@@ -188,13 +191,7 @@ type ActionRes<T> = { success: boolean; data?: T; error?: { code: string; messag
  *  ES label (kebab-case, accent-stripped), falling back to "hito-N". */
 function milestoneSlug(m: WizardMilestone, i: number): string {
   if (m.slug && /^[a-z0-9]+(-[a-z0-9]+)*$/.test(m.slug)) return m.slug;
-  const base = (m.label.es || m.label.en || "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return base || `hito-${i + 1}`;
+  return slugify(m.label.es || m.label.en || "") || `hito-${i + 1}`;
 }
 
 const STEP_IDS = ["basics", "plans", "parties", "phases", "docs", "forms", "contract", "publish"] as const;
@@ -1431,6 +1428,8 @@ function DocsStep({
   const [schemaModalOpen, setSchemaModalOpen] = React.useState(false);
   // Admin-chosen upload format for this document: pdf | png (default pdf).
   const [docFormat, setDocFormat] = React.useState<"pdf" | "png">("pdf");
+  // Admin-chosen: client may upload more than one file for this document.
+  const [docAllowMultiple, setDocAllowMultiple] = React.useState(false);
   const [savingDoc, setSavingDoc] = React.useState(false);
   // null = create mode; a doc id = editing that document in place.
   const [editingDocId, setEditingDocId] = React.useState<string | null>(null);
@@ -1454,6 +1453,7 @@ function DocsStep({
     setDocAiExtract(false);
     setDocExtractionSchema(null);
     setDocFormat("pdf");
+    setDocAllowMultiple(false);
   }
 
   function startEditDoc(d: WizardDoc) {
@@ -1466,16 +1466,11 @@ function DocsStep({
     setDocAiExtract(d.ai_extract);
     setDocExtractionSchema(d.extraction_schema ?? null);
     setDocFormat(d.accepted_format ?? "pdf");
+    setDocAllowMultiple(d.allow_multiple ?? false);
   }
 
   const docSlugFrom = (es: string) =>
-    es
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[̀-ͯ]/g, "")
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 60) || `documento-${(phase?.docs.length ?? 0) + 1}`;
+    slugify(es).slice(0, 60) || `documento-${(phase?.docs.length ?? 0) + 1}`;
 
   async function saveDocument() {
     if (!phase) return;
@@ -1503,6 +1498,7 @@ function DocsStep({
         ai_extract: docAiExtract,
         extraction_schema: docAiExtract ? docExtractionSchema : null,
         accepted_format: docFormat,
+        allow_multiple: docAllowMultiple,
       });
       setSavingDoc(false);
       if (r.success) {
@@ -1523,6 +1519,7 @@ function DocsStep({
                           ai_extract: docAiExtract,
                           extraction_schema: docAiExtract ? docExtractionSchema : null,
                           accepted_format: docFormat,
+                          allow_multiple: docAllowMultiple,
                         }
                       : d,
                   ),
@@ -1550,6 +1547,7 @@ function DocsStep({
       ai_extract: docAiExtract,
       extraction_schema: docAiExtract ? docExtractionSchema : null,
       accepted_format: docFormat,
+      allow_multiple: docAllowMultiple,
       position: phase.docs.length,
     });
     setSavingDoc(false);
@@ -1566,6 +1564,7 @@ function DocsStep({
         ai_extract: docAiExtract,
         extraction_schema: docAiExtract ? docExtractionSchema : null,
         accepted_format: docFormat,
+        allow_multiple: docAllowMultiple,
         is_active: true,
       };
       setPhases((prev) =>
@@ -1651,6 +1650,10 @@ function DocsStep({
               <Switch checked={docAiExtract} onCheckedChange={setDocAiExtract} aria-label={t.docAiExtract} />
               {t.docAiExtract}
             </label>
+            <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer" }}>
+              <Switch checked={docAllowMultiple} onCheckedChange={setDocAllowMultiple} aria-label={t.docAllowMultiple} />
+              {t.docAllowMultiple}
+            </label>
             {docAiExtract && (
               <GhostBtn size="md" full={false} icon="sparkle" onClick={() => setSchemaModalOpen(true)}>
                 {t.docSchema}
@@ -1703,6 +1706,7 @@ function DocsStep({
                 <th style={{ ...docHead, textAlign: "center" }}>{t.docPerParty}</th>
                 <th style={docHead}>{t.docPartiesColumn}</th>
                 <th style={{ ...docHead, textAlign: "center" }}>{t.docFormat}</th>
+                <th style={{ ...docHead, textAlign: "center" }}>{t.docMultiple}</th>
                 <th style={{ ...docHead, textAlign: "center" }}>{t.docAiExtract}</th>
                 <th style={{ ...docHead, textAlign: "right" }} aria-label={t.docActions} />
               </tr>
@@ -1710,7 +1714,7 @@ function DocsStep({
             <tbody>
               {phase.docs.length === 0 ? (
                 <tr>
-                  <td colSpan={8} style={{ ...docCell, textAlign: "center", color: "var(--ink-3)", padding: "26px" }}>
+                  <td colSpan={9} style={{ ...docCell, textAlign: "center", color: "var(--ink-3)", padding: "26px" }}>
                     {t.emptyTitle ?? "—"}
                   </td>
                 </tr>
@@ -1731,6 +1735,9 @@ function DocsStep({
                     </td>
                     <td style={{ ...docCell, textAlign: "center" }}>
                       <Chip tone="blue">{(d.accepted_format ?? "pdf").toUpperCase()}</Chip>
+                    </td>
+                    <td style={{ ...docCell, textAlign: "center" }}>
+                      {d.allow_multiple ? <Icon name="check" size={16} color="var(--green)" /> : "—"}
                     </td>
                     <td style={{ ...docCell, textAlign: "center" }}>
                       {d.ai_extract ? (
@@ -1778,15 +1785,7 @@ function DocsStep({
 /* ───────────────────────── Step 5: Forms (DOC-40 §3.5/§3.6) ───────────────────────── */
 
 function formSlugFrom(es: string, fallbackIdx: number): string {
-  return (
-    es
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[̀-ͯ]/g, "")
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 60) || `formulario-${fallbackIdx}`
-  );
+  return slugify(es).slice(0, 60) || `formulario-${fallbackIdx}`;
 }
 
 function FormsStep({

@@ -26,8 +26,10 @@ export interface DocumentPreviewModalProps {
   onOpenChange: (open: boolean) => void;
   /** Full same-origin /preview URL (with query), or null while closed. */
   src: string | null;
-  /** Title shown in the header + used as the download filename. */
+  /** Title shown in the header. */
   title: string;
+  /** Semantic filename (with extension) used for the download, e.g. "pasaporte-de-juan.pdf". */
+  downloadName?: string;
   strings: DocumentPreviewStrings;
 }
 
@@ -51,7 +53,7 @@ export function LoadingDots() {
   );
 }
 
-export function DocumentPreviewModal({ open, onOpenChange, src, title, strings }: DocumentPreviewModalProps) {
+export function DocumentPreviewModal({ open, onOpenChange, src, title, downloadName, strings }: DocumentPreviewModalProps) {
   const [blobUrl, setBlobUrl] = React.useState<string | null>(null);
   const [mime, setMime] = React.useState("");
   const [loading, setLoading] = React.useState(false);
@@ -94,7 +96,7 @@ export function DocumentPreviewModal({ open, onOpenChange, src, title, strings }
     if (!blobUrl) return;
     const a = document.createElement("a");
     a.href = blobUrl;
-    a.download = title || "document";
+    a.download = downloadName || title || "document";
     document.body.appendChild(a);
     a.click();
     a.remove();

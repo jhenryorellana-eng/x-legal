@@ -16,6 +16,7 @@ import { requireActor } from "@/backend/modules/identity";
 import {
   startDocumentUpload,
   confirmDocumentUpload,
+  deleteCaseDocument,
   getDocumentsMatrix,
   getDocumentExtractionStatus,
   CaseError,
@@ -69,6 +70,8 @@ export async function confirmUploadAction(input: {
   requirementId: string | null;
   partyId: string | null;
   originalFilename: string;
+  /** Client-typed name for multiple/free uploads (ignored for single slots). */
+  displayName?: string | null;
   /** Phase progress before the upload (to compute the celebration gain). */
   previousProgress: number;
 }): Promise<ConfirmUploadResult> {
@@ -80,10 +83,26 @@ export async function confirmUploadAction(input: {
       requirementId: input.requirementId,
       partyId: input.partyId,
       originalFilename: input.originalFilename,
+      displayName: input.displayName ?? null,
     });
     const matrix = await getDocumentsMatrix(actor, input.caseId);
     const gain = Math.max(0, matrix.progress - input.previousProgress);
     return { ok: true, progress: matrix.progress, gain, caseDocumentId: doc.id };
+  } catch (err) {
+    const code = err instanceof CaseError ? err.code : "UNEXPECTED";
+    return { ok: false, error: { code } };
+  }
+}
+
+/** Deletes a never-reviewed document the client uploaded (mistake/overwrite). */
+export async function deleteDocumentAction(input: {
+  caseId: string;
+  documentId: string;
+}): Promise<{ ok: boolean; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    await deleteCaseDocument(actor, input.documentId);
+    return { ok: true };
   } catch (err) {
     const code = err instanceof CaseError ? err.code : "UNEXPECTED";
     return { ok: false, error: { code } };

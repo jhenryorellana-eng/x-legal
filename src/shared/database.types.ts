@@ -885,6 +885,7 @@ export type Database = {
           case_id: string
           correction_due_at: string | null
           created_at: string
+          display_name: string | null
           id: string
           mime_type: string
           original_filename: string
@@ -905,6 +906,7 @@ export type Database = {
           case_id: string
           correction_due_at?: string | null
           created_at?: string
+          display_name?: string | null
           id?: string
           mime_type: string
           original_filename: string
@@ -925,6 +927,7 @@ export type Database = {
           case_id?: string
           correction_due_at?: string | null
           created_at?: string
+          display_name?: string | null
           id?: string
           mime_type?: string
           original_filename?: string
@@ -3648,6 +3651,7 @@ export type Database = {
         Row: {
           accepted_format: string
           ai_extract: boolean
+          allow_multiple: boolean
           category_i18n: Json | null
           created_at: string
           extraction_schema: Json | null
@@ -3668,6 +3672,7 @@ export type Database = {
         Insert: {
           accepted_format?: string
           ai_extract?: boolean
+          allow_multiple?: boolean
           category_i18n?: Json | null
           created_at?: string
           extraction_schema?: Json | null
@@ -3688,6 +3693,7 @@ export type Database = {
         Update: {
           accepted_format?: string
           ai_extract?: boolean
+          allow_multiple?: boolean
           category_i18n?: Json | null
           created_at?: string
           extraction_schema?: Json | null

@@ -148,6 +148,7 @@ function makeRequiredDoc(overrides: Partial<RequiredDocumentType> = {}): Require
     ai_extract: false,
     extraction_schema: null,
     accepted_format: "pdf",
+    allow_multiple: false,
     position: 0,
     is_active: true,
     ...overrides,
@@ -635,6 +636,7 @@ describe("applyRequirementOverrides", () => {
       ai_extract: false,
       extraction_schema: null,
       accepted_format: "pdf",
+      allow_multiple: false,
       position: 0,
       ...overrides,
     };

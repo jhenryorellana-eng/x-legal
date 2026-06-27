@@ -16,6 +16,7 @@ import {
   type DocItem,
 } from "@/frontend/features/cliente/documentos/documentos-screen";
 import { EmptyCase } from "@/frontend/features/cliente/shared/empty-case";
+import { deleteDocumentAction } from "../subir/actions";
 
 export default async function DocumentosPage({
   params,
@@ -68,6 +69,14 @@ export default async function DocumentosPage({
         ? pickLocale(d.rejectionReasonI18n, locale)
         : null,
       query: qs.toString(),
+      allowMultiple: d.allowMultiple,
+      uploads: d.uploads.map((u) => ({
+        documentId: u.documentId,
+        name: u.displayName,
+        status: u.status,
+        // Only a never-reviewed file (status 'revision' = uploaded) can be deleted.
+        canDelete: u.status === "revision",
+      })),
     };
   });
 
@@ -91,7 +100,12 @@ export default async function DocumentosPage({
         inReview: t("inReview"),
         upload: t("upload"),
         fix: t("fix"),
+        addFile: t("addFile"),
+        remove: t("remove"),
+        confirm: t("confirm"),
+        cancel: t("cancel"),
       }}
+      onDelete={deleteDocumentAction}
     />
   );
 }

@@ -46,7 +46,7 @@ export function ClientePreview({ view }: { view: string }) {
       />
     );
   } else if (view === "documentos") {
-    content = <DocumentosScreen {...documentosMock} />;
+    content = <DocumentosScreen {...documentosMock} onDelete={async () => ({ ok: true as const })} />;
   } else if (view === "disclaimer") {
     content = (
       <DisclaimerScreen

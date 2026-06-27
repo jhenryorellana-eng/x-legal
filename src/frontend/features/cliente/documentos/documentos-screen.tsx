@@ -16,7 +16,21 @@ import { ScreenHead } from "@/frontend/components/mobile";
  * Client component (category accordion is interactive). Rejected docs render in
  * AMBER (StatusPill never used for "corregir" → red button + reason text, per
  * the spec's tone rule RF-CLI-028).
+ *
+ * Multiple requirements (allow_multiple) list every uploaded file with its
+ * client-chosen name, a delete action (only while pending review), and an
+ * "Add file" button. Single slots keep the classic upload/fix flow plus a
+ * delete affordance while the upload is still pending review.
  */
+
+/** One uploaded file within a slot (the unit a multiple requirement lists). */
+export interface DocUploadItem {
+  documentId: string;
+  name: string;
+  status: "revision" | "aprobado" | "corregir";
+  /** True only while the file is pending review ('uploaded') → client may delete it. */
+  canDelete: boolean;
+}
 
 export interface DocItem {
   key: string;
@@ -27,6 +41,10 @@ export interface DocItem {
   rejectionReason: string | null;
   /** Query string for the upload/fix route (carries requirement + party). */
   query: string;
+  /** True when the admin marked this requirement as multiple (≥1 file). */
+  allowMultiple: boolean;
+  /** Current (non-replaced) files for this slot. */
+  uploads: DocUploadItem[];
 }
 
 export interface DocumentosLabels {
@@ -39,7 +57,13 @@ export interface DocumentosLabels {
   inReview: string;
   upload: string;
   fix: string;
+  addFile: string;
+  remove: string;
+  confirm: string;
+  cancel: string;
 }
+
+export type DeleteResult = { ok: boolean; error?: { code: string } };
 
 export function DocumentosScreen({
   items,
@@ -49,6 +73,7 @@ export function DocumentosScreen({
   phaseName,
   caseId,
   labels,
+  onDelete,
 }: {
   items: DocItem[];
   done: number;
@@ -57,6 +82,7 @@ export function DocumentosScreen({
   phaseName: string;
   caseId: string;
   labels: DocumentosLabels;
+  onDelete: (input: { caseId: string; documentId: string }) => Promise<DeleteResult>;
 }) {
   const router = useRouter();
   const categories = React.useMemo(
@@ -66,6 +92,119 @@ export function DocumentosScreen({
   const [open, setOpen] = React.useState<string[]>(categories);
   const toggle = (c: string) =>
     setOpen((o) => (o.includes(c) ? o.filter((x) => x !== c) : [...o, c]));
+
+  // Two-step inline delete: first tap arms (sets confirmingId), second confirms.
+  const [confirmingId, setConfirmingId] = React.useState<string | null>(null);
+  const [busyId, setBusyId] = React.useState<string | null>(null);
+
+  async function handleDelete(documentId: string) {
+    setBusyId(documentId);
+    const r = await onDelete({ caseId, documentId });
+    setBusyId(null);
+    setConfirmingId(null);
+    if (r.ok) router.refresh();
+  }
+
+  function goUpload(d: DocItem) {
+    router.push(
+      d.status === "corregir"
+        ? `/caso/${caseId}/corregir?${d.query}`
+        : `/caso/${caseId}/subir?${d.query}`,
+    );
+  }
+
+  /** Trash / confirm inline control for a deletable upload. */
+  function DeleteControl({ documentId }: { documentId: string }) {
+    if (confirmingId === documentId) {
+      return (
+        <span style={{ display: "inline-flex", gap: 6 }}>
+          <button
+            type="button"
+            onClick={() => handleDelete(documentId)}
+            disabled={busyId === documentId}
+            style={{
+              height: 36,
+              padding: "0 12px",
+              borderRadius: 999,
+              border: "none",
+              cursor: "pointer",
+              background: "var(--red)",
+              color: "#fff",
+              fontWeight: 700,
+              fontSize: 13.5,
+            }}
+          >
+            {busyId === documentId ? "…" : labels.confirm}
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirmingId(null)}
+            style={{
+              height: 36,
+              padding: "0 12px",
+              borderRadius: 999,
+              border: "1px solid var(--line)",
+              cursor: "pointer",
+              background: "var(--card)",
+              color: "var(--ink-2)",
+              fontWeight: 700,
+              fontSize: 13.5,
+            }}
+          >
+            {labels.cancel}
+          </button>
+        </span>
+      );
+    }
+    return (
+      <button
+        type="button"
+        onClick={() => setConfirmingId(documentId)}
+        aria-label={labels.remove}
+        style={{
+          width: 36,
+          height: 36,
+          borderRadius: 999,
+          border: "none",
+          cursor: "pointer",
+          background: "var(--red-soft)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexShrink: 0,
+        }}
+      >
+        <Icon name="x" size={17} color="var(--red)" />
+      </button>
+    );
+  }
+
+  /** A single uploaded file row inside a multiple slot. */
+  function UploadRow({ u }: { u: DocUploadItem }) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "8px 10px",
+          background: "var(--panel-2)",
+          borderRadius: 12,
+        }}
+      >
+        <Icon name="doc" size={18} color="var(--accent)" />
+        <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: "var(--navy)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {u.name}
+        </span>
+        {u.status !== "corregir" && (
+          <StatusPill kind={u.status}>
+            {u.status === "aprobado" ? labels.approved : labels.inReview}
+          </StatusPill>
+        )}
+        {u.canDelete && <DeleteControl documentId={u.documentId} />}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -158,96 +297,154 @@ export function DocumentosScreen({
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {items
                 .filter((d) => d.category === cat)
-                .map((d) => (
-                  <div
-                    key={d.key}
-                    className="mp-lift"
-                    style={{
-                      background: "var(--card)",
-                      borderRadius: 20,
-                      padding: 16,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 13,
-                      boxShadow: "var(--shadow-soft)",
-                    }}
-                  >
-                    <IconTile name="doc" color="var(--accent)" size={44} radius={13} iconSize={24} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div
-                        className="t-title"
-                        style={{
-                          fontSize: 16,
-                          color: "var(--navy)",
-                          fontWeight: 700,
-                          lineHeight: 1.25,
-                        }}
-                      >
-                        {d.label}
-                      </div>
-                      {d.status === "corregir" && d.rejectionReason && (
+                .map((d) =>
+                  d.allowMultiple ? (
+                    // ── Multiple slot: list of files + "add file" button ──────
+                    <div
+                      key={d.key}
+                      style={{
+                        background: "var(--card)",
+                        borderRadius: 20,
+                        padding: 16,
+                        boxShadow: "var(--shadow-soft)",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 12,
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
+                        <IconTile name="doc" color="var(--accent)" size={44} radius={13} iconSize={24} />
                         <div
-                          style={{
-                            fontSize: 13,
-                            color: "var(--gold-deep)",
-                            fontWeight: 700,
-                            marginTop: 3,
-                          }}
+                          className="t-title"
+                          style={{ flex: 1, fontSize: 16, color: "var(--navy)", fontWeight: 700, lineHeight: 1.25 }}
                         >
-                          {d.rejectionReason}
+                          {d.label}
+                        </div>
+                      </div>
+
+                      {d.uploads.length > 0 && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                          {d.uploads.map((u) => (
+                            <UploadRow key={u.documentId} u={u} />
+                          ))}
                         </div>
                       )}
-                      {(d.status === "aprobado" || d.status === "revision") && (
-                        <div style={{ marginTop: 6 }}>
-                          <StatusPill kind={d.status}>
-                            {d.status === "aprobado" ? labels.approved : labels.inReview}
-                          </StatusPill>
-                        </div>
-                      )}
-                    </div>
-                    {(d.status === "pendiente" || d.status === "corregir") && (
+
                       <button
                         type="button"
-                        onClick={() =>
-                          router.push(
-                            d.status === "corregir"
-                              ? `/caso/${caseId}/corregir?${d.query}`
-                              : `/caso/${caseId}/subir?${d.query}`,
-                          )
-                        }
+                        onClick={() => router.push(`/caso/${caseId}/subir?${d.query}`)}
                         className="mp-pop"
                         style={{
                           height: 44,
                           padding: "0 18px",
                           borderRadius: 999,
-                          border: "none",
+                          border: "1.5px dashed color-mix(in srgb, var(--accent) 50%, transparent)",
                           cursor: "pointer",
-                          // "corregir" CTA is amber (gold-deep), NOT red — tone rule.
-                          background:
-                            d.status === "corregir"
-                              ? "var(--gold-deep)"
-                              : "var(--accent)",
-                          color: "#fff",
+                          background: "var(--blue-soft)",
+                          color: "var(--accent)",
                           fontFamily: "var(--font-title)",
                           fontWeight: 700,
                           fontSize: 15,
                           display: "flex",
                           alignItems: "center",
-                          gap: 6,
-                          boxShadow: `0 6px 14px color-mix(in srgb, ${d.status === "corregir" ? "var(--gold-deep)" : "var(--accent)"} 27%, transparent)`,
-                          whiteSpace: "nowrap",
+                          justifyContent: "center",
+                          gap: 7,
                         }}
                       >
-                        <Icon
-                          name={d.status === "corregir" ? "edit" : "upload"}
-                          size={18}
-                          color="#fff"
-                        />
-                        {d.status === "corregir" ? labels.fix : labels.upload}
+                        <Icon name="plus" size={18} color="var(--accent)" />
+                        {labels.addFile}
                       </button>
-                    )}
-                  </div>
-                ))}
+                    </div>
+                  ) : (
+                    // ── Single slot: classic upload/fix + status, delete if pending ──
+                    <div
+                      key={d.key}
+                      className="mp-lift"
+                      style={{
+                        background: "var(--card)",
+                        borderRadius: 20,
+                        padding: 16,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 13,
+                        boxShadow: "var(--shadow-soft)",
+                      }}
+                    >
+                      <IconTile name="doc" color="var(--accent)" size={44} radius={13} iconSize={24} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div
+                          className="t-title"
+                          style={{
+                            fontSize: 16,
+                            color: "var(--navy)",
+                            fontWeight: 700,
+                            lineHeight: 1.25,
+                          }}
+                        >
+                          {d.label}
+                        </div>
+                        {d.status === "corregir" && d.rejectionReason && (
+                          <div
+                            style={{
+                              fontSize: 13,
+                              color: "var(--gold-deep)",
+                              fontWeight: 700,
+                              marginTop: 3,
+                            }}
+                          >
+                            {d.rejectionReason}
+                          </div>
+                        )}
+                        {(d.status === "aprobado" || d.status === "revision") && (
+                          <div style={{ marginTop: 6 }}>
+                            <StatusPill kind={d.status}>
+                              {d.status === "aprobado" ? labels.approved : labels.inReview}
+                            </StatusPill>
+                          </div>
+                        )}
+                      </div>
+                      {/* Delete a pending (not-yet-reviewed) single upload to free the slot. */}
+                      {d.status === "revision" && d.uploads[0]?.canDelete && (
+                        <DeleteControl documentId={d.uploads[0].documentId} />
+                      )}
+                      {(d.status === "pendiente" || d.status === "corregir") && (
+                        <button
+                          type="button"
+                          onClick={() => goUpload(d)}
+                          className="mp-pop"
+                          style={{
+                            height: 44,
+                            padding: "0 18px",
+                            borderRadius: 999,
+                            border: "none",
+                            cursor: "pointer",
+                            // "corregir" CTA is amber (gold-deep), NOT red — tone rule.
+                            background:
+                              d.status === "corregir"
+                                ? "var(--gold-deep)"
+                                : "var(--accent)",
+                            color: "#fff",
+                            fontFamily: "var(--font-title)",
+                            fontWeight: 700,
+                            fontSize: 15,
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                            boxShadow: `0 6px 14px color-mix(in srgb, ${d.status === "corregir" ? "var(--gold-deep)" : "var(--accent)"} 27%, transparent)`,
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          <Icon
+                            name={d.status === "corregir" ? "edit" : "upload"}
+                            size={18}
+                            color="#fff"
+                          />
+                          {d.status === "corregir" ? labels.fix : labels.upload}
+                        </button>
+                      )}
+                    </div>
+                  ),
+                )}
             </div>
           )}
         </div>

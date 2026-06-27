@@ -851,6 +851,26 @@ export async function updateDocument(
 }
 
 /**
+ * Hard-deletes a case document row by ID (service client). Used only for
+ * never-reviewed ('uploaded') documents the client removes/overwrites — the
+ * Storage object is deleted separately by the caller. Reviewed documents
+ * (approved/rejected) are never hard-deleted (audit trail).
+ */
+export async function deleteCaseDocumentRow(documentId: string): Promise<void> {
+  const supabase = await createServiceClient();
+  const { error } = await supabase
+    .from("case_documents")
+    .delete()
+    .eq("id", documentId);
+
+  if (error) {
+    throw new Error(
+      `cases.repository: deleteCaseDocumentRow failed — ${error.message}`,
+    );
+  }
+}
+
+/**
  * Finds the current chain head (most recent, non-replaced document) for a
  * given case/requirement/party triple.
  *
