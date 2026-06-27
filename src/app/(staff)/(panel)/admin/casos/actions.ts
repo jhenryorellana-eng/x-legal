@@ -42,7 +42,12 @@ import {
   saveFormDraft,
   submitFormResponse,
   getCaseDocumentDownloadUrl,
+  transferCase,
+  assignCaseOwner,
+  getCaseStageInfo,
+  setDocumentTranslationNotRequired,
   CaseError,
+  type CaseStageInfoDto,
 } from "@/backend/modules/cases";
 import {
   translateAnswerText,
@@ -565,5 +570,70 @@ export async function translateFormAnswersAction(input: {
     return { ok: true, translations };
   } catch {
     return { ok: false, error: { code: "TRANSLATE_FAILED" } };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Case ownership stage — responsable / etapa (eje propio)
+// ---------------------------------------------------------------------------
+
+/** Reads the responsable/etapa + checklist gating for the case detail UI. */
+export async function getCaseStageInfoAction(input: {
+  caseId: string;
+}): Promise<{ ok: true; info: CaseStageInfoDto } | Err> {
+  try {
+    const actor = await requireActor();
+    const info = await getCaseStageInfo(actor, input.caseId);
+    return { ok: true, info };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+/**
+ * "Traspasar": advances the case to the next stage + responsible. Gated by the
+ * stage checklist (admin may force). Moves the kanban card automatically.
+ */
+export async function transferCaseAction(input: {
+  caseId: string;
+  toOwnerId?: string | null;
+  force?: boolean;
+  note?: string;
+}): Promise<{ ok: true; stage: string; ownerId: string | null } | Err> {
+  try {
+    const actor = await requireActor();
+    const res = await transferCase(actor, input);
+    return { ok: true, stage: res.stage, ownerId: res.ownerId };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+/** Admin reassigns the responsible within the current stage. */
+export async function assignCaseOwnerAction(input: {
+  caseId: string;
+  ownerId: string;
+}): Promise<{ ok: true } | Err> {
+  try {
+    const actor = await requireActor();
+    await assignCaseOwner(actor, input);
+    return { ok: true };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+/** Marks a document as already-English (excluded from the translation gating) or back. */
+export async function setDocumentTranslationNotRequiredAction(input: {
+  caseId: string;
+  caseDocumentId: string;
+  value: boolean;
+}): Promise<{ ok: true } | Err> {
+  try {
+    const actor = await requireActor();
+    await setDocumentTranslationNotRequired(actor, input);
+    return { ok: true };
+  } catch (err) {
+    return mapErr(err);
   }
 }

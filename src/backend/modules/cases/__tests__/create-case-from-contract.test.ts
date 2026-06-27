@@ -142,6 +142,7 @@ vi.mock("../repository", async (importOriginal) => {
     updateDocument: vi.fn(),
     updateCase: vi.fn(),
     insertPhaseHistory: vi.fn(),
+    insertStageHistory: vi.fn(),
     getTimelinePage: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
     listCaseDocuments: vi.fn().mockResolvedValue([]),
     getRequirementOverrides: vi.fn().mockResolvedValue([]),
@@ -615,7 +616,9 @@ describe("createCaseFromContract", () => {
     expect(mockEmit).not.toHaveBeenCalledWith(expect.objectContaining({ type: "case.created" }));
   });
 
-  it("emits case.assigned when assignedParalegalId is set", async () => {
+  it("stores assigned_paralegal_id as preselection; no owner change when no sales is assigned", async () => {
+    // Admin actor, no sales rep → initial owner is null (admin assigns later).
+    // assigned_paralegal_id is kept only as the default owner for the Legal handoff.
     await createCaseFromContract(ACTOR, {
       primaryClientId: CLIENT_ID,
       serviceId: SERVICE_ID,
@@ -625,8 +628,28 @@ describe("createCaseFromContract", () => {
       paymentPlan: VALID_PAYMENT_PLAN,
     });
 
-    expect(mockEmit).toHaveBeenCalledWith(expect.objectContaining({ type: "case.assigned" }));
     const payload = mockCreateCaseAtomic.mock.calls[0][0];
     expect(payload.case.assigned_paralegal_id).toBe("ffffffff-ffff-4fff-8fff-ffffffffffff");
+    expect(mockEmit).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "case.owner_changed" }),
+    );
+  });
+
+  it("sets the sales creator as initial responsible and projects the case card (case.owner_changed)", async () => {
+    const salesActor = { ...ACTOR, role: "sales" as const, userId: "sales-user-9" };
+    await createCaseFromContract(salesActor, {
+      primaryClientId: CLIENT_ID,
+      serviceId: SERVICE_ID,
+      servicePlanId: PLAN_ID,
+      parties: [],
+      paymentPlan: VALID_PAYMENT_PLAN,
+    });
+
+    expect(mockEmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "case.owner_changed",
+        payload: expect.objectContaining({ fromOwnerId: null, toOwnerId: "sales-user-9" }),
+      }),
+    );
   });
 });

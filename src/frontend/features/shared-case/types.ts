@@ -75,6 +75,8 @@ export interface DocMatrixVM {
   status: "pendiente" | "revision" | "aprobado" | "corregir";
   documentId: string | null;
   rejectionReason: string | null;
+  /** Staff marked this uploaded document as already-English (no translation needed). */
+  translationNotRequired?: boolean;
 }
 
 export interface PartyVM {
@@ -188,8 +190,44 @@ export interface CaseRutaVM {
   citas: RutaCitaVM[];
 }
 
+/** Case responsibility stage (eje propio) — drives the Traspaso tab + header chip. */
+export type CaseStageId = "sales" | "legal" | "operations" | "done";
+
+export interface StageChecklistItemVM {
+  /** Stable key → i18n label (citas, docs, forms, translation, payment, contract, …). */
+  key: string;
+  done: boolean;
+  /** true = task not yet defined in product (placeholder gate, admin can force). */
+  placeholder: boolean;
+}
+
+export interface StageOwnerOptionVM {
+  userId: string;
+  displayName: string;
+  role: string;
+}
+
+export interface CaseStageVM {
+  stage: CaseStageId;
+  ownerId: string | null;
+  ownerName: string | null;
+  nextStage: CaseStageId | null;
+  checklist: StageChecklistItemVM[];
+  allDone: boolean;
+  isOwner: boolean;
+  isAdmin: boolean;
+  /** owner/admin AND checklist complete → "Traspasar" enabled (without force). */
+  canTransfer: boolean;
+  /** Candidates to reassign the CURRENT stage (admin). */
+  eligibleOwners: StageOwnerOptionVM[];
+  /** Candidates for the NEXT stage (transfer target picker). */
+  nextStageOwners: StageOwnerOptionVM[];
+}
+
 export interface CaseWorkspaceVM {
   header: CaseHeaderVM;
+  /** Responsible/stage + handoff gating (Traspaso tab + header chip). Null = unavailable. */
+  stage?: CaseStageVM | null;
   /** Appointment route for the current phase (Ruta de citas tab). Null = unavailable. */
   ruta?: CaseRutaVM | null;
   /** Drives the role-aware tab set + admin affordances. */
@@ -353,5 +391,34 @@ export interface CaseDetailActions {
     caseId: string;
     label?: { es: string; en: string } | null;
     objectives: Array<{ id?: string; text: { es: string; en: string } }>;
+  }) => Promise<{ ok: boolean; error?: { code: string } }>;
+  /**
+   * "Traspasar": advance the case to the next stage + responsible (current owner
+   * or admin). Gated by the stage checklist; an admin may `force`. When the next
+   * stage has several eligible owners, pass `toOwnerId`. Optional — only staff
+   * surfaces inject it.
+   */
+  transferCase?: (input: {
+    caseId: string;
+    toOwnerId?: string | null;
+    force?: boolean;
+    note?: string;
+  }) => Promise<{ ok: boolean; stage?: string; ownerId?: string | null; error?: { code: string } }>;
+  /**
+   * Reassign the responsible within the current stage (admin only). Optional —
+   * only the admin surface injects it.
+   */
+  assignCaseOwner?: (input: {
+    caseId: string;
+    ownerId: string;
+  }) => Promise<{ ok: boolean; error?: { code: string } }>;
+  /**
+   * Mark an uploaded document as already-English (excluded from the translation
+   * gating) or back. Staff-only — optional, only case-detail surfaces inject it.
+   */
+  setDocumentTranslationNotRequired?: (input: {
+    caseId: string;
+    caseDocumentId: string;
+    value: boolean;
   }) => Promise<{ ok: boolean; error?: { code: string } }>;
 }

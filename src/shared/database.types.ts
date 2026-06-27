@@ -897,6 +897,7 @@ export type Database = {
           size_bytes: number
           status: string
           storage_path: string
+          translation_not_required: boolean
           updated_at: string
           uploaded_by: string
         }
@@ -916,6 +917,7 @@ export type Database = {
           size_bytes: number
           status?: string
           storage_path: string
+          translation_not_required?: boolean
           updated_at?: string
           uploaded_by: string
         }
@@ -935,6 +937,7 @@ export type Database = {
           size_bytes?: number
           status?: string
           storage_path?: string
+          translation_not_required?: boolean
           updated_at?: string
           uploaded_by?: string
         }
@@ -1102,6 +1105,58 @@ export type Database = {
           },
         ]
       }
+      case_milestone_history: {
+        Row: {
+          case_id: string
+          created_at: string
+          entered_at: string
+          entered_by: string | null
+          id: string
+          milestone_id: string
+          note: string | null
+        }
+        Insert: {
+          case_id: string
+          created_at?: string
+          entered_at?: string
+          entered_by?: string | null
+          id?: string
+          milestone_id: string
+          note?: string | null
+        }
+        Update: {
+          case_id?: string
+          created_at?: string
+          entered_at?: string
+          entered_by?: string | null
+          id?: string
+          milestone_id?: string
+          note?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_milestone_history_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_milestone_history_entered_by_fkey"
+            columns: ["entered_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_milestone_history_milestone_id_fkey"
+            columns: ["milestone_id"]
+            isOneToOne: false
+            referencedRelation: "service_phase_milestones"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       case_overrides: {
         Row: {
           appointment_count: number | null
@@ -1208,58 +1263,6 @@ export type Database = {
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "users"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      case_milestone_history: {
-        Row: {
-          case_id: string
-          created_at: string
-          entered_at: string
-          entered_by: string | null
-          id: string
-          milestone_id: string
-          note: string | null
-        }
-        Insert: {
-          case_id: string
-          created_at?: string
-          entered_at?: string
-          entered_by?: string | null
-          id?: string
-          milestone_id: string
-          note?: string | null
-        }
-        Update: {
-          case_id?: string
-          created_at?: string
-          entered_at?: string
-          entered_by?: string | null
-          id?: string
-          milestone_id?: string
-          note?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "case_milestone_history_case_id_fkey"
-            columns: ["case_id"]
-            isOneToOne: false
-            referencedRelation: "cases"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "case_milestone_history_entered_by_fkey"
-            columns: ["entered_by"]
-            isOneToOne: false
-            referencedRelation: "users"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "case_milestone_history_milestone_id_fkey"
-            columns: ["milestone_id"]
-            isOneToOne: false
-            referencedRelation: "service_phase_milestones"
             referencedColumns: ["id"]
           },
         ]
@@ -1384,6 +1387,71 @@ export type Database = {
           },
         ]
       }
+      case_stage_history: {
+        Row: {
+          actor_id: string | null
+          case_id: string
+          created_at: string
+          from_owner_id: string | null
+          from_stage: string | null
+          id: string
+          note: string | null
+          to_owner_id: string | null
+          to_stage: string
+        }
+        Insert: {
+          actor_id?: string | null
+          case_id: string
+          created_at?: string
+          from_owner_id?: string | null
+          from_stage?: string | null
+          id?: string
+          note?: string | null
+          to_owner_id?: string | null
+          to_stage: string
+        }
+        Update: {
+          actor_id?: string | null
+          case_id?: string
+          created_at?: string
+          from_owner_id?: string | null
+          from_stage?: string | null
+          id?: string
+          note?: string | null
+          to_owner_id?: string | null
+          to_stage?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_stage_history_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_stage_history_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_stage_history_from_owner_id_fkey"
+            columns: ["from_owner_id"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "case_stage_history_to_owner_id_fkey"
+            columns: ["to_owner_id"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["user_id"]
+          },
+        ]
+      }
       case_timeline: {
         Row: {
           actor_kind: string
@@ -1452,7 +1520,9 @@ export type Database = {
           completed_at: string | null
           created_at: string
           current_milestone_id: string | null
+          current_owner_id: string | null
           current_phase_id: string | null
+          current_stage: string
           id: string
           internal_note: string | null
           opened_at: string | null
@@ -1471,7 +1541,9 @@ export type Database = {
           completed_at?: string | null
           created_at?: string
           current_milestone_id?: string | null
+          current_owner_id?: string | null
           current_phase_id?: string | null
+          current_stage?: string
           id?: string
           internal_note?: string | null
           opened_at?: string | null
@@ -1490,7 +1562,9 @@ export type Database = {
           completed_at?: string | null
           created_at?: string
           current_milestone_id?: string | null
+          current_owner_id?: string | null
           current_phase_id?: string | null
+          current_stage?: string
           id?: string
           internal_note?: string | null
           opened_at?: string | null
@@ -1523,6 +1597,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "service_phase_milestones"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cases_current_owner_id_fkey"
+            columns: ["current_owner_id"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["user_id"]
           },
           {
             foreignKeyName: "cases_current_phase_id_fkey"

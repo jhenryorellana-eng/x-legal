@@ -298,6 +298,155 @@ export async function insertMilestoneHistory(row: {
 }
 
 // ---------------------------------------------------------------------------
+// Stage / ownership (responsable interno — eje propio)
+// ---------------------------------------------------------------------------
+
+export type CaseStageHistoryRow = Tables<"case_stage_history">;
+
+/** Inserts an immutable case_stage_history row (service-role; authz in service). */
+export async function insertStageHistory(row: {
+  caseId: string;
+  fromStage: string | null;
+  toStage: string;
+  fromOwnerId: string | null;
+  toOwnerId: string | null;
+  actorId: string | null;
+  note: string | null;
+}): Promise<void> {
+  const supabase = await createServiceClient();
+  const { error } = await supabase.from("case_stage_history").insert({
+    case_id: row.caseId,
+    from_stage: row.fromStage,
+    to_stage: row.toStage,
+    from_owner_id: row.fromOwnerId,
+    to_owner_id: row.toOwnerId,
+    actor_id: row.actorId,
+    note: row.note,
+  });
+  if (error) {
+    throw new Error(`cases.repository: insertStageHistory failed — ${error.message}`);
+  }
+}
+
+/** Lists a case's stage history (oldest first). Service-role read (staff-only surface). */
+export async function listCaseStageHistory(
+  caseId: string,
+): Promise<CaseStageHistoryRow[]> {
+  const supabase = await createServiceClient();
+  const { data, error } = await supabase
+    .from("case_stage_history")
+    .select("*")
+    .eq("case_id", caseId)
+    .order("created_at", { ascending: true });
+  if (error) {
+    throw new Error(`cases.repository: listCaseStageHistory failed — ${error.message}`);
+  }
+  return data ?? [];
+}
+
+/**
+ * Staff in an org with `can_edit` on a module — the eligible owners for a stage
+ * (STAGE_MODULE). Admins are eligible for every stage regardless of the matrix
+ * and are appended by the service. Service-role read.
+ */
+export async function listStaffWithModuleEdit(
+  orgId: string,
+  moduleKey: string,
+): Promise<Array<{ userId: string; displayName: string; role: string }>> {
+  const supabase = await createServiceClient();
+  // staff_id → staff_profiles.user_id → users.id. Nest the users embed inside
+  // staff_profiles (there is no direct FK from this table to users). `!inner`
+  // turns the org/active constraints into real joins.
+  const { data, error } = await supabase
+    .from("employee_module_permissions")
+    .select("staff_id, staff_profiles!inner(display_name, role, users!inner(org_id, is_active))")
+    .eq("module_key", moduleKey)
+    .eq("can_edit", true)
+    .eq("staff_profiles.users.org_id", orgId)
+    .eq("staff_profiles.users.is_active", true);
+  if (error) {
+    throw new Error(`cases.repository: listStaffWithModuleEdit failed — ${error.message}`);
+  }
+  const rows = (data ?? []) as unknown as Array<{
+    staff_id: string;
+    staff_profiles: { display_name: string; role: string } | null;
+  }>;
+  return rows
+    .filter((r) => r.staff_profiles)
+    .map((r) => ({
+      userId: r.staff_id,
+      displayName: r.staff_profiles!.display_name,
+      role: r.staff_profiles!.role,
+    }));
+}
+
+/** Resolves a staff member's display name (responsable). Service-role read. */
+export async function findStaffDisplayName(userId: string): Promise<string | null> {
+  const supabase = await createServiceClient();
+  const { data } = await supabase
+    .from("staff_profiles")
+    .select("display_name")
+    .eq("user_id", userId)
+    .maybeSingle();
+  return data?.display_name ?? null;
+}
+
+/**
+ * Translation progress for a case (gating signal for the sales handoff).
+ * "to translate" = live documents (status uploaded|approved) NOT marked as
+ * already-English (translation_not_required=false); "completed" = those with a
+ * finished es-en translation. Service-role read.
+ */
+export async function getTranslationProgress(
+  caseId: string,
+): Promise<{ toTranslate: number; completed: number }> {
+  const supabase = await createServiceClient();
+  const { data: docs, error: docErr } = await supabase
+    .from("case_documents")
+    .select("id")
+    .eq("case_id", caseId)
+    .eq("translation_not_required", false)
+    .in("status", ["uploaded", "approved"]);
+  if (docErr) {
+    throw new Error(`cases.repository: getTranslationProgress(docs) failed — ${docErr.message}`);
+  }
+  const docIds = (docs ?? []).map((d) => d.id);
+  if (docIds.length === 0) return { toTranslate: 0, completed: 0 };
+
+  const { data: trans, error: trErr } = await supabase
+    .from("document_translations")
+    .select("case_document_id")
+    .in("case_document_id", docIds)
+    .eq("direction", "es-en")
+    .eq("status", "completed");
+  if (trErr) {
+    throw new Error(`cases.repository: getTranslationProgress(trans) failed — ${trErr.message}`);
+  }
+  const completedIds = new Set((trans ?? []).map((t) => t.case_document_id));
+  return { toTranslate: docIds.length, completed: completedIds.size };
+}
+
+/**
+ * Flags a document as already-English (no ES→EN translation needed) or back.
+ * Scoped to the case for safety. Service-role write (authz in service).
+ */
+export async function setDocumentTranslationNotRequiredRow(
+  caseId: string,
+  caseDocumentId: string,
+  value: boolean,
+): Promise<void> {
+  const supabase = await createServiceClient();
+  const { error } = await supabase
+    .from("case_documents")
+    .update({ translation_not_required: value, updated_at: new Date().toISOString() })
+    .eq("id", caseDocumentId)
+    .eq("case_id", caseId);
+  if (error) {
+    throw new Error(`cases.repository: setDocumentTranslationNotRequiredRow failed — ${error.message}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Documents
 // ---------------------------------------------------------------------------
 
@@ -974,6 +1123,8 @@ export interface ListCasesFilters {
   status?: string;
   assignedParalegalId?: string;
   assignedSalesId?: string;
+  /** Filters by current_owner_id (responsable interno). */
+  ownerId?: string;
   cursor?: string;
   limit?: number;
 }
@@ -1158,6 +1309,9 @@ export async function listCases(filters: ListCasesFilters): Promise<CasesPage> {
   }
   if (filters.assignedSalesId) {
     query = query.eq("assigned_sales_id", filters.assignedSalesId);
+  }
+  if (filters.ownerId) {
+    query = query.eq("current_owner_id", filters.ownerId);
   }
   if (filters.cursor) {
     query = query.lt("created_at", filters.cursor);

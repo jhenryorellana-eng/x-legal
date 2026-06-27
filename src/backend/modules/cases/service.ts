@@ -45,7 +45,13 @@ import {
   selectContractAdditionalParties,
   findCardinalityViolation,
   PRODUCTION_STATUSES,
+  computeStageChecklist,
+  canTransferStage,
+  nextStage,
+  STAGE_MODULE,
   type CaseStatus,
+  type CaseStage,
+  type StageChecklist,
   type FormResponseStatus,
   type QuestionValidationRule,
   type PartiesSnapshotShape,
@@ -101,6 +107,12 @@ import {
   findCasesWithGenerationFailed,
   findCasesWithRfeOverdue,
   getActiveCasesEnriched,
+  insertStageHistory,
+  listCaseStageHistory,
+  listStaffWithModuleEdit,
+  getTranslationProgress,
+  findStaffDisplayName,
+  setDocumentTranslationNotRequiredRow,
   type CaseRow,
   type CaseDocumentRow,
   type CaseFormResponseRow,
@@ -159,7 +171,14 @@ export class CaseError extends Error {
       | "FORM_PDF_BLOCKED"
       | "FORM_PDF_REQUIRED_MISSING"
       | "FORM_RESPONSE_NOT_FOUND"
-      | "FORM_PROFILE_FIELD_FORBIDDEN",
+      | "FORM_PROFILE_FIELD_FORBIDDEN"
+      // Stage / ownership (responsable interno)
+      | "STAGE_TERMINAL"
+      | "STAGE_FORBIDDEN"
+      | "STAGE_NOT_READY"
+      | "STAGE_NO_OWNER"
+      | "STAGE_OWNER_REQUIRED"
+      | "STAGE_INVALID_OWNER",
     public readonly details?: Record<string, unknown>,
   ) {
     super(code);
@@ -706,10 +725,29 @@ export async function createCaseFromContract(
     occurredAt: new Date(),
   });
 
-  if (p.assignedParalegalId) {
+  // Initial responsible (etapa 'sales') = the assigned sales rep (the creator,
+  // typically Vanessa). Projects the case card onto their personal `cases` board
+  // via case.owner_changed. `assigned_paralegal_id` stays as a *preselection*
+  // used later as the default owner at the Legal handoff (transferCase).
+  if (assignedSalesId) {
+    await updateCase(caseId, { current_owner_id: assignedSalesId });
+    await insertStageHistory({
+      caseId,
+      fromStage: null,
+      toStage: "sales",
+      fromOwnerId: null,
+      toOwnerId: assignedSalesId,
+      actorId: actor.userId,
+      note: "case created",
+    });
     await appEvents.emitAndWait({
-      type: "case.assigned",
-      payload: { caseId, paralegalId: p.assignedParalegalId },
+      type: "case.owner_changed",
+      payload: {
+        caseId,
+        orgId: actor.orgId,
+        fromOwnerId: null,
+        toOwnerId: assignedSalesId,
+      },
       occurredAt: new Date(),
     });
   }
@@ -2412,6 +2450,7 @@ async function buildDocumentsMatrix(
         documentId: doc?.id ?? null,
         rejectionReasonI18n: doc ? asI18n(doc.rejection_reason_i18n) : null,
         correctionDueAt: doc?.correction_due_at ?? null,
+        translationNotRequired: doc?.translation_not_required ?? false,
       };
     },
   );
@@ -2455,6 +2494,8 @@ export interface DocumentMatrixItem {
   documentId: string | null;
   rejectionReasonI18n: I18nValue | null;
   correctionDueAt: string | null;
+  /** Staff marked this document as already-English (excluded from translation gating). */
+  translationNotRequired: boolean;
 }
 
 export interface CaseTimelineCita {
@@ -3976,13 +4017,19 @@ export async function getCaseExtractions(
  *
  * @api-id API-CASE-20
  */
-export async function listCasesForParalegal(
+/**
+ * Lists the cases the actor is the RESPONSIBLE (current_owner_id) for — the
+ * source of each staff member's personal `cases` kanban (Vanessa, Diana, Andrium).
+ * Generalises the old listCasesForParalegal (which keyed off assigned_paralegal_id)
+ * to the new ownership axis.
+ */
+export async function listCasesByOwner(
   actor: Actor,
 ): Promise<AdminCaseListItem[]> {
   can(actor, "cases", "view");
   const page = await listCases({
     orgId: actor.orgId,
-    assignedParalegalId: actor.userId,
+    ownerId: actor.userId,
   });
 
   const items = await Promise.all(
@@ -4014,6 +4061,342 @@ export async function listCasesForParalegal(
   );
 
   return items;
+}
+
+// ---------------------------------------------------------------------------
+// Case ownership stage — responsable / etapa (eje propio)
+// ---------------------------------------------------------------------------
+
+export interface StageChecklistItemDto {
+  key: string;
+  done: boolean;
+  placeholder: boolean;
+}
+
+export interface StageOwnerOption {
+  userId: string;
+  displayName: string;
+  role: string;
+}
+
+export interface CaseStageInfoDto {
+  stage: CaseStage;
+  ownerId: string | null;
+  ownerName: string | null;
+  nextStage: CaseStage | null;
+  checklist: StageChecklistItemDto[];
+  allDone: boolean;
+  isOwner: boolean;
+  isAdmin: boolean;
+  /** owner/admin AND checklist complete → "Traspasar" enabled (without force). */
+  canTransfer: boolean;
+  /** Eligible responsibles for the CURRENT stage (admin reassign). */
+  eligibleOwners: StageOwnerOption[];
+  /** Eligible responsibles for the NEXT stage (transfer target picker). */
+  nextStageOwners: StageOwnerOption[];
+}
+
+/** Builds the stage checklist for a case row (gather signals + pure domain compute). */
+async function buildStageChecklist(actor: Actor, caseRow: CaseRow): Promise<StageChecklist> {
+  const stage = (caseRow.current_stage ?? "sales") as CaseStage;
+
+  // Documents: strict "approved" count for the gate.
+  const { items: docItems, counts: docCounts } = await buildDocumentsMatrix(caseRow);
+  const docsApproved = docItems.filter((i) => !i.isHidden && i.status === "aprobado").length;
+
+  // Forms.
+  let formsTotal = 0;
+  let formsDone = 0;
+  try {
+    const forms = await getClientFormsForCase(actor, caseRow.id);
+    formsTotal = forms.length;
+    formsDone = forms.filter((f) => f.status === "submitted" || f.status === "approved").length;
+  } catch {
+    // best-effort: a forms read failure must not crash the checklist
+  }
+
+  // Appointment route (scheduling) — dynamic import avoids a module cycle.
+  let citasTotal = 0;
+  let citasCompleted = 0;
+  try {
+    const sched = (await import("@/backend/modules/scheduling")) as {
+      getCaseRuta: (a: Actor, c: string) => Promise<{ total: number; citas: Array<{ status: string }> }>;
+    };
+    const ruta = await sched.getCaseRuta(actor, caseRow.id);
+    citasTotal = ruta.total;
+    citasCompleted = ruta.citas.filter((c) => c.status === "completed").length;
+  } catch {
+    // best-effort
+  }
+
+  const tr = await getTranslationProgress(caseRow.id);
+
+  return computeStageChecklist(stage, {
+    citasTotal,
+    citasCompleted,
+    docsTotal: docCounts.total,
+    docsApproved,
+    formsTotal,
+    formsDone,
+    docsToTranslate: tr.toTranslate,
+    translationsCompleted: tr.completed,
+  });
+}
+
+/** Eligible responsibles for a stage = staff with can_edit on STAGE_MODULE[stage]. */
+async function eligibleOwnersForStage(orgId: string, stage: CaseStage): Promise<StageOwnerOption[]> {
+  if (stage === "done") return [];
+  const staff = await listStaffWithModuleEdit(orgId, STAGE_MODULE[stage]);
+  return staff.map((s) => ({ userId: s.userId, displayName: s.displayName, role: s.role }));
+}
+
+/**
+ * Stage info for the case detail UI: responsable, etapa, checklist gating, and
+ * the eligible owners for reassign / transfer. Staff-only.
+ *
+ * @api-id API-CASE-STAGE-01
+ */
+export async function getCaseStageInfo(actor: Actor, caseId: string): Promise<CaseStageInfoDto> {
+  await requireCaseAccess(actor, caseId);
+  if (actor.kind !== "staff") throw new AuthzError("wrong_kind");
+
+  const caseRow = await findCaseById(caseId);
+  if (!caseRow) throw new CaseError("CASE_NOT_FOUND");
+
+  const stage = (caseRow.current_stage ?? "sales") as CaseStage;
+  const checklist = await buildStageChecklist(actor, caseRow);
+  const isAdmin = actor.role === "admin";
+  const isOwner = caseRow.current_owner_id === actor.userId;
+  const canTransfer = canTransferStage(stage, checklist, { isOwner, isAdmin }) === null;
+  const ns = nextStage(stage);
+
+  const [ownerName, eligibleOwners, nextStageOwners] = await Promise.all([
+    caseRow.current_owner_id
+      ? findStaffDisplayName(caseRow.current_owner_id).catch(() => null)
+      : Promise.resolve(null),
+    eligibleOwnersForStage(actor.orgId, stage).catch(() => [] as StageOwnerOption[]),
+    ns
+      ? eligibleOwnersForStage(actor.orgId, ns).catch(() => [] as StageOwnerOption[])
+      : Promise.resolve([] as StageOwnerOption[]),
+  ]);
+
+  return {
+    stage,
+    ownerId: caseRow.current_owner_id,
+    ownerName,
+    nextStage: ns,
+    checklist: checklist.items.map((i) => ({
+      key: i.key,
+      done: i.done,
+      placeholder: i.placeholder ?? false,
+    })),
+    allDone: checklist.allDone,
+    isOwner,
+    isAdmin,
+    canTransfer,
+    eligibleOwners,
+    nextStageOwners,
+  };
+}
+
+const TransferCaseSchema = z.object({
+  caseId: zUuid,
+  toOwnerId: zUuid.nullable().optional(),
+  force: z.boolean().optional(),
+  note: z.string().trim().max(500).optional(),
+});
+export type TransferCaseInput = z.infer<typeof TransferCaseSchema>;
+
+/**
+ * Transfers the case to the NEXT stage + a new responsible. Gated by the current
+ * stage's checklist (an admin may `force`). Moves the kanban card to the new
+ * owner's board and removes it from the previous one (via case.owner_changed).
+ * Does NOT touch cases.status. Staff-only (current owner or admin).
+ *
+ * @api-id API-CASE-STAGE-02
+ */
+export async function transferCase(
+  actor: Actor,
+  input: TransferCaseInput,
+): Promise<{ stage: CaseStage; ownerId: string | null }> {
+  const p = TransferCaseSchema.parse(input);
+  await requireCaseAccess(actor, p.caseId);
+  if (actor.kind !== "staff") throw new AuthzError("wrong_kind");
+
+  const caseRow = await findCaseById(p.caseId);
+  if (!caseRow) throw new CaseError("CASE_NOT_FOUND");
+
+  const stage = (caseRow.current_stage ?? "sales") as CaseStage;
+  const isAdmin = actor.role === "admin";
+  const isOwner = caseRow.current_owner_id === actor.userId;
+
+  const checklist = await buildStageChecklist(actor, caseRow);
+  const denied = canTransferStage(stage, checklist, {
+    isOwner,
+    isAdmin,
+    force: Boolean(p.force) && isAdmin,
+  });
+  if (denied) throw new CaseError(denied);
+
+  const toStage = nextStage(stage);
+  if (!toStage) throw new CaseError("STAGE_TERMINAL");
+
+  // Resolve the next responsible.
+  let toOwnerId: string | null = null;
+  if (toStage !== "done") {
+    const candidates = await eligibleOwnersForStage(actor.orgId, toStage);
+    if (p.toOwnerId) {
+      // Target must be an org-scoped, permission-eligible owner — for admins too
+      // (defense in depth against cross-org / stale identifiers).
+      if (!candidates.some((c) => c.userId === p.toOwnerId)) {
+        throw new CaseError("STAGE_INVALID_OWNER");
+      }
+      toOwnerId = p.toOwnerId;
+    } else if (candidates.length === 1) {
+      toOwnerId = candidates[0].userId;
+    } else if (candidates.length === 0) {
+      throw new CaseError("STAGE_NO_OWNER");
+    } else {
+      throw new CaseError("STAGE_OWNER_REQUIRED", { candidates });
+    }
+  }
+
+  const fromOwnerId = caseRow.current_owner_id;
+
+  const fields: TablesUpdate<"cases"> = {
+    current_stage: toStage,
+    current_owner_id: toOwnerId,
+  };
+  // Keep the legacy paralegal pointer consistent when entering Legal.
+  if (toStage === "legal") fields.assigned_paralegal_id = toOwnerId;
+  await updateCase(p.caseId, fields);
+
+  await insertStageHistory({
+    caseId: p.caseId,
+    fromStage: stage,
+    toStage,
+    fromOwnerId,
+    toOwnerId,
+    actorId: actor.userId,
+    note: p.note ?? null,
+  });
+
+  await writeAudit(actor, "case.stage_transferred", "cases", p.caseId, {
+    before: { stage, ownerId: fromOwnerId },
+    after: { stage: toStage, ownerId: toOwnerId },
+  });
+
+  await writeTimeline({
+    caseId: p.caseId,
+    eventType: "case.stage_transferred",
+    actorKind: "team",
+    actorUserId: actor.userId,
+    visibleToClient: false,
+    titleI18n: { en: `Case handed off to ${toStage}`, es: `Caso traspasado a ${toStage}` },
+  });
+
+  await appEvents.emitAndWait({
+    type: "case.owner_changed",
+    payload: { caseId: p.caseId, orgId: actor.orgId, fromOwnerId, toOwnerId },
+    occurredAt: new Date(),
+  });
+
+  return { stage: toStage, ownerId: toOwnerId };
+}
+
+const AssignCaseOwnerSchema = z.object({
+  caseId: zUuid,
+  ownerId: zUuid,
+});
+export type AssignCaseOwnerInput = z.infer<typeof AssignCaseOwnerSchema>;
+
+/**
+ * Reassigns the case's responsible WITHIN the current stage (admin only). Moves
+ * the kanban card to the new owner's board. Does not advance the stage.
+ *
+ * @api-id API-CASE-STAGE-03
+ */
+export async function assignCaseOwner(
+  actor: Actor,
+  input: AssignCaseOwnerInput,
+): Promise<void> {
+  const p = AssignCaseOwnerSchema.parse(input);
+  await requireCaseAccess(actor, p.caseId);
+  if (actor.kind !== "staff" || actor.role !== "admin") {
+    throw new AuthzError("forbidden_module");
+  }
+
+  const caseRow = await findCaseById(p.caseId);
+  if (!caseRow) throw new CaseError("CASE_NOT_FOUND");
+
+  const fromOwnerId = caseRow.current_owner_id;
+  if (fromOwnerId === p.ownerId) return; // no-op
+
+  const stage = (caseRow.current_stage ?? "sales") as CaseStage;
+  // Target must be an org-scoped, permission-eligible owner for the current stage.
+  const candidates = await eligibleOwnersForStage(actor.orgId, stage);
+  if (!candidates.some((c) => c.userId === p.ownerId)) {
+    throw new CaseError("STAGE_INVALID_OWNER");
+  }
+
+  const fields: TablesUpdate<"cases"> = { current_owner_id: p.ownerId };
+  if (stage === "legal") fields.assigned_paralegal_id = p.ownerId;
+  if (stage === "sales") fields.assigned_sales_id = p.ownerId;
+  await updateCase(p.caseId, fields);
+
+  await insertStageHistory({
+    caseId: p.caseId,
+    fromStage: stage,
+    toStage: stage,
+    fromOwnerId,
+    toOwnerId: p.ownerId,
+    actorId: actor.userId,
+    note: "reassigned",
+  });
+
+  await writeAudit(actor, "case.owner_reassigned", "cases", p.caseId, {
+    before: { ownerId: fromOwnerId },
+    after: { ownerId: p.ownerId },
+  });
+
+  await appEvents.emitAndWait({
+    type: "case.owner_changed",
+    payload: { caseId: p.caseId, orgId: actor.orgId, fromOwnerId, toOwnerId: p.ownerId },
+    occurredAt: new Date(),
+  });
+}
+
+/** Stage history for a case (staff-only read, oldest first). */
+export async function getCaseStageHistory(actor: Actor, caseId: string) {
+  await requireCaseAccess(actor, caseId);
+  if (actor.kind !== "staff") throw new AuthzError("wrong_kind");
+  return listCaseStageHistory(caseId);
+}
+
+const SetDocTranslationNotRequiredSchema = z.object({
+  caseId: zUuid,
+  caseDocumentId: zUuid,
+  value: z.boolean(),
+});
+export type SetDocumentTranslationNotRequiredInput = z.infer<typeof SetDocTranslationNotRequiredSchema>;
+
+/**
+ * Marks a document as already-English (no ES→EN translation needed) or back.
+ * Staff with cases:edit. Toggles whether it counts in the sales translation gate.
+ *
+ * @api-id API-CASE-STAGE-04
+ */
+export async function setDocumentTranslationNotRequired(
+  actor: Actor,
+  input: SetDocumentTranslationNotRequiredInput,
+): Promise<void> {
+  const p = SetDocTranslationNotRequiredSchema.parse(input);
+  await requireCaseAccess(actor, p.caseId);
+  can(actor, "cases", "edit");
+  await setDocumentTranslationNotRequiredRow(p.caseId, p.caseDocumentId, p.value);
+  await writeAudit(actor, "document.translation_flag", "case_documents", p.caseDocumentId, {
+    after: { translationNotRequired: p.value },
+  });
 }
 
 /**

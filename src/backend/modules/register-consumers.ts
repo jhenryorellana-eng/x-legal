@@ -14,7 +14,7 @@ import { logger } from "@/backend/platform/logger";
 import { onDownpaymentConfirmed, onExpedienteSentToFinanceCase, onExpedientePrintedCase, appendAppointmentTimeline } from "@/backend/modules/cases";
 import { notifyFromEvent } from "@/backend/modules/notifications";
 import {
-  onCaseAssigned,
+  onCaseOwnerChanged,
   onContractSigned as onContractSignedKanban,
   onDownpaymentConfirmedKanban,
   onExpedienteSentToFinance,
@@ -217,16 +217,18 @@ export function registerConsumers(): void {
   // kanban consumers (F3 — §3.8 automatic card listeners)
   // -------------------------------------------------------------------------
 
-  // case.assigned → create card on cases board of the assigned paralegal
-  appEvents.on("case.assigned", async (event) => {
+  // case.owner_changed → move the case card to the new owner's cases board and
+  // remove it from the previous owner's board (handoff / reassign / creation).
+  appEvents.on("case.owner_changed", async (event) => {
     const payload = event.payload as {
       caseId: string;
-      assignedParalegalId: string;
       orgId: string;
-      previousParalegalId?: string;
+      fromOwnerId: string | null;
+      toOwnerId: string | null;
     };
-    logger.info({ caseId: payload.caseId }, "kanban: consuming case.assigned");
-    await onCaseAssigned(payload);
+    if (!payload.caseId || !payload.orgId) return;
+    logger.info({ caseId: payload.caseId }, "kanban: consuming case.owner_changed");
+    await onCaseOwnerChanged(payload);
   });
 
   // contract.signed → create card on collections board (finance)

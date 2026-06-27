@@ -46,8 +46,14 @@ export {
   getCaseExtractions,
   getCaseFormResponsesForStaff,
   // GAP reads — kanban board support (F5-Ola3)
-  listCasesForParalegal,
+  listCasesByOwner,
   getCaseBoardAlerts,
+  // Case ownership stage — responsable / etapa (eje propio)
+  getCaseStageInfo,
+  transferCase,
+  assignCaseOwner,
+  getCaseStageHistory,
+  setDocumentTranslationNotRequired,
   // Event consumers (service-role — no actor session)
   transitionCaseSystem,
   onExpedienteSentToFinanceCase,
@@ -103,6 +109,12 @@ export type {
   AdminCasesPage,
   // GAP-3 — kanban board alert shape
   CaseBoardAlert,
+  // Case ownership stage DTOs
+  CaseStageInfoDto,
+  StageChecklistItemDto,
+  StageOwnerOption,
+  TransferCaseInput,
+  AssignCaseOwnerInput,
 } from "./service";
 
 // Error class (used by route handlers / actions for HTTP mapping)
@@ -116,6 +128,10 @@ export type {
   StaffRole,
   TimelineEntryInput,
   I18nText,
+  CaseStage,
+  StageChecklist,
+  StageChecklistItem,
+  StageChecklistSignals,
 } from "./domain";
 
 export {
@@ -126,6 +142,11 @@ export {
   buildPartiesSnapshot,
   PRODUCTION_STATUSES,
   CASE_TRANSITIONS,
+  computeStageChecklist,
+  canTransferStage,
+  nextStage,
+  STAGE_ORDER,
+  STAGE_MODULE,
 } from "./domain";
 
 export type { SnapshotParty, PartiesSnapshotShape } from "./domain";
@@ -134,7 +155,7 @@ export type { SnapshotParty, PartiesSnapshotShape } from "./domain";
 export type {
   CaseEvent,
   CaseCreatedEvent,
-  CaseAssignedEvent,
+  CaseOwnerChangedEvent,
   DocumentUploadedEvent,
   DocumentApprovedEvent,
   DocumentRejectedEvent,

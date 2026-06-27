@@ -28,6 +28,7 @@ import { ValidacionTab } from "./tabs/validacion-tab";
 import { ExpedienteTab } from "./tabs/expediente-tab";
 import { MensajesTab } from "./tabs/mensajes-tab";
 import { buildChatActions, type RawChatActions } from "@/frontend/features/messaging/build-chat-actions";
+import { stageLabel } from "./stage-label";
 import type { CaseWorkspaceVM, CaseDetailActions, CaseTabId } from "./types";
 import type { CasosStrings } from "./strings";
 
@@ -137,6 +138,30 @@ export function SharedCaseView({
             <Chip tone="blue">{strings.planSelf}</Chip>
           )}
         </div>
+
+        {/* Responsable / Etapa chip (eje propio) — so the owner never gets lost. */}
+        {vm.stage && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 7,
+                fontSize: 13,
+                fontWeight: 700,
+                color: "var(--ink-2)",
+                border: "1px solid var(--line)",
+                borderRadius: 999,
+                padding: "5px 12px",
+                background: "var(--card, #fff)",
+              }}
+            >
+              <Icon name="user" size={14} color="var(--accent)" />
+              {t.responsableLabel}: <strong style={{ color: "var(--ink)" }}>{vm.stage.ownerName ?? t.unassigned}</strong>
+            </span>
+            <Chip tone="blue">{t.etapaLabel}: {stageLabel(t, vm.stage.stage)}</Chip>
+          </div>
+        )}
       </div>
 
       {/* Admin-mode bar */}
@@ -199,7 +224,7 @@ export function SharedCaseView({
         {active === "formularios" && <InformacionTab vm={vm} strings={strings} />}
         {active === "cartas" && <GeneracionesTab vm={vm} strings={strings} locale={locale} title={tb.cartas} />}
         {active === "generaciones" && <GeneracionesTab vm={vm} strings={strings} locale={locale} title={tb.generaciones} />}
-        {active === "traspaso" && <TraspasoTab vm={vm} strings={strings} />}
+        {active === "traspaso" && <TraspasoTab vm={vm} actions={actions} strings={strings} />}
         {active === "pagos" && <PagosTab vm={vm} actions={actions} strings={strings} locale={locale} />}
         {active === "expediente" && <ExpedienteTab vm={vm} strings={strings} title={tb.expediente} />}
         {active === "validacion" && <ValidacionTab vm={vm} strings={strings} title={tb.validacion} />}

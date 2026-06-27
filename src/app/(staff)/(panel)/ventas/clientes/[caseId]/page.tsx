@@ -18,6 +18,7 @@ import {
   getDocumentsMatrix,
   getClientFormsForCase,
   getTimeline,
+  getCaseStageInfo,
   CaseError,
 } from "@/backend/modules/cases";
 import { getPaymentPlanForCase } from "@/backend/modules/billing";
@@ -51,6 +52,10 @@ import {
   startDocumentUploadAction,
   confirmDocumentUploadAction,
   addCaseAppointmentAction,
+  transferCaseAction,
+  setDocumentTranslationNotRequiredAction,
+  translateDocumentAction,
+  getDocumentTranslationAction,
 } from "../../../admin/casos/actions";
 
 export const dynamic = "force-dynamic";
@@ -87,6 +92,9 @@ export default async function VentasCasoDetailPage({
     getCaseRuta(actor, caseId).catch(() => null),
   ]);
 
+  // Responsable / etapa (eje propio) — staff-only; degrade to null on failure.
+  const stageInfo = await getCaseStageInfo(actor, caseId).catch(() => null);
+
   const requirements = (matrix?.items ?? []).map((d) => ({
     key: d.key,
     requirementId: d.requirementId,
@@ -99,6 +107,7 @@ export default async function VentasCasoDetailPage({
     status: d.status,
     documentId: d.documentId,
     rejectionReason: d.rejectionReasonI18n ? resolveI18n(d.rejectionReasonI18n, locale) : null,
+    translationNotRequired: d.translationNotRequired,
   }));
 
   // Visibility toggle is an admin + sales affordance (DOC-41 §3.5 decision).
@@ -175,6 +184,7 @@ export default async function VentasCasoDetailPage({
       contractId: contract?.id ?? null,
     },
     ruta,
+    stage: stageInfo,
     role: (actor.role as "sales" | "paralegal" | "finance" | "admin") ?? "sales",
     isAdmin: false,
     requiresLawyerValidation: contractPlanKind === "with_lawyer",
@@ -229,6 +239,10 @@ export default async function VentasCasoDetailPage({
         startUpload: startDocumentUploadAction,
         confirmUpload: confirmDocumentUploadAction,
         addCaseAppointment: canManageCalendar ? addCaseAppointmentAction : undefined,
+        transferCase: transferCaseAction,
+        setDocumentTranslationNotRequired: canManageDocs ? setDocumentTranslationNotRequiredAction : undefined,
+        translateDocument: canManageDocs ? translateDocumentAction : undefined,
+        getTranslation: canManageDocs ? getDocumentTranslationAction : undefined,
       }}
       strings={strings}
       locale={lc}

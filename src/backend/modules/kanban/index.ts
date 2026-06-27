@@ -50,7 +50,7 @@ export {
 
 // Automatic card listener handlers (§3.8 — called from register-consumers.ts)
 export {
-  onCaseAssigned,
+  onCaseOwnerChanged,
   onContractSigned,
   onDownpaymentConfirmedKanban,
   onExpedienteSentToFinance,

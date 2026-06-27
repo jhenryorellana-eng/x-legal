@@ -1438,43 +1438,52 @@ export async function listMyTasks(
 // ---------------------------------------------------------------------------
 
 /**
- * Handles case.assigned → create card on cases board of the assigned paralegal.
- * Idempotent: if a card already exists for this case on the board, skip creation.
+ * Handles case.owner_changed → projects the case card onto the NEW owner's
+ * `cases` board (entry column "Por iniciar") and removes it from the previous
+ * owner's `cases` board. Owner-agnostic: drives the sales→legal→operations
+ * handoff AND admin reassignments AND the initial projection at case creation.
+ *
+ * Idempotent. `fromOwnerId`/`toOwnerId` may be null (creation has no previous
+ * owner; an un-assignment has no next owner). The board is created lazily, so a
+ * staff member (e.g. Vanessa) gets their `cases` board the first time they own one.
  */
-export async function onCaseAssigned(payload: {
+export async function onCaseOwnerChanged(payload: {
   caseId: string;
-  assignedParalegalId: string;
   orgId: string;
-  previousParalegalId?: string;
+  fromOwnerId: string | null;
+  toOwnerId: string | null;
 }): Promise<void> {
   try {
     const actor = systemActor();
-    const { assignedParalegalId, caseId, orgId, previousParalegalId } = payload;
+    const { caseId, orgId, fromOwnerId, toOwnerId } = payload;
 
-    // Remove card from previous paralegal's board (reasignment)
-    if (previousParalegalId) {
-      const prevBoard = await repo.findBoard(previousParalegalId, "cases");
+    // Remove card from previous owner's board (handoff / reassignment).
+    if (fromOwnerId && fromOwnerId !== toOwnerId) {
+      const prevBoard = await repo.findBoard(fromOwnerId, "cases");
       if (prevBoard) {
         await repo.deleteCardByRef(prevBoard.id, "case", caseId);
       }
     }
 
-    // Find or create board for new paralegal
-    let board = await repo.findBoard(assignedParalegalId, "cases");
+    // No next owner (un-assigned) → nothing to project.
+    if (!toOwnerId) return;
+
+    // Find or create the new owner's cases board (lazy seed).
+    let board = await repo.findBoard(toOwnerId, "cases");
     if (!board) {
       board = await repo.createBoardWithSeed(
-        assignedParalegalId,
+        toOwnerId,
         orgId,
         "cases",
         seedColumnsFor("cases"),
       );
     }
 
-    // Idempotent: skip if card already exists
+    // Idempotent: skip if a card already exists for this case on the board.
     const existing = await repo.findCardByRef(board.id, "case", caseId);
     if (existing) return;
 
-    // Find entry column ("Por iniciar" — position 1)
+    // Entry column = lowest position ("Por iniciar").
     const columns = await repo.listColumns(board.id);
     const entryCol = columns.reduce((min, c) =>
       c.position < min.position ? c : min,
@@ -1488,9 +1497,9 @@ export async function onCaseAssigned(payload: {
       position: maxPos + 1,
     });
 
-    logger.info({ caseId, assignedParalegalId }, "kanban: case.assigned card created");
+    logger.info({ caseId, toOwnerId }, "kanban: case.owner_changed card projected");
 
-    // Broadcast to paralegal's board
+    // Broadcast to the new owner's board so an open view updates live.
     await broadcastCardMoved(board.id, {
       card_id: caseId,
       from_column_id: entryCol.id,
@@ -1499,7 +1508,7 @@ export async function onCaseAssigned(payload: {
       actor_user_id: actor.userId,
     });
   } catch (err) {
-    logger.error({ err, payload }, "kanban: onCaseAssigned failed");
+    logger.error({ err, payload }, "kanban: onCaseOwnerChanged failed");
   }
 }
 
@@ -2183,7 +2192,7 @@ export async function onExpedientePrinted(payload: {
  * Idempotent — safe to call on every page load; DB unique constraint on
  * (ref_type, ref_id, column_id) provides final-layer protection.
  *
- * Design note: caseIds are passed in by the page (from listCasesForParalegal),
+ * Design note: caseIds are passed in by the page (from listCasesByOwner),
  * keeping kanban agnostic of the cases schema (no cross-module query here).
  *
  * @GAP-2
@@ -2236,6 +2245,6 @@ export async function backfillCasesBoard(
     });
     nextPos += 1;
 
-    logger.info({ caseId, paralegalId: actor.userId }, "kanban: backfillCasesBoard — card inserted");
+    logger.info({ caseId, ownerId: actor.userId }, "kanban: backfillCasesBoard — card inserted");
   }
 }

@@ -1,16 +1,16 @@
 /**
- * Kanban de casos — /legal (DOC-54 §1, RF-DIA-001..006).
+ * Kanban de casos personal — /ventas/casos (Vanessa).
  *
- * Server Component:
- *   1. Guards actor (staff + cases:view).
- *   2. listCasesByOwner(actor) → only the cases Diana is responsible for.
- *   3. backfillCasesBoard(actor, caseIds) → idempotently ensure a card exists
- *      for every assigned case (covers cases assigned before the onCaseAssigned
- *      listener ran). Safe on every load.
+ * Mismo motor genérico que /legal (Diana): cada staff ve los casos de los que es
+ * RESPONSABLE (current_owner_id = actor) en su propio board `cases`. La primera
+ * columna ("Por iniciar") recibe los casos recién creados/traspasados a esta persona.
+ *
+ * Server Component (idéntico patrón a /legal):
+ *   1. Guards actor (staff).
+ *   2. listCasesByOwner(actor) → sólo los casos de los que el actor es responsable.
+ *   3. backfillCasesBoard(actor, caseIds) → idempotente, asegura una tarjeta por caso.
  *   4. getBoard(actor, { kind: 'cases' }) → lazy-init con columnas semilla.
- *   5. getCaseBoardAlerts(actor, caseIds) → batch alert aggregation per case
- *      (docs to review, lawyer corrections, generation failed, RFE overdue).
- *   6. Injects server actions and passes serialisable VM to the client component.
+ *   5. getCaseBoardAlerts → agregación batch de alertas por caso.
  */
 
 import { redirect } from "next/navigation";
@@ -42,7 +42,7 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export default async function LegalPage() {
+export default async function VentasCasosPage() {
   // ── Auth gate ────────────────────────────────────────────────────────────
   const actor = await getActor();
   if (!actor || actor.kind !== "staff") redirect("/login");
@@ -51,11 +51,6 @@ export default async function LegalPage() {
   const t = await getTranslations("staff.legal.kanban");
 
   // ── Board + hydration data ───────────────────────────────────────────────
-  // 1. listCasesByOwner → only the cases Diana is responsible for (GAP-1).
-  // 2. backfillCasesBoard → ensure a card exists for every assigned case
-  //    (idempotent; covers cases assigned before the onCaseAssigned listener).
-  // 3. getBoard → seeded board + cards.
-  // 4. getCaseBoardAlerts → batch alert aggregation per case (GAP-3).
   let board: Awaited<ReturnType<typeof getBoard>> | null = null;
   let boardError = false;
   let myCases: AdminCaseListItem[] = [];
@@ -65,26 +60,21 @@ export default async function LegalPage() {
     myCases = await listCasesByOwner(actor);
     const caseIds = myCases.map((c) => c.id);
 
-    // Backfill is best-effort: a failure must never blank the whole board.
     try {
       await backfillCasesBoard(actor, caseIds);
     } catch (err) {
-      // Best-effort: log to server stdout (the platform logger isn't importable
-      // from the app layer per eslint-boundaries).
-      console.error("[/legal] backfillCasesBoard failed:", err);
+      console.error("[/ventas/casos] backfillCasesBoard failed:", err);
     }
 
     board = await getBoard(actor, { kind: "cases" });
 
-    // Alerts are an enrichment: degrade to no-alerts on failure.
     try {
       alertsMap = await getCaseBoardAlerts(actor, caseIds);
     } catch (err) {
-      console.error("[/legal] getCaseBoardAlerts failed:", err);
+      console.error("[/ventas/casos] getCaseBoardAlerts failed:", err);
     }
   } catch (err) {
-    // listCasesForParalegal / getBoard are essential → friendly error state.
-    console.error("[/legal] board load failed:", err);
+    console.error("[/ventas/casos] board load failed:", err);
     boardError = true;
   }
 
@@ -118,7 +108,6 @@ export default async function LegalPage() {
       const isInactive = caseStatus === "on_hold" || caseStatus === "cancelled";
       const withLawyer = caseItem?.planKind === "with_lawyer";
 
-      // Time in column from card.updated_at (best proxy available)
       const ageFrom = card.updated_at ?? card.created_at ?? now.toISOString();
       const ageLabel = fmtRelative(ageFrom, locale as "es" | "en");
       const minutesInCol = (now.getTime() - new Date(ageFrom).getTime()) / 60_000;
@@ -134,7 +123,6 @@ export default async function LegalPage() {
         caseNumber: caseItem?.caseNumber ?? card.ref_id.slice(0, 8).toUpperCase(),
         clientName: caseItem?.clientName ?? "—",
         serviceLabel: serviceLabel || "—",
-        // Service icon/color not in AdminCaseListItem — GAP-3 (need enriched DTO)
         serviceIcon: "folder",
         serviceColor: "var(--ink-2)",
         phaseLabel: phaseLabel || "",
@@ -174,7 +162,6 @@ export default async function LegalPage() {
     noteError: t("noteError"),
     orderError: t("orderError"),
     deleteError: t("deleteError"),
-    // Raw templates: the client interpolates {n} per render via String.replace.
     bannerSingle: t.raw("bannerSingle"),
     bannerPlural: t.raw("bannerPlural"),
     bannerCta: t("bannerCta"),
@@ -214,7 +201,6 @@ export default async function LegalPage() {
     timeInColumn: t("timeInColumn"),
     colMenuEdit: t("colMenuEdit"),
     colMenuDelete: t("colMenuDelete"),
-    // Raw templates: client interpolates {title}/{caseNumber} per render.
     colMenuAria: t.raw("colMenuAria"),
     openCaseAria: t.raw("openCaseAria"),
   };
@@ -224,7 +210,7 @@ export default async function LegalPage() {
     return (
       <div style={{ padding: "54px 32px", maxWidth: 480 }}>
         <p style={{ color: "var(--red)", fontWeight: 700 }}>{t("loadError")}</p>
-        <a href="/legal" style={{ color: "var(--accent)", fontWeight: 700 }}>{t("retry")}</a>
+        <a href="/ventas/casos" style={{ color: "var(--accent)", fontWeight: 700 }}>{t("retry")}</a>
       </div>
     );
   }

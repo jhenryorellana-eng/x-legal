@@ -272,6 +272,141 @@ export function computePhaseProgress(input: PhaseProgressInput): number {
 }
 
 // ---------------------------------------------------------------------------
+// Case ownership stage — responsable / etapa interna (eje propio)
+//
+// Eje de RESPONSABILIDAD, ortogonal a `cases.status` (legal) y a la columna kanban.
+// El caso pasa de un responsable al siguiente por TRASPASO MANUAL gated por tareas:
+//   sales (Vanessa) → legal (Diana) → operations (Andrium) → done
+// El traspaso NO toca cases.status. Estas funciones son puras; el servicio orquesta
+// el I/O (update + history + kanban + audit).
+// ---------------------------------------------------------------------------
+
+export type CaseStage = "sales" | "legal" | "operations" | "done";
+
+/** Orden canónico de las etapas. `done` es terminal. */
+export const STAGE_ORDER: CaseStage[] = ["sales", "legal", "operations", "done"];
+
+/** La etapa siguiente, o null si la actual es terminal (`done`). Pura. */
+export function nextStage(stage: CaseStage): CaseStage | null {
+  const i = STAGE_ORDER.indexOf(stage);
+  if (i < 0 || i >= STAGE_ORDER.length - 1) return null;
+  return STAGE_ORDER[i + 1];
+}
+
+/**
+ * Módulo de permisos que gobierna la ELEGIBILIDAD del responsable de cada etapa
+ * (no-terminal). Los candidatos = staff con can_edit en ese module_key (+ admin).
+ * Editable por el admin en /admin/empleados → "todo por permisos".
+ *  - sales       → 'leads'       (los asesores de ventas)
+ *  - legal       → 'expedientes' (paralegales: arman el expediente)
+ *  - operations  → 'printing'    (operaciones: imprimen/envían)
+ */
+export const STAGE_MODULE: Record<Exclude<CaseStage, "done">, string> = {
+  sales: "leads",
+  legal: "expedientes",
+  operations: "printing",
+};
+
+export interface StageChecklistItem {
+  /** Clave estable para i18n y tests (la etiqueta la resuelve el frontend). */
+  key: string;
+  done: boolean;
+  /** true = tarea aún no definida en el producto (gate placeholder, forzable por admin). */
+  placeholder?: boolean;
+}
+
+export interface StageChecklist {
+  stage: CaseStage;
+  items: StageChecklistItem[];
+  /** Todas las tareas no-placeholder cumplidas (habilita "Traspasar"). */
+  allDone: boolean;
+}
+
+/**
+ * Señales (ya calculadas en el servicio) que alimentan el checklist de la etapa.
+ * Un total === 0 significa "no aplica" → cuenta como cumplido (no bloquea).
+ *
+ * Nota: pago + contrato firmado + disclaimer son prerequisitos de ACCESO al caso
+ * (puntos aparte), NO tareas del traspaso — por eso no están aquí.
+ */
+export interface StageChecklistSignals {
+  citasTotal: number;
+  citasCompleted: number;
+  docsTotal: number;
+  /** Documentos APROBADOS (status='approved'), no sólo subidos. */
+  docsApproved: number;
+  formsTotal: number;
+  formsDone: number;
+  /** Documentos que requieren traducción (ES, sin marcar "ya en inglés"). */
+  docsToTranslate: number;
+  translationsCompleted: number;
+}
+
+/**
+ * Definition of Done por etapa. Devuelve los ítems con su estado `done`.
+ *
+ * Etapa `sales` (Vanessa) — gating del traspaso a Legal (decisión de Henry):
+ *   - citas: toda la ruta de citas completada.
+ *   - docs: documentos del cliente al 100% APROBADOS (status='approved').
+ *   - forms: formularios al 100% enviados.
+ *   - translation: todo documento en español traducido (los marcados "ya en
+ *     inglés" se excluyen del denominador).
+ *   (pago + contrato + disclaimer son prerequisitos de acceso, puntos aparte.)
+ *
+ * Etapas `legal` / `operations`: gate placeholder (las tareas se definen en otra
+ * sesión); el admin puede forzar el traspaso mientras tanto.
+ *
+ * Pura.
+ */
+export function computeStageChecklist(
+  stage: CaseStage,
+  s: StageChecklistSignals,
+): StageChecklist {
+  const done = (total: number, ok: number) => total === 0 || ok >= total;
+
+  let items: StageChecklistItem[];
+  if (stage === "sales") {
+    items = [
+      { key: "citas", done: done(s.citasTotal, s.citasCompleted) },
+      { key: "docs", done: done(s.docsTotal, s.docsApproved) },
+      { key: "forms", done: done(s.formsTotal, s.formsDone) },
+      { key: "translation", done: done(s.docsToTranslate, s.translationsCompleted) },
+    ];
+  } else if (stage === "legal") {
+    items = [{ key: "expediente", done: false, placeholder: true }];
+  } else if (stage === "operations") {
+    items = [{ key: "print_send", done: false, placeholder: true }];
+  } else {
+    items = [];
+  }
+
+  const gating = items.filter((i) => !i.placeholder);
+  const allDone = gating.length > 0 && gating.every((i) => i.done);
+  return { stage, items, allDone };
+}
+
+/**
+ * ¿Se puede traspasar la etapa actual? Pura.
+ * Devuelve null si está permitido, o un código de error.
+ *  - Sólo el responsable actual o un admin pueden traspasar.
+ *  - El checklist debe estar completo, salvo que un admin lo fuerce (`force`).
+ *  - No se puede traspasar desde una etapa terminal.
+ */
+export function canTransferStage(
+  stage: CaseStage,
+  checklist: StageChecklist,
+  ctx: { isOwner: boolean; isAdmin: boolean; force?: boolean },
+): null | "STAGE_TERMINAL" | "STAGE_FORBIDDEN" | "STAGE_NOT_READY" {
+  if (nextStage(stage) === null) return "STAGE_TERMINAL";
+  if (!ctx.isOwner && !ctx.isAdmin) return "STAGE_FORBIDDEN";
+  if (!checklist.allDone) {
+    if (ctx.isAdmin && ctx.force) return null;
+    return "STAGE_NOT_READY";
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Phase advancement — manual, staff-driven (DOC-51 §13 / §22)
 //
 // The phase % within a phase is automatic (computePhaseProgress above); moving

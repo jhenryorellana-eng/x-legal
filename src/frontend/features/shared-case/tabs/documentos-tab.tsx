@@ -60,6 +60,8 @@ export function DocumentosTab({
   const canToggle = typeof actions.setRequirementVisibility === "function";
   // Translation is staff-only — only surfaces that wire the action show it.
   const canTranslate = typeof actions.translateDocument === "function";
+  // Toggle "already English / no translation needed" — staff-only.
+  const canMarkTranslation = typeof actions.setDocumentTranslationNotRequired === "function";
 
   async function onApprove(item: DocMatrixVM) {
     if (!item.documentId) return;
@@ -87,6 +89,21 @@ export function DocumentosTab({
       setRejecting(null);
       setReasonEs("");
       setReasonEn("");
+      router.refresh();
+    } else toast.error(strings.errorTitle);
+  }
+
+  async function onToggleTranslationFlag(item: DocMatrixVM) {
+    if (!actions.setDocumentTranslationNotRequired || !item.documentId) return;
+    setBusyKey(item.key);
+    const res = await actions.setDocumentTranslationNotRequired({
+      caseId: vm.header.caseId,
+      caseDocumentId: item.documentId,
+      value: !item.translationNotRequired,
+    });
+    setBusyKey(null);
+    if (res.ok) {
+      toast.success(t.translationFlagDone);
       router.refresh();
     } else toast.error(strings.errorTitle);
   }
@@ -143,6 +160,11 @@ export function DocumentosTab({
               <Chip tone="amber">{t.hiddenFromClient}</Chip>
             </span>
           )}
+          {item.translationNotRequired && (
+            <span style={{ marginLeft: 8 }}>
+              <Chip tone="green">{t.englishChip}</Chip>
+            </span>
+          )}
         </p>
         {item.status === "corregir" && item.rejectionReason && (
           <p className="doc-meta" style={{ color: "var(--brand-red)" }}>
@@ -192,7 +214,7 @@ export function DocumentosTab({
                 {t.view}
               </GhostBtn>
             )}
-            {item.documentId && canTranslate && (
+            {item.documentId && canTranslate && !item.translationNotRequired && (
               <GhostBtn
                 size="md"
                 full={false}
@@ -200,6 +222,17 @@ export function DocumentosTab({
                 onClick={() => setTranslateDoc({ id: item.documentId!, label: item.label })}
               >
                 {t.translate}
+              </GhostBtn>
+            )}
+            {item.documentId && canMarkTranslation && (
+              <GhostBtn
+                size="md"
+                full={false}
+                icon={item.translationNotRequired ? "globe" : "check"}
+                disabled={busyKey === item.key}
+                onClick={() => onToggleTranslationFlag(item)}
+              >
+                {item.translationNotRequired ? t.markNeedsTranslation : t.markEnglish}
               </GhostBtn>
             )}
             {item.status === "revision" && item.documentId && (

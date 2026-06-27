@@ -2,7 +2,7 @@
  * Cases module — GAP reads for paralegal kanban board (F5-Ola3)
  *
  * Covers:
- *  GAP-1  listCasesForParalegal(actor)
+ *  GAP-1  listCasesByOwner(actor)
  *    - enforces can(actor,'cases','view')
  *    - filters by assignedParalegalId = actor.userId
  *    - enriches each case (service, phases, clientName, planKind)
@@ -139,7 +139,7 @@ vi.mock("../repository", async (importOriginal) => {
 });
 
 // Import AFTER mocks
-import { listCasesForParalegal, getCaseBoardAlerts } from "../service";
+import { listCasesByOwner, getCaseBoardAlerts } from "../service";
 import type { Actor } from "@/backend/platform/authz";
 
 // ---------------------------------------------------------------------------
@@ -188,10 +188,10 @@ const makePhases = () => [
 ];
 
 // ---------------------------------------------------------------------------
-// GAP-1: listCasesForParalegal
+// GAP-1: listCasesByOwner
 // ---------------------------------------------------------------------------
 
-describe("cases: listCasesForParalegal", () => {
+describe("cases: listCasesByOwner", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCan.mockReturnValue(undefined); // no throw = authorized
@@ -200,26 +200,26 @@ describe("cases: listCasesForParalegal", () => {
   it("enforces can(actor,'cases','view')", async () => {
     mockCan.mockImplementation(() => { throw new Error("AUTHZ_DENIED"); });
     mockListCases.mockResolvedValue({ items: [], nextCursor: null });
-    await expect(listCasesForParalegal(ACTOR)).rejects.toThrow("AUTHZ_DENIED");
+    await expect(listCasesByOwner(ACTOR)).rejects.toThrow("AUTHZ_DENIED");
   });
 
   it("returns empty array when no cases assigned to paralegal", async () => {
     mockListCases.mockResolvedValue({ items: [], nextCursor: null });
-    const result = await listCasesForParalegal(ACTOR);
+    const result = await listCasesByOwner(ACTOR);
     expect(result).toEqual([]);
   });
 
-  it("filters by assignedParalegalId = actor.userId", async () => {
+  it("filters by ownerId = actor.userId", async () => {
     mockListCases.mockResolvedValue({ items: [], nextCursor: null });
-    await listCasesForParalegal(ACTOR);
+    await listCasesByOwner(ACTOR);
     expect(mockListCases).toHaveBeenCalledWith(
-      expect.objectContaining({ assignedParalegalId: ACTOR.userId }),
+      expect.objectContaining({ ownerId: ACTOR.userId }),
     );
   });
 
   it("scopes query to actor.orgId", async () => {
     mockListCases.mockResolvedValue({ items: [], nextCursor: null });
-    await listCasesForParalegal(ACTOR);
+    await listCasesByOwner(ACTOR);
     expect(mockListCases).toHaveBeenCalledWith(
       expect.objectContaining({ orgId: ACTOR.orgId }),
     );
@@ -232,7 +232,7 @@ describe("cases: listCasesForParalegal", () => {
     mockFindClientDisplayName.mockResolvedValue("Maria Lopez");
     mockFindPlanKind.mockResolvedValue("standard");
 
-    const result = await listCasesForParalegal(ACTOR);
+    const result = await listCasesByOwner(ACTOR);
 
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({
@@ -257,7 +257,7 @@ describe("cases: listCasesForParalegal", () => {
     mockFindClientDisplayName.mockResolvedValue(null);
     mockFindPlanKind.mockResolvedValue(null);
 
-    const result = await listCasesForParalegal(ACTOR);
+    const result = await listCasesByOwner(ACTOR);
     expect(result).toHaveLength(2);
     expect(result.map((r) => r.id)).toEqual([CASE_ID_1, CASE_ID_2]);
   });
@@ -269,7 +269,7 @@ describe("cases: listCasesForParalegal", () => {
     mockFindClientDisplayName.mockResolvedValue(null);
     mockFindPlanKind.mockResolvedValue(null);
 
-    const result = await listCasesForParalegal(ACTOR);
+    const result = await listCasesByOwner(ACTOR);
     // asI18n(null) returns null — the page must handle null serviceLabelI18n
     expect(result[0].serviceLabelI18n).toBeNull();
     expect(result[0].planKind).toBeNull();

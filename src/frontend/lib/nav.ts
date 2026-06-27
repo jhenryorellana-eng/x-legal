@@ -70,6 +70,7 @@ export const STAFF_NAV: NavGroup[] = [
     labelKey: "sales",
     items: [
       { labelKey: "miDia", href: "/ventas/mi-dia", icon: "sun", module: "dashboard" },
+      { labelKey: "salesCases", href: "/ventas/casos", icon: "briefcase", module: "cases" },
       { labelKey: "leads", href: "/ventas/leads", icon: "route", module: "leads", badge: "leads" },
       { labelKey: "appointments", href: "/ventas/citas", icon: "calendar", module: "calendar" },
       { labelKey: "availability", href: "/ventas/disponibilidad", icon: "clock", module: "calendar" },
@@ -81,6 +82,7 @@ export const STAFF_NAV: NavGroup[] = [
   {
     labelKey: "finance",
     items: [
+      { labelKey: "financeCases", href: "/finanzas/casos", icon: "briefcase", module: "cases" },
       { labelKey: "payments", href: "/finanzas/pagos", icon: "card", module: "billing", badge: "pagos" },
       { labelKey: "accounting", href: "/finanzas/contabilidad", icon: "wallet", module: "accounting" },
       { labelKey: "aiCosts", href: "/admin/ai-costs", icon: "dollar", module: "metrics" },

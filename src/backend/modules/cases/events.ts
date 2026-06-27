@@ -52,11 +52,19 @@ export interface CaseCreatedEvent {
   occurredAt: Date;
 }
 
-export interface CaseAssignedEvent {
-  type: "case.assigned";
+/**
+ * Emitted whenever the case's responsible staff (current_owner_id) changes:
+ * at creation (fromOwnerId=null), on a stage transfer, or on an admin reassign.
+ * The kanban module consumes it to project the case card onto the new owner's
+ * `cases` board and remove it from the previous owner's board.
+ */
+export interface CaseOwnerChangedEvent {
+  type: "case.owner_changed";
   payload: {
     caseId: string;
-    paralegalId: string;
+    orgId: string;
+    fromOwnerId: string | null;
+    toOwnerId: string | null;
   };
   occurredAt: Date;
 }
@@ -75,6 +83,6 @@ export type CaseEvent =
   | DocumentApprovedEvent
   | DocumentRejectedEvent
   | CaseCreatedEvent
-  | CaseAssignedEvent;
+  | CaseOwnerChangedEvent;
 
 export type ConsumedByCasesEvent = DownpaymentConfirmedEvent;

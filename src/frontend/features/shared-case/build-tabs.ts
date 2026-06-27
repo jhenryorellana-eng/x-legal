@@ -41,6 +41,7 @@ export function buildTabs(input: BuildTabsInput): TabConfig[] {
     );
     if (input.requiresLawyerValidation) tabs.push({ id: "validacion", label: tb.validacion });
     tabs.push(
+      { id: "traspaso", label: tb.traspaso },
       { id: "pagos", label: tb.pagos },
       { id: "contrato", label: tb.contrato },
     );
