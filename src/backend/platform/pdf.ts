@@ -559,8 +559,7 @@ export async function compileExpedientePdf(items: ExpedienteItemInput[]): Promis
     String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string));
   const buildTocHtml = (rows: Array<{ title: string; startPage: number }>) =>
     `<!DOCTYPE html><html><body style="font-family:Helvetica,Arial,sans-serif;margin:54pt 60pt;color:${NAVY}">
-      <div style="font-size:11pt;letter-spacing:3pt;color:${GOLD};font-weight:bold">X LEGAL</div>
-      <div style="font-size:22pt;font-weight:bold;margin:6pt 0 4pt">Índice del expediente</div>
+      <div style="font-size:22pt;font-weight:bold;margin:0 0 4pt">Índice del expediente</div>
       <div style="border-top:2pt solid ${GOLD};margin-bottom:14pt"></div>
       <table style="width:100%;font-size:12pt;border-collapse:collapse">
         ${rows
