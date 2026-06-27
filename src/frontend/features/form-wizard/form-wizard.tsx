@@ -66,7 +66,21 @@ const SAVE_LABEL: Record<SaveState, keyof WizardLabels | null> = {
   saved: "saved",
   queued: "queued",
   error: "saveError",
+  blocked: "saveBlocked",
 };
+
+/** The chip text — "blocked" gets a code-specific message (e.g. submitted elsewhere). */
+function saveLabel(
+  saveState: SaveState,
+  blockedCode: string | null,
+  labels: WizardLabels,
+): string | null {
+  if (saveState === "blocked" && blockedCode === "FORM_NOT_SUBMITTABLE") {
+    return labels.saveBlockedSubmitted;
+  }
+  const key = SAVE_LABEL[saveState];
+  return key ? labels[key] : null;
+}
 
 export function FormWizard({
   caseId,
@@ -112,6 +126,16 @@ export function FormWizard({
     partyId,
     saveDraft,
     enabled: !readOnly && !done,
+    // Offline-reload rehydration: merge unsynced edits recovered from IndexedDB
+    // over the server answers so the user sees exactly what they last typed.
+    onHydrate: (recovered) => {
+      setAnswers((prev) => ({ ...prev, ...recovered }));
+      setPrefilledIds((prev) => {
+        const next = new Set(prev);
+        for (const k of Object.keys(recovered)) next.delete(k);
+        return next;
+      });
+    },
   });
 
   const total = groups.length;
@@ -407,23 +431,54 @@ export function FormWizard({
         <ProgressBar pct={pct} height={8} aria-label={labels.stepCounter.replace("{n}", String(step + 1)).replace("{total}", String(total))} />
       </div>
 
+      {/* Persistent offline banner (discreet) — DOC-50 §6.3 / spec: "cola local + indicador". */}
+      {!autosave.online && (
+        <div
+          role="status"
+          className="anim-fade-in"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "8px 12px",
+            marginBottom: 10,
+            background: "var(--gold-soft)",
+            color: "var(--ink-2)",
+            borderRadius: 12,
+            fontSize: 12.5,
+            fontWeight: 600,
+            lineHeight: 1.35,
+          }}
+        >
+          <Icon name="info" size={14} color="var(--gold-deep)" />
+          <span>{labels.offlineBanner}</span>
+        </div>
+      )}
+
       {/* Autosave indicator */}
       <div style={{ minHeight: 20, display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
-        {SAVE_LABEL[autosave.saveState] && (
+        {saveLabel(autosave.saveState, autosave.blockedCode, labels) && (
           <span
             className="anim-fade-in"
+            role={autosave.saveState === "blocked" ? "alert" : undefined}
             style={{
               display: "inline-flex",
               alignItems: "center",
               gap: 5,
               fontSize: 12.5,
               fontWeight: 700,
-              color: autosave.saveState === "saved" ? "var(--green)" : "var(--ink-3)",
+              color:
+                autosave.saveState === "saved"
+                  ? "var(--green)"
+                  : autosave.saveState === "blocked"
+                    ? "var(--gold-deep)"
+                    : "var(--ink-3)",
             }}
           >
             {autosave.saveState === "saved" && <Icon name="check" size={13} color="var(--green)" stroke={3} />}
             {autosave.saveState === "queued" && <Icon name="clock" size={13} color="var(--ink-3)" />}
-            {labels[SAVE_LABEL[autosave.saveState]!]}
+            {autosave.saveState === "blocked" && <Icon name="info" size={13} color="var(--gold-deep)" />}
+            {saveLabel(autosave.saveState, autosave.blockedCode, labels)}
           </span>
         )}
       </div>

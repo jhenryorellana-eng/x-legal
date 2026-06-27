@@ -84,6 +84,12 @@ export interface WizardForm {
 export interface SaveDraftResult {
   ok: boolean;
   responseId?: string;
+  /**
+   * Whether a failed save is worth retrying. The server is the source of truth for
+   * the policy (computed via classifySaveError); the client falls back to its own
+   * classifier when this is absent (older deployments / network throws).
+   */
+  retryable?: boolean;
   error?: { code: string; details?: Record<string, unknown> };
 }
 
@@ -123,8 +129,14 @@ export type TranslateAnswersFn = (input: {
 // Wizard runtime state (UI-only — never the source of truth)
 // ---------------------------------------------------------------------------
 
-/** The discrete autosave indicator state (DOC-50 §6.3). */
-export type SaveState = "idle" | "saving" | "saved" | "queued" | "error";
+/**
+ * The discrete autosave indicator state (DOC-50 §6.3).
+ *  - idle/saving/saved: normal online lifecycle.
+ *  - queued: offline (or a network throw) — saved on-device, pending sync.
+ *  - error: a transient server error — retrying with backoff.
+ *  - blocked: a permanent rejection (e.g. submitted elsewhere) — no retry; reload.
+ */
+export type SaveState = "idle" | "saving" | "saved" | "queued" | "error" | "blocked";
 
 /** Per-question validation failure codes mirroring the server domain. */
 export type FieldErrorCode = "required" | "regex" | "min" | "max" | "type";
@@ -144,8 +156,12 @@ export interface WizardLabels {
   // Autosave indicator
   saving: string; // "Guardando…"
   saved: string; // "Guardado ✓"
-  queued: string; // "Se guardará al reconectar"
+  queued: string; // "Guardado en este dispositivo · pendiente de envío"
   saveError: string; // "Reintentando…"
+  saveBlocked: string; // "No pudimos guardar. Recarga la página para continuar."
+  saveBlockedSubmitted: string; // "Este formulario ya fue enviado. Recarga…"
+  offlineBanner: string; // persistent offline banner
+
   // Prefill ("Ya lo tenemos")
   prefillChip: string; // "Ya lo tenemos"
   prefillFromDocument: string; // "lo tomamos de tu acta de nacimiento"

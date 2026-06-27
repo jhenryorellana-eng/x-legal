@@ -12,10 +12,13 @@
 
 import { requireActor } from "@/backend/modules/identity";
 import { saveFormDraft, submitFormResponse, CaseError } from "@/backend/modules/cases";
+import { classifySaveError } from "@/frontend/features/form-wizard/classify-save-error";
 
 export interface SaveDraftResult {
   ok: boolean;
   responseId?: string;
+  /** Whether a failed save is worth retrying (autosave engine policy). */
+  retryable?: boolean;
   error?: { code: string; details?: Record<string, unknown> };
 }
 
@@ -36,10 +39,12 @@ export async function saveDraftAction(input: {
     });
     return { ok: true, responseId: response.id };
   } catch (err) {
+    const code = err instanceof CaseError ? err.code : "UNEXPECTED";
+    const retryable = classifySaveError(code) === "transient";
     if (err instanceof CaseError) {
-      return { ok: false, error: { code: err.code, details: err.details } };
+      return { ok: false, retryable, error: { code: err.code, details: err.details } };
     }
-    return { ok: false, error: { code: "UNEXPECTED" } };
+    return { ok: false, retryable, error: { code: "UNEXPECTED" } };
   }
 }
 

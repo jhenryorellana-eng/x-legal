@@ -58,6 +58,7 @@ import {
   type DocumentTranslationRow,
 } from "@/backend/modules/ai-engine";
 import { addCaseAppointment, SchedulingError } from "@/backend/modules/scheduling";
+import { classifySaveError } from "@/frontend/features/form-wizard/classify-save-error";
 
 type Ok<T> = { ok: true } & T;
 type Err = { ok: false; error: { code: string; message?: string } };
@@ -507,7 +508,7 @@ export async function saveFormDraftAction(input: {
   formDefinitionId: string;
   partyId: string | null;
   patch: Record<string, unknown>;
-}): Promise<{ ok: boolean; responseId?: string; error?: { code: string; details?: Record<string, unknown> } }> {
+}): Promise<{ ok: boolean; responseId?: string; retryable?: boolean; error?: { code: string; details?: Record<string, unknown> } }> {
   try {
     const actor = await requireActor();
     const response = await saveFormDraft(actor, {
@@ -518,8 +519,10 @@ export async function saveFormDraftAction(input: {
     });
     return { ok: true, responseId: response.id };
   } catch (err) {
-    if (err instanceof CaseError) return { ok: false, error: { code: err.code, details: err.details } };
-    return { ok: false, error: { code: "UNEXPECTED" } };
+    const code = err instanceof CaseError ? err.code : "UNEXPECTED";
+    const retryable = classifySaveError(code) === "transient";
+    if (err instanceof CaseError) return { ok: false, retryable, error: { code: err.code, details: err.details } };
+    return { ok: false, retryable, error: { code: "UNEXPECTED" } };
   }
 }
 
