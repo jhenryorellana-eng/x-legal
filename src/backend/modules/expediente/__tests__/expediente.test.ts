@@ -57,6 +57,11 @@ const {
   mockListFormResponsesForMaterial,
   mockListApprovedDocumentsForMaterial,
   mockFindCoverRenderById,
+  mockListCompletedTranslationsForCase,
+  mockFindTranslationById,
+  mockCountCoverItemRefs,
+  mockDeleteCoverRender,
+  mockProposeExpedienteAssembly,
   // Audit mock
   mockWriteAudit,
   // Events mock
@@ -100,6 +105,11 @@ const {
   mockListFormResponsesForMaterial: vi.fn().mockResolvedValue([]),
   mockListApprovedDocumentsForMaterial: vi.fn().mockResolvedValue([]),
   mockFindCoverRenderById: vi.fn().mockResolvedValue(null),
+  mockListCompletedTranslationsForCase: vi.fn().mockResolvedValue([]),
+  mockFindTranslationById: vi.fn().mockResolvedValue(null),
+  mockCountCoverItemRefs: vi.fn().mockResolvedValue(0),
+  mockDeleteCoverRender: vi.fn().mockResolvedValue(undefined),
+  mockProposeExpedienteAssembly: vi.fn(),
   // Audit
   mockWriteAudit: vi.fn().mockResolvedValue(undefined),
   // Events
@@ -203,6 +213,14 @@ vi.mock("../repository", () => ({
   listFormResponsesForMaterial: mockListFormResponsesForMaterial,
   listApprovedDocumentsForMaterial: mockListApprovedDocumentsForMaterial,
   findCoverRenderById: mockFindCoverRenderById,
+  listCompletedTranslationsForCase: mockListCompletedTranslationsForCase,
+  findTranslationById: mockFindTranslationById,
+  countCoverItemRefs: mockCountCoverItemRefs,
+  deleteCoverRender: mockDeleteCoverRender,
+}));
+
+vi.mock("@/backend/modules/ai-engine", () => ({
+  proposeExpedienteAssembly: mockProposeExpedienteAssembly,
 }));
 
 vi.mock("@/backend/modules/cases", () => ({
@@ -210,7 +228,7 @@ vi.mock("@/backend/modules/cases", () => ({
     caseNumber: "ULP-2026-0001",
     service: { labelI18n: { es: "Visa de Trabajo", en: "Work Visa" } },
     parties: [
-      { role: "primary_applicant", name: "María García" },
+      { id: "00000000-0000-0000-0000-0000000000a1", role: "petitioner", name: "María García" },
     ],
   }),
 }));
@@ -439,6 +457,7 @@ import {
   compileExpediente,
   createCorrectionAttempt,
   generateCover,
+  autoAssembleWithAi,
   ExpedienteError,
 } from "../service";
 
@@ -992,7 +1011,7 @@ describe("service: generateCover", () => {
     );
   });
 
-  it("derives canonical client label from primary_applicant party", async () => {
+  it("derives canonical client label from the petitioner (principal) party", async () => {
     await generateCover(staffActor, {
       caseId: CASE_ID,
       templateId: TEMPLATE_ID,
@@ -1002,6 +1021,18 @@ describe("service: generateCover", () => {
     // "María García" → "M. García"
     const call = mockRenderCoverPdf.mock.calls[0][0];
     expect(call.clientLabel).toBe("M. García");
+  });
+
+  it("uses a custom title and per-party subtitle when provided", async () => {
+    await generateCover(staffActor, {
+      caseId: CASE_ID,
+      templateId: TEMPLATE_ID,
+      data: { title: "Documentos del menor", partyId: "00000000-0000-0000-0000-0000000000a1" },
+    });
+
+    const call = mockRenderCoverPdf.mock.calls[0][0];
+    expect(call.title).toBe("Documentos del menor");
+    expect(call.subtitle).toBe("María García"); // subtitle defaults to the selected party's name
   });
 
   it("uploads the rendered PDF to generated bucket", async () => {
@@ -1069,6 +1100,66 @@ describe("service: generateCover", () => {
       expect.any(String),
       expect.anything(),
     );
+  });
+});
+
+describe("service: autoAssembleWithAi", () => {
+  const PARTY_ID = "00000000-0000-0000-0000-0000000000a1"; // matches the cases mock
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCan.mockReturnValue(undefined);
+    mockRequireCaseAccess.mockResolvedValue(undefined);
+    // Existing empty draft → no replace needed.
+    mockFindDraftExpedienteForCase.mockResolvedValue(makeExpediente("draft"));
+    mockListItemsForExpediente.mockResolvedValue([]);
+    mockMaxItemPositionForExpediente.mockResolvedValue(0);
+    mockListActiveCoverTemplates.mockResolvedValue([
+      { id: TEMPLATE_ID, org_id: staffActor.orgId, name: "Sep", template: { style: "ulp-divider" }, is_active: true, created_at: "", updated_at: "" },
+    ]);
+    mockListApprovedDocumentsForMaterial.mockResolvedValue([
+      { refId: "doc1", title: "Acta de nacimiento", createdAt: "", storagePath: "p", displayName: "Acta de nacimiento", originalFilename: "acta.pdf", partyId: PARTY_ID, requirementLabel: null },
+    ]);
+    mockListCompletedTranslationsForCase.mockResolvedValue([
+      { translationId: "tr1", caseDocumentId: "doc1", translatedPdfPath: "tp" },
+    ]);
+    mockListFormResponsesForMaterial.mockResolvedValue([]);
+    mockListGenerationRunsForMaterial.mockResolvedValue([]);
+    mockInsertCoverRender.mockResolvedValue({ id: "cov1" });
+    mockInsertItem.mockResolvedValue({ id: "it" });
+    mockProposeExpedienteAssembly.mockResolvedValue({
+      sections: [
+        { kind: "party", title: "Documentos de la peticionaria: María García", partyId: PARTY_ID, documentIds: ["doc1"] },
+      ],
+    });
+  });
+
+  it("builds the draft: cover, then translation BEFORE the original document", async () => {
+    const res = await autoAssembleWithAi(staffActor, CASE_ID);
+
+    // Order of inserted items: cover → translation → client_document
+    const types = mockInsertItem.mock.calls.map((c) => (c[0] as { item_type: string }).item_type);
+    expect(types).toEqual(["cover", "translation", "client_document"]);
+
+    // The translation item references the translation id, the doc item the doc id.
+    const trCall = mockInsertItem.mock.calls.find((c) => (c[0] as { item_type: string }).item_type === "translation");
+    const docCall = mockInsertItem.mock.calls.find((c) => (c[0] as { item_type: string }).item_type === "client_document");
+    expect((trCall![0] as { ref_id: string }).ref_id).toBe("tr1");
+    expect((docCall![0] as { ref_id: string }).ref_id).toBe("doc1");
+
+    expect(res.coversCreated).toBe(1);
+    expect(res.itemsCreated).toBe(3);
+  });
+
+  it("refuses to overwrite a non-empty draft without replace", async () => {
+    mockListItemsForExpediente.mockResolvedValue([{ id: "x", item_type: "cover", ref_id: "c", position: 1 }]);
+    const err = await autoAssembleWithAi(staffActor, CASE_ID).catch((e: ExpedienteError) => e);
+    expect((err as ExpedienteError).code).toBe("EXPEDIENTE_NOT_EMPTY");
+  });
+
+  it("per-party cover carries the party name as subtitle", async () => {
+    await autoAssembleWithAi(staffActor, CASE_ID);
+    const coverCall = mockRenderCoverPdf.mock.calls[0][0];
+    expect(coverCall.subtitle).toBe("María García");
   });
 });
 

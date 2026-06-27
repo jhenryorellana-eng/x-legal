@@ -67,6 +67,7 @@ export function SharedCaseView({
   const tabs = buildTabs({
     strings,
     isAdmin,
+    role: vm.role,
     documentsToReview,
     hasChat: !!chat,
     requiresLawyerValidation: vm.requiresLawyerValidation,
@@ -101,6 +102,14 @@ export function SharedCaseView({
               </HeaderLink>
               <HeaderLink href="/admin/auditoria" icon="scale">
                 {t.auditLink}
+              </HeaderLink>
+            </div>
+          )}
+
+          {vm.role === "paralegal" && (
+            <div style={{ display: "flex", gap: 8 }}>
+              <HeaderLink href={`/legal/caso/${h.caseId}/formularios`} icon="form">
+                {tb.formularios}
               </HeaderLink>
             </div>
           )}

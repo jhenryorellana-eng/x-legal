@@ -340,7 +340,14 @@ export interface StageChecklistSignals {
   /** Documentos que requieren traducción (ES, sin marcar "ya en inglés"). */
   docsToTranslate: number;
   translationsCompleted: number;
+  /** Estado del expediente vigente del caso (null si aún no existe). Etapas legal/operations. */
+  expedienteStatus: string | null;
 }
+
+/** Estados de expediente que cuentan como "al menos compilado" (no borrador/fallido). */
+const EXP_COMPILED_PLUS = ["compiled", "sent_to_lawyer", "approved", "sent_to_finance", "printed"];
+/** Estados de expediente entregados a Andrium (finanzas/impresión). */
+const EXP_SENT_PLUS = ["sent_to_finance", "printed"];
 
 /**
  * Definition of Done por etapa. Devuelve los ítems con su estado `done`.
@@ -353,8 +360,11 @@ export interface StageChecklistSignals {
  *     inglés" se excluyen del denominador).
  *   (pago + contrato + disclaimer son prerequisitos de acceso, puntos aparte.)
  *
- * Etapas `legal` / `operations`: gate placeholder (las tareas se definen en otra
- * sesión); el admin puede forzar el traspaso mientras tanto.
+ * Etapa `legal` (Diana): el expediente debe estar al menos compilado y enviado a
+ *   Andrium (`sent_to_finance`). Normalmente el traspaso legal→operations lo
+ *   dispara `sendToFinance` automáticamente (handoff único); este checklist
+ *   refleja el progreso y habilita el traspaso manual del admin como respaldo.
+ * Etapa `operations` (Andrium): el expediente debe estar impreso (`printed`).
  *
  * Pura.
  */
@@ -363,6 +373,7 @@ export function computeStageChecklist(
   s: StageChecklistSignals,
 ): StageChecklist {
   const done = (total: number, ok: number) => total === 0 || ok >= total;
+  const exp = s.expedienteStatus;
 
   let items: StageChecklistItem[];
   if (stage === "sales") {
@@ -373,9 +384,12 @@ export function computeStageChecklist(
       { key: "translation", done: done(s.docsToTranslate, s.translationsCompleted) },
     ];
   } else if (stage === "legal") {
-    items = [{ key: "expediente", done: false, placeholder: true }];
+    items = [
+      { key: "expediente_compiled", done: exp !== null && EXP_COMPILED_PLUS.includes(exp) },
+      { key: "expediente_sent", done: exp !== null && EXP_SENT_PLUS.includes(exp) },
+    ];
   } else if (stage === "operations") {
-    items = [{ key: "print_send", done: false, placeholder: true }];
+    items = [{ key: "expediente_printed", done: exp === "printed" }];
   } else {
     items = [];
   }

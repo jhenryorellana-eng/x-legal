@@ -20,6 +20,7 @@ export interface CaseFormItemVM {
   kind: string;
   filledBy: string;
   status: string;
+  partyId: string | null;
   partyName: string | null;
   hasPdf: boolean;
   submittedAt: string | null;
@@ -28,6 +29,15 @@ export interface CaseFormItemVM {
 export interface CaseFormsActions {
   approve: (input: { responseId: string }) => Promise<{ ok: boolean; error?: { code: string } }>;
   generatePdf: (input: { responseId: string }) => Promise<{ ok: boolean; downloadUrl?: string; error?: { code: string; details?: Record<string, unknown> } }>;
+  /**
+   * Launch an ai_letter generation (carta IA) from a form response. Optional —
+   * only surfaces that authorize generation inject it; absence hides the button.
+   */
+  startGeneration?: (input: {
+    caseId: string;
+    formDefinitionId: string;
+    partyId?: string | null;
+  }) => Promise<{ ok: boolean; budgetWarning?: string | null; error?: { code: string } }>;
 }
 
 const STATUS_PILL: Record<string, { kind: StatusKind; label: string }> = {
@@ -47,13 +57,48 @@ function pdfErrorMessage(code: string, details?: Record<string, unknown>): strin
 export function CaseFormsManager({
   items: initialItems,
   actions,
+  caseId,
+  reviewBasePath,
 }: {
   items: CaseFormItemVM[];
   actions: CaseFormsActions;
+  /** Required to launch ai_letter generations from this surface. */
+  caseId?: string;
+  /** When set (e.g. "/legal/caso/<id>/revisar"), shows a side-by-side "Revisar" link per form. */
+  reviewBasePath?: string;
 }) {
   const [items, setItems] = React.useState(initialItems);
   const [busy, setBusy] = React.useState<string | null>(null);
   const [pdfUrls, setPdfUrls] = React.useState<Record<string, string>>({});
+  const [generated, setGenerated] = React.useState<Record<string, boolean>>({});
+
+  async function generateLetter(it: CaseFormItemVM) {
+    if (!actions.startGeneration || !caseId) return;
+    setBusy(it.responseId);
+    const r = await actions.startGeneration({
+      caseId,
+      formDefinitionId: it.formDefinitionId,
+      partyId: it.partyId,
+    });
+    setBusy(null);
+    if (r.ok) {
+      setGenerated((m) => ({ ...m, [it.responseId]: true }));
+      toast.success(
+        r.budgetWarning === "over_100"
+          ? "Carta en generación (presupuesto IA del mes superado)"
+          : "Carta en generación — síguela en la pestaña Generaciones",
+      );
+    } else {
+      const code = r.error?.code;
+      toast.error(
+        code === "AI_RUN_DUPLICATE"
+          ? "Ya hay una generación en curso para esta carta."
+          : code === "AI_CONFIG_NOT_FOUND"
+            ? "Esta carta no tiene configuración de generación en el servicio."
+            : "No se pudo iniciar la generación de la carta.",
+      );
+    }
+  }
 
   async function approve(it: CaseFormItemVM) {
     setBusy(it.responseId);
@@ -97,7 +142,9 @@ export function CaseFormsManager({
         const pill = STATUS_PILL[it.status] ?? { kind: "pendiente" as StatusKind, label: it.status };
         const isBusy = busy === it.responseId;
         const url = pdfUrls[it.responseId];
-        const canGenerate = it.status === "approved" || (it.status === "submitted" && it.filledBy !== "client");
+        const isLetter = it.kind === "ai_letter";
+        const canGenerate = !isLetter && (it.status === "approved" || (it.status === "submitted" && it.filledBy !== "client"));
+        const canGenerateLetter = isLetter && !!actions.startGeneration && !!caseId;
         return (
           <Card key={it.responseId}>
             <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap", padding: 4 }}>
@@ -116,6 +163,14 @@ export function CaseFormsManager({
               </div>
 
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                {reviewBasePath && it.kind !== "ai_letter" && (
+                  <a
+                    href={`${reviewBasePath}/${it.formDefinitionId}${it.partyId ? `?party=${it.partyId}` : ""}`}
+                    style={{ fontSize: 13, fontWeight: 700, color: "var(--accent)", textDecoration: "none", border: "1px solid var(--line)", borderRadius: 999, padding: "6px 14px" }}
+                  >
+                    Revisar ⟷
+                  </a>
+                )}
                 {it.status === "submitted" && (
                   <GradientBtn size="md" full={false} onClick={() => approve(it)} disabled={isBusy}>
                     {isBusy ? "Aprobando…" : "Aprobar"}
@@ -124,6 +179,11 @@ export function CaseFormsManager({
                 {canGenerate && (
                   <GhostBtn size="md" full={false} onClick={() => generate(it)} disabled={isBusy}>
                     {isBusy ? "Generando…" : it.hasPdf ? "Regenerar PDF" : "Generar PDF"}
+                  </GhostBtn>
+                )}
+                {canGenerateLetter && (
+                  <GhostBtn size="md" full={false} onClick={() => generateLetter(it)} disabled={isBusy}>
+                    {isBusy ? "Iniciando…" : generated[it.responseId] ? "Regenerar carta" : "Generar carta"}
                   </GhostBtn>
                 )}
                 {url && (

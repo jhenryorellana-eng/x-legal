@@ -23,7 +23,7 @@ import {
   type CoverTemplateRow,
   type ExpedienteMaterial,
 } from "@/backend/modules/expediente";
-import { CaseError } from "@/backend/modules/cases";
+import { CaseError, getCaseWorkspace } from "@/backend/modules/cases";
 import { EnsambladorView, type EnsambladorVM } from "@/frontend/features/legal/ensamblador/ensamblador-view";
 import {
   createExpedienteAction,
@@ -35,6 +35,10 @@ import {
   compileExpedienteAction,
   getCompiledPdfUrlAction,
   createCorrectionAttemptAction,
+  autoAssembleWithAiAction,
+  deleteCoverItemAction,
+  regenerateCoverAction,
+  sendToFinanceAction,
 } from "./actions";
 
 // ---------------------------------------------------------------------------
@@ -70,6 +74,11 @@ export default async function EnsambladorPage({
 
   const t = await getTranslations("staff_ensamblador");
 
+  // Back-link role-aware: Diana (paralegal) regresa a su workspace; el resto al
+  // detalle de caso admin. Mantiene coherente la navegación kanban→workspace→ensamblador.
+  const backHref =
+    actor.role === "paralegal" ? `/legal/caso/${caseId}` : `/admin/casos/${caseId}`;
+
   // -------------------------------------------------------------------------
   // Data loading — all errors become friendly empty states (never 500).
   // -------------------------------------------------------------------------
@@ -78,7 +87,14 @@ export default async function EnsambladorPage({
     items: [],
     material: { covers: [], generations: [], forms: [], documents: [] },
     coverTemplates: [],
+    parties: [],
   };
+
+  // Case parties feed the per-party cover generator (subtitle = party name).
+  // Loaded regardless of expediente existence; degrade to [] on failure.
+  const parties = await getCaseWorkspace(actor, caseId)
+    .then((ws) => ws.parties.map((p) => ({ id: p.id, name: p.name ?? "—", role: p.role })))
+    .catch(() => [] as { id: string; name: string; role: string }[]);
 
   try {
     const allExpedientes = await getCaseExpedientes(actor, caseId);
@@ -120,17 +136,21 @@ export default async function EnsambladorPage({
         documents: material.documents,
       },
       coverTemplates: coverTemplates.map((t) => ({ id: t.id, name: t.name })),
+      parties,
     };
   } catch (err) {
     // Membership / access denied / not-found → render empty rather than crash.
     if (!(err instanceof ExpedienteError) && !(err instanceof CaseError)) throw err;
   }
 
+  // Ensure parties are present even when the expediente load short-circuited.
+  vm.parties = parties;
+
   return (
     <div>
       <div style={{ marginBottom: 18 }}>
         <Link
-          href={`/admin/casos/${caseId}`}
+          href={backHref}
           style={{
             fontSize: 12.5,
             fontWeight: 700,
@@ -169,6 +189,10 @@ export default async function EnsambladorPage({
           compileExpediente: compileExpedienteAction,
           getCompiledPdfUrl: getCompiledPdfUrlAction,
           createCorrectionAttempt: createCorrectionAttemptAction,
+          autoAssembleWithAi: autoAssembleWithAiAction,
+          deleteCoverItem: deleteCoverItemAction,
+          regenerateCover: regenerateCoverAction,
+          sendToFinance: sendToFinanceAction,
         }}
       />
     </div>

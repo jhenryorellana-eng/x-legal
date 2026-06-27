@@ -354,6 +354,8 @@ export interface MaterialCovers {
   title: string;
   createdAt: string;
   pdfPath: string;
+  /** The party this cover is for (per-party covers), if any. */
+  partyId: string | null;
 }
 
 export interface MaterialGenerations {
@@ -361,6 +363,7 @@ export interface MaterialGenerations {
   title: string;
   createdAt: string;
   outputPath: string;
+  partyId: string | null;
 }
 
 export interface MaterialForms {
@@ -368,6 +371,13 @@ export interface MaterialForms {
   title: string;
   createdAt: string;
   filledPdfPath: string;
+  partyId: string | null;
+}
+
+/** Resolves the Spanish-first label from a form_definitions join (or a fallback). */
+function formLabelFromJoin(fd: unknown, fallback: string): string {
+  const label = (fd as { label_i18n?: { es?: string; en?: string } } | null)?.label_i18n;
+  return label?.es || label?.en || fallback;
 }
 
 export interface MaterialDocuments {
@@ -375,6 +385,13 @@ export interface MaterialDocuments {
   title: string;
   createdAt: string;
   storagePath: string;
+  /** Semantic display name typed by the client (falls back to original_filename). */
+  displayName: string | null;
+  originalFilename: string;
+  /** The party this upload belongs to (may be null on multi-file / unassigned slots). */
+  partyId: string | null;
+  /** Requirement label (i18n) for the slot this document was uploaded to. */
+  requirementLabel: { es: string; en: string } | null;
 }
 
 /** Loads the library of addable items for a case (cover renders). */
@@ -384,15 +401,75 @@ export async function listCoverRendersForMaterial(
   const supabase = createServiceClient();
   const { data } = await supabase
     .from("cover_renders")
-    .select("id, pdf_path, created_at")
+    .select("id, pdf_path, created_at, data")
     .eq("case_id", caseId)
     .order("created_at", { ascending: false });
-  return (data ?? []).map((r) => ({
-    refId: r.id,
-    title: "Cover",
-    createdAt: r.created_at,
-    pdfPath: r.pdf_path,
-  }));
+  return (data ?? []).map((r) => {
+    const d = (r.data ?? {}) as { title?: unknown; partyId?: unknown };
+    return {
+      refId: r.id,
+      title: typeof d.title === "string" && d.title.trim() ? d.title : "Carátula",
+      createdAt: r.created_at,
+      pdfPath: r.pdf_path,
+      partyId: typeof d.partyId === "string" ? d.partyId : null,
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Translations + cover deletion (AI assembly + cover edit/delete)
+// ---------------------------------------------------------------------------
+
+/** Completed translations for a case, keyed for attaching to their source doc. */
+export async function listCompletedTranslationsForCase(
+  caseId: string,
+): Promise<Array<{ translationId: string; caseDocumentId: string; translatedPdfPath: string }>> {
+  const supabase = createServiceClient();
+  // document_translations has no case_id; join through case_documents.
+  const { data } = await supabase
+    .from("document_translations")
+    .select("id, case_document_id, translated_pdf_path, status, case_documents!inner(case_id)")
+    .eq("status", "completed")
+    .not("translated_pdf_path", "is", null)
+    .eq("case_documents.case_id", caseId);
+  return (data ?? [])
+    .filter((r) => r.translated_pdf_path !== null)
+    .map((r) => ({
+      translationId: r.id,
+      caseDocumentId: r.case_document_id,
+      translatedPdfPath: r.translated_pdf_path as string,
+    }));
+}
+
+/** Finds a translation by id (for resolveItemBytes of 'translation' items). */
+export async function findTranslationById(
+  id: string,
+): Promise<{ id: string; translated_pdf_path: string | null } | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("document_translations")
+    .select("id, translated_pdf_path")
+    .eq("id", id)
+    .maybeSingle();
+  return data ?? null;
+}
+
+/** Counts how many expediente_items reference a given cover render. */
+export async function countCoverItemRefs(coverRenderId: string): Promise<number> {
+  const supabase = createServiceClient();
+  const { count } = await supabase
+    .from("expediente_items")
+    .select("id", { count: "exact", head: true })
+    .eq("item_type", "cover")
+    .eq("ref_id", coverRenderId);
+  return count ?? 0;
+}
+
+/** Deletes a cover render (only call when no expediente_item references it). */
+export async function deleteCoverRender(id: string): Promise<void> {
+  const supabase = createServiceClient();
+  const { error } = await supabase.from("cover_renders").delete().eq("id", id);
+  if (error) throw new Error(`expediente.repository: deleteCoverRender — ${error.message}`);
 }
 
 /** Loads completed ai_generation_runs for a case. */
@@ -402,7 +479,7 @@ export async function listGenerationRunsForMaterial(
   const supabase = createServiceClient();
   const { data } = await supabase
     .from("ai_generation_runs")
-    .select("id, output_path, created_at, form_definition_id")
+    .select("id, output_path, created_at, party_id, form_definitions(label_i18n)")
     .eq("case_id", caseId)
     .eq("status", "completed")
     .not("output_path", "is", null)
@@ -411,9 +488,10 @@ export async function listGenerationRunsForMaterial(
     .filter((r) => r.output_path !== null)
     .map((r) => ({
       refId: r.id,
-      title: `Generation (form ${r.form_definition_id})`,
+      title: formLabelFromJoin(r.form_definitions, "Carta generada"),
       createdAt: r.created_at,
       outputPath: r.output_path as string,
+      partyId: r.party_id ?? null,
     }));
 }
 
@@ -424,7 +502,7 @@ export async function listFormResponsesForMaterial(
   const supabase = createServiceClient();
   const { data } = await supabase
     .from("case_form_responses")
-    .select("id, filled_pdf_path, created_at")
+    .select("id, filled_pdf_path, created_at, party_id, form_definitions(label_i18n)")
     .eq("case_id", caseId)
     .not("filled_pdf_path", "is", null)
     .order("created_at", { ascending: false });
@@ -432,9 +510,10 @@ export async function listFormResponsesForMaterial(
     .filter((r) => r.filled_pdf_path !== null)
     .map((r) => ({
       refId: r.id,
-      title: "Automated Form",
+      title: formLabelFromJoin(r.form_definitions, "Formulario"),
       createdAt: r.created_at,
       filledPdfPath: r.filled_pdf_path as string,
+      partyId: r.party_id ?? null,
     }));
 }
 
@@ -629,14 +708,25 @@ export async function listApprovedDocumentsForMaterial(
   const supabase = createServiceClient();
   const { data } = await supabase
     .from("case_documents")
-    .select("id, storage_path, original_filename, created_at")
+    .select("id, storage_path, original_filename, display_name, party_id, created_at, required_document_types(label_i18n)")
     .eq("case_id", caseId)
     .eq("status", "approved")
     .order("created_at", { ascending: false });
-  return (data ?? []).map((r) => ({
+  return (data ?? []).map((r) => {
+    const rdt = r.required_document_types as { label_i18n: unknown } | null;
+    const requirementLabel =
+      rdt && typeof rdt.label_i18n === "object" && rdt.label_i18n !== null
+        ? (rdt.label_i18n as { es: string; en: string })
+        : null;
+    return {
     refId: r.id,
-    title: r.original_filename ?? "Document",
+    title: r.display_name ?? r.original_filename ?? "Document",
     createdAt: r.created_at,
     storagePath: r.storage_path,
-  }));
+    displayName: r.display_name ?? null,
+    originalFilename: r.original_filename,
+    partyId: r.party_id ?? null,
+    requirementLabel,
+    };
+  });
 }

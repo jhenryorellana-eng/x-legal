@@ -23,6 +23,7 @@ const READY: StageChecklistSignals = {
   formsDone: 2,
   docsToTranslate: 4,
   translationsCompleted: 4,
+  expedienteStatus: null,
 };
 
 describe("cases/domain: stage order", () => {
@@ -76,18 +77,30 @@ describe("cases/domain: computeStageChecklist (sales)", () => {
   });
 });
 
-describe("cases/domain: computeStageChecklist (legal/operations placeholders)", () => {
-  it("legal has a non-gating placeholder task (allDone stays false)", () => {
-    const c = computeStageChecklist("legal", READY);
-    expect(c.items).toHaveLength(1);
-    expect(c.items[0]).toMatchObject({ key: "expediente", placeholder: true });
-    // Only placeholder tasks → not "ready" by the automatic gate (admin force).
+describe("cases/domain: computeStageChecklist (legal/operations — real expediente gating)", () => {
+  it("legal: no expediente → both items pending, not ready", () => {
+    const c = computeStageChecklist("legal", { ...READY, expedienteStatus: null });
+    expect(c.items.map((i) => i.key)).toEqual(["expediente_compiled", "expediente_sent"]);
+    expect(c.items.every((i) => !i.done)).toBe(true);
     expect(c.allDone).toBe(false);
   });
 
-  it("operations has a print/send placeholder", () => {
-    const c = computeStageChecklist("operations", READY);
-    expect(c.items[0]).toMatchObject({ key: "print_send", placeholder: true });
+  it("legal: compiled but not sent → compiled done, sent pending, not ready", () => {
+    const c = computeStageChecklist("legal", { ...READY, expedienteStatus: "compiled" });
+    expect(c.items.find((i) => i.key === "expediente_compiled")?.done).toBe(true);
+    expect(c.items.find((i) => i.key === "expediente_sent")?.done).toBe(false);
+    expect(c.allDone).toBe(false);
+  });
+
+  it("legal: sent_to_finance → both done, ready to hand off", () => {
+    const c = computeStageChecklist("legal", { ...READY, expedienteStatus: "sent_to_finance" });
+    expect(c.items.every((i) => i.done)).toBe(true);
+    expect(c.allDone).toBe(true);
+  });
+
+  it("operations: ready only when the expediente is printed", () => {
+    expect(computeStageChecklist("operations", { ...READY, expedienteStatus: "sent_to_finance" }).allDone).toBe(false);
+    expect(computeStageChecklist("operations", { ...READY, expedienteStatus: "printed" }).allDone).toBe(true);
   });
 });
 

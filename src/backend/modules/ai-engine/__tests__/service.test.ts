@@ -245,6 +245,7 @@ import {
   markTranslationFailed,
   getRunsForCase,
   proposeFormSegmentation,
+  proposeExpedienteAssembly,
   translateAnswerText,
   assessDocumentLegibility,
   executeTranslationJob,
@@ -958,6 +959,54 @@ describe("proposeFormSegmentation", () => {
 });
 
 // ---------------------------------------------------------------------------
+// proposeExpedienteAssembly — AI assembly planner (sync, JSON, retry)
+// ---------------------------------------------------------------------------
+
+describe("proposeExpedienteAssembly", () => {
+  const createMsg = (text: string) => ({ content: [{ type: "text", text }] });
+  const baseInput = {
+    caseLabel: "ULP-2026-0001",
+    serviceCategory: "Asilo Político",
+    parties: [{ id: "p1", role: "minor", name: "Juan Pérez" }],
+    strongDocs: [{ kind: "automated_form" as const, id: "f1", label: "Formulario I-589", partyId: null }],
+    documents: [{ caseDocumentId: "d1", fileName: "acta_juan.pdf", partyId: "p1", requirementLabel: "Acta de nacimiento" }],
+  };
+
+  beforeEach(() => {
+    mocks.anthropicClient.messages.create.mockReset();
+  });
+
+  it("parses the planner JSON into ordered sections", async () => {
+    mocks.anthropicClient.messages.create.mockResolvedValue(
+      createMsg(
+        '{"sections":[{"kind":"document","title":"Formulario I-589","refType":"automated_form","refId":"f1"},{"kind":"party","title":"Documentos del menor: Juan Pérez","partyId":"p1","documentIds":["d1"]}]}',
+      ),
+    );
+
+    const plan = await proposeExpedienteAssembly(baseInput);
+    expect(plan.sections).toHaveLength(2);
+    expect(plan.sections[0]).toMatchObject({ kind: "document", refType: "automated_form", refId: "f1" });
+    expect(plan.sections[1]).toMatchObject({ kind: "party", partyId: "p1", documentIds: ["d1"] });
+  });
+
+  it("retries once with feedback when the first response is invalid", async () => {
+    mocks.anthropicClient.messages.create
+      .mockResolvedValueOnce(createMsg("not json at all"))
+      .mockResolvedValueOnce(createMsg('{"sections":[{"kind":"other","title":"Otros","documentIds":["d1"]}]}'));
+
+    const plan = await proposeExpedienteAssembly(baseInput);
+    expect(plan.sections).toHaveLength(1);
+    expect(mocks.anthropicClient.messages.create).toHaveBeenCalledTimes(2);
+  });
+
+  it("throws AI_OUTPUT_INVALID after the retry also fails", async () => {
+    mocks.anthropicClient.messages.create.mockResolvedValue(createMsg("still not json"));
+    await expect(proposeExpedienteAssembly(baseInput)).rejects.toMatchObject({ code: "AI_OUTPUT_INVALID" });
+    expect(mocks.anthropicClient.messages.create).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // translateAnswerText — PII masking before the provider (review SHOULD-FIX #1)
 // ---------------------------------------------------------------------------
 
@@ -984,6 +1033,31 @@ describe("translateAnswerText", () => {
     });
     const r = await translateAnswerText({ text: "hola mundo", direction: "es-en" });
     expect(r.text).toBe("hello world");
+  });
+
+  it("instructs the model to keep proper nouns and accents (legal-form mode)", async () => {
+    mocks.geminiModels.generateContent.mockResolvedValue({
+      candidates: [{ content: { parts: [{ text: "José Ramírez" }] } }],
+    });
+    await translateAnswerText({ text: "José Ramírez", direction: "es-en" });
+    const sentPrompt = mocks.geminiModels.generateContent.mock.calls[0][0].contents[0].parts[0]
+      .text as string;
+    expect(sentPrompt).toMatch(/proper noun/i);
+    expect(sentPrompt).toMatch(/accent|diacritic/i);
+  });
+
+  it("passes the field label to the model as disambiguation context", async () => {
+    mocks.geminiModels.generateContent.mockResolvedValue({
+      candidates: [{ content: { parts: [{ text: "Christian" }] } }],
+    });
+    await translateAnswerText({
+      text: "Cristiano",
+      direction: "es-en",
+      fieldLabel: "¿Cuál es su religión?",
+    });
+    const sentPrompt = mocks.geminiModels.generateContent.mock.calls[0][0].contents[0].parts[0]
+      .text as string;
+    expect(sentPrompt).toContain("¿Cuál es su religión?");
   });
 });
 

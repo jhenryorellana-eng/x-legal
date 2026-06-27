@@ -27,6 +27,7 @@ import {
 } from "@/backend/platform/pdf";
 import type { ExpedienteItemInput } from "@/backend/platform/pdf";
 import { writeAudit } from "@/backend/modules/audit";
+import { PRINCIPAL_ROLE_KEY } from "@/shared/constants/party-roles";
 import { emitExpedienteCompiled, emitExpedienteSentToFinance, emitExpedientePrinted } from "./events";
 import {
   isEditableStatus,
@@ -38,6 +39,11 @@ import {
   listActiveCoverTemplates,
   findCoverTemplateById,
   insertCoverRender,
+  findCoverRenderById,
+  listCompletedTranslationsForCase,
+  findTranslationById,
+  countCoverItemRefs,
+  deleteCoverRender,
   findExpedienteById,
   listExpedientesForCase,
   maxAttemptNoForCase,
@@ -97,6 +103,8 @@ export class ExpedienteError extends Error {
       | "EXPEDIENTE_ITEM_REF_INVALID"
       | "COVER_TEMPLATE_NOT_FOUND"
       | "COVER_RENDER_NOT_FOUND"
+      | "COVER_IN_USE"
+      | "EXPEDIENTE_NOT_EMPTY"
       | "EXTERNAL_FILE_UPLOAD_INVALID",
     public readonly details?: Record<string, unknown>,
   ) {
@@ -124,7 +132,16 @@ export async function listCoverTemplates(
 const GenerateCoverSchema = z.object({
   caseId: zUuid,
   templateId: zUuid,
-  data: z.record(z.string(), z.unknown()),
+  // Cover data Diana edits in the assembler: a custom title, an optional subtitle,
+  // and an optional partyId for per-party covers ("Documentos del menor: {nombre}").
+  // Kept open (passthrough) so future template fields persist into cover_renders.data.
+  data: z
+    .object({
+      title: z.string().trim().min(1).optional(),
+      subtitle: z.string().trim().min(1).optional(),
+      partyId: zUuid.optional(),
+    })
+    .passthrough(),
 });
 
 export type GenerateCoverInput = z.infer<typeof GenerateCoverSchema>;
@@ -156,24 +173,22 @@ export async function generateCover(
     getCaseWorkspace: (actor: Actor, caseId: string) => Promise<{
       caseNumber: string;
       service: { labelI18n: { es: string; en: string } } | null;
-      parties: Array<{ role: string; name: string | null }>;
+      parties: Array<{ id: string; role: string; name: string | null }>;
     }>;
   };
   const workspace = await getCaseWorkspace(actor, parsed.caseId);
 
-  // Build canonical client label from the primary applicant party name
-  // Fall back to initials from data if no party name is resolved
-  const primaryParty = workspace.parties.find(
-    (p) => p.role === "primary_applicant",
-  );
+  // Build canonical client label from the petitioner (principal) party name.
+  // Falls back to "—" if no party name resolves. (Role is PRINCIPAL_ROLE_KEY,
+  // not the legacy "primary_applicant" — that mismatch left every cover as "—".)
+  const primaryParty = workspace.parties.find((p) => p.role === PRINCIPAL_ROLE_KEY);
   let clientLabel = "—";
   if (primaryParty?.name) {
     const parts = primaryParty.name.trim().split(/\s+/);
-    if (parts.length >= 2) {
-      clientLabel = canonicalClientLabel(parts[0], parts.slice(1).join(" "));
-    } else {
-      clientLabel = parts[0] ?? "—";
-    }
+    clientLabel =
+      parts.length >= 2
+        ? canonicalClientLabel(parts[0], parts.slice(1).join(" "))
+        : (parts[0] ?? "—");
   }
 
   const serviceLabel =
@@ -181,17 +196,27 @@ export async function generateCover(
     workspace.service?.labelI18n.en ??
     "";
 
+  const tpl = template.template as {
+    title_i18n?: { es?: string; en?: string };
+    style?: "ulp-classic" | "ulp-divider";
+  };
+
+  // Per-party cover: when a partyId is supplied, the subtitle defaults to that
+  // party's name ("Documentos del menor: {nombre}"), unless an explicit subtitle
+  // was typed. The title falls back to the template's title or "EXPEDIENTE".
+  const selectedParty = parsed.data.partyId
+    ? workspace.parties.find((p) => p.id === parsed.data.partyId)
+    : undefined;
+  const subtitle =
+    parsed.data.subtitle ?? (selectedParty?.name ? selectedParty.name : undefined);
+
   const coverData = {
-    title: (template.template as Record<string, unknown>).title_i18n
-      ? ((template.template as { title_i18n?: { es?: string } }).title_i18n?.es ?? "EXPEDIENTE")
-      : "EXPEDIENTE",
+    title: parsed.data.title ?? tpl.title_i18n?.en ?? tpl.title_i18n?.es ?? "Case File",
+    subtitle,
     caseNumber: workspace.caseNumber,
     clientLabel,
     serviceLabel,
-    style: (template.template as Record<string, unknown>).style as
-      | "ulp-classic"
-      | "ulp-divider"
-      | undefined,
+    style: tpl.style,
   };
 
   const bytes = await renderCoverPdf(coverData);
@@ -212,6 +237,356 @@ export async function generateCover(
   });
 
   return row;
+}
+
+// ---------------------------------------------------------------------------
+// Cover edit / delete (correct AI mistakes manually) — API-EXP-15/16
+// ---------------------------------------------------------------------------
+
+type Json = import("@/shared/database.types").Json;
+
+interface CaseCoverContext {
+  caseNumber: string;
+  serviceLabel: string;
+  clientLabel: string;
+  parties: Array<{ id: string; role: string; name: string | null }>;
+}
+
+/** Loads the case data needed to render covers (caseNumber, service, parties, masked client label). */
+async function loadCaseCoverContext(actor: Actor, caseId: string): Promise<CaseCoverContext> {
+  const { getCaseWorkspace } = (await import("@/backend/modules/cases")) as {
+    getCaseWorkspace: (a: Actor, c: string) => Promise<{
+      caseNumber: string;
+      service: { labelI18n: { es: string; en: string } } | null;
+      parties: Array<{ id: string; role: string; name: string | null }>;
+    }>;
+  };
+  const ws = await getCaseWorkspace(actor, caseId);
+  const primary = ws.parties.find((p) => p.role === PRINCIPAL_ROLE_KEY);
+  let clientLabel = "—";
+  if (primary?.name) {
+    const parts = primary.name.trim().split(/\s+/);
+    clientLabel =
+      parts.length >= 2 ? canonicalClientLabel(parts[0], parts.slice(1).join(" ")) : (parts[0] ?? "—");
+  }
+  const serviceLabel = ws.service?.labelI18n.es ?? ws.service?.labelI18n.en ?? "";
+  return { caseNumber: ws.caseNumber, serviceLabel, clientLabel, parties: ws.parties };
+}
+
+/** Renders a cover PDF + inserts a cover_render row. Returns the new row. */
+async function renderInsertCover(
+  caseId: string,
+  ctx: CaseCoverContext,
+  template: CoverTemplateRow,
+  data: { title: string; subtitle?: string | null; partyId?: string | null; sectionKind?: string; aiGenerated?: boolean },
+  createdBy: string,
+): Promise<CoverRenderRow> {
+  const tpl = template.template as { title_i18n?: { es?: string; en?: string }; style?: "ulp-classic" | "ulp-divider" };
+  const bytes = await renderCoverPdf({
+    title: data.title || tpl.title_i18n?.en || tpl.title_i18n?.es || "Case File",
+    subtitle: data.subtitle ?? undefined,
+    caseNumber: ctx.caseNumber,
+    clientLabel: ctx.clientLabel,
+    serviceLabel: ctx.serviceLabel,
+    style: tpl.style,
+  });
+  const pdfPath = `case/${caseId}/covers/${crypto.randomUUID()}.pdf`;
+  await uploadBytesToStorage("generated", pdfPath, bytes, "application/pdf");
+  return insertCoverRender({
+    case_id: caseId,
+    template_id: template.id,
+    data: {
+      title: data.title,
+      subtitle: data.subtitle ?? null,
+      partyId: data.partyId ?? null,
+      sectionKind: data.sectionKind ?? null,
+      aiGenerated: data.aiGenerated ?? false,
+    } as Json,
+    pdf_path: pdfPath,
+    created_by: createdBy,
+  });
+}
+
+/**
+ * Removes a cover item from the expediente AND deletes its cover_render when no
+ * other item references it (correct an AI mistake). For non-cover items, use
+ * removeItem. Renumbers remaining items.
+ *
+ * @api-id API-EXP-15
+ */
+export async function deleteCoverItem(actor: Actor, itemId: string): Promise<void> {
+  can(actor, "expedientes", "edit");
+  const item = await findItemById(itemId);
+  if (!item) throw new ExpedienteError("EXPEDIENTE_ITEM_NOT_FOUND");
+  const expediente = await findExpedienteById(item.expediente_id);
+  if (!expediente) throw new ExpedienteError("EXPEDIENTE_NOT_FOUND");
+  await requireCaseAccess(actor, expediente.case_id);
+  if (!isEditableStatus(expediente.status as import("./domain").ExpedienteStatus)) {
+    throw new ExpedienteError("EXPEDIENTE_NOT_EDITABLE", { status: expediente.status });
+  }
+
+  await removeItem(actor, itemId); // renumbers
+  if (item.item_type === "cover" && item.ref_id) {
+    const refs = await countCoverItemRefs(item.ref_id);
+    if (refs === 0) await deleteCoverRender(item.ref_id).catch(() => {});
+  }
+}
+
+const RegenerateCoverSchema = z.object({
+  itemId: zUuid,
+  title: z.string().trim().min(1).optional(),
+  subtitle: z.string().trim().optional(),
+  partyId: zUuid.nullable().optional(),
+});
+
+/**
+ * Re-renders a cover item with corrected data (title/subtitle/party). Creates a
+ * NEW cover_render (covers are immutable), repoints the item's ref_id, deletes
+ * the old render if now unreferenced, and updates the item title (TOC entry).
+ *
+ * @api-id API-EXP-16
+ */
+export async function regenerateCover(
+  actor: Actor,
+  input: z.infer<typeof RegenerateCoverSchema>,
+): Promise<CoverRenderRow> {
+  can(actor, "expedientes", "edit");
+  const parsed = RegenerateCoverSchema.parse(input);
+  const item = await findItemById(parsed.itemId);
+  if (!item) throw new ExpedienteError("EXPEDIENTE_ITEM_NOT_FOUND");
+  if (item.item_type !== "cover") throw new ExpedienteError("EXPEDIENTE_ITEM_REF_INVALID", { reason: "not a cover item" });
+  const expediente = await findExpedienteById(item.expediente_id);
+  if (!expediente) throw new ExpedienteError("EXPEDIENTE_NOT_FOUND");
+  await requireCaseAccess(actor, expediente.case_id);
+  if (!isEditableStatus(expediente.status as import("./domain").ExpedienteStatus)) {
+    throw new ExpedienteError("EXPEDIENTE_NOT_EDITABLE", { status: expediente.status });
+  }
+
+  const ctx = await loadCaseCoverContext(actor, expediente.case_id);
+  const templates = await listActiveCoverTemplates(actor.orgId);
+  if (templates.length === 0) throw new ExpedienteError("COVER_TEMPLATE_NOT_FOUND");
+
+  // Carry over the previous title/subtitle/template when not overridden.
+  const prev = item.ref_id ? await findCoverRenderById(item.ref_id) : null;
+  const prevData = (prev?.data ?? {}) as { title?: string; subtitle?: string; partyId?: string; sectionKind?: string };
+  const template =
+    templates.find((t) => t.id === prev?.template_id) ??
+    templates.find((t) => (t.template as { style?: string }).style === "ulp-divider") ??
+    templates[0];
+
+  const selectedPartyId = parsed.partyId !== undefined ? parsed.partyId : (prevData.partyId ?? null);
+  const partyName = selectedPartyId ? ctx.parties.find((p) => p.id === selectedPartyId)?.name ?? null : null;
+  const title = parsed.title ?? prevData.title ?? "Carátula";
+  const subtitle = parsed.subtitle ?? (selectedPartyId ? (partyName ?? undefined) : prevData.subtitle);
+
+  const newCover = await renderInsertCover(
+    expediente.case_id,
+    ctx,
+    template,
+    { title, subtitle, partyId: selectedPartyId, sectionKind: prevData.sectionKind, aiGenerated: false },
+    actor.userId,
+  );
+
+  await updateItemMeta(parsed.itemId, { ref_id: newCover.id, title });
+
+  // Drop the old render if nothing else points to it.
+  if (item.ref_id && item.ref_id !== newCover.id) {
+    const refs = await countCoverItemRefs(item.ref_id);
+    if (refs === 0) await deleteCoverRender(item.ref_id).catch(() => {});
+  }
+
+  await writeAudit(actor, "expediente.cover_regenerated", "expediente_items", parsed.itemId, {
+    after: { coverRenderId: newCover.id, title },
+  });
+  return newCover;
+}
+
+// ---------------------------------------------------------------------------
+// autoAssembleWithAi — AI planner builds the full ordered draft (API-EXP-17)
+// ---------------------------------------------------------------------------
+
+export interface AutoAssembleResult {
+  expedienteId: string;
+  coversCreated: number;
+  itemsCreated: number;
+  /** Human-readable notes about artifacts the planner referenced but couldn't be placed. */
+  unresolved: string[];
+}
+
+/**
+ * One-click AI assembly: gathers the case context (parties, strong artifacts,
+ * approved documents + translations), asks the AI planner for an ordered set of
+ * sections, then renders the covers and builds the expediente_items in order
+ * (per-party covers group the client docs; each doc's certified translation is
+ * inserted BEFORE the original, per USCIS practice). Diana refines afterwards.
+ *
+ * @api-id API-EXP-17
+ */
+export async function autoAssembleWithAi(
+  actor: Actor,
+  caseId: string,
+  opts?: { replace?: boolean },
+): Promise<AutoAssembleResult> {
+  can(actor, "expedientes", "edit");
+  await requireCaseAccess(actor, caseId);
+
+  // 1. Ensure an editable draft (reuse the existing one; replace its items only
+  //    when the caller confirmed).
+  let draft = await findDraftExpedienteForCase(caseId);
+  if (draft) {
+    const existing = await listItemsForExpediente(draft.id);
+    if (existing.length > 0) {
+      if (!opts?.replace) throw new ExpedienteError("EXPEDIENTE_NOT_EMPTY");
+      for (const it of existing) {
+        await deleteItem(it.id);
+        if (it.item_type === "cover" && it.ref_id && (await countCoverItemRefs(it.ref_id)) === 0) {
+          await deleteCoverRender(it.ref_id).catch(() => {});
+        }
+      }
+    }
+  } else {
+    const attemptNo = (await maxAttemptNoForCase(caseId)) + 1;
+    draft = await insertExpediente({ case_id: caseId, attempt_no: attemptNo, status: "draft", built_by: actor.userId });
+  }
+
+  // 2. Gather context.
+  const ctx = await loadCaseCoverContext(actor, caseId);
+  const [templates, docs, translations, forms, gens] = await Promise.all([
+    listActiveCoverTemplates(actor.orgId),
+    listApprovedDocumentsForMaterial(caseId),
+    listCompletedTranslationsForCase(caseId),
+    listFormResponsesForMaterial(caseId),
+    listGenerationRunsForMaterial(caseId),
+  ]);
+  if (templates.length === 0) throw new ExpedienteError("COVER_TEMPLATE_NOT_FOUND");
+  const dividerTpl =
+    templates.find((t) => (t.template as { style?: string }).style === "ulp-divider") ?? templates[0];
+
+  const partyName = new Map(ctx.parties.map((p) => [p.id, p.name ?? "—"]));
+  const validPartyIds = new Set(ctx.parties.map((p) => p.id));
+  const translationByDoc = new Map(translations.map((t) => [t.caseDocumentId, t.translationId]));
+  const docById = new Map(docs.map((d) => [d.refId, d]));
+  const validForm = new Set(forms.map((f) => f.refId));
+  const validGen = new Set(gens.map((g) => g.refId));
+
+  // 3. Ask the AI planner (via ai-engine module-pub; R3).
+  const { proposeExpedienteAssembly } = await import("@/backend/modules/ai-engine");
+  const plan = await proposeExpedienteAssembly({
+    caseLabel: ctx.caseNumber,
+    serviceCategory: ctx.serviceLabel,
+    parties: ctx.parties.map((p) => ({ id: p.id, role: p.role, name: p.name ?? "—" })),
+    strongDocs: [
+      ...forms.map((f) => ({ kind: "automated_form" as const, id: f.refId, label: f.title, partyId: f.partyId })),
+      ...gens.map((g) => ({ kind: "ai_generation" as const, id: g.refId, label: g.title, partyId: g.partyId })),
+    ],
+    documents: docs.map((d) => ({
+      caseDocumentId: d.refId,
+      fileName: d.displayName ?? d.originalFilename,
+      partyId: d.partyId,
+      requirementLabel: d.requirementLabel?.es ?? d.requirementLabel?.en ?? null,
+    })),
+  });
+
+  // 4. Build, re-validating every id against the gathered context.
+  let position = await maxItemPositionForExpediente(draft.id);
+  let coversCreated = 0;
+  let itemsCreated = 0;
+  const unresolved: string[] = [];
+  const usedDocs = new Set<string>();
+  const usedStrong = new Set<string>();
+
+  const addItemDirect = async (
+    itemType: ExpedienteItemType,
+    refId: string,
+    title: string,
+  ): Promise<void> => {
+    position += 1;
+    await insertItem({
+      expediente_id: draft!.id,
+      item_type: itemType,
+      ref_id: refId,
+      external_file_path: null,
+      title,
+      position,
+      include_in_toc: true,
+    });
+    itemsCreated += 1;
+  };
+
+  const addDocWithTranslation = async (docId: string): Promise<void> => {
+    const doc = docById.get(docId);
+    if (!doc || usedDocs.has(docId)) {
+      if (!doc) unresolved.push(`documento ${docId}`);
+      return;
+    }
+    usedDocs.add(docId);
+    const trId = translationByDoc.get(docId);
+    if (trId) await addItemDirect("translation", trId, `Translation — ${doc.title}`); // translation BEFORE original
+    await addItemDirect("client_document", docId, doc.title);
+  };
+
+  for (const section of plan.sections) {
+    if (section.kind === "document") {
+      const okRef =
+        section.refType === "automated_form" ? validForm.has(section.refId) : validGen.has(section.refId);
+      if (!okRef) {
+        unresolved.push(`artefacto ${section.refType} ${section.refId}`);
+        continue;
+      }
+      usedStrong.add(section.refId);
+      const cover = await renderInsertCover(caseId, ctx, dividerTpl, { title: section.title, sectionKind: "document", aiGenerated: true }, actor.userId);
+      await addItemDirect("cover", cover.id, section.title);
+      coversCreated += 1;
+      await addItemDirect(section.refType, section.refId, section.title);
+    } else {
+      const subtitle =
+        section.kind === "party" && validPartyIds.has(section.partyId)
+          ? partyName.get(section.partyId)
+          : undefined;
+      const cover = await renderInsertCover(
+        caseId,
+        ctx,
+        dividerTpl,
+        {
+          title: section.title,
+          subtitle,
+          partyId: section.kind === "party" ? section.partyId : null,
+          sectionKind: section.kind,
+          aiGenerated: true,
+        },
+        actor.userId,
+      );
+      await addItemDirect("cover", cover.id, section.title);
+      coversCreated += 1;
+      for (const docId of section.documentIds) await addDocWithTranslation(docId);
+    }
+  }
+
+  // 5. Safety net: place any strong doc / approved doc the planner didn't cover.
+  const leftoverStrong = [
+    ...forms.filter((f) => !usedStrong.has(f.refId)).map((f) => ({ kind: "automated_form" as const, ref: f.refId, title: f.title })),
+    ...gens.filter((g) => !usedStrong.has(g.refId)).map((g) => ({ kind: "ai_generation" as const, ref: g.refId, title: g.title })),
+  ];
+  for (const s of leftoverStrong) {
+    const cover = await renderInsertCover(caseId, ctx, dividerTpl, { title: s.title, sectionKind: "document", aiGenerated: true }, actor.userId);
+    await addItemDirect("cover", cover.id, s.title);
+    coversCreated += 1;
+    await addItemDirect(s.kind, s.ref, s.title);
+  }
+
+  const leftoverDocs = docs.filter((d) => !usedDocs.has(d.refId));
+  if (leftoverDocs.length > 0) {
+    const cover = await renderInsertCover(caseId, ctx, dividerTpl, { title: "Additional Documents", sectionKind: "other", aiGenerated: true }, actor.userId);
+    await addItemDirect("cover", cover.id, "Additional Documents");
+    coversCreated += 1;
+    for (const d of leftoverDocs) await addDocWithTranslation(d.refId);
+  }
+
+  await writeAudit(actor, "expediente.auto_assembled", "expedientes", draft.id, {
+    after: { coversCreated, itemsCreated, unresolved },
+  });
+
+  return { expedienteId: draft.id, coversCreated, itemsCreated, unresolved };
 }
 
 // ---------------------------------------------------------------------------
@@ -343,7 +718,7 @@ export async function getExpedienteMaterial(
 
 const AddItemSchema = z.object({
   expedienteId: zUuid,
-  itemType: z.enum(["cover", "ai_generation", "automated_form", "client_document", "external_file"]),
+  itemType: z.enum(["cover", "ai_generation", "automated_form", "client_document", "translation", "external_file"]),
   refId: zUuid.nullable().optional(),
   externalFilePath: z.string().min(1).nullable().optional(),
   title: z.string().min(1),
@@ -443,6 +818,11 @@ async function validateLogicalFk(
     case "client_document": {
       const doc = await findCaseDocumentById(refId);
       if (!doc) throw new ExpedienteError("EXPEDIENTE_ITEM_REF_INVALID", { itemType, refId });
+      break;
+    }
+    case "translation": {
+      const tr = await findTranslationById(refId);
+      if (!tr) throw new ExpedienteError("EXPEDIENTE_ITEM_REF_INVALID", { itemType, refId });
       break;
     }
   }
@@ -853,6 +1233,15 @@ async function resolveItemBytes(
         throw new Error(`external_file item has no external_file_path: ${item.id}`);
       bucket = "expedientes";
       path = item.external_file_path;
+      break;
+    }
+    case "translation": {
+      // document_translations → 'generated' bucket, translated_pdf_path
+      const tr = await findTranslationById(item.ref_id!);
+      if (!tr || !tr.translated_pdf_path)
+        throw new Error(`translation not found or has no PDF: ${item.ref_id}`);
+      bucket = "generated";
+      path = tr.translated_pdf_path;
       break;
     }
     default:

@@ -1437,13 +1437,50 @@ export async function markTranslationFailed(
 export async function translateText(input: {
   text: string;
   direction: "es-en" | "en-es";
+  /**
+   * Legal-document mode: keep proper nouns verbatim and preserve diacritics.
+   * Used when translating client answers for an official AcroForm — a person's
+   * name, city, state/department, country or employer must NOT be translated
+   * (e.g. "Rosa" must stay "Rosa", never "Pink"), and accents must survive
+   * (e.g. "José Ramírez" must stay "José Ramírez", never "Jose Ramirez").
+   */
+  preserveProperNouns?: boolean;
+  /**
+   * The form field this value answers (e.g. "¿Cuál es su religión?"). Translating
+   * a bare value out of context is ambiguous — "Cristiano" is both a religion and
+   * a personal name. The label lets the model disambiguate: a religion field →
+   * "Christian"; a name field → keep "Cristiano".
+   */
+  fieldLabel?: string;
 }): Promise<{ text: string; model: string }> {
   const model = process.env.AI_GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL;
   const geminiModels = getGeminiModels();
 
-  const promptText = input.direction === "es-en"
-    ? `Translate this text from Spanish to English. Return only the translated text, no explanations.\n\n${input.text}`
-    : `Translate this text from English to Spanish. Return only the translated text, no explanations.\n\n${input.text}`;
+  const langs =
+    input.direction === "es-en"
+      ? { from: "Spanish", to: "English" }
+      : { from: "English", to: "Spanish" };
+  // For legal-form answers, names of people and places are identifiers, not words
+  // to translate — and dropping an accent changes a legal name. Instruct the model
+  // to keep them exactly. (Common descriptive words like an occupation are still
+  // translated normally.)
+  const properNounRule = input.preserveProperNouns
+    ? " Keep every proper noun exactly as written — the names of specific people," +
+      " streets, cities, towns, departments, provinces, states, countries, schools," +
+      " employers and institutions must NOT be translated or transliterated (e.g." +
+      ' "Carlos" stays "Carlos", "Distrito Capital" stays "Distrito Capital").' +
+      " Do translate ordinary descriptive words normally — occupations, religions," +
+      ' relationships and other common nouns (e.g. "Vendedor" → "Seller",' +
+      ' "Cristiano" → "Christian"). Preserve all accents and diacritics exactly as in' +
+      " the source (e.g. keep á é í ó ú ñ); never strip or normalize them."
+    : "";
+  const fieldContext = input.fieldLabel?.trim()
+    ? ` This value is the answer to the form field "${input.fieldLabel.trim()}";` +
+      " use that context to choose the right meaning."
+    : "";
+  const promptText =
+    `Translate this text from ${langs.from} to ${langs.to}.` +
+    ` Return only the translated text, no explanations.${properNounRule}${fieldContext}\n\n${input.text}`;
 
   try {
     const response = await geminiModels.generateContent({
@@ -1569,8 +1606,15 @@ export async function assessDocumentLegibility(input: {
 export async function translateAnswerText(input: {
   text: string;
   direction: "es-en" | "en-es";
+  /** The form field label this answer belongs to, for disambiguation. */
+  fieldLabel?: string;
 }): Promise<{ text: string }> {
-  const { text } = await translateText({ text: maskPii(input.text), direction: input.direction });
+  const { text } = await translateText({
+    text: maskPii(input.text),
+    direction: input.direction,
+    preserveProperNouns: true,
+    fieldLabel: input.fieldLabel,
+  });
   return { text };
 }
 
@@ -2099,6 +2143,198 @@ export async function proposeExtractionSchema(
   }
 
   throw new AiEngineError("AI_OUTPUT_INVALID", `proposeExtractionSchema: ${lastError}`);
+}
+
+// ---------------------------------------------------------------------------
+// API-AI-11: proposeExpedienteAssembly — AI planner for the case-file assembly
+// ---------------------------------------------------------------------------
+
+/** A case party as seen by the assembly planner. */
+export interface AssemblyPartyInput {
+  id: string;
+  role: string;
+  name: string;
+}
+
+/** A "strong" artifact (USCIS form already filled, or a generated letter). */
+export interface AssemblyStrongDocInput {
+  kind: "automated_form" | "ai_generation";
+  id: string;
+  label: string;
+  partyId?: string | null;
+}
+
+/** A client-uploaded document available for grouping under a party cover. */
+export interface AssemblyDocInput {
+  caseDocumentId: string;
+  fileName: string;
+  partyId: string | null;
+  requirementLabel?: string | null;
+  /** Already-extracted signal (masked before prompting) to sharpen classification. */
+  extraction?: { payload?: Record<string, unknown> | null; rawTextSnippet?: string | null } | null;
+}
+
+export interface ExpedienteAssemblyInput {
+  caseLabel: string;
+  serviceCategory?: string | null;
+  parties: AssemblyPartyInput[];
+  strongDocs: AssemblyStrongDocInput[];
+  documents: AssemblyDocInput[];
+}
+
+export type ExpedienteAssemblySection =
+  | { kind: "document"; title: string; refType: "automated_form" | "ai_generation"; refId: string }
+  | { kind: "party"; title: string; partyId: string; documentIds: string[] }
+  | { kind: "other"; title: string; documentIds: string[] };
+
+export interface ExpedienteAssemblyPlan {
+  sections: ExpedienteAssemblySection[];
+}
+
+const AssemblyPlanSchema = z.object({
+  sections: z
+    .array(
+      z.discriminatedUnion("kind", [
+        z.object({
+          kind: z.literal("document"),
+          title: z.string().trim().min(1),
+          refType: z.enum(["automated_form", "ai_generation"]),
+          refId: z.string().min(1),
+        }),
+        z.object({
+          kind: z.literal("party"),
+          title: z.string().trim().min(1),
+          partyId: z.string().min(1),
+          documentIds: z.array(z.string()).default([]),
+        }),
+        z.object({
+          kind: z.literal("other"),
+          title: z.string().trim().min(1),
+          documentIds: z.array(z.string()).default([]),
+        }),
+      ]),
+    )
+    .min(1),
+});
+
+/** Build a short, PII-masked extraction hint for the classifier. */
+function summarizeExtractionForPlanner(
+  ext: AssemblyDocInput["extraction"],
+): string | null {
+  if (!ext) return null;
+  const parts: string[] = [];
+  if (ext.payload && Object.keys(ext.payload).length > 0) {
+    parts.push(JSON.stringify(ext.payload).slice(0, 400));
+  }
+  if (ext.rawTextSnippet) parts.push(ext.rawTextSnippet.slice(0, 300));
+  if (parts.length === 0) return null;
+  return maskPii(parts.join(" | "));
+}
+
+/**
+ * AI planner for the expediente (case file) assembly. Given the case context —
+ * parties, strong artifacts (filled USCIS forms + generated letters) and the
+ * client's uploaded documents (with file names + already-extracted hints) — it
+ * returns an ORDERED list of sections: one cover per strong document (explicit
+ * title) and semantic per-party covers grouping the remaining documents by the
+ * member they belong to (inferred from the file name + extraction even when the
+ * uploaded slot didn't set party_id). The legal order is GUIDED by the prompt;
+ * the human (Diana) reviews and reorders. Sync call (no cost persisted), same
+ * pattern as proposeExtractionSchema. The orchestrator re-validates every id.
+ *
+ * @api-id API-AI-11
+ */
+export async function proposeExpedienteAssembly(
+  input: ExpedienteAssemblyInput,
+): Promise<ExpedienteAssemblyPlan> {
+  const editorModel = process.env.AI_EDITOR_MODEL ?? "claude-sonnet-4-6";
+  const client = getAnthropicClient();
+
+  const context = {
+    case: input.caseLabel,
+    serviceCategory: input.serviceCategory ?? null,
+    parties: input.parties.map((p) => ({ id: p.id, role: p.role, name: p.name })),
+    strongDocuments: input.strongDocs.map((s) => ({
+      id: s.id,
+      kind: s.kind,
+      label: s.label,
+      partyId: s.partyId ?? null,
+    })),
+    uploadedDocuments: input.documents.map((d) => ({
+      id: d.caseDocumentId,
+      fileName: d.fileName,
+      partyId: d.partyId,
+      requirement: d.requirementLabel ?? null,
+      extractedHint: summarizeExtractionForPlanner(d.extraction),
+    })),
+  };
+
+  const systemPrompt = [
+    "You organize a U.S. immigration legal case file (\"expediente\") for filing with USCIS or an immigration court.",
+    "You receive the case parties, the strong artifacts (already-filled USCIS forms and generated letters) and the client's uploaded documents.",
+    "Your job: produce an ORDERED list of sections that a paralegal will review.",
+    "Return ONLY valid JSON, no markdown code fences.",
+  ].join("\n");
+
+  const buildUserPrompt = (feedback?: string): string => {
+    const lines = [
+      "CONTEXT (JSON):",
+      JSON.stringify(context, null, 2),
+      "",
+      "RULES:",
+      "0. ALL section titles MUST be written in ENGLISH — the case file is filed with USCIS / the immigration court in English. Translate the artifact labels to natural English titles. Keep party PERSON NAMES verbatim (do not translate names).",
+      "1. Order the sections following the canonical legal sequence for the case type. General order:",
+      "   a) Initial instructions / petition / main USCIS form, b) sworn declarations & affidavits,",
+      "   c) documents of each beneficiary/minor, d) documents of the petitioner/sponsor, e) witnesses, f) supporting evidence.",
+      "   Example (Juvenile Visa / custody): Petition for Temporary Guardianship → Sworn Declaration of the Minor → Affidavit of Mother/Sponsor → Documents of the Minor → Documents of the Petitioner → Affidavit of Witness.",
+      "   Example (Asylum): Form I-589 → Credible Fear Memorandum → documents per family member (beneficiary minor, spouse, each child) → supporting evidence.",
+      "2. Emit ONE 'document' section PER strong artifact (each filled form and each letter), each with an explicit, human-readable ENGLISH title (e.g. \"Form I-589\", \"Credible Fear Memorandum\", \"Statement of the Minor's Circumstances\"). Use the artifact's id as refId and its kind as refType.",
+      "3. Group the remaining uploadedDocuments into 'party' sections — ONE per party that has documents. Assign each document to the party it belongs to using fileName + extractedHint + partyId (infer the party even when partyId is null or when a slot has multiple files). ENGLISH title format: \"Documents of the {role in English}: {party name}\" (e.g. \"Documents of the Minor: Juan Pérez\", \"Documents of the Petitioner: Carlos\", \"Documents of the Spouse: Rosa\").",
+      "4. Documents that don't belong to any party (e.g. witnesses, general evidence) go in 'other' sections with a clear ENGLISH title (e.g. \"Witness Documents\", \"Supporting Evidence\").",
+      "5. Use ONLY ids present in the context. Every uploaded document id must appear in exactly one section. Do NOT invent ids or titles for missing artifacts.",
+      "",
+      "Return JSON with EXACTLY this shape (no code fences):",
+      '{ "sections": [',
+      '  { "kind": "document", "title": "Formulario I-589", "refType": "automated_form", "refId": "<id>" },',
+      '  { "kind": "party", "title": "Documentos del menor: Juan Pérez", "partyId": "<id>", "documentIds": ["<docId>", "<docId>"] },',
+      '  { "kind": "other", "title": "Documentos de testigos", "documentIds": ["<docId>"] }',
+      "] }",
+    ];
+    if (feedback) {
+      lines.push("", `CORRECTION REQUIRED — previous response had errors: ${feedback}`, "Fix these issues and return valid JSON.");
+    }
+    return lines.join("\n");
+  };
+
+  let lastError = "response was not valid JSON";
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await client.messages.create({
+      model: editorModel,
+      max_tokens: 6000,
+      system: systemPrompt,
+      messages: [{ role: "user", content: buildUserPrompt(attempt > 0 ? lastError : undefined) }],
+    });
+
+    const text = response.content
+      .filter((b) => b.type === "text")
+      .map((b) => (b as { text: string }).text)
+      .join("");
+
+    const parsed = stripFencesAndParse<unknown>(text);
+    const result = AssemblyPlanSchema.safeParse(parsed);
+    if (result.success) return result.data as ExpedienteAssemblyPlan;
+
+    lastError = result.error.issues
+      .map((i) => `${i.path.join(".")}: ${i.message}`)
+      .join("; ");
+
+    if (attempt === 0) {
+      logger.warn({ attempt, lastError }, "ai-engine: proposeExpedienteAssembly — retrying with feedback");
+    }
+  }
+
+  throw new AiEngineError("AI_OUTPUT_INVALID", `proposeExpedienteAssembly: ${lastError}`);
 }
 
 // ---------------------------------------------------------------------------

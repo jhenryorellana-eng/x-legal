@@ -33,6 +33,7 @@ export const EXPEDIENTE_ITEM_TYPES = [
   "ai_generation",
   "automated_form",
   "client_document",
+  "translation",
   "external_file",
 ] as const;
 

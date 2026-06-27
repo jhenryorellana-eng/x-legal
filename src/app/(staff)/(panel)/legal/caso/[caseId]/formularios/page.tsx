@@ -1,9 +1,11 @@
 /**
- * Staff Formularios — `/admin/casos/[caseId]/formularios` (RF-ADM-010 / DOC-53 §3.4.3).
+ * Formularios de Diana — `/legal/caso/[caseId]/formularios` (paralegal).
  *
- * Server component: lists the case's form RESPONSES via getCaseFormResponsesForStaff
- * (cases module-pub) and mounts CaseFormsManager with the approve/generate-PDF server
- * actions injected. CaseError → friendly empty (never a 500).
+ * Espejo de la página admin: lista las RESPUESTAS de formularios del caso vía
+ * getCaseFormResponsesForStaff (cases module-pub) y monta CaseFormsManager con
+ * las acciones de aprobar / generar PDF llenado / generar carta IA inyectadas.
+ * Reusa las server actions de la ruta admin (convención del repo). CaseError →
+ * empty amable (nunca 500).
  */
 
 import Link from "next/link";
@@ -12,9 +14,15 @@ import { getLocale } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
 import { getCaseFormResponsesForStaff, getCaseWorkspace, CaseError } from "@/backend/modules/cases";
 import { CaseFormsManager, type CaseFormItemVM } from "@/frontend/features/admin/case-forms/case-forms-manager";
-import { approveFormResponseAction, generateFilledPdfAction, startGenerationAction } from "./actions";
+import {
+  approveFormResponseAction,
+  generateFilledPdfAction,
+  startGenerationAction,
+} from "../../../../admin/casos/[caseId]/formularios/actions";
 
-export default async function CaseFormulariosPage({
+export const dynamic = "force-dynamic";
+
+export default async function LegalCaseFormulariosPage({
   params,
 }: {
   params: Promise<{ caseId: string }>;
@@ -48,24 +56,26 @@ export default async function CaseFormulariosPage({
     }));
   } catch (err) {
     if (!(err instanceof CaseError)) throw err;
-    // Membership / not-found → render the empty manager rather than a 500.
   }
 
   return (
     <div>
       <div style={{ marginBottom: 18 }}>
-        <Link href={`/admin/casos/${caseId}`} style={{ fontSize: 12.5, fontWeight: 700, color: "var(--ink-3)", textDecoration: "none" }}>
+        <Link href={`/legal/caso/${caseId}`} style={{ fontSize: 12.5, fontWeight: 700, color: "var(--ink-3)", textDecoration: "none" }}>
           ← Volver al caso
         </Link>
         <h1 style={{ fontSize: 24, fontWeight: 900, color: "var(--ink)", margin: "8px 0 2px", fontFamily: "var(--font-title)" }}>
           Formularios{caseNumber ? ` · ${caseNumber}` : ""}
         </h1>
-        <p style={{ fontSize: 14, color: "var(--ink-2)" }}>Revisa los formularios enviados, apruébalos y genera el PDF oficial llenado.</p>
+        <p style={{ fontSize: 14, color: "var(--ink-2)" }}>
+          Revisa los formularios enviados, apruébalos, genera el PDF oficial llenado y lanza las cartas IA.
+        </p>
       </div>
 
       <CaseFormsManager
         items={items}
         caseId={caseId}
+        reviewBasePath={`/legal/caso/${caseId}/revisar`}
         actions={{
           approve: approveFormResponseAction,
           generatePdf: generateFilledPdfAction,

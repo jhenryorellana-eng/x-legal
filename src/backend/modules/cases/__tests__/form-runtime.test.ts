@@ -966,13 +966,26 @@ describe("generateFilledPdf", () => {
     mockGetPublishedAutomationVersion.mockResolvedValue({ ...publishedVersion, source_language: "en" });
     mockListQuestionGroups.mockResolvedValue([{ id: "grp1" }]);
     mockListQuestions.mockResolvedValue([
-      { id: "q1", source: "client_answer", source_ref: null, pdf_field_name: "Story", is_required: false, field_type: "textarea" },
+      {
+        id: "q1",
+        source: "client_answer",
+        source_ref: null,
+        pdf_field_name: "Story",
+        is_required: false,
+        field_type: "textarea",
+        question_i18n: { es: "Cuente su historia", en: "Tell your story" },
+      },
     ]);
     mockTranslateText.mockResolvedValue({ text: "hello world" });
 
     await generateFilledPdf(staffActor, { responseId: RESPONSE_ID });
 
-    expect(mockTranslateText).toHaveBeenCalledWith({ text: "hola mundo", direction: "es-en" });
+    // The field label is forwarded as translation context (disambiguation).
+    expect(mockTranslateText).toHaveBeenCalledWith({
+      text: "hola mundo",
+      direction: "es-en",
+      fieldLabel: "Cuente su historia",
+    });
     expect(mockFillAcroForm).toHaveBeenCalledWith(expect.anything(), {}, { Story: "hello world" });
   });
 
@@ -1013,6 +1026,58 @@ describe("generateFilledPdf", () => {
 
     expect(mockTranslateText).not.toHaveBeenCalled();
     expect(mockFillAcroForm).toHaveBeenCalledWith(expect.anything(), {}, { Story: "hello world" });
+  });
+
+  it("formats a full-date answer as MM/DD/YYYY for the official PDF", async () => {
+    mockFindFormResponseById.mockResolvedValue({
+      ...approvedResponse,
+      answers: { q1: "1985-06-15" },
+      translation_status: "none",
+    });
+    mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
+    mockGetPublishedAutomationVersion.mockResolvedValue({ ...publishedVersion, source_language: "en" });
+    mockListQuestionGroups.mockResolvedValue([{ id: "grp1" }]);
+    mockListQuestions.mockResolvedValue([
+      {
+        id: "q1",
+        source: "client_answer",
+        source_ref: null,
+        pdf_field_name: "DOB",
+        is_required: false,
+        field_type: "date",
+        question_i18n: { es: "¿Cuál es su fecha de nacimiento?" },
+      },
+    ]);
+
+    await generateFilledPdf(staffActor, { responseId: RESPONSE_ID });
+
+    expect(mockFillAcroForm).toHaveBeenCalledWith(expect.anything(), {}, { DOB: "06/15/1985" });
+  });
+
+  it("formats a month/year date answer as MM/YYYY (Mo/Yr field)", async () => {
+    mockFindFormResponseById.mockResolvedValue({
+      ...approvedResponse,
+      answers: { q1: "2018-01-01" },
+      translation_status: "none",
+    });
+    mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
+    mockGetPublishedAutomationVersion.mockResolvedValue({ ...publishedVersion, source_language: "en" });
+    mockListQuestionGroups.mockResolvedValue([{ id: "grp1" }]);
+    mockListQuestions.mockResolvedValue([
+      {
+        id: "q1",
+        source: "client_answer",
+        source_ref: null,
+        pdf_field_name: "FromDate",
+        is_required: false,
+        field_type: "date",
+        question_i18n: { es: "Residencia 1 — desde (mes/año)" },
+      },
+    ]);
+
+    await generateFilledPdf(staffActor, { responseId: RESPONSE_ID });
+
+    expect(mockFillAcroForm).toHaveBeenCalledWith(expect.anything(), {}, { FromDate: "01/2018" });
   });
 });
 

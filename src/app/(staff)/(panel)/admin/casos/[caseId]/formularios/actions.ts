@@ -13,9 +13,11 @@ import { requireActor } from "@/backend/modules/identity";
 import {
   approveFormResponse,
   generateFilledPdf,
+  getFormResponsePdfUrl,
   getCaseExtractions,
   CaseError,
 } from "@/backend/modules/cases";
+import { startGeneration, AiEngineError } from "@/backend/modules/ai-engine";
 
 export interface ApproveFormResult {
   ok: boolean;
@@ -68,6 +70,58 @@ export async function generateFilledPdfAction(input: {
         error: { code: err.code, details: err.details },
       };
     }
+    return { ok: false, error: { code: "UNEXPECTED" } };
+  }
+}
+
+export interface StartGenerationResultDto {
+  ok: boolean;
+  /** "over_80" | "over_100" when the org is near/over its AI budget (non-blocking). */
+  budgetWarning?: string | null;
+  error?: { code: string };
+}
+
+/**
+ * Launch an ai_letter generation run for a case form (carta IA). Used by the
+ * forms manager for `kind='ai_letter'` rows (startGeneration handles the
+ * duplicate-active-run guard and budget check). Diana/admin/staff with cases:edit.
+ *
+ * @api-id API-AI-01
+ */
+export async function startGenerationAction(input: {
+  caseId: string;
+  formDefinitionId: string;
+  partyId?: string | null;
+}): Promise<StartGenerationResultDto> {
+  try {
+    const actor = await requireActor();
+    const res = await startGeneration(actor, {
+      caseId: input.caseId,
+      formDefinitionId: input.formDefinitionId,
+      partyId: input.partyId ?? null,
+    });
+    return { ok: true, budgetWarning: res.budgetWarning };
+  } catch (err) {
+    if (err instanceof AiEngineError || err instanceof CaseError) {
+      return { ok: false, error: { code: err.code } };
+    }
+    return { ok: false, error: { code: "UNEXPECTED" } };
+  }
+}
+
+/**
+ * Read-only signed URL of a form response's official filled PDF (or null if not
+ * generated yet). Used by the side-by-side review screen's left panel.
+ */
+export async function getFormResponsePdfUrlAction(input: {
+  responseId: string;
+}): Promise<{ ok: boolean; url?: string | null; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    const url = await getFormResponsePdfUrl(actor, input.responseId);
+    return { ok: true, url };
+  } catch (err) {
+    if (err instanceof CaseError) return { ok: false, error: { code: err.code } };
     return { ok: false, error: { code: "UNEXPECTED" } };
   }
 }

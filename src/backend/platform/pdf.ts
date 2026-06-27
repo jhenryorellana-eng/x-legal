@@ -480,22 +480,17 @@ export async function renderCoverPdf(data: CoverData): Promise<Uint8Array> {
   const esc = (s: string) =>
     String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string));
   const isDivider = data.style === "ulp-divider";
+  // Minimal, court-ready cover: large centered title (+ optional subtitle) and a
+  // thin gold rule. No brand/firm name, no case/client/service metadata, no
+  // bordered box — the client files pro se, so the page carries only the section
+  // title. Titles arrive already in English from the assembly planner.
+  const titleSize = isDivider ? "36pt" : "46pt";
   const html = `<!DOCTYPE html><html><body style="font-family:Helvetica,Arial,sans-serif;margin:0;padding:0;color:${NAVY}">
-    <div style="margin:96pt 72pt;border:2pt solid ${GOLD};padding:48pt 36pt;text-align:center">
-      <div style="font-size:11pt;letter-spacing:3pt;color:${GOLD};font-weight:bold">X LEGAL</div>
-      <div style="height:${isDivider ? "8pt" : "36pt"}"></div>
-      <div style="font-size:${isDivider ? "22pt" : "30pt"};font-weight:bold;letter-spacing:1pt">${esc(data.title)}</div>
-      ${data.subtitle ? `<div style="font-size:14pt;color:${NAVY};margin-top:8pt">${esc(data.subtitle)}</div>` : ""}
-      <div style="height:24pt"></div>
-      <div style="border-top:1pt solid ${GOLD};width:40%;margin:0 auto"></div>
-      <div style="height:24pt"></div>
-      <table style="margin:0 auto;font-size:12pt;text-align:left">
-        <tr><td style="color:${GOLD};padding:3pt 12pt 3pt 0">Caso</td><td style="font-weight:bold">${esc(data.caseNumber)}</td></tr>
-        <tr><td style="color:${GOLD};padding:3pt 12pt 3pt 0">Cliente</td><td style="font-weight:bold">${esc(data.clientLabel)}</td></tr>
-        <tr><td style="color:${GOLD};padding:3pt 12pt 3pt 0">Servicio</td><td style="font-weight:bold">${esc(data.serviceLabel)}</td></tr>
-      </table>
+    <div style="text-align:center;margin-top:300pt;padding:0 54pt">
+      <div style="font-size:${titleSize};font-weight:bold;letter-spacing:0.5pt;line-height:1.15">${esc(data.title)}</div>
+      ${data.subtitle ? `<div style="font-size:24pt;margin-top:20pt;line-height:1.2">${esc(data.subtitle)}</div>` : ""}
+      <div style="margin-top:30pt"><span style="display:inline-block;width:150pt;border-top:2pt solid ${GOLD}">&nbsp;</span></div>
     </div>
-    ${data.footer ? `<div style="position:fixed;bottom:48pt;left:0;right:0;text-align:center;font-size:9pt;color:${GOLD}">${esc(data.footer)}</div>` : ""}
   </body></html>`;
   return htmlToPdf(html);
 }

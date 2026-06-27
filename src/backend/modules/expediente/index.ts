@@ -15,6 +15,17 @@
 export {
   listCoverTemplates,
   generateCover,
+  deleteCoverItem,
+  regenerateCover,
+} from "./service";
+
+// AI auto-assembly (one-click semantic covers + ordered draft)
+export {
+  autoAssembleWithAi,
+} from "./service";
+
+export type {
+  AutoAssembleResult,
 } from "./service";
 
 // Ensamblador reads

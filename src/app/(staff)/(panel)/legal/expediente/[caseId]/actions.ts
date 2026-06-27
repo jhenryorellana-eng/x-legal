@@ -19,10 +19,16 @@ import {
   compileExpediente,
   getCompiledPdfUrl,
   createCorrectionAttempt,
+  autoAssembleWithAi,
+  deleteCoverItem,
+  regenerateCover,
+  sendToFinance,
   ExpedienteError,
   type ExpedienteRow,
   type CoverRenderRow,
+  type AutoAssembleResult,
 } from "@/backend/modules/expediente";
+import { AiEngineError } from "@/backend/modules/ai-engine";
 
 // ---------------------------------------------------------------------------
 // Shared result shapes
@@ -206,6 +212,85 @@ export async function createCorrectionAttemptAction(input: {
   try {
     const actor = await requireActor();
     const data = await createCorrectionAttempt(actor, input.expedienteId);
+    return { ok: true, data };
+  } catch (err) {
+    if (err instanceof ExpedienteError) return { ok: false, error: { code: err.code } };
+    return { ok: false, error: { code: "UNEXPECTED" } };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// autoAssembleWithAiAction  (API-EXP-17) — AI builds the full ordered draft
+// ---------------------------------------------------------------------------
+
+export async function autoAssembleWithAiAction(input: {
+  caseId: string;
+  replace?: boolean;
+}): Promise<ExpedienteResult<AutoAssembleResult>> {
+  try {
+    const actor = await requireActor();
+    const data = await autoAssembleWithAi(actor, input.caseId, { replace: input.replace });
+    return { ok: true, data };
+  } catch (err) {
+    if (err instanceof ExpedienteError) return { ok: false, error: { code: err.code } };
+    if (err instanceof AiEngineError) return { ok: false, error: { code: err.code } };
+    return { ok: false, error: { code: "UNEXPECTED" } };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// sendToFinanceAction  (API-EXP-...) — hand off to Andrium (printing)
+// ---------------------------------------------------------------------------
+
+export async function sendToFinanceAction(input: {
+  caseId: string;
+  expedienteId: string;
+}): Promise<ExpedienteResult> {
+  try {
+    const actor = await requireActor();
+    await sendToFinance(actor, { caseId: input.caseId, expedienteId: input.expedienteId });
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof ExpedienteError) return { ok: false, error: { code: err.code } };
+    return { ok: false, error: { code: "UNEXPECTED" } };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// deleteCoverItemAction  (API-EXP-15) — remove a cover + its render
+// ---------------------------------------------------------------------------
+
+export async function deleteCoverItemAction(input: {
+  itemId: string;
+}): Promise<ExpedienteResult> {
+  try {
+    const actor = await requireActor();
+    await deleteCoverItem(actor, input.itemId);
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof ExpedienteError) return { ok: false, error: { code: err.code } };
+    return { ok: false, error: { code: "UNEXPECTED" } };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// regenerateCoverAction  (API-EXP-16) — re-render a cover with corrected data
+// ---------------------------------------------------------------------------
+
+export async function regenerateCoverAction(input: {
+  itemId: string;
+  title?: string;
+  subtitle?: string;
+  partyId?: string | null;
+}): Promise<ExpedienteResult<CoverRenderRow>> {
+  try {
+    const actor = await requireActor();
+    const data = await regenerateCover(actor, {
+      itemId: input.itemId,
+      title: input.title,
+      subtitle: input.subtitle,
+      partyId: input.partyId,
+    });
     return { ok: true, data };
   } catch (err) {
     if (err instanceof ExpedienteError) return { ok: false, error: { code: err.code } };

@@ -7,9 +7,11 @@
  * the expediente-assembler wave. Admin-only.
  */
 
+import Link from "next/link";
 import { Card } from "@/frontend/components/brand/card";
 import { StatusPill, type StatusKind } from "@/frontend/components/brand/status-pill";
 import { EmptyState } from "@/frontend/components/desktop/empty-state";
+import { Icon } from "@/frontend/components/brand/icon";
 import type { CaseWorkspaceVM, ExpedienteVM } from "../types";
 import type { CasosStrings } from "../strings";
 import { interp } from "../strings";
@@ -40,10 +42,33 @@ export function ExpedienteTab({
 
   return (
     <Card>
-      <h2 style={{ margin: 0, fontFamily: "var(--font-title)", fontWeight: 800, fontSize: 18, color: "var(--ink)" }}>
-        {title}
-      </h2>
-      <p style={{ margin: "4px 0 0", fontSize: 13.5, color: "var(--ink-2)" }}>{t.expSub}</p>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h2 style={{ margin: 0, fontFamily: "var(--font-title)", fontWeight: 800, fontSize: 18, color: "var(--ink)" }}>
+            {title}
+          </h2>
+          <p style={{ margin: "4px 0 0", fontSize: 13.5, color: "var(--ink-2)" }}>{t.expSub}</p>
+        </div>
+        <Link
+          href={`/legal/expediente/${vm.header.caseId}`}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            fontSize: 13,
+            fontWeight: 800,
+            color: "#fff",
+            textDecoration: "none",
+            borderRadius: 999,
+            padding: "8px 16px",
+            background: "linear-gradient(120deg, var(--accent), var(--navy, #002855))",
+            whiteSpace: "nowrap",
+          }}
+        >
+          <Icon name="doc" size={15} color="#fff" />
+          {t.expOpenAssembler}
+        </Link>
+      </div>
 
       {vm.expedientes.length === 0 ? (
         <div style={{ marginTop: 16 }}>

@@ -31,6 +31,8 @@ export {
   // Catalog editor assistance (consumed by catalog module)
   proposeFormSegmentation,
   proposeExtractionSchema,
+  // Expediente assembly planner (consumed by expediente module)
+  proposeExpedienteAssembly,
   // Job entrypoints (consumed by jobs/ layer)
   executeGenerationJob,
   executeExtractionJob,
@@ -57,6 +59,13 @@ export type {
   ProposedGroup,
   SegmentationProposal,
   DocumentLegibilityVerdict,
+  // Expediente assembly planner (consumed by expediente module)
+  ExpedienteAssemblyInput,
+  ExpedienteAssemblyPlan,
+  ExpedienteAssemblySection,
+  AssemblyPartyInput,
+  AssemblyStrongDocInput,
+  AssemblyDocInput,
 } from "./service";
 
 // ---------------------------------------------------------------------------

@@ -53,6 +53,8 @@ export interface EnsambladorVM {
     documents: MaterialItem[];
   };
   coverTemplates: { id: string; name: string }[];
+  /** Case parties — for per-party covers (subtitle = party name, e.g. each minor). */
+  parties: { id: string; name: string; role: string }[];
 }
 
 export interface ItemVM {
@@ -78,6 +80,10 @@ export interface EnsambladorActions {
   compileExpediente: (input: { expedienteId: string }) => Promise<{ ok: boolean; error?: { code: string } }>;
   getCompiledPdfUrl: (input: { expedienteId: string }) => Promise<{ ok: boolean; data?: string; error?: { code: string } }>;
   createCorrectionAttempt: (input: { expedienteId: string }) => Promise<{ ok: boolean; error?: { code: string } }>;
+  autoAssembleWithAi: (input: { caseId: string; replace?: boolean }) => Promise<{ ok: boolean; data?: { coversCreated: number; itemsCreated: number; unresolved: string[] }; error?: { code: string } }>;
+  deleteCoverItem: (input: { itemId: string }) => Promise<{ ok: boolean; error?: { code: string } }>;
+  regenerateCover: (input: { itemId: string; title?: string; subtitle?: string; partyId?: string | null }) => Promise<{ ok: boolean; error?: { code: string } }>;
+  sendToFinance: (input: { caseId: string; expedienteId: string }) => Promise<{ ok: boolean; error?: { code: string } }>;
 }
 
 export interface EnsambladorViewProps {
@@ -102,6 +108,17 @@ const STATUS_PILL: Record<string, { kind: StatusKind; labelKey: string }> = {
   printed:             { kind: "hecho",     labelKey: "statusPrinted" },
 };
 
+// Item-type chip styling (flow clarity) — labelKey resolves via i18n.
+const ITEM_TYPE_STYLE: Record<string, { labelKey: string; color: string; bg: string }> = {
+  cover:           { labelKey: "typeCover",       color: "var(--gold-deep)",     bg: "var(--gold-soft)" },
+  ai_generation:   { labelKey: "typeLetter",      color: "var(--accent)",        bg: "var(--blue-soft)" },
+  automated_form:  { labelKey: "typeForm",        color: "var(--navy, #002855)", bg: "var(--chip)" },
+  client_document: { labelKey: "typeDocument",    color: "#1d7a4d",              bg: "#e6f5ec" },
+  translation:     { labelKey: "typeTranslation", color: "#7a5c1d",              bg: "#f5efe0" },
+  external_file:   { labelKey: "typeExternal",    color: "var(--ink-2)",         bg: "var(--chip)" },
+  default:         { labelKey: "typeDocument",    color: "var(--ink-2)",         bg: "var(--chip)" },
+};
+
 // ---------------------------------------------------------------------------
 // Error code → friendly message
 // ---------------------------------------------------------------------------
@@ -111,8 +128,28 @@ function errorMessage(code: string, t: T): string {
     case "EXPEDIENTE_COMPILE_FAILED":   return t("errCompileFailed");
     case "EXPEDIENTE_NOT_EDITABLE":     return t("errNotEditable");
     case "EXPEDIENTE_DRAFT_EXISTS":     return t("errDraftExists");
+    case "EXPEDIENTE_NOT_APPROVED":     return t("errNotApproved");
+    case "EXPEDIENTE_ALREADY_SENT_TO_FINANCE": return t("errAlreadySent");
+    case "EXPEDIENTE_NOT_EMPTY":        return t("errNotEmpty");
     default:                            return t("errUnexpected");
   }
+}
+
+/** Shared input/select style for the cover generator fields. */
+function coverFieldStyle(editable: boolean): React.CSSProperties {
+  return {
+    width: "100%",
+    fontSize: 13,
+    fontWeight: 600,
+    color: "var(--ink)",
+    background: "var(--card)",
+    border: "1px solid var(--line)",
+    borderRadius: 6,
+    padding: "6px 10px",
+    cursor: editable ? "text" : "default",
+    opacity: editable ? 1 : 0.5,
+    fontFamily: "inherit",
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -286,6 +323,13 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
   const [selectedTemplateId, setSelectedTemplateId] = React.useState<string>(
     vm.coverTemplates[0]?.id ?? "",
   );
+  const [coverTitle, setCoverTitle] = React.useState<string>("");
+  const [coverPartyId, setCoverPartyId] = React.useState<string>("");
+  const [busyAi, setBusyAi] = React.useState(false);
+  const [busyFinance, setBusyFinance] = React.useState(false);
+  const [editingCoverId, setEditingCoverId] = React.useState<string | null>(null);
+  const [editCoverTitle, setEditCoverTitle] = React.useState<string>("");
+  const [editCoverParty, setEditCoverParty] = React.useState<string>("");
 
   // -------------------------------------------------------------------------
   // No expediente yet — empty state
@@ -297,11 +341,17 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
         <h3 style={{ fontSize: 16, fontWeight: 800, color: "var(--ink)", marginTop: 12 }}>
           {t("emptyTitle")}
         </h3>
-        <p style={{ fontSize: 13.5, marginTop: 6, marginBottom: 20 }}>
+        <p style={{ fontSize: 13.5, marginTop: 6, marginBottom: 8 }}>
           {t("emptyBody")}
         </p>
-        <div style={{ display: "flex", justifyContent: "center" }}>
-          <GradientBtn
+        <p style={{ fontSize: 12.5, marginTop: 0, marginBottom: 20, color: "var(--ink-3)", maxWidth: 460, marginInline: "auto" }}>
+          {t("aiAssembleHint")}
+        </p>
+        <div style={{ display: "flex", justifyContent: "center", gap: 10, flexWrap: "wrap" }}>
+          <GradientBtn size="md" full={false} disabled={busyAi} onClick={handleAutoAssemble}>
+            {busyAi ? t("aiAssembling") : `✨ ${t("aiAssembleBtn")}`}
+          </GradientBtn>
+          <GhostBtn
             size="md"
             full={false}
             disabled={busyCreate}
@@ -316,8 +366,8 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
               }
             }}
           >
-            {busyCreate ? t("creatingBtn") : t("createBtn")}
-          </GradientBtn>
+            {busyCreate ? t("creatingBtn") : t("createBtnManual")}
+          </GhostBtn>
         </div>
       </div>
     );
@@ -376,10 +426,80 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
       return;
     }
     setBusyCover(true);
-    const r = await actions.generateCover({ caseId, templateId: selectedTemplateId, data: {} });
+    const data: Record<string, unknown> = {};
+    if (coverTitle.trim()) data.title = coverTitle.trim();
+    if (coverPartyId) data.partyId = coverPartyId;
+    const r = await actions.generateCover({ caseId, templateId: selectedTemplateId, data });
     setBusyCover(false);
     if (r.ok) {
       toast.success(t("coverGeneratedToast"));
+      window.location.reload();
+    } else {
+      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED", t));
+    }
+  }
+
+  // ---- Send to Andrium (handoff) ----
+  async function handleSendToFinance() {
+    if (!window.confirm(t("sendFinanceConfirm"))) return;
+    setBusyFinance(true);
+    const r = await actions.sendToFinance({ caseId, expedienteId });
+    setBusyFinance(false);
+    if (r.ok) {
+      toast.success(t("sendFinanceToast"));
+      window.location.reload();
+    } else {
+      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED", t));
+    }
+  }
+
+  // ---- Auto-assemble with AI ----
+  async function handleAutoAssemble() {
+    const hasItems = !!vm.expediente && vm.items.length > 0;
+    if (hasItems && !window.confirm(t("aiReplaceConfirm"))) return;
+    setBusyAi(true);
+    const r = await actions.autoAssembleWithAi({ caseId, replace: hasItems });
+    setBusyAi(false);
+    if (r.ok) {
+      const n = r.data?.coversCreated ?? 0;
+      const unresolved = r.data?.unresolved.length ?? 0;
+      toast.success(
+        unresolved > 0
+          ? t("aiAssembledWithUnresolvedToast", { n: String(n), u: String(unresolved) })
+          : t("aiAssembledToast", { n: String(n) }),
+      );
+      window.location.reload();
+    } else {
+      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED", t));
+    }
+  }
+
+  // ---- Delete a cover item (removes the item + its render) ----
+  async function handleDeleteCover(itemId: string) {
+    if (!window.confirm(t("coverDeleteConfirm"))) return;
+    setBusyItem(itemId + ":delcover");
+    const r = await actions.deleteCoverItem({ itemId });
+    setBusyItem(null);
+    if (r.ok) {
+      toast.success(t("coverDeletedToast"));
+      window.location.reload();
+    } else {
+      toast.error(errorMessage(r.error?.code ?? "UNEXPECTED", t));
+    }
+  }
+
+  // ---- Regenerate (edit) a cover item with corrected title/party ----
+  async function handleRegenerateCover(itemId: string, title: string, partyId: string) {
+    setBusyItem(itemId + ":regen");
+    const r = await actions.regenerateCover({
+      itemId,
+      title: title.trim() || undefined,
+      partyId: partyId || null,
+    });
+    setBusyItem(null);
+    if (r.ok) {
+      setEditingCoverId(null);
+      toast.success(t("coverUpdatedToast"));
       window.location.reload();
     } else {
       toast.error(errorMessage(r.error?.code ?? "UNEXPECTED", t));
@@ -504,6 +624,11 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
 
           {/* Right: header actions */}
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            {editable && (
+              <GhostBtn size="md" full={false} disabled={busyAi} onClick={handleAutoAssemble}>
+                {busyAi ? t("aiAssembling") : `✨ ${t("aiAssembleBtn")}`}
+              </GhostBtn>
+            )}
             {status === "corrections_needed" && (
               <GhostBtn
                 size="md"
@@ -532,6 +657,16 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
                 onClick={handleCompile}
               >
                 {busyCompile ? t("compilingBtn") : t("compileBtn")}
+              </GradientBtn>
+            )}
+            {(status === "compiled" || status === "approved") && (
+              <GradientBtn
+                size="md"
+                full={false}
+                disabled={busyFinance}
+                onClick={handleSendToFinance}
+              >
+                {busyFinance ? t("sendFinanceBtnBusy") : t("sendFinanceBtn")}
               </GradientBtn>
             )}
           </div>
@@ -586,25 +721,12 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
                   {t("noCoverTemplates")}
                 </p>
               ) : (
-                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   <select
                     value={selectedTemplateId}
                     onChange={(e) => setSelectedTemplateId(e.target.value)}
                     disabled={!editable || busyCover}
-                    style={{
-                      flex: 1,
-                      minWidth: 120,
-                      fontSize: 13,
-                      fontWeight: 600,
-                      color: "var(--ink)",
-                      background: "var(--card)",
-                      border: "1px solid var(--line)",
-                      borderRadius: 6,
-                      padding: "6px 10px",
-                      cursor: editable ? "pointer" : "default",
-                      opacity: editable ? 1 : 0.5,
-                      fontFamily: "inherit",
-                    }}
+                    style={coverFieldStyle(editable)}
                   >
                     {vm.coverTemplates.map((tpl) => (
                       <option key={tpl.id} value={tpl.id}>
@@ -612,12 +734,35 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
                       </option>
                     ))}
                   </select>
+                  <input
+                    type="text"
+                    value={coverTitle}
+                    onChange={(e) => setCoverTitle(e.target.value)}
+                    disabled={!editable || busyCover}
+                    placeholder={t("coverTitlePlaceholder")}
+                    style={coverFieldStyle(editable)}
+                  />
+                  {vm.parties.length > 0 && (
+                    <select
+                      value={coverPartyId}
+                      onChange={(e) => setCoverPartyId(e.target.value)}
+                      disabled={!editable || busyCover}
+                      style={coverFieldStyle(editable)}
+                    >
+                      <option value="">{t("coverPartyNone")}</option>
+                      {vm.parties.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                   <GhostBtn
                     size="md"
                     full={false}
                     disabled={!editable || busyCover}
                     onClick={handleGenerateCover}
-                    style={{ fontSize: 13, height: 34, padding: "0 14px" }}
+                    style={{ fontSize: 13, height: 34, padding: "0 14px", alignSelf: "flex-start" }}
                   >
                     {busyCover ? t("generatingBtn") : t("generateCoverBtn")}
                   </GhostBtn>
@@ -710,9 +855,11 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {vm.items.map((item, idx) => {
                   const isBusyThis = busyItem?.startsWith(item.id);
+                  const isCover = item.itemType === "cover";
+                  const typeStyle = ITEM_TYPE_STYLE[item.itemType] ?? ITEM_TYPE_STYLE.default;
                   return (
+                    <div key={item.id} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                     <div
-                      key={item.id}
                       style={{
                         display: "flex",
                         alignItems: "center",
@@ -743,6 +890,23 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
                         }}
                       >
                         {String(idx + 1)}
+                      </span>
+
+                      {/* Item type chip */}
+                      <span
+                        title={t(typeStyle.labelKey)}
+                        style={{
+                          fontSize: 10.5,
+                          fontWeight: 800,
+                          color: typeStyle.color,
+                          background: typeStyle.bg,
+                          borderRadius: 6,
+                          padding: "3px 7px",
+                          flexShrink: 0,
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {t(typeStyle.labelKey)}
                       </span>
 
                       {/* Title (editable) */}
@@ -838,13 +1002,45 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
                         {"↓"}
                       </button>
 
+                      {/* Edit cover (cover items only) */}
+                      {isCover && (
+                        <button
+                          type="button"
+                          disabled={!editable || !!isBusyThis}
+                          title={t("coverEdit")}
+                          aria-label={t("coverEdit")}
+                          onClick={() => {
+                            setEditingCoverId(editingCoverId === item.id ? null : item.id);
+                            setEditCoverTitle(item.title);
+                            setEditCoverParty("");
+                          }}
+                          style={{
+                            width: 28,
+                            height: 28,
+                            borderRadius: 6,
+                            border: "1px solid var(--line)",
+                            background: editingCoverId === item.id ? "var(--blue-soft)" : "var(--card)",
+                            color: "var(--accent)",
+                            fontSize: 13,
+                            cursor: editable ? "pointer" : "default",
+                            opacity: editable ? 1 : 0.3,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            flexShrink: 0,
+                          }}
+                        >
+                          {"✎"}
+                        </button>
+                      )}
+
                       {/* Remove */}
                       <button
                         type="button"
                         disabled={!editable || !!isBusyThis}
                         title={t("removeItem")}
                         aria-label={t("removeItem")}
-                        onClick={() => handleRemoveItem(item.id)}
+                        onClick={() => (isCover ? handleDeleteCover(item.id) : handleRemoveItem(item.id))}
                         style={{
                           width: 28,
                           height: 28,
@@ -863,6 +1059,66 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
                       >
                         {"×"}
                       </button>
+                    </div>
+
+                    {/* Inline cover editor */}
+                    {isCover && editingCoverId === item.id && (
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: 8,
+                          flexWrap: "wrap",
+                          alignItems: "center",
+                          padding: "10px 12px",
+                          border: "1px solid var(--accent)",
+                          borderRadius: 8,
+                          background: "var(--blue-soft)",
+                        }}
+                      >
+                        <input
+                          type="text"
+                          value={editCoverTitle}
+                          onChange={(e) => setEditCoverTitle(e.target.value)}
+                          placeholder={t("coverTitlePlaceholder")}
+                          style={{ ...coverFieldStyle(true), flex: 1, minWidth: 160 }}
+                        />
+                        {vm.parties.length > 0 && (
+                          <select
+                            value={editCoverParty}
+                            onChange={(e) => setEditCoverParty(e.target.value)}
+                            style={{ ...coverFieldStyle(true), width: "auto", minWidth: 160 }}
+                          >
+                            <option value="">{t("coverPartyKeep")}</option>
+                            {vm.parties.map((p) => (
+                              <option key={p.id} value={p.id}>{p.name}</option>
+                            ))}
+                          </select>
+                        )}
+                        <GhostBtn
+                          size="md"
+                          full={false}
+                          disabled={!!isBusyThis}
+                          onClick={() => handleRegenerateCover(item.id, editCoverTitle, editCoverParty)}
+                          style={{ height: 34, padding: "0 14px", fontSize: 13 }}
+                        >
+                          {t("coverEditSave")}
+                        </GhostBtn>
+                        <button
+                          type="button"
+                          onClick={() => setEditingCoverId(null)}
+                          style={{
+                            border: "none",
+                            background: "transparent",
+                            color: "var(--ink-2)",
+                            fontSize: 13,
+                            fontWeight: 700,
+                            cursor: "pointer",
+                          }}
+                        >
+                          {t("coverEditCancel")}
+                        </button>
+                      </div>
+                    )}
                     </div>
                   );
                 })}

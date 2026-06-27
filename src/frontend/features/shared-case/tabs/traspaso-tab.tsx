@@ -27,6 +27,9 @@ const CHECK_LABEL: Record<string, keyof CasosStrings["detail"]> = {
   forms: "checkForms",
   translation: "checkTranslation",
   expediente: "checkExpediente",
+  expediente_compiled: "checkExpedienteCompiled",
+  expediente_sent: "checkExpedienteSent",
+  expediente_printed: "checkExpedientePrinted",
   print_send: "checkPrintSend",
 };
 

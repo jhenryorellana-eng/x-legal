@@ -3944,6 +3944,39 @@ const GenerateFilledPdfSchema = z.object({
 export type GenerateFilledPdfInput = z.infer<typeof GenerateFilledPdfSchema>;
 
 /**
+ * USCIS forms expect US date format. The wizard's `<input type="date">` yields an
+ * ISO value ("YYYY-MM-DD"); reformat it to "MM/DD/YYYY" so the filled PDF matches
+ * the field label (e.g. "Date of Birth (mm/dd/yyyy)"). Month/year-only fields
+ * (labelled "Mo/Yr" — their question text says "mes/año") render as "MM/YYYY".
+ * A value that is not ISO (already formatted, or free text) is returned untouched.
+ */
+function formatPdfDate(value: string, monthYearOnly: boolean): string {
+  const m = /^(\d{4})-(\d{2})(?:-(\d{2}))?$/.exec(value.trim());
+  if (!m) return value;
+  const [, yyyy, mm, dd] = m;
+  if (monthYearOnly || !dd) return `${mm}/${yyyy}`;
+  return `${mm}/${dd}/${yyyy}`;
+}
+
+/** A date question is month/year-only when its prompt asks for "mes/año" (Mo/Yr). */
+function isMonthYearDateQuestion(questionI18n: unknown): boolean {
+  const es =
+    questionI18n && typeof questionI18n === "object" && "es" in questionI18n
+      ? String((questionI18n as { es?: unknown }).es ?? "")
+      : "";
+  return /mes\s*\/?\s*a[nñ]o/i.test(es);
+}
+
+/** The Spanish prompt of a question (or English fallback), used as translation context. */
+function questionLabel(questionI18n: unknown): string {
+  if (questionI18n && typeof questionI18n === "object") {
+    const o = questionI18n as { es?: unknown; en?: unknown };
+    return String(o.es ?? o.en ?? "").trim();
+  }
+  return "";
+}
+
+/**
  * Generates a filled PDF for an approved (or submitted-by-staff) form response.
  *
  * Gates:
@@ -3995,6 +4028,7 @@ export async function generateFilledPdf(
       field_type: string;
       condition: unknown;
       options: unknown;
+      question_i18n?: unknown;
     }>>;
   };
 
@@ -4019,6 +4053,7 @@ export async function generateFilledPdf(
     field_type: string;
     condition: unknown;
     options: unknown;
+    question_i18n?: unknown;
   }> = [];
 
   if (catalog.listQuestionGroups && catalog.listQuestions) {
@@ -4042,7 +4077,7 @@ export async function generateFilledPdf(
   const translationStatus = (response.translation_status ?? "none") as string;
   const answersTranslated = (response.answers_translated ?? {}) as Record<string, unknown>;
   const needsTranslation = translationStatus !== "none";
-  let translateAnswer: ((text: string) => Promise<string>) | null = null;
+  let translateAnswer: ((text: string, fieldLabel?: string) => Promise<string>) | null = null;
   if (needsTranslation) {
     // 2-language system: if translation is needed, answers are in the non-source language.
     const answerLang: "en" | "es" = sourceLang === "en" ? "es" : "en";
@@ -4050,11 +4085,15 @@ export async function generateFilledPdf(
     // translateAnswerText masks structured PII (SSN/A-number/passport) before the
     // provider — structured PII for the form arrives via source='profile' (local).
     const { translateAnswerText } = (await import("@/backend/modules/ai-engine")) as {
-      translateAnswerText: (i: { text: string; direction: "es-en" | "en-es" }) => Promise<{ text: string }>;
+      translateAnswerText: (i: {
+        text: string;
+        direction: "es-en" | "en-es";
+        fieldLabel?: string;
+      }) => Promise<{ text: string }>;
     };
-    translateAnswer = async (text: string) => {
+    translateAnswer = async (text: string, fieldLabel?: string) => {
       try {
-        const r = await translateAnswerText({ text, direction });
+        const r = await translateAnswerText({ text, direction, fieldLabel });
         return r.text?.trim() ? r.text : text;
       } catch {
         return text; // best-effort — never block PDF generation on translation
@@ -4121,8 +4160,11 @@ export async function generateFilledPdf(
         if (typeof pre === "string" && pre.trim()) {
           str = pre; // client already translated this one on-device
         } else if (translationStatus !== "done" && translateAnswer) {
-          str = await translateAnswer(str); // fill the gap server-side
+          str = await translateAnswer(str, questionLabel(q.question_i18n)); // fill the gap server-side
         }
+      } else if (q.field_type === "date") {
+        // USCIS expects MM/DD/YYYY (or MM/YYYY for Mo/Yr fields); the wizard stores ISO.
+        str = formatPdfDate(str, isMonthYearDateQuestion(q.question_i18n));
       }
       fieldValues[q.pdf_field_name!] = str;
     }
@@ -4201,6 +4243,23 @@ export async function generateFilledPdf(
   // Return signed download URL
   const { createSignedDownloadUrl } = await import("@/backend/platform/storage");
   return createSignedDownloadUrl("generated", storagePath);
+}
+
+/**
+ * Read-only signed URL of a form response's already-generated official PDF
+ * (filled_pdf_path), or null when it hasn't been generated yet. Used by the
+ * side-by-side review screen to show the official PDF without regenerating it.
+ */
+export async function getFormResponsePdfUrl(
+  actor: Actor,
+  responseId: string,
+): Promise<string | null> {
+  can(actor, "cases", "view");
+  const response = await findFormResponseById(responseId);
+  if (!response) throw new CaseError("FORM_RESPONSE_NOT_FOUND");
+  await requireCaseAccess(actor, response.case_id);
+  if (!response.filled_pdf_path) return null;
+  return createSignedDownloadUrl("generated", response.filled_pdf_path);
 }
 
 // ---------------------------------------------------------------------------
@@ -4359,6 +4418,21 @@ async function buildStageChecklist(actor: Actor, caseRow: CaseRow): Promise<Stag
 
   const tr = await getTranslationProgress(caseRow.id);
 
+  // Expediente status (legal/operations gating) — dynamic import avoids a cycle.
+  let expedienteStatus: string | null = null;
+  if (stage === "legal" || stage === "operations") {
+    try {
+      const exp = (await import("@/backend/modules/expediente")) as {
+        getCaseExpedientes: (a: Actor, c: string) => Promise<Array<{ status: string; attempt_no: number }>>;
+      };
+      const rows = await exp.getCaseExpedientes(actor, caseRow.id);
+      // getCaseExpedientes is DESC by attempt_no → first is the current attempt.
+      expedienteStatus = rows[0]?.status ?? null;
+    } catch {
+      // best-effort: an expediente read failure must not crash the checklist
+    }
+  }
+
   return computeStageChecklist(stage, {
     citasTotal,
     citasCompleted,
@@ -4368,6 +4442,7 @@ async function buildStageChecklist(actor: Actor, caseRow: CaseRow): Promise<Stag
     formsDone,
     docsToTranslate: tr.toTranslate,
     translationsCompleted: tr.completed,
+    expedienteStatus,
   });
 }
 
@@ -4736,13 +4811,44 @@ export async function onExpedienteSentToFinanceCase(payload: {
     return;
   }
 
-  // Idempotent: if already at or past ready_for_delivery, skip
+  // Idempotent: if already at or past ready_for_delivery, skip the STATUS change.
   const alreadyDone: string[] = ["ready_for_delivery", "delivered", "completed", "cancelled", "on_hold"];
-  if (alreadyDone.includes(caseRow.status)) return;
+  if (!alreadyDone.includes(caseRow.status)) {
+    // Direct service_role update — ruta corta (bypasses canTransitionCase domain gate)
+    await updateCase(caseId, { status: "ready_for_delivery" });
+    logger.info({ caseId }, "cases: case transitioned to ready_for_delivery via expediente.sent_to_finance");
+  }
 
-  // Direct service_role update — ruta corta (bypasses canTransitionCase domain gate)
-  await updateCase(caseId, { status: "ready_for_delivery" });
-  logger.info({ caseId }, "cases: case transitioned to ready_for_delivery via expediente.sent_to_finance");
+  // Reconciliation (single handoff): sending the expediente to Andrium also
+  // advances the responsibility stage legal→operations and assigns the case to
+  // the operations (printing) owner — so there is ONE handoff trigger, not a
+  // separate manual "Traspasar". Idempotent: only acts while still in legal.
+  if (caseRow.current_stage === "legal") {
+    let toOwnerId: string | null = null;
+    try {
+      const candidates = await eligibleOwnersForStage(caseRow.org_id, "operations");
+      toOwnerId = candidates[0]?.userId ?? null;
+    } catch {
+      // best-effort: missing operations owner → leave unassigned (admin assigns)
+    }
+    const fromOwnerId = caseRow.current_owner_id;
+    await updateCase(caseId, { current_stage: "operations", current_owner_id: toOwnerId });
+    await insertStageHistory({
+      caseId,
+      fromStage: "legal",
+      toStage: "operations",
+      fromOwnerId,
+      toOwnerId,
+      actorId: fromOwnerId,
+      note: "Auto: expediente enviado a Andrium",
+    }).catch((err) => logger.warn({ err, caseId }, "cases.onExpedienteSentToFinanceCase: stage history failed — non-fatal"));
+    await appEvents.emitAndWait({
+      type: "case.owner_changed",
+      payload: { caseId, orgId: caseRow.org_id, fromOwnerId, toOwnerId },
+      occurredAt: new Date(),
+    });
+    logger.info({ caseId, toOwnerId }, "cases: stage advanced legal→operations via expediente.sent_to_finance");
+  }
 }
 
 /**

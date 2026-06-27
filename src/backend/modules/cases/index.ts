@@ -43,6 +43,7 @@ export {
   submitFormResponse,
   approveFormResponse,
   generateFilledPdf,
+  getFormResponsePdfUrl,
   resolveBySource,
   // Staff reads
   getCaseExtractions,
