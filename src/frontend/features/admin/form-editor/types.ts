@@ -98,11 +98,25 @@ export interface GenerationSectionVM {
   model?: string | null;
 }
 
+export type AssemblyBlockType = "cover" | "toc" | "body" | "chronology" | "conclusions" | "annexes" | "closing";
+export interface AssemblyBlockVM {
+  type: AssemblyBlockType;
+  enabled: boolean;
+}
+export interface CoverRowVM {
+  label: string;
+  value: string;
+}
 export interface GenerationAssemblyVM {
   cover: boolean;
   toc: boolean;
   chronology: boolean;
+  annexes?: boolean;
   closing: string | null;
+  /** Ordered, toggleable structural blocks (preferred over the booleans above). */
+  blocks?: AssemblyBlockVM[];
+  /** Editable cover: title + rows (label + {{token}} value). */
+  cover_page?: { title?: string; rows?: CoverRowVM[] };
 }
 
 export interface GenerationConfigVM {

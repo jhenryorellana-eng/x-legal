@@ -5,7 +5,7 @@ import { GradientBtn, Icon, Chip } from "@/frontend/components/brand";
 import { Switch, toast } from "@/frontend/components/desktop";
 import { FieldLabel, SelectInput, TextInput } from "../shared/chrome";
 import { GENERATION_MODELS, DEFAULT_GENERATION_MODEL } from "@/shared/constants/ai-models";
-import type { FormEditorVM, FormEditorActions, GenerationConfigVM, GenerationSectionVM } from "./types";
+import type { FormEditorVM, FormEditorActions, GenerationConfigVM, GenerationSectionVM, AssemblyBlockType } from "./types";
 import type { FormEditorStrings } from "./strings";
 
 /**
@@ -50,6 +50,66 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
   const updateAssembly = (patch: Partial<NonNullable<GenerationConfigVM["assembly"]>>) =>
     setCfg({ ...cfg, assembly: { ...asm, ...patch } });
   const [saving, setSaving] = React.useState(false);
+
+  // ── Assembly: ordered blocks (document structure) ──────────────────────────
+  const BLOCK_META: { type: AssemblyBlockType; label: string }[] = [
+    { type: "cover", label: "Carátula (portada)" },
+    { type: "toc", label: "Índice (tabla de contenidos)" },
+    { type: "body", label: "Cuerpo (secciones)" },
+    { type: "chronology", label: "Tabla cronológica" },
+    { type: "conclusions", label: "Conclusiones (última sección, aparte)" },
+    { type: "annexes", label: "Anexos (exhibits)" },
+    { type: "closing", label: "Declaración bajo perjurio" },
+  ];
+  // Effective ordered blocks: explicit list if set, else derived from legacy flags.
+  const effBlocks: { type: AssemblyBlockType; enabled: boolean }[] = asm.blocks?.length
+    ? asm.blocks
+    : BLOCK_META.map((b) => ({
+        type: b.type,
+        enabled:
+          b.type === "body" ? true
+          : b.type === "cover" ? !!asm.cover
+          : b.type === "toc" ? !!asm.toc
+          : b.type === "chronology" ? !!asm.chronology
+          : b.type === "annexes" ? !!asm.annexes
+          : b.type === "closing" ? !!(asm.closing && asm.closing.trim())
+          : false, // conclusions: off by default in legacy configs
+      }));
+  const setBlocks = (blocks: { type: AssemblyBlockType; enabled: boolean }[]) => {
+    const on = (t: AssemblyBlockType) => blocks.some((b) => b.type === t && b.enabled);
+    // keep the legacy booleans in sync so any reader still sees consistent flags
+    updateAssembly({ blocks, cover: on("cover"), toc: on("toc"), chronology: on("chronology"), annexes: on("annexes") });
+  };
+  const moveBlock = (i: number, dir: -1 | 1) => {
+    const next = [...effBlocks];
+    const j = i + dir;
+    if (j < 0 || j >= next.length) return;
+    [next[i], next[j]] = [next[j], next[i]];
+    setBlocks(next);
+  };
+  const toggleBlock = (i: number) => setBlocks(effBlocks.map((b, k) => (k === i ? { ...b, enabled: !b.enabled } : b)));
+  const arrowBtn = (disabled: boolean): React.CSSProperties => ({
+    border: "1px solid var(--line)", background: "transparent", borderRadius: 7, width: 26, height: 26,
+    cursor: disabled ? "default" : "pointer", color: disabled ? "var(--ink-3)" : "var(--ink)", opacity: disabled ? 0.4 : 1, fontSize: 11,
+  });
+
+  // ── Assembly: editable cover (title + rows with {{token}} values) ──────────
+  const DEFAULT_COVER_ROWS = [
+    { label: "Country of nationality", value: "{{nationality}}" },
+    { label: "Court / jurisdiction", value: "{{court}}" },
+    { label: "A-Number of principal applicant", value: "{{a_number}}" },
+    { label: "Derivative applicant(s) included", value: "{{derivatives}}" },
+    { label: "Date of entry into the United States", value: "{{entry_date}}" },
+    { label: "Principal theory", value: "{{principal_theory}}" },
+  ];
+  const coverPage = asm.cover_page ?? {};
+  const coverRows = coverPage.rows?.length ? coverPage.rows : DEFAULT_COVER_ROWS;
+  const updateCover = (patch: Partial<NonNullable<NonNullable<GenerationConfigVM["assembly"]>["cover_page"]>>) =>
+    updateAssembly({ cover_page: { ...coverPage, ...patch } });
+  const updateCoverRow = (i: number, patch: Partial<{ label: string; value: string }>) =>
+    updateCover({ rows: coverRows.map((r, k) => (k === i ? { ...r, ...patch } : r)) });
+  const addCoverRow = () => updateCover({ rows: [...coverRows, { label: "", value: "" }] });
+  const removeCoverRow = (i: number) => updateCover({ rows: coverRows.filter((_, k) => k !== i) });
 
   // Test column state
   const [caseQuery, setCaseQuery] = React.useState("");
@@ -269,27 +329,52 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
             <button type="button" onClick={addSection} style={{ border: "none", background: "none", color: "var(--accent)", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>+ Agregar sección</button>
           </div>
 
-          {/* Ensamblado del documento (court assembly) */}
+          {/* Ensamblado del documento — estructura configurable por bloques */}
           <div>
             <FieldLabel>Ensamblado del documento</FieldLabel>
-            <p style={{ fontSize: 11.5, color: "var(--ink-3)", margin: "0 0 10px" }}>Cómo se compone el documento final de corte: carátula, índice, tabla cronológica y cierre (declaración bajo perjurio / firma).</p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-                <Switch checked={asm.cover} onCheckedChange={(c) => updateAssembly({ cover: c })} aria-label="Carátula" />
-                <span style={{ fontSize: 13, color: "var(--ink)" }}>Carátula (portada con tabla de datos del caso)</span>
-              </label>
-              <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-                <Switch checked={asm.toc} onCheckedChange={(c) => updateAssembly({ toc: c })} aria-label="Índice" />
-                <span style={{ fontSize: 13, color: "var(--ink)" }}>Índice (tabla de contenidos)</span>
-              </label>
-              <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-                <Switch checked={asm.chronology} onCheckedChange={(c) => updateAssembly({ chronology: c })} aria-label="Tabla cronológica" />
-                <span style={{ fontSize: 13, color: "var(--ink)" }}>Tabla cronológica en el cuerpo</span>
-              </label>
+            <p style={{ fontSize: 11.5, color: "var(--ink-3)", margin: "0 0 10px" }}>Estructura del documento final. Activa/desactiva cada bloque y reordénalos con ▲▼ (cada uno empieza en su página cuando corresponde). El “Cuerpo” son las secciones de arriba; “Conclusiones” rinde la última sección por separado, para que la tabla cronológica quede antes de ella.</p>
+
+            {/* Lista de bloques (orden + on/off) */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
+              {effBlocks.map((b, i) => {
+                const meta = BLOCK_META.find((m) => m.type === b.type);
+                return (
+                  <div key={b.type} style={{ display: "flex", alignItems: "center", gap: 8, border: "1px solid var(--line)", borderRadius: 10, padding: "6px 10px", opacity: b.enabled ? 1 : 0.5 }}>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: "var(--ink-3)", width: 16, textAlign: "center" }}>{i + 1}</span>
+                    <Switch checked={b.enabled} onCheckedChange={() => toggleBlock(i)} aria-label={`Activar ${meta?.label ?? b.type}`} />
+                    <span style={{ flex: 1, fontSize: 13, color: "var(--ink)" }}>{meta?.label ?? b.type}</span>
+                    <button type="button" onClick={() => moveBlock(i, -1)} disabled={i === 0} aria-label={`Subir ${meta?.label ?? b.type}`} style={arrowBtn(i === 0)}>▲</button>
+                    <button type="button" onClick={() => moveBlock(i, 1)} disabled={i === effBlocks.length - 1} aria-label={`Bajar ${meta?.label ?? b.type}`} style={arrowBtn(i === effBlocks.length - 1)}>▼</button>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Carátula editable (título + filas con variables) */}
+            <div style={{ border: "1px solid var(--line)", borderRadius: 12, padding: 12, marginBottom: 14, display: "grid", gap: 10 }}>
+              <FieldLabel>Carátula (primera página)</FieldLabel>
               <div>
-                <FieldLabel>Cierre (declaración bajo perjurio / firma)</FieldLabel>
-                <textarea value={asm.closing ?? ""} aria-label="Cierre del documento" placeholder="Ej. I declare under penalty of perjury under the laws of the United States that the foregoing is true and correct…" onChange={(e) => updateAssembly({ closing: e.target.value || null })} style={{ width: "100%", minHeight: 60, borderRadius: 12, border: "1.5px solid var(--line)", background: "var(--panel-2, var(--card-alt))", padding: 10, fontSize: 12.5, color: "var(--ink)", resize: "vertical", boxSizing: "border-box" }} />
+                <FieldLabel>Título del documento</FieldLabel>
+                <TextInput value={coverPage.title ?? ""} placeholder="LEGAL MEMORANDUM AND APPLICANT DECLARATION IN SUPPORT OF ASYLUM" aria-label="Título de la carátula" onChange={(e) => updateCover({ title: e.target.value || undefined })} />
               </div>
+              <div>
+                <FieldLabel>Filas (etiqueta · valor)</FieldLabel>
+                {coverRows.map((r, i) => (
+                  <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+                    <TextInput value={r.label} placeholder="País de nacionalidad" aria-label={`Etiqueta fila ${i + 1}`} onChange={(e) => updateCoverRow(i, { label: e.target.value })} />
+                    <TextInput value={r.value} placeholder="{{nationality}}" aria-label={`Valor fila ${i + 1}`} onChange={(e) => updateCoverRow(i, { value: e.target.value })} />
+                    <button type="button" onClick={() => removeCoverRow(i)} aria-label={`Eliminar fila ${i + 1}`} style={{ border: "none", background: "none", color: "var(--red)", cursor: "pointer", display: "inline-flex" }}><Icon name="x" size={16} /></button>
+                  </div>
+                ))}
+                <button type="button" onClick={addCoverRow} style={{ border: "none", background: "none", color: "var(--accent)", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>+ Agregar fila</button>
+                <p style={{ fontSize: 11, color: "var(--ink-3)", margin: "8px 0 0" }}>Variables: <code>{"{{nationality}}"}</code>, <code>{"{{court}}"}</code>, <code>{"{{a_number}}"}</code>, <code>{"{{derivatives}}"}</code>, <code>{"{{entry_date}}"}</code>, <code>{"{{principal_theory}}"}</code>, <code>{"{{applicant_name}}"}</code> y cualquier campo extraído de los documentos de entrada. Sin marca del despacho ni número interno de caso.</p>
+              </div>
+            </div>
+
+            {/* Cierre (declaración bajo perjurio) */}
+            <div>
+              <FieldLabel>Declaración bajo perjurio / firma</FieldLabel>
+              <textarea value={asm.closing ?? ""} aria-label="Cierre del documento" placeholder="Ej. I declare under penalty of perjury under the laws of the United States that the foregoing is true and correct…" onChange={(e) => updateAssembly({ closing: e.target.value || null })} style={{ width: "100%", minHeight: 60, borderRadius: 12, border: "1.5px solid var(--line)", background: "var(--panel-2, var(--card-alt))", padding: 10, fontSize: 12.5, color: "var(--ink)", resize: "vertical", boxSizing: "border-box" }} />
             </div>
           </div>
         </div>
