@@ -64,6 +64,10 @@ docs/_evidence/**/*-LLENADO.pdf
 docs/_evidence/**/*-APP-GENERADO.pdf
 docs/_evidence/f5-compile/
 
+# Memoria del proyecto (docs/historial/) — registro interno local de sesiones/cambios,
+# orientado a spec-driven development. Es contexto para Claude en esta máquina; NO se sube.
+docs/historial/
+
 # Local artifacts (screenshots, scratch PDFs, build/dev logs) — not source
 /*.png
 /*.jpg

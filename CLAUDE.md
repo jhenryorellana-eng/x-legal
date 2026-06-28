@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Qué es
 
-PWA de gestión de casos migratorios/legales. Stack: **Next.js 15** (App Router, Webpack) + React 19 + TypeScript strict + Tailwind v4 + shadcn/ui. Backend **Supabase** (Postgres 17, RLS, Auth email-OTP cliente / email+password staff, Storage). Jobs **QStash**. IA **Anthropic** (generación legal) + **Gemini** (extracción/traducción). Contenido en español, código en inglés.
+PWA de gestión de casos migratorios/legales. Stack: **Next.js 16** (LTS, App Router, build con `--webpack`) + React 19 + TypeScript strict + Tailwind v4 + shadcn/ui. Backend **Supabase** (Postgres 17, RLS, Auth email-OTP cliente / email+password staff, Storage). Jobs **QStash**. IA **Anthropic** (generación legal) + **Gemini** (extracción/traducción). Contenido en español, código en inglés.
 
 - **Repo**: `C:\Users\mauri\Documents\Trabajos\usalatino-v2\`
 - **SoT (biblioteca de docs)**: `C:\Users\mauri\Documents\Trabajos\USALATINO V2\V2\docs\` (104 docs `DOC-XX`). El plan por fases es **DOC-80** (F0→F8). Continuidad de sesión en `PROGRESO.md` (raíz del repo).
@@ -102,3 +102,19 @@ select count(*) from public.cases;   -- vía mcp__supabase__execute_sql
 ## Cadencia de trabajo
 
 Por **olas verificables** con OK de Henry entre cada una: construir → gates verdes → two-stage review (code-reviewer + verification) → **verificación en vivo con navegador MCP** → demo → OK. Toda PII se enmascara antes de ir a la IA (`ai-engine` `maskPii`).
+
+## 🧠 Memoria del proyecto — `docs/historial/` (LEER ANTES DE IMPLEMENTAR)
+
+`docs/historial/` es la **memoria viva del proyecto**: una entrada `.md` por sesión/cambio
+significativo (orientada a **Spec-Driven Development** — del *qué/por qué* a la verificación).
+
+- **REGLA #1 — leer antes de implementar.** Antes de implementar, refactorizar o tomar una
+  decisión no trivial, **lee `docs/historial/`**: primero `README.md` (índice), luego las
+  entradas relevantes al área que vas a tocar. Es cómo obtienes contexto completo sin releer el `git log`.
+- **REGLA #2 — escribir al terminar.** Toda modificación significativa (feature, fix no trivial,
+  migración, **decisión —incluida la de *no* hacer algo**—, infra/deploy/seguridad) crea o
+  actualiza una entrada `docs/historial/YYYY-MM-DD-slug.md` (plantilla: `docs/historial/_PLANTILLA.md`)
+  y se añade al índice del `README.md` (lo más reciente arriba). Si tu cambio continúa un trabajo
+  ya registrado, **continúa esa historia**, no la dupliques.
+- Complementa (no reemplaza) al `git log`, a `PROGRESO.md` y a la SoT (`DOC-XX`). Sé honesto: si
+  algo quedó a medias, un test falla, o la decisión fue "lo dejamos así", escríbelo tal cual.
