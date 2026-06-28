@@ -959,8 +959,23 @@ export interface ServiceSlugIndex {
   aiLetterSlugs: string[];
 }
 
-export async function getServiceSlugIndex(serviceId: string): Promise<ServiceSlugIndex> {
-  const phases = await listPhases(serviceId);
+export async function getServiceSlugIndex(idHint: string): Promise<ServiceSlugIndex> {
+  // The index is always service-wide. Historically several callers pass the wrong
+  // id here — a service_phase_id or even a form_definition_id instead of a service
+  // id — which silently produced an EMPTY index (so every input slug failed
+  // source-ref validation, breaking config saves for any letter with input slugs).
+  // Resolve the owning service from whichever id we were handed.
+  let phases = await listPhases(idHint);
+  if (phases.length === 0) {
+    const phase = await findPhaseById(idHint);
+    if (phase) {
+      phases = await listPhases(phase.service_id);
+    } else {
+      const form = await findFormDefinition(idHint);
+      const ownerPhase = form ? await findPhaseById(form.service_phase_id) : null;
+      if (ownerPhase) phases = await listPhases(ownerPhase.service_id);
+    }
+  }
   const phaseIds = phases.map((p) => p.id);
 
   if (phaseIds.length === 0) {
