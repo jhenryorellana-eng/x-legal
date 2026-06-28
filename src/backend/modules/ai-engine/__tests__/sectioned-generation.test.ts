@@ -37,10 +37,18 @@ function section(over: Partial<GenerationSectionSpec> = {}): GenerationSectionSp
 }
 
 describe("buildWebSearchTool", () => {
-  it("returns the native web_search tool spec and clamps max_uses to [1,10]", () => {
+  it("clamps max_uses to [1,10] and defaults to the basic variant", () => {
     expect(buildWebSearchTool(4)).toEqual({ type: "web_search_20250305", name: "web_search", max_uses: 4 });
     expect(buildWebSearchTool(0).max_uses).toBe(1);
     expect(buildWebSearchTool(99).max_uses).toBe(10);
+  });
+  it("uses the dynamic-filtering variant for capable models (opus 4.7 / sonnet 4.6 / fable 5)", () => {
+    expect(buildWebSearchTool(5, "claude-opus-4-7").type).toBe("web_search_20260209");
+    expect(buildWebSearchTool(5, "claude-sonnet-4-6").type).toBe("web_search_20260209");
+    expect(buildWebSearchTool(5, "claude-fable-5").type).toBe("web_search_20260209");
+  });
+  it("falls back to the basic variant for models without dynamic filtering (haiku)", () => {
+    expect(buildWebSearchTool(5, "claude-haiku-4-5").type).toBe("web_search_20250305");
   });
 });
 

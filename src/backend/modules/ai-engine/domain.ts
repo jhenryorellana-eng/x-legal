@@ -801,8 +801,16 @@ export interface ExtractionResult {
 /** Native Anthropic web_search tool spec (jurisprudence / country-conditions research). */
 export function buildWebSearchTool(
   maxUses: number,
-): { type: "web_search_20250305"; name: "web_search"; max_uses: number } {
-  return { type: "web_search_20250305", name: "web_search", max_uses: Math.max(1, Math.min(10, maxUses)) };
+  model?: string,
+): { type: "web_search_20250305" | "web_search_20260209"; name: "web_search"; max_uses: number } {
+  // Dynamic-filtering variant (better quality) on the models that support it;
+  // basic variant elsewhere (e.g. Haiku) where _20260209 isn't available.
+  const dynamic = !!model && /^claude-(fable-5|opus-4-[678]|sonnet-4-6)/.test(model);
+  return {
+    type: dynamic ? "web_search_20260209" : "web_search_20250305",
+    name: "web_search",
+    max_uses: Math.max(1, Math.min(10, maxUses)),
+  };
 }
 
 export function countWords(text: string): number {
@@ -1053,6 +1061,41 @@ function rrec(v: unknown): Record<string, unknown> | null {
 function rarr(v: unknown): unknown[] | null {
   return Array.isArray(v) ? v : null;
 }
+/** First array-valued property among `keys` (tolerant of wrapper-key variation). */
+function rarrProp(rec: Record<string, unknown> | null, keys: string[]): unknown[] | null {
+  if (!rec) return null;
+  for (const k of keys) {
+    const a = rarr(rec[k]);
+    if (a) return a;
+  }
+  return null;
+}
+/** Returns the first balanced `{…}`/`[…]` span (string-aware), ignoring trailing prose. */
+function extractBalanced(text: string): string | undefined {
+  const firstObj = text.indexOf("{");
+  const firstArr = text.indexOf("[");
+  if (firstObj === -1 && firstArr === -1) return undefined;
+  const useArr = firstArr !== -1 && (firstObj === -1 || firstArr < firstObj);
+  const open = useArr ? "[" : "{";
+  const close = useArr ? "]" : "}";
+  const start = useArr ? firstArr : firstObj;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === open) depth++;
+    else if (c === close && --depth === 0) return text.slice(start, i + 1);
+  }
+  return undefined;
+}
 
 /**
  * Extracts a JSON value from a model response that may wrap it in a ```json fence
@@ -1060,8 +1103,9 @@ function rarr(v: unknown): unknown[] | null {
  */
 export function extractJson(text: string): unknown {
   if (!text) return null;
-  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidates = fence ? [fence[1], text] : [text];
+  const candidates: string[] = [];
+  for (const m of text.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)) candidates.push(m[1]);
+  candidates.push(text);
   for (const c of candidates) {
     const parsed = tryParseJsonLoose(c);
     if (parsed !== undefined) return parsed;
@@ -1074,20 +1118,17 @@ function tryParseJsonLoose(text: string): unknown {
   try {
     return JSON.parse(trimmed);
   } catch {
-    /* fall through to bracket extraction */
+    /* fall through to balanced-span extraction */
   }
-  const firstObj = trimmed.indexOf("{");
-  const firstArr = trimmed.indexOf("[");
-  if (firstObj === -1 && firstArr === -1) return undefined;
-  const useArr = firstArr !== -1 && (firstObj === -1 || firstArr < firstObj);
-  const start = useArr ? firstArr : firstObj;
-  const end = trimmed.lastIndexOf(useArr ? "]" : "}");
-  if (end <= start) return undefined;
-  try {
-    return JSON.parse(trimmed.slice(start, end + 1));
-  } catch {
-    return undefined;
+  const balanced = extractBalanced(trimmed);
+  if (balanced !== undefined) {
+    try {
+      return JSON.parse(balanced);
+    } catch {
+      return undefined;
+    }
   }
+  return undefined;
 }
 
 /** Parses the structured analysis (E1-E8 + chronology); null when unrecoverable. */
@@ -1122,13 +1163,13 @@ export function parseResearchAnalysis(text: string): ResearchAnalysis | null {
 /** Parses verified jurisprudence; accepts `{cases:[…]}` or a bare array. */
 export function parseJurisprudence(text: string): JurisprudenceCase[] {
   const json = extractJson(text);
-  const arr = rarr(json) ?? (rrec(json) ? rarr(rrec(json)!.cases) : null);
+  const arr = rarr(json) ?? rarrProp(rrec(json), ["cases", "precedents", "results"]);
   if (!arr) return [];
   const out: JurisprudenceCase[] = [];
   for (const raw of arr) {
     const r = rrec(raw);
     if (!r) continue;
-    const name = rstr(r.name);
+    const name = rstr(r.name ?? r.case_name ?? r.title);
     const citation = rstr(r.citation);
     if (!name || !citation) continue;
     out.push({
@@ -1147,19 +1188,19 @@ export function parseJurisprudence(text: string): JurisprudenceCase[] {
 /** Parses verified country-conditions sources; accepts `{items:[…]}` or a bare array. */
 export function parseCountryConditions(text: string): CountryConditionSource[] {
   const json = extractJson(text);
-  const arr = rarr(json) ?? (rrec(json) ? rarr(rrec(json)!.items) : null);
+  const arr = rarr(json) ?? rarrProp(rrec(json), ["items", "sources", "country_conditions", "results"]);
   if (!arr) return [];
   const out: CountryConditionSource[] = [];
   for (const raw of arr) {
     const r = rrec(raw);
     if (!r) continue;
-    const source_name = rstr(r.source_name);
+    const source_name = rstr(r.source_name ?? r.source ?? r.name ?? r.outlet ?? r.publication);
     if (!source_name) continue;
     out.push({
       source_name,
       author: rstr(r.author),
-      summary: rstr(r.summary ?? r.executive_summary),
-      full_context: rstr(r.full_context),
+      summary: rstr(r.summary ?? r.executive_summary ?? r.excerpt),
+      full_context: rstr(r.full_context ?? r.context),
       why_it_helps: rstr(r.why_it_helps),
       url: rstr(r.url),
       published_date: rstr(r.published_date ?? r.date),
@@ -1237,6 +1278,7 @@ export function buildJurisprudencePrompt(args: { instructions: string | null; an
   const system = [
     "You are a Senior Federal Immigration Attorney. Use the web_search tool to find REAL, verified, favorable published precedents. NEVER fabricate a case, citation, holding or URL — every case must trace to a search result with a working source link.",
     'Output ONLY strict JSON, no prose, no code fences: { "cases": [ { "name": string, "citation": string, "court": string, "year": string, "holding": string, "factual_analogy_to_applicant": string, "url": string } ] }',
+    "After completing your web searches, your FINAL message must be the JSON object and nothing else — no narration, no commentary, no text before or after it.",
   ].join("\n");
   const user = [
     args.instructions?.trim() || "Find favorable, verified federal precedents matched to the applicant's profile.",
@@ -1255,6 +1297,7 @@ export function buildCountryConditionsPrompt(args: { instructions: string | null
   const system = [
     "You are a Senior Federal Immigration Attorney assembling corroborating country-conditions sources. Use web_search to find recent, verified, reputable reporting (HRW, U.S. State Department, major outlets). NEVER fabricate a source, quote, statistic or URL.",
     'Output ONLY strict JSON, no prose, no code fences: { "items": [ { "source_name": string, "author": string, "executive_summary": string, "full_context": string, "why_it_helps": string, "url": string, "published_date": string } ] }',
+    "After completing your web searches, your FINAL message must be the JSON object and nothing else — no narration, no commentary, no text before or after it.",
   ].join("\n");
   const user = [
     args.instructions?.trim() || "Find recent country-conditions reporting corroborating the applicant's claim.",

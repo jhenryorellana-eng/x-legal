@@ -59,7 +59,7 @@ async function call(model: string, system: string, user: string, maxTokens: numb
     max_tokens: maxTokens,
     system,
     messages: [{ role: "user", content: user }],
-    ...(useSearch ? { tools: [buildWebSearchTool(5)] as never } : {}),
+    ...(useSearch ? { tools: [buildWebSearchTool(5, model)] as never } : {}),
   });
   const msg = await stream.finalMessage();
   const text = msg.content.filter((b) => b.type === "text").map((b) => (b as { text: string }).text).join("");

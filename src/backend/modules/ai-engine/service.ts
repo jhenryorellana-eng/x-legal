@@ -624,7 +624,7 @@ async function runSinglePassGeneration(
 ): Promise<JobOutcome> {
   const client = getAnthropicClient();
   const model = snapshot.model ?? DEFAULT_GENERATION_MODEL;
-  const tools = snapshot.web_search_enabled ? [buildWebSearchTool(snapshot.web_search_max_uses ?? 5)] : undefined;
+  const tools = snapshot.web_search_enabled ? [buildWebSearchTool(snapshot.web_search_max_uses ?? 5, model)] : undefined;
   let res: AnthropicCallResult;
   try {
     res = await callAnthropic(client, {
@@ -730,7 +730,7 @@ async function runSectionedGeneration(
   let bundle: ResearchBundle = snapshot.research ?? { analysis: null, jurisprudence: [], country_conditions: [] };
   if (snapshot.web_search_enabled && !snapshot.research) {
     try {
-      const tools = [buildWebSearchTool(snapshot.web_search_max_uses ?? 5)];
+      const tools = [buildWebSearchTool(snapshot.web_search_max_uses ?? 5, researchModel)];
       const ap = buildAnalysisPrompt({ systemPrompt: snapshot.system_prompt, caseContext: baseUserContent });
       const ar = await callAnthropic(client, { model: researchModel, system: ap.system, user: ap.user, maxTokens: 8000 });
       account(ar);

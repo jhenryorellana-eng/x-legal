@@ -24,6 +24,12 @@ describe("extractJson", () => {
   it("returns null when there is no JSON", () => {
     expect(extractJson("no json here")).toBeNull();
   });
+  it("extracts a balanced object even when prose with stray braces trails it", () => {
+    // web_search narration often appends prose (with its own braces) after the JSON.
+    expect(extractJson('Here are the results:\n{"items": [{"x": 1}]}\nThat concludes {citation 3}.')).toEqual({
+      items: [{ x: 1 }],
+    });
+  });
 });
 
 describe("parseJurisprudence", () => {
@@ -59,6 +65,12 @@ describe("parseJurisprudence", () => {
     expect(parseJurisprudence('{"cases":[{"holding":"x"}]}')).toEqual([]);
     expect(parseJurisprudence("not json")).toEqual([]);
   });
+
+  it("tolerates alternative wrapper keys and name aliases", () => {
+    const out = parseJurisprudence('{"precedents":[{"case_name":"A v. B","citation":"1 F.4th 2"}]}');
+    expect(out).toHaveLength(1);
+    expect(out[0].name).toBe("A v. B");
+  });
 });
 
 describe("parseCountryConditions", () => {
@@ -86,6 +98,15 @@ describe("parseCountryConditions", () => {
 
   it("drops entries with no source_name", () => {
     expect(parseCountryConditions('{"items":[{"summary":"x"}]}')).toEqual([]);
+  });
+
+  it("tolerates a `sources` wrapper and `source`/`excerpt` field aliases", () => {
+    const out = parseCountryConditions(
+      '{"sources":[{"source":"Reuters","excerpt":"Crackdown continues.","why_it_helps":"W","url":"https://r"}]}',
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].source_name).toBe("Reuters");
+    expect(out[0].summary).toBe("Crackdown continues.");
   });
 });
 
