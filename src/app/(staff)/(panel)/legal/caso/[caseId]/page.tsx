@@ -57,7 +57,6 @@ import {
   confirmDocumentUploadAction,
   renameDocumentAction,
   transferCaseAction,
-  advanceCasePhaseAction,
   advanceCaseMilestoneAction,
   translateDocumentAction,
   getDocumentTranslationAction,
@@ -273,7 +272,8 @@ export default async function LegalCasoDetailPage({
         confirmUpload: confirmDocumentUploadAction,
         renameDocument: renameDocumentAction,
         transferCase: transferCaseAction,
-        advanceCasePhase: advanceCasePhaseAction,
+        // Phase advance is an operations action (Andrium/admin, gated on the
+        // expediente being printed) — not surfaced on the legal workspace.
         advanceCaseMilestone: advanceCaseMilestoneAction,
         translateDocument: canTranslate ? translateDocumentAction : undefined,
         getTranslation: canTranslate ? getDocumentTranslationAction : undefined,

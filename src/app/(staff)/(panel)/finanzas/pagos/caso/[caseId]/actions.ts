@@ -7,16 +7,9 @@
  * Returns `{ ok: true, data? }` or `{ ok: false, error: { code } }`.
  * Mirror pattern: legal/validaciones/[caseId]/actions.ts.
  *
- * Billing functions present in module (F6-Ola1):
- *   createCheckoutSessionForInstallment, confirmZellePayment, rejectZelleProof,
- *   registerZellePayment, getZelleProofUploadUrl, getInstallmentPaymentStatus.
- *
- * TODO BIL-RSC-3 (rescheduleInstallment): `rescheduleInstallment(actor, { installmentId, newDueDate })`
- *   is NOT yet exported from @/backend/modules/billing. Leave stub.
- * TODO BIL-RSC-4 (waiveInstallment): `waiveInstallment(actor, { installmentId, reason })`
- *   is NOT yet exported from @/backend/modules/billing. Leave stub.
- * TODO BIL-RSC-5 (listDueCalendar / listOverdueForCollections):
- *   Not yet exported from @/backend/modules/billing. Global pagos page uses stubs.
+ * Billing use cases wired here: Stripe checkout, Zelle confirm/reject/register,
+ * proof upload/view, reschedule (RF-AND-022) and waive (RF-AND-019). All are
+ * exported from @/backend/modules/billing and fully functional.
  */
 
 import { requireActor } from "@/backend/modules/identity";

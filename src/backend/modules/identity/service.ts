@@ -39,6 +39,7 @@ import { appEvents } from "@/backend/platform/events";
 
 import type { ModuleKey } from "@/shared/constants/modules";
 import { MODULE_KEYS } from "@/shared/constants/modules";
+import { ROLE_PRESETS } from "@/shared/constants/role-presets";
 import { escapeHtml } from "@/shared/html";
 
 import {
@@ -903,49 +904,17 @@ export async function listEmployees(
 function buildPermissionPreset(
   role: "admin" | "sales" | "paralegal" | "finance",
 ): EmployeePermissionInput[] {
-  if (role === "admin") {
-    // Admin bypasses matrix entirely (§5.2). Return full access for completeness.
-    return MODULE_KEYS.map((k) => ({
-      module_key: k as ModuleKey,
-      can_view: true,
-      can_edit: true,
-    }));
-  }
-
-  type Cell = "E" | "V" | "-";
-
-  // Matrix from DOC-22 §6 (sales = Vanessa, paralegal = Diana, finance = Andrium)
-  const matrix: Record<ModuleKey, { sales: Cell; paralegal: Cell; finance: Cell }> = {
-    dashboard:   { sales: "V", paralegal: "V", finance: "V" },
-    leads:       { sales: "E", paralegal: "-", finance: "-" },
-    clients:     { sales: "V", paralegal: "V", finance: "V" },
-    cases:       { sales: "V", paralegal: "E", finance: "V" },
-    calendar:    { sales: "E", paralegal: "V", finance: "-" },
-    availability: { sales: "E", paralegal: "-", finance: "-" },
-    metrics:     { sales: "V", paralegal: "-", finance: "-" },
-    catalog:     { sales: "-", paralegal: "-", finance: "-" },
-    datasets:    { sales: "-", paralegal: "-", finance: "-" },
-    employees:   { sales: "-", paralegal: "-", finance: "-" },
-    billing:     { sales: "-", paralegal: "-", finance: "E" },
-    collections: { sales: "-", paralegal: "-", finance: "E" },
-    printing:    { sales: "-", paralegal: "-", finance: "E" },
-    campaigns:   { sales: "-", paralegal: "-", finance: "E" },
-    accounting:  { sales: "-", paralegal: "-", finance: "E" },
-    expedientes: { sales: "-", paralegal: "E", finance: "V" },
-    validations: { sales: "-", paralegal: "E", finance: "-" },
-    messaging:   { sales: "E", paralegal: "E", finance: "E" },
-    community:   { sales: "-", paralegal: "-", finance: "E" },
-    audit:       { sales: "-", paralegal: "-", finance: "-" },
-  };
-
+  // Single source of truth: shared ROLE_PRESETS (DOC-22 §6). Admin = full access.
+  // Kept in shared/ so the admin UI and the backend never drift apart.
+  const preset = ROLE_PRESETS[role];
   return MODULE_KEYS.flatMap((k) => {
-    const cell = matrix[k as ModuleKey][role];
-    if (cell === "-") return [];
+    const cell = preset[k as ModuleKey];
+    if (!cell.view && !cell.edit) return [];
     return [
       {
         module_key: k as ModuleKey,
-        can_view: true,
-        can_edit: cell === "E",
+        can_view: cell.view,
+        can_edit: cell.edit,
       },
     ];
   });

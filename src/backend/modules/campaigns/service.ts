@@ -21,6 +21,14 @@ import { sanitizeCampaignHtml } from "@/backend/platform/email-html";
 import { appEvents } from "@/backend/platform/events";
 import { enqueueJob } from "@/backend/platform/qstash";
 import type { Json } from "@/shared/database.types";
+import {
+  renderBlocksToHtml,
+  interpolateMergeFields,
+  type EmailBlock,
+} from "@/shared/email-blocks";
+
+/** Brand name resolved for the {{org}} merge field. */
+const ORG_MERGE_NAME = "UsaLatinoPrime";
 
 import {
   canTransitionCampaign,
@@ -89,12 +97,24 @@ const AudienceSchema: z.ZodType<AudienceSpec> = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("all_clients") }),
   z.object({ kind: z.literal("by_service"), serviceIds: z.array(z.string().uuid()).min(1) }),
   z.object({ kind: z.literal("custom"), userIds: z.array(z.string().uuid()).min(1) }),
+  z.object({ kind: z.literal("completed") }),
+]);
+
+// Visual composer block model (mirrors shared/email-blocks EmailBlock).
+const EmailBlockSchema: z.ZodType<EmailBlock> = z.discriminatedUnion("type", [
+  z.object({ id: z.string().min(1).max(64), type: z.literal("heading"), text: z.string().max(300) }),
+  z.object({ id: z.string().min(1).max(64), type: z.literal("text"), text: z.string().max(5000) }),
+  z.object({ id: z.string().min(1).max(64), type: z.literal("button"), label: z.string().max(120), url: z.string().max(2000) }),
+  z.object({ id: z.string().min(1).max(64), type: z.literal("image"), url: z.string().max(2000), alt: z.string().max(300) }),
+  z.object({ id: z.string().min(1).max(64), type: z.literal("divider") }),
+  z.object({ id: z.string().min(1).max(64), type: z.literal("spacer") }),
 ]);
 
 const CreateCampaignSchema = z.object({
   name: z.string().min(1).max(120),
   subject: z.string().min(1).max(200),
-  bodyHtml: z.string().min(1),
+  bodyHtml: z.string().min(1).optional(),
+  bodyBlocks: z.array(EmailBlockSchema).max(100).optional(),
   audience: AudienceSchema,
 });
 export type CreateCampaignInput = z.infer<typeof CreateCampaignSchema>;
@@ -103,6 +123,7 @@ const UpdateCampaignSchema = z.object({
   name: z.string().min(1).max(120).optional(),
   subject: z.string().min(1).max(200).optional(),
   bodyHtml: z.string().min(1).optional(),
+  bodyBlocks: z.array(EmailBlockSchema).max(100).optional(),
   audience: AudienceSchema.optional(),
 });
 export type UpdateCampaignInput = z.infer<typeof UpdateCampaignSchema>;
@@ -129,8 +150,42 @@ export interface CampaignSummaryDto {
 
 export interface CampaignDetailDto extends CampaignSummaryDto {
   bodyHtml: string;
+  bodyBlocks: EmailBlock[] | null;
   audience: AudienceSpec;
   metrics: CampaignMetrics;
+}
+
+/** Validates persisted body_blocks jsonb back into typed blocks (null if absent/invalid). */
+function parseBodyBlocks(raw: unknown): EmailBlock[] | null {
+  if (!Array.isArray(raw)) return null;
+  const parsed = z.array(EmailBlockSchema).safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+
+/** Resolves a {{nombre}} value per user (preferred_name → first_name) for merge fields. */
+async function fetchFirstNames(userIds: string[]): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (userIds.length === 0) return map;
+  try {
+    const supabase = createServiceClient();
+    const { data } = await supabase
+      .from("client_profiles")
+      .select("user_id, first_name, preferred_name")
+      .in("user_id", userIds);
+    const rows = (Array.isArray(data) ? data : []) as Array<{
+      user_id: string;
+      first_name: string | null;
+      preferred_name: string | null;
+    }>;
+    for (const r of rows) {
+      const name = r.preferred_name?.trim() || r.first_name?.trim() || "";
+      if (name) map.set(r.user_id, name);
+    }
+  } catch (err) {
+    // A name-resolution failure must never block the campaign send (merge → "").
+    logger.warn({ err }, "campaigns: fetchFirstNames failed — sending without {{nombre}}");
+  }
+  return map;
 }
 
 export interface AudiencePreviewDto {
@@ -187,6 +242,7 @@ export async function getCampaign(actor: Actor, id: string): Promise<CampaignDet
   return {
     ...toSummaryDto(row),
     bodyHtml: row.body_html,
+    bodyBlocks: parseBodyBlocks(row.body_blocks),
     audience: parseAudience(row.audience),
     metrics,
   };
@@ -235,11 +291,18 @@ export async function previewAudience(
 export async function createCampaign(actor: Actor, input: CreateCampaignInput): Promise<CampaignRow> {
   can(actor, "campaigns", "edit");
   const parsed = CreateCampaignSchema.parse(input);
+  // body_html source of truth: blocks (trusted render) override raw html (sanitised).
+  const bodyHtml = parsed.bodyBlocks !== undefined
+    ? renderBlocksToHtml(parsed.bodyBlocks)
+    : parsed.bodyHtml !== undefined
+      ? sanitizeCampaignHtml(parsed.bodyHtml)
+      : "<p></p>";
   const row = await insertCampaign({
     org_id: actor.orgId,
     name: parsed.name,
     subject: parsed.subject,
-    body_html: sanitizeCampaignHtml(parsed.bodyHtml),
+    body_html: bodyHtml,
+    body_blocks: (parsed.bodyBlocks ?? null) as Json,
     audience: audienceToJson(parsed.audience) as Json,
     status: "draft",
     created_by: actor.userId,
@@ -267,7 +330,14 @@ export async function updateCampaign(
   const patch: Record<string, unknown> = {};
   if (parsed.name !== undefined) patch.name = parsed.name;
   if (parsed.subject !== undefined) patch.subject = parsed.subject;
-  if (parsed.bodyHtml !== undefined) patch.body_html = sanitizeCampaignHtml(parsed.bodyHtml);
+  // Blocks (trusted render) take precedence over raw html (sanitised) and become
+  // the body_html source of truth; both are persisted so the editor can reopen them.
+  if (parsed.bodyBlocks !== undefined) {
+    patch.body_blocks = parsed.bodyBlocks as Json;
+    patch.body_html = renderBlocksToHtml(parsed.bodyBlocks);
+  } else if (parsed.bodyHtml !== undefined) {
+    patch.body_html = sanitizeCampaignHtml(parsed.bodyHtml);
+  }
   if (parsed.audience !== undefined) patch.audience = audienceToJson(parsed.audience) as Json;
 
   const row = await repoUpdateCampaign(campaignId, patch as Parameters<typeof repoUpdateCampaign>[1]);
@@ -290,17 +360,28 @@ export async function sendTest(actor: Actor, campaignId: string): Promise<void> 
     .maybeSingle();
   if (!user?.email) throw new CampaignError("TEST_EMAIL_INVALID");
 
+  // Sample merge values so the tester sees personalisation rendered.
+  const { data: profile } = await supabase
+    .from("staff_profiles")
+    .select("display_name")
+    .eq("user_id", actor.userId)
+    .maybeSingle();
+  const sampleName = (profile?.display_name ?? "").split(" ")[0] || "Ejemplo";
+  const vars = { nombre: sampleName, org: ORG_MERGE_NAME };
+  const subject = interpolateMergeFields(campaign.subject, vars, { escape: false });
+  const personalizedBody = interpolateMergeFields(campaign.body_html, vars);
+
   const unsubscribeUrl = buildUnsubscribeUrl(campaign.id, actor.userId);
   const { html, text } = await renderCampaignEmail({
     locale: user.locale ?? "es",
-    subject: campaign.subject,
-    bodyHtml: campaign.body_html,
+    subject,
+    bodyHtml: personalizedBody,
     unsubscribeUrl,
   });
 
   await sendTransactional({
     to: user.email,
-    subject: `[Prueba] ${campaign.subject}`,
+    subject: `[Prueba] ${subject}`,
     html,
     text,
     from: FROM_CAMPAIGNS,
@@ -488,17 +569,21 @@ export async function sendCampaignBatch(campaignId: string): Promise<SendBatchRe
     return { status: "completed", hasMore: false };
   }
 
-  // Render each recipient's email (per-locale + per-recipient unsubscribe).
+  // Render each recipient's email (per-locale + per-recipient unsubscribe + merge fields).
+  const namesByUser = await fetchFirstNames(batch.map((r) => r.userId));
   const items = await Promise.all(
     batch.map(async (r) => {
+      const vars = { nombre: namesByUser.get(r.userId) ?? "", org: ORG_MERGE_NAME };
+      const subject = interpolateMergeFields(campaign.subject, vars, { escape: false });
+      const personalizedBody = interpolateMergeFields(campaign.body_html, vars);
       const unsubscribeUrl = buildUnsubscribeUrl(campaignId, r.userId);
       const { html, text } = await renderCampaignEmail({
         locale: r.locale,
-        subject: campaign.subject,
-        bodyHtml: campaign.body_html,
+        subject,
+        bodyHtml: personalizedBody,
         unsubscribeUrl,
       });
-      return { to: r.email, subject: campaign.subject, html, text, from: FROM_CAMPAIGNS };
+      return { to: r.email, subject, html, text, from: FROM_CAMPAIGNS };
     }),
   );
 

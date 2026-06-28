@@ -1,12 +1,16 @@
 /**
  * Cases / advanceCasePhase (TDD).
  *
- * Manual, staff-driven phase progression (hybrid progress model). Decisions
- * under test:
- *  - only admin + paralegal may advance (sales/finance/client denied)
- *  - advances to the next phase by position; records phase history + timeline
- *  - rejects advancing past the last phase (CASE_ALREADY_LAST_PHASE)
- *  - an explicit earlier/equal target is rejected (CASE_INVALID_TRANSITION)
+ * The phase boundary is the "close this phase & restart the cycle" operation
+ * (Andrium/admin, after the phase's expediente is printed). Decisions under test:
+ *  - only admin + finance may advance (sales/paralegal/client denied)
+ *  - gated on the current phase's latest expediente being `printed`
+ *    (admin may `force`); otherwise CASE_PHASE_NOT_PRINTED
+ *  - advancing resets the case to the `sales` stage + a sales owner (Vanessa),
+ *    moves the kanban card (case.owner_changed) and notifies sales
+ *  - the last phase completes the case (status=completed, stage=done) and emits
+ *    case.completed for retention hooks
+ *  - rejects advancing past the last phase / an earlier explicit target
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -18,8 +22,12 @@ const {
   mockListServicePhases,
   mockUpdateCase,
   mockInsertPhaseHistory,
+  mockInsertStageHistory,
+  mockListStaffWithModuleEdit,
   mockWriteAudit,
   mockAppendCaseTimeline,
+  mockEmitAndWait,
+  mockGetCaseExpedientes,
 } = vi.hoisted(() => ({
   mockCan: vi.fn(),
   mockRequireCaseAccess: vi.fn().mockResolvedValue(undefined),
@@ -27,8 +35,12 @@ const {
   mockListServicePhases: vi.fn(),
   mockUpdateCase: vi.fn().mockResolvedValue(undefined),
   mockInsertPhaseHistory: vi.fn().mockResolvedValue(undefined),
+  mockInsertStageHistory: vi.fn().mockResolvedValue(undefined),
+  mockListStaffWithModuleEdit: vi.fn(),
   mockWriteAudit: vi.fn().mockResolvedValue(undefined),
   mockAppendCaseTimeline: vi.fn().mockResolvedValue(undefined),
+  mockEmitAndWait: vi.fn().mockResolvedValue(undefined),
+  mockGetCaseExpedientes: vi.fn(),
 }));
 
 vi.mock("@/backend/platform/authz", () => ({
@@ -46,7 +58,7 @@ vi.mock("@/backend/platform/authz", () => ({
 }));
 
 vi.mock("@/backend/platform/events", () => ({
-  appEvents: { emit: vi.fn(), emitAndWait: vi.fn().mockResolvedValue(undefined), on: vi.fn() },
+  appEvents: { emit: vi.fn(), emitAndWait: mockEmitAndWait, on: vi.fn() },
 }));
 
 vi.mock("@/backend/platform/logger", () => ({
@@ -69,6 +81,11 @@ vi.mock("@/backend/modules/audit", () => ({
   appendCaseTimeline: mockAppendCaseTimeline,
 }));
 
+// Printed gate reads the latest expediente (dynamic import in the service).
+vi.mock("@/backend/modules/expediente", () => ({
+  getCaseExpedientes: mockGetCaseExpedientes,
+}));
+
 vi.mock("../repository", async (importOriginal) => {
   const original = await importOriginal<typeof import("../repository")>();
   return {
@@ -77,6 +94,8 @@ vi.mock("../repository", async (importOriginal) => {
     listServicePhases: mockListServicePhases,
     updateCase: mockUpdateCase,
     insertPhaseHistory: mockInsertPhaseHistory,
+    insertStageHistory: mockInsertStageHistory,
+    listStaffWithModuleEdit: mockListStaffWithModuleEdit,
   };
 });
 
@@ -90,6 +109,8 @@ const CASE_ID = "cccccccc-cccc-4ccc-8ccc-000000000001";
 const PHASE_0 = "11111111-1111-4111-8111-000000000000";
 const PHASE_1 = "11111111-1111-4111-8111-000000000001";
 const SERVICE_ID = "dddddddd-dddd-4ddd-8ddd-000000000001";
+const VANESSA = "22222222-2222-4222-8222-000000000002";
+const VANESSA_2 = "22222222-2222-4222-8222-000000000003";
 
 function actor(role: "admin" | "sales" | "paralegal" | "finance") {
   return {
@@ -109,16 +130,18 @@ const CLIENT_ACTOR = {
   permissions: new Map(),
 };
 
-function caseAt(phaseId: string | null) {
+function caseAt(phaseId: string | null, over: Record<string, unknown> = {}) {
   return {
     id: CASE_ID,
     org_id: "bbbbbbbb-bbbb-4bbb-8bbb-000000000001",
     case_number: "T-001",
-    status: "active",
+    status: "ready_for_delivery",
     service_id: SERVICE_ID,
     service_plan_id: "eeeeeeee-eeee-4eee-8eee-000000000001",
     primary_client_id: "aaaaaaaa-aaaa-4aaa-8aaa-000000000099",
     current_phase_id: phaseId,
+    current_stage: "operations",
+    current_owner_id: "ffffffff-ffff-4fff-8fff-000000000004",
     assigned_paralegal_id: null,
     assigned_sales_id: null,
     opened_at: null,
@@ -127,6 +150,7 @@ function caseAt(phaseId: string | null) {
     rebooking_blocked_until: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
+    ...over,
   };
 }
 
@@ -141,6 +165,12 @@ beforeEach(() => {
   mockRequireCaseAccess.mockResolvedValue(undefined);
   mockFindCaseById.mockResolvedValue(caseAt(PHASE_0));
   mockListServicePhases.mockResolvedValue(PHASES);
+  // Default: the current phase's expediente is printed → gate passes.
+  mockGetCaseExpedientes.mockResolvedValue([{ status: "printed", attempt_no: 1 }]);
+  // Default: a single eligible sales owner (Vanessa) → auto-assigned.
+  mockListStaffWithModuleEdit.mockResolvedValue([
+    { userId: VANESSA, displayName: "Vanessa", role: "sales" },
+  ]);
 });
 
 // ---------------------------------------------------------------------------
@@ -148,27 +178,55 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("advanceCasePhase", () => {
-  it("admin advances to the next phase (updates phase + writes history + timeline)", async () => {
+  it("admin advances: bumps phase, resets to sales+Vanessa, status active", async () => {
     const res = await advanceCasePhase(actor("admin"), { caseId: CASE_ID });
 
-    expect(mockUpdateCase).toHaveBeenCalledWith(CASE_ID, { current_phase_id: PHASE_1 });
+    expect(mockUpdateCase).toHaveBeenCalledWith(
+      CASE_ID,
+      expect.objectContaining({
+        current_phase_id: PHASE_1,
+        current_stage: "sales",
+        current_owner_id: VANESSA,
+        assigned_sales_id: VANESSA,
+        status: "active",
+      }),
+    );
     expect(mockInsertPhaseHistory).toHaveBeenCalledWith(
       expect.objectContaining({ caseId: CASE_ID, phaseId: PHASE_1 }),
+    );
+    expect(mockInsertStageHistory).toHaveBeenCalledWith(
+      expect.objectContaining({ caseId: CASE_ID, toStage: "sales", toOwnerId: VANESSA }),
     );
     expect(mockAppendCaseTimeline).toHaveBeenCalledWith(
       expect.objectContaining({ eventType: "phase.advanced", visibleToClient: true }),
     );
-    expect(res).toMatchObject({ phaseId: PHASE_1, phaseIndex: 2, phaseCount: 2 });
+    // kanban card moves to the new sales owner
+    expect(mockEmitAndWait).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "case.owner_changed" }),
+    );
+    // sales (Vanessa) gets notified via the case.phase_advanced event → consumer
+    expect(mockEmitAndWait).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "case.phase_advanced" }),
+    );
+    expect(res).toMatchObject({ phaseId: PHASE_1, phaseIndex: 2, phaseCount: 2, completed: false, stage: "sales" });
   });
 
-  it("paralegal may also advance (admin + paralegal)", async () => {
-    await expect(advanceCasePhase(actor("paralegal"), { caseId: CASE_ID })).resolves.toMatchObject({
+  it("finance (Andrium) may advance", async () => {
+    await expect(advanceCasePhase(actor("finance"), { caseId: CASE_ID })).resolves.toMatchObject({
       phaseId: PHASE_1,
+      stage: "sales",
     });
     expect(mockUpdateCase).toHaveBeenCalled();
   });
 
-  it("sales is denied (AuthzError, not admin/paralegal)", async () => {
+  it("paralegal is denied (only admin + finance cross the phase boundary)", async () => {
+    await expect(
+      advanceCasePhase(actor("paralegal"), { caseId: CASE_ID }),
+    ).rejects.toMatchObject({ reason: "forbidden_module" });
+    expect(mockUpdateCase).not.toHaveBeenCalled();
+  });
+
+  it("sales is denied", async () => {
     await expect(
       advanceCasePhase(actor("sales"), { caseId: CASE_ID }),
     ).rejects.toMatchObject({ reason: "forbidden_module" });
@@ -181,12 +239,64 @@ describe("advanceCasePhase", () => {
     ).rejects.toMatchObject({ reason: "forbidden_module" });
   });
 
-  it("rejects advancing past the last phase", async () => {
+  it("rejects when the current phase's expediente is not printed", async () => {
+    mockGetCaseExpedientes.mockResolvedValue([{ status: "sent_to_finance", attempt_no: 1 }]);
+    await expect(
+      advanceCasePhase(actor("finance"), { caseId: CASE_ID }),
+    ).rejects.toMatchObject({ code: "CASE_PHASE_NOT_PRINTED" });
+    expect(mockUpdateCase).not.toHaveBeenCalled();
+  });
+
+  it("admin may force-advance even when not printed", async () => {
+    mockGetCaseExpedientes.mockResolvedValue([{ status: "draft", attempt_no: 1 }]);
+    await expect(
+      advanceCasePhase(actor("admin"), { caseId: CASE_ID, force: true }),
+    ).resolves.toMatchObject({ phaseId: PHASE_1 });
+  });
+
+  it("rejects when the case is not at the operations stage (guards double-advance)", async () => {
+    mockFindCaseById.mockResolvedValue(caseAt(PHASE_0, { current_stage: "sales" }));
+    await expect(
+      advanceCasePhase(actor("finance"), { caseId: CASE_ID }),
+    ).rejects.toMatchObject({ code: "STAGE_NOT_READY" });
+    expect(mockUpdateCase).not.toHaveBeenCalled();
+  });
+
+  it("last phase completes the case (status=completed, stage=done) and emits case.completed", async () => {
     mockFindCaseById.mockResolvedValue(caseAt(PHASE_1));
+    const res = await advanceCasePhase(actor("admin"), { caseId: CASE_ID });
+
+    expect(mockUpdateCase).toHaveBeenCalledWith(
+      CASE_ID,
+      expect.objectContaining({ current_stage: "done", current_owner_id: null, status: "completed" }),
+    );
+    expect(mockEmitAndWait).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "case.completed" }),
+    );
+    expect(res).toMatchObject({ completed: true, stage: "done" });
+  });
+
+  it("requires owner selection when several sales owners are eligible", async () => {
+    mockListStaffWithModuleEdit.mockResolvedValue([
+      { userId: VANESSA, displayName: "Vanessa", role: "sales" },
+      { userId: VANESSA_2, displayName: "Otra", role: "sales" },
+    ]);
     await expect(
       advanceCasePhase(actor("admin"), { caseId: CASE_ID }),
-    ).rejects.toMatchObject({ code: "CASE_ALREADY_LAST_PHASE" });
+    ).rejects.toMatchObject({ code: "STAGE_OWNER_REQUIRED" });
     expect(mockUpdateCase).not.toHaveBeenCalled();
+  });
+
+  it("honours an explicit sales owner pick", async () => {
+    mockListStaffWithModuleEdit.mockResolvedValue([
+      { userId: VANESSA, displayName: "Vanessa", role: "sales" },
+      { userId: VANESSA_2, displayName: "Otra", role: "sales" },
+    ]);
+    await advanceCasePhase(actor("admin"), { caseId: CASE_ID, toOwnerId: VANESSA_2 });
+    expect(mockUpdateCase).toHaveBeenCalledWith(
+      CASE_ID,
+      expect.objectContaining({ current_owner_id: VANESSA_2 }),
+    );
   });
 
   it("rejects an explicit target that is not strictly ahead", async () => {

@@ -4,7 +4,12 @@
  * CampanaEditorView — `/finanzas/campanas/[id]` editor + detail (Andrium · marketing).
  * DOC-55 §4.2-4.4, RF-AND-034..039. Boundaries: no @/backend imports.
  *
- * - Draft: editable (name/subject/body + audience), live audience count + preview,
+ * The body is composed with a VISUAL BLOCK EDITOR (no HTML knowledge required):
+ * pick a template, add/reorder/edit blocks (heading, text, button, image, divider,
+ * spacer), insert personalisation fields ({{nombre}}, {{org}}), and watch the live
+ * preview. The blocks render to body_html server-side (shared/email-blocks).
+ *
+ * - Draft: editable (name/subject/blocks + audience), live audience count + preview,
  *   sticky actions (test / schedule / send).
  * - Non-draft: read-only + delivery metrics; cancel if scheduled/sending.
  */
@@ -13,14 +18,24 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Card, GradientBtn, GhostBtn, Icon, ProgressBar } from "@/frontend/components/brand";
 import { Modal, toast } from "@/frontend/components/desktop";
+import {
+  type EmailBlock,
+  type EmailBlockType,
+  EMAIL_BLOCK_TYPES,
+  emptyBlock,
+  renderBlocksToHtml,
+  BLOCK_TEMPLATES,
+  MERGE_FIELDS,
+} from "@/shared/email-blocks";
 
-export type AudKind = "all_clients" | "by_service" | "custom";
+export type AudKind = "all_clients" | "by_service" | "custom" | "completed";
 export type CampaignStatusVM = "draft" | "scheduled" | "sending" | "sent" | "failed" | "cancelled";
 
 export type AudienceSpecVM =
   | { kind: "all_clients" }
   | { kind: "by_service"; serviceIds: string[] }
-  | { kind: "custom"; userIds: string[] };
+  | { kind: "custom"; userIds: string[] }
+  | { kind: "completed" };
 
 export interface CampaignMetricsVM {
   total: number;
@@ -49,6 +64,7 @@ export interface CampanaEditorVM {
   name: string;
   subject: string;
   bodyHtml: string;
+  bodyBlocks: EmailBlock[] | null;
   status: CampaignStatusVM;
   audience: AudienceSpecVM;
   scheduledAt: string | null;
@@ -64,7 +80,7 @@ export interface CampanaEditorViewProps {
     update: (input: {
       name?: string;
       subject?: string;
-      bodyHtml?: string;
+      bodyBlocks?: EmailBlock[];
       audience?: AudienceSpecVM;
     }) => Promise<CampaignResult>;
     preview: (audience: AudienceSpecVM) => Promise<CampaignResult<AudiencePreviewVM>>;
@@ -79,6 +95,20 @@ function tt(locale: "es" | "en", es: string, en: string) {
   return locale === "es" ? es : en;
 }
 
+// Stable-ish unique id for new blocks (client-only; React keys + reorder).
+let _bid = 0;
+function newBlockId(): string {
+  return `b${Date.now().toString(36)}${(_bid++).toString(36)}`;
+}
+
+/** Seeds the composer: persisted blocks → else a single text block from legacy html → else one heading. */
+function seedBlocks(vm: CampanaEditorVM): EmailBlock[] {
+  if (vm.bodyBlocks && vm.bodyBlocks.length > 0) return vm.bodyBlocks;
+  const stripped = vm.bodyHtml.replace(/<[^>]+>/g, "").trim();
+  if (stripped) return [{ id: newBlockId(), type: "text", text: stripped }];
+  return [{ id: newBlockId(), type: "heading", text: "Hola {{nombre}}" }];
+}
+
 function buildPreviewHtml(bodyHtml: string): string {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"></head>
 <body style="margin:0;background:#f8f9fa;font-family:-apple-system,Segoe UI,Roboto,sans-serif">
@@ -89,6 +119,101 @@ function buildPreviewHtml(bodyHtml: string): string {
 </div></body></html>`;
 }
 
+const inputStyle: React.CSSProperties = {
+  width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--line)",
+  background: "var(--card)", color: "var(--ink)", fontSize: 14, outline: "none",
+};
+const labelStyle: React.CSSProperties = { fontSize: 13, fontWeight: 700, color: "var(--ink-2)", marginBottom: 6, display: "block" };
+
+const BLOCK_META: Record<EmailBlockType, { es: string; en: string; icon: string }> = {
+  heading: { es: "Título", en: "Heading", icon: "doc" },
+  text: { es: "Texto", en: "Text", icon: "doc" },
+  button: { es: "Botón", en: "Button", icon: "send" },
+  image: { es: "Imagen", en: "Image", icon: "doc" },
+  divider: { es: "Separador", en: "Divider", icon: "doc" },
+  spacer: { es: "Espacio", en: "Spacer", icon: "doc" },
+};
+
+// ---------------------------------------------------------------------------
+// Single block editor
+// ---------------------------------------------------------------------------
+
+interface BlockEditorProps {
+  block: EmailBlock;
+  index: number;
+  total: number;
+  locale: "es" | "en";
+  onChange: (b: EmailBlock) => void;
+  onRemove: () => void;
+  onMove: (dir: -1 | 1) => void;
+  onFocusBlock: () => void;
+}
+
+function BlockEditor({ block, index, total, locale, onChange, onRemove, onMove, onFocusBlock }: BlockEditorProps) {
+  const meta = BLOCK_META[block.type];
+  return (
+    <div style={{ border: "1px solid var(--line)", borderRadius: 12, padding: 12, background: "var(--card)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <span style={{ fontSize: 12, fontWeight: 800, color: "var(--ink-3)", textTransform: "uppercase", letterSpacing: "0.04em", flex: 1 }}>
+          {tt(locale, meta.es, meta.en)}
+        </span>
+        <button type="button" aria-label={tt(locale, "Subir", "Move up")} disabled={index === 0}
+          onClick={() => onMove(-1)}
+          style={{ border: "none", background: "transparent", cursor: index === 0 ? "default" : "pointer", opacity: index === 0 ? 0.3 : 1, padding: 4 }}>
+          <Icon name="chevL" size={16} color="var(--ink-2)" />
+        </button>
+        <button type="button" aria-label={tt(locale, "Bajar", "Move down")} disabled={index === total - 1}
+          onClick={() => onMove(1)}
+          style={{ border: "none", background: "transparent", cursor: index === total - 1 ? "default" : "pointer", opacity: index === total - 1 ? 0.3 : 1, padding: 4, transform: "rotate(180deg)" }}>
+          <Icon name="chevL" size={16} color="var(--ink-2)" />
+        </button>
+        <button type="button" aria-label={tt(locale, "Eliminar", "Delete")} onClick={onRemove}
+          style={{ border: "none", background: "transparent", cursor: "pointer", padding: 4, color: "var(--red)", fontWeight: 800, fontSize: 16, lineHeight: 1 }}>
+          ×
+        </button>
+      </div>
+
+      {block.type === "heading" && (
+        <input style={inputStyle} value={block.text} onFocus={onFocusBlock}
+          onChange={(e) => onChange({ ...block, text: e.target.value })}
+          placeholder={tt(locale, "Escribe el título…", "Write the heading…")} maxLength={300} />
+      )}
+      {block.type === "text" && (
+        <textarea style={{ ...inputStyle, minHeight: 90, resize: "vertical" }} value={block.text} onFocus={onFocusBlock}
+          onChange={(e) => onChange({ ...block, text: e.target.value })}
+          placeholder={tt(locale, "Escribe tu mensaje…", "Write your message…")} maxLength={5000} />
+      )}
+      {block.type === "button" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <input style={inputStyle} value={block.label} onFocus={onFocusBlock}
+            onChange={(e) => onChange({ ...block, label: e.target.value })}
+            placeholder={tt(locale, "Texto del botón", "Button label")} maxLength={120} />
+          <input style={inputStyle} value={block.url}
+            onChange={(e) => onChange({ ...block, url: e.target.value })}
+            placeholder="https://…" maxLength={2000} />
+        </div>
+      )}
+      {block.type === "image" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <input style={inputStyle} value={block.url}
+            onChange={(e) => onChange({ ...block, url: e.target.value })}
+            placeholder={tt(locale, "URL de la imagen (https://…)", "Image URL (https://…)")} maxLength={2000} />
+          <input style={inputStyle} value={block.alt}
+            onChange={(e) => onChange({ ...block, alt: e.target.value })}
+            placeholder={tt(locale, "Texto alternativo", "Alt text")} maxLength={300} />
+        </div>
+      )}
+      {(block.type === "divider" || block.type === "spacer") && (
+        <p style={{ margin: 0, fontSize: 13, color: "var(--ink-3)" }}>
+          {block.type === "divider"
+            ? tt(locale, "Una línea divisoria.", "A horizontal divider.")
+            : tt(locale, "Un espacio en blanco.", "A blank space.")}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function CampanaEditorView({ vm, actions }: CampanaEditorViewProps) {
   const router = useRouter();
   const locale = vm.locale;
@@ -97,7 +222,8 @@ export function CampanaEditorView({ vm, actions }: CampanaEditorViewProps) {
 
   const [name, setName] = React.useState(vm.name);
   const [subject, setSubject] = React.useState(vm.subject);
-  const [bodyHtml, setBodyHtml] = React.useState(vm.bodyHtml);
+  const [blocks, setBlocks] = React.useState<EmailBlock[]>(() => seedBlocks(vm));
+  const [activeBlockId, setActiveBlockId] = React.useState<string | null>(null);
   const [audKind, setAudKind] = React.useState<AudKind>(vm.audience.kind);
   const [serviceIds, setServiceIds] = React.useState<string[]>(
     vm.audience.kind === "by_service" ? vm.audience.serviceIds : [],
@@ -112,14 +238,18 @@ export function CampanaEditorView({ vm, actions }: CampanaEditorViewProps) {
   const [scheduleOpen, setScheduleOpen] = React.useState(false);
   const [scheduleAt, setScheduleAt] = React.useState("");
 
+  const previewHtml = React.useMemo(() => buildPreviewHtml(renderBlocksToHtml(blocks)), [blocks]);
+
   const currentAudience = React.useCallback((): AudienceSpecVM => {
     if (audKind === "by_service") return { kind: "by_service", serviceIds };
     if (audKind === "custom") return { kind: "custom", userIds };
+    if (audKind === "completed") return { kind: "completed" };
     return { kind: "all_clients" };
   }, [audKind, serviceIds, userIds]);
 
   const audienceValid =
     audKind === "all_clients" ||
+    audKind === "completed" ||
     (audKind === "by_service" && serviceIds.length > 0) ||
     (audKind === "custom" && userIds.length > 0);
 
@@ -137,9 +267,51 @@ export function CampanaEditorView({ vm, actions }: CampanaEditorViewProps) {
     return () => clearTimeout(handle);
   }, [audienceValid, currentAudience, actions]);
 
+  // --- block mutations ---
+  function updateBlock(id: string, next: EmailBlock) {
+    setBlocks((bs) => bs.map((b) => (b.id === id ? next : b)));
+  }
+  function removeBlock(id: string) {
+    setBlocks((bs) => bs.filter((b) => b.id !== id));
+  }
+  function moveBlock(id: string, dir: -1 | 1) {
+    setBlocks((bs) => {
+      const i = bs.findIndex((b) => b.id === id);
+      const j = i + dir;
+      if (i < 0 || j < 0 || j >= bs.length) return bs;
+      const copy = [...bs];
+      [copy[i], copy[j]] = [copy[j], copy[i]];
+      return copy;
+    });
+  }
+  function addBlock(type: EmailBlockType) {
+    setBlocks((bs) => [...bs, emptyBlock(type, newBlockId())]);
+  }
+  function loadTemplate(key: string) {
+    const tpl = BLOCK_TEMPLATES.find((t) => t.key === key);
+    if (!tpl) return;
+    setBlocks(tpl.blocks.map((b) => ({ ...b, id: newBlockId() }) as EmailBlock));
+    if (!subject.trim() || subject === vm.subject) setSubject(tpl.subject);
+    toast.success(tt(locale, "Plantilla cargada", "Template loaded"));
+  }
+  function insertMergeField(token: string) {
+    const target = blocks.find((b) => b.id === activeBlockId) ?? blocks[blocks.length - 1];
+    if (!target) {
+      setBlocks((bs) => [...bs, { id: newBlockId(), type: "text", text: token }]);
+      return;
+    }
+    if (target.type === "heading" || target.type === "text") {
+      updateBlock(target.id, { ...target, text: `${target.text}${token}` });
+    } else if (target.type === "button") {
+      updateBlock(target.id, { ...target, label: `${target.label}${token}` });
+    } else {
+      setBlocks((bs) => [...bs, { id: newBlockId(), type: "text", text: token }]);
+    }
+  }
+
   async function saveDraft(silent = false): Promise<boolean> {
     setSaving(true);
-    const res = await actions.update({ name, subject, bodyHtml, audience: currentAudience() });
+    const res = await actions.update({ name, subject, bodyBlocks: blocks, audience: currentAudience() });
     setSaving(false);
     if (!res.ok && !silent) toast.error(tt(locale, "No se pudo guardar", "Could not save"));
     return res.ok;
@@ -203,17 +375,10 @@ export function CampanaEditorView({ vm, actions }: CampanaEditorViewProps) {
     }
   }
 
-  const labelStyle: React.CSSProperties = { fontSize: 13, fontWeight: 700, color: "var(--ink-2)", marginBottom: 6, display: "block" };
-  const inputStyle: React.CSSProperties = {
-    width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--line)",
-    background: "var(--card)", color: "var(--ink)", fontSize: 14, outline: "none",
-  };
-
   const filteredClients = vm.clients.filter((c) =>
     !clientSearch.trim() || c.name.toLowerCase().includes(clientSearch.trim().toLowerCase()),
   );
 
-  // Delivery metrics invariant: total = sent + failed + suppressed + pending.
   const m = vm.metrics;
   const bounceRate = m.sent > 0 ? (m.bounced / m.sent) * 100 : 0;
   const complaintRate = m.sent > 0 ? (m.complained / m.sent) * 100 : 0;
@@ -282,25 +447,102 @@ export function CampanaEditorView({ vm, actions }: CampanaEditorViewProps) {
                 <label style={labelStyle}>{tt(locale, "Asunto", "Subject")}</label>
                 <input style={inputStyle} value={subject} disabled={!editable} onChange={(e) => setSubject(e.target.value)} maxLength={200} />
               </div>
-              <div>
-                <label style={labelStyle}>{tt(locale, "Contenido (HTML)", "Content (HTML)")}</label>
-                <textarea
-                  style={{ ...inputStyle, minHeight: 200, fontFamily: "var(--font-mono, monospace)", resize: "vertical" }}
-                  value={bodyHtml}
-                  disabled={!editable}
-                  onChange={(e) => setBodyHtml(e.target.value)}
-                />
-              </div>
             </div>
+          </Card>
+
+          {/* Block composer */}
+          <Card>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <p style={{ fontSize: 14, fontWeight: 800, color: "var(--ink)", margin: 0 }}>{tt(locale, "Contenido", "Content")}</p>
+            </div>
+
+            {editable && (
+              <>
+                {/* Templates */}
+                <div style={{ marginBottom: 12 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-3)", display: "block", marginBottom: 6 }}>
+                    {tt(locale, "Empezar desde una plantilla", "Start from a template")}
+                  </span>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {BLOCK_TEMPLATES.map((t) => (
+                      <button key={t.key} type="button" onClick={() => loadTemplate(t.key)}
+                        style={{ padding: "6px 12px", borderRadius: 999, border: "1px solid var(--line)", background: "var(--card)", color: "var(--ink-2)", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                        {tt(locale, t.nameEs, t.nameEn)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Merge fields */}
+                <div style={{ marginBottom: 12, padding: "8px 12px", borderRadius: 10, background: "var(--hover, rgba(47,107,255,0.04))" }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-3)" }}>
+                    {tt(locale, "Personalizar (clic para insertar):", "Personalise (click to insert):")}
+                  </span>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                    {MERGE_FIELDS.map((f) => (
+                      <button key={f.token} type="button" onClick={() => insertMergeField(f.token)}
+                        title={tt(locale, f.labelEs, f.labelEn)}
+                        style={{ padding: "4px 10px", borderRadius: 8, border: "1px dashed var(--accent)", background: "var(--accent-soft, rgba(47,107,255,0.10))", color: "var(--accent)", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-mono, monospace)" }}>
+                        {f.token}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Blocks */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {blocks.map((b, i) => (
+                    <BlockEditor
+                      key={b.id}
+                      block={b}
+                      index={i}
+                      total={blocks.length}
+                      locale={locale}
+                      onChange={(next) => updateBlock(b.id, next)}
+                      onRemove={() => removeBlock(b.id)}
+                      onMove={(dir) => moveBlock(b.id, dir)}
+                      onFocusBlock={() => setActiveBlockId(b.id)}
+                    />
+                  ))}
+                  {blocks.length === 0 && (
+                    <p style={{ fontSize: 13, color: "var(--ink-3)", textAlign: "center", padding: "12px 0" }}>
+                      {tt(locale, "Agrega un bloque para empezar.", "Add a block to start.")}
+                    </p>
+                  )}
+                </div>
+
+                {/* Add block menu */}
+                <div style={{ marginTop: 12, display: "flex", gap: 6, flexWrap: "wrap", borderTop: "1px solid var(--line)", paddingTop: 12 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-3)", alignSelf: "center" }}>
+                    {tt(locale, "Añadir:", "Add:")}
+                  </span>
+                  {EMAIL_BLOCK_TYPES.map((type) => (
+                    <button key={type} type="button" onClick={() => addBlock(type)}
+                      style={{ padding: "6px 12px", borderRadius: 999, border: "1px solid var(--accent)", background: "var(--card)", color: "var(--accent)", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                      + {tt(locale, BLOCK_META[type].es, BLOCK_META[type].en)}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+            {!editable && (
+              <p style={{ fontSize: 13, color: "var(--ink-3)", margin: 0 }}>
+                {tt(locale, "El contenido ya no es editable.", "The content is no longer editable.")}
+              </p>
+            )}
           </Card>
 
           {/* Audience */}
           <Card>
             <p style={{ fontSize: 14, fontWeight: 800, color: "var(--ink)", margin: "0 0 12px" }}>{tt(locale, "Audiencia", "Audience")}</p>
-            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-              {(["all_clients", "by_service", "custom"] as const).map((k) => {
+            <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+              {(["all_clients", "by_service", "custom", "completed"] as const).map((k) => {
                 const active = audKind === k;
-                const label = k === "all_clients" ? tt(locale, "Todos", "All") : k === "by_service" ? tt(locale, "Por servicio", "By service") : tt(locale, "Personalizada", "Custom");
+                const label =
+                  k === "all_clients" ? tt(locale, "Todos", "All")
+                  : k === "by_service" ? tt(locale, "Por servicio", "By service")
+                  : k === "custom" ? tt(locale, "Personalizada", "Custom")
+                  : tt(locale, "Completados (win-back)", "Completed (win-back)");
                 return (
                   <button key={k} type="button" disabled={!editable} onClick={() => setAudKind(k)}
                     style={{
@@ -376,8 +618,8 @@ export function CampanaEditorView({ vm, actions }: CampanaEditorViewProps) {
           <iframe
             title={tt(locale, "Vista previa del correo", "Email preview")}
             sandbox=""
-            srcDoc={buildPreviewHtml(bodyHtml)}
-            style={{ width: "100%", height: 520, border: "none", background: "#f8f9fa" }}
+            srcDoc={previewHtml}
+            style={{ width: "100%", height: 560, border: "none", background: "#f8f9fa" }}
           />
         </Card>
       </div>

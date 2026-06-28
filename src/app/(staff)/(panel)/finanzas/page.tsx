@@ -5,14 +5,10 @@
  *   1. Guards actor (staff + collections:view).
  *   2. getBoard(actor, { kind: 'collections' }) → lazy-init con 5 columnas semilla.
  *   3. listCasesAdmin(actor) → hydrates each card with case data.
- *   4. <<NEED-BACKEND>> getCollectionMetrics → KPI strip.
- *      The billing module does not yet export getCollectionMetrics(actor, today, month)
- *      → CollectionMetricsDto. KPIs are rendered with placeholder data until this
- *      read is implemented. See §0.5 DOC-55 / API-BIL-17.
- *   5. <<NEED-BACKEND>> Per-card collection line enrichment (amount_cents, days_late,
- *      attempt_no, page_count) is NOT yet available via a dedicated collection read.
- *      The card collectionLine and daysLate are set as TODO placeholders; the billing
- *      and expediente modules must expose a listCollectionCards(actor) read.
+ *   4. getCollectionMetrics → KPI strip (collected month + real month-over-month
+ *      trend, on-time %, overdue). API-BIL-17.
+ *   5. Per-card collection line is hydrated from the billing/expediente reads
+ *      (listOverdueForCollections, listDueCalendar, listPrintQueue), keyed by case.
  *   6. Injects server actions and passes serialisable VM to the client component.
  *
  * Permissions: collections (view to load, edit to move/manage); KPIs: metrics|billing view.
@@ -208,8 +204,8 @@ export default async function FinanzasPage() {
 
       const serviceLabel = resolveI18n(caseItem?.serviceLabelI18n, locale as "es" | "en");
 
-      // Service color: not in AdminCaseListItem (GAP-3 pattern, same as Diana).
-      // <<NEED-BACKEND>>: enriched DTO must include service color token.
+      // Collection cards use the brand accent for the service chip (the cobranza
+      // board is service-agnostic; per-service colour is intentionally not surfaced here).
       const serviceColor = "var(--accent)";
 
       // Age in column
@@ -271,13 +267,25 @@ export default async function FinanzasPage() {
       };
     });
 
+  // Month-over-month delta for the collected KPI (no baseline → honest em-dash).
+  function pctDelta(curr: number, prev: number): { label: string; up: boolean } {
+    if (prev <= 0) return { label: "—", up: true };
+    const d = Math.round(((curr - prev) / prev) * 100);
+    return { label: `${d >= 0 ? "+" : ""}${d}%`, up: d >= 0 };
+  }
+
   // ── KPI strip (API-BIL-17 getCollectionMetrics) ──────────────────────────
+  const collectedTrend = metrics
+    ? pctDelta(metrics.collectedMonthCents, metrics.collectedPrevMonthCents)
+    : { label: "—", up: true };
+
   const kpi: CollectionKpiVM = metrics
     ? {
         collectedMonth: usd(metrics.collectedMonthCents),
-        collectedTrend: "—",
-        collectedTrendUp: true,
+        collectedTrend: collectedTrend.label,
+        collectedTrendUp: collectedTrend.up,
         onTimePct: `${Math.round(metrics.onTimePct)}%`,
+        // On-time % has no monthly snapshot to compare against — left as a neutral mark.
         onTimeTrend: "—",
         onTimeTrendUp: true,
         overdueLabel: usd(metrics.overdue.montoCents),

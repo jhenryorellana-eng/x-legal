@@ -23,7 +23,7 @@ export interface CampaignSummaryVM {
   name: string;
   subject: string;
   status: CampaignStatusVM;
-  audienceKind: "all_clients" | "by_service" | "custom";
+  audienceKind: "all_clients" | "by_service" | "custom" | "completed";
   scheduledAt: string | null;
   sentCount: number;
   createdAt: string;
@@ -69,6 +69,7 @@ const STATUS_META: Record<CampaignStatusVM, { tone: ChipTone; es: string; en: st
 function audienceLabel(kind: CampaignSummaryVM["audienceKind"], locale: "es" | "en") {
   if (kind === "all_clients") return tt(locale, "Todos los clientes", "All clients");
   if (kind === "by_service") return tt(locale, "Por servicio", "By service");
+  if (kind === "completed") return tt(locale, "Completados (win-back)", "Completed (win-back)");
   return tt(locale, "Personalizada", "Custom");
 }
 

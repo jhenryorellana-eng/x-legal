@@ -989,6 +989,8 @@ export async function listOverdueForCollections(
 /** Aggregated collection metrics for the Andrium dashboard (DOC-44 §3.12). */
 export interface CollectionMetricsRepo {
   collectedMonthCents: number;
+  /** Σ income for the previous calendar month — powers the month-over-month trend. */
+  collectedPrevMonthCents: number;
   onTimePct: number;
   overdue: { cuotas: number; montoCents: number; casos: number };
 }
@@ -1018,6 +1020,28 @@ export async function collectionMetrics(
     .lte("entry_date", monthEnd);
 
   const collectedMonthCents = (ledgerData ?? []).reduce(
+    (sum, r) => sum + (r.amount_cents as number),
+    0,
+  );
+
+  // 1b. Collected in the PREVIOUS calendar month (month-over-month trend).
+  const [my, mm] = month.split("-").map((n) => parseInt(n, 10));
+  const prevMonthDate = new Date(my, mm - 2, 1); // mm is 1-based → mm-2 = prev month
+  const prevMonth = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth() + 1).padStart(2, "0")}`;
+  const prevMonthStart = `${prevMonth}-01`;
+  const prevMonthEnd = new Date(prevMonthDate.getFullYear(), prevMonthDate.getMonth() + 1, 0)
+    .toISOString()
+    .split("T")[0];
+
+  const { data: prevLedgerData } = await supabase
+    .from("ledger_entries")
+    .select("amount_cents")
+    .eq("org_id", orgId)
+    .eq("kind", "income")
+    .gte("entry_date", prevMonthStart)
+    .lte("entry_date", prevMonthEnd);
+
+  const collectedPrevMonthCents = (prevLedgerData ?? []).reduce(
     (sum, r) => sum + (r.amount_cents as number),
     0,
   );
@@ -1089,6 +1113,7 @@ export async function collectionMetrics(
 
   return {
     collectedMonthCents,
+    collectedPrevMonthCents,
     onTimePct,
     overdue: { cuotas: overdueCuotas, montoCents: overdueMonto, casos: overdueCasos },
   };

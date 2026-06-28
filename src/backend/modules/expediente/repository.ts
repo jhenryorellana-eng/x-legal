@@ -710,6 +710,94 @@ export async function listPrintQueue(
     });
 }
 
+// ---------------------------------------------------------------------------
+// Print history — Andrium panel (API-EXP-20, RF-AND-027)
+// ---------------------------------------------------------------------------
+
+export interface PrintHistoryAttemptRepo {
+  expedienteId: string;
+  attemptNo: number;
+  status: string;
+  sentToFinanceAt: string | null;
+  printedAt: string | null;
+  shippedAt: string | null;
+  filedAt: string | null;
+  builtByName: string | null;
+  printedByName: string | null;
+  withLawyer: boolean;
+  lawyerVerdict: string | null;
+}
+
+/**
+ * Per-case expediente attempt history with resolved staff names + lawyer verdict.
+ * Resolves built_by / printed_by → display_name via FK joins; the lawyer verdict
+ * comes from legal_validations (by expediente_id, no PostgREST FK assumed).
+ * Ordered by attempt_no DESC (latest first). Service-role; caller ran can('printing','view').
+ *
+ * RF-AND-027 / API-EXP-20.
+ */
+export async function listPrintHistory(
+  orgId: string,
+  caseId: string,
+): Promise<PrintHistoryAttemptRepo[]> {
+  const supabase = createServiceClient();
+
+  const { data, error } = await supabase
+    .from("expedientes")
+    .select(`
+      id, attempt_no, status, sent_to_finance_at, printed_at, shipped_at, filed_at,
+      cases!inner(org_id, service_plans(requires_lawyer_validation)),
+      built_by_staff:staff_profiles!expedientes_built_by_fkey(display_name),
+      printed_by_staff:staff_profiles!expedientes_printed_by_fkey(display_name)
+    `)
+    .eq("case_id", caseId)
+    .eq("cases.org_id", orgId)
+    .order("attempt_no", { ascending: false });
+  if (error) throw new Error(`expediente.repository: listPrintHistory — ${error.message}`);
+
+  type RawRow = {
+    id: string;
+    attempt_no: number;
+    status: string;
+    sent_to_finance_at: string | null;
+    printed_at: string | null;
+    shipped_at: string | null;
+    filed_at: string | null;
+    cases: { org_id: string; service_plans: { requires_lawyer_validation: boolean } | null };
+    built_by_staff: { display_name: string } | null;
+    printed_by_staff: { display_name: string } | null;
+  };
+  const rows = ((data ?? []) as unknown as RawRow[]).filter((r) => r.cases.org_id === orgId);
+
+  // Lawyer verdict per attempt — keyed by expediente_id (separate read).
+  const ids = rows.map((r) => r.id);
+  const verdictByExp = new Map<string, string>();
+  if (ids.length > 0) {
+    const { data: vData } = await supabase
+      .from("legal_validations")
+      .select("expediente_id, verdict, status")
+      .in("expediente_id", ids);
+    for (const v of (vData ?? []) as Array<{ expediente_id: string; verdict: string | null; status: string | null }>) {
+      const value = v.verdict ?? v.status ?? "";
+      if (value) verdictByExp.set(v.expediente_id, value);
+    }
+  }
+
+  return rows.map((r) => ({
+    expedienteId: r.id,
+    attemptNo: r.attempt_no,
+    status: r.status,
+    sentToFinanceAt: r.sent_to_finance_at,
+    printedAt: r.printed_at,
+    shippedAt: r.shipped_at,
+    filedAt: r.filed_at,
+    builtByName: r.built_by_staff?.display_name ?? null,
+    printedByName: r.printed_by_staff?.display_name ?? null,
+    withLawyer: r.cases.service_plans?.requires_lawyer_validation ?? false,
+    lawyerVerdict: verdictByExp.get(r.id) ?? null,
+  }));
+}
+
 /** Loads approved case_documents for a case. */
 export async function listApprovedDocumentsForMaterial(
   caseId: string,

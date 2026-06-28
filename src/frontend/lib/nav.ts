@@ -87,6 +87,7 @@ export const STAFF_NAV: NavGroup[] = [
       { labelKey: "accounting", href: "/finanzas/contabilidad", icon: "wallet", module: "accounting" },
       { labelKey: "aiCosts", href: "/admin/ai-costs", icon: "dollar", module: "metrics" },
       { labelKey: "campaigns", href: "/finanzas/campanas", icon: "megaphone", module: "campaigns" },
+      { labelKey: "retention", href: "/finanzas/seguimiento", icon: "family", module: "retention" },
       { labelKey: "financeConfig", href: "/finanzas/configuracion", icon: "gear", module: "accounting", hiddenForAdmin: true },
     ],
   },
@@ -107,6 +108,50 @@ export const STAFF_NAV: NavGroup[] = [
     ],
   },
 ];
+
+/**
+ * Diana / paralegal sidebar (DOC-54 §0.2). The admin sees the full STAFF_NAV;
+ * each staff role gets its own department-focused tree so the navigation matches
+ * the role's actual surfaces (the admin tree mixes /admin and cross-department
+ * routes that don't belong in a paralegal's sidebar — and never surfaced /legal).
+ *
+ * Modules gate visibility exactly like STAFF_NAV (the layout still runs
+ * `filterNav` as defense-in-depth). Diana's modules: dashboard, cases,
+ * expedientes, validations, calendar, messaging, clients.
+ */
+export const LEGAL_NAV: NavGroup[] = [
+  {
+    labelKey: "production",
+    items: [
+      { labelKey: "miDia", href: "/legal/mi-dia", icon: "sun", module: "dashboard" },
+      { labelKey: "legalCases", href: "/legal", icon: "briefcase", module: "cases", badge: "cases" },
+      { labelKey: "legalReview", href: "/legal/por-revisar", icon: "check", module: "cases" },
+      { labelKey: "expedientes", href: "/legal/expediente", icon: "doc", module: "expedientes" },
+      { labelKey: "validations", href: "/legal/validaciones", icon: "shield", module: "validations" },
+    ],
+  },
+  {
+    labelKey: "communication",
+    items: [
+      // Calendar is a shared, read-only agenda for legal (DOC-54 §0.2). There is
+      // no /legal/citas surface — the org calendar lives under /ventas/citas and
+      // the `calendar` module gate keeps it read-only for the paralegal.
+      { labelKey: "appointments", href: "/ventas/citas", icon: "calendar", module: "calendar" },
+      { labelKey: "legalConfig", href: "/legal/configuracion", icon: "gear", module: "validations" },
+    ],
+  },
+];
+
+/**
+ * The navigation tree for a staff role. Admin (and unknown roles) get the full
+ * org-wide STAFF_NAV; the paralegal gets the curated legal sidebar (DOC-54 §0.2).
+ * Sales/finance keep STAFF_NAV (their department groups already cover them); the
+ * layout filters every tree by module permission regardless.
+ */
+export function navForRole(role: string | null | undefined): NavGroup[] {
+  if (role === "paralegal") return LEGAL_NAV;
+  return STAFF_NAV;
+}
 
 /**
  * Filters the nav tree by a permission predicate (canUi mirror, DOC-50 §3).

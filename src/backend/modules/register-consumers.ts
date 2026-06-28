@@ -25,6 +25,7 @@ import { onContractSigned as onContractSignedBilling } from "@/backend/modules/b
 import { ensureCaseConversation, postSystemMessage } from "@/backend/modules/messaging";
 import { registerAiEngineConsumers } from "@/backend/modules/ai-engine";
 import { registerIntegrationsConsumers } from "@/backend/modules/integrations";
+import { requestReviewSystem } from "@/backend/modules/retention";
 // scheduling: no in-process event consumers in V2.0 (DOC-43 §5 — scheduling does
 // NOT consume events from other modules; the reminder job uses polling, not events)
 
@@ -69,6 +70,19 @@ export function registerConsumers(): void {
   // case.created → notify the case's asesora (onboarding flow)
   appEvents.on("case.created", async (event) => {
     await notifyFromEvent(event);
+  });
+
+  // case.phase_advanced (cycle restart) → notify sales (Vanessa) + client
+  appEvents.on("case.phase_advanced", async (event) => {
+    await notifyFromEvent(event);
+  });
+
+  // case.completed → fidelización: open a review request for the client (retención)
+  appEvents.on("case.completed", async (event) => {
+    const p = (event.payload ?? {}) as { orgId?: string; clientId?: string; caseId?: string };
+    if (p.orgId && p.clientId && p.caseId) {
+      await requestReviewSystem(p.orgId, p.clientId, p.caseId);
+    }
   });
 
   // contract.signed → notify finance + sales + client

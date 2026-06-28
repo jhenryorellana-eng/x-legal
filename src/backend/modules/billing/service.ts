@@ -1697,6 +1697,7 @@ export async function recordReminderSent(
 
 export interface CollectionMetricsDto {
   collectedMonthCents: number;
+  collectedPrevMonthCents: number;
   onTimePct: number;
   overdue: { cuotas: number; montoCents: number; casos: number };
 }

@@ -18,6 +18,7 @@ import {
   getCompiledPdfUrl,
   ExpedienteError,
 } from "@/backend/modules/expediente";
+import { advanceCasePhase, CaseError } from "@/backend/modules/cases";
 
 // ---------------------------------------------------------------------------
 // Shared result shape
@@ -116,6 +117,55 @@ export async function getExpedientePdfUrlAction(
   } catch (err) {
     if (err instanceof ExpedienteError)
       return { ok: false, error: { code: err.code } };
+    return { ok: false, error: { code: "UNEXPECTED" } };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// advancePhaseAction  (API-CASE-26, RF-AND — phase boundary / cycle restart)
+// ---------------------------------------------------------------------------
+
+export interface AdvancePhaseOwnerOption {
+  userId: string;
+  displayName: string;
+  role: string;
+}
+
+export interface AdvancePhaseActionResult {
+  ok: boolean;
+  completed?: boolean;
+  phaseIndex?: number;
+  phaseCount?: number;
+  /** When several sales owners are eligible, the UI must pick one and retry. */
+  candidates?: AdvancePhaseOwnerOption[];
+  error?: { code: string };
+}
+
+/**
+ * Closes the printed phase and restarts the cycle (back to sales/Vanessa) or
+ * completes the case on the last phase. Andrium/admin only; the service gates on
+ * the expediente being `printed`. When more than one sales owner is eligible the
+ * service throws STAGE_OWNER_REQUIRED with the candidate list so the UI can ask.
+ */
+export async function advancePhaseAction(input: {
+  caseId: string;
+  toOwnerId?: string | null;
+  note?: string | null;
+}): Promise<AdvancePhaseActionResult> {
+  try {
+    const actor = await requireActor();
+    const res = await advanceCasePhase(actor, input);
+    return {
+      ok: true,
+      completed: res.completed,
+      phaseIndex: res.phaseIndex,
+      phaseCount: res.phaseCount,
+    };
+  } catch (err) {
+    if (err instanceof CaseError) {
+      const candidates = err.details?.candidates as AdvancePhaseOwnerOption[] | undefined;
+      return { ok: false, error: { code: err.code }, candidates };
+    }
     return { ok: false, error: { code: "UNEXPECTED" } };
   }
 }

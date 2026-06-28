@@ -25,6 +25,7 @@ import type { AdminCaseListItem, CaseBoardAlert } from "@/backend/modules/cases"
 import { resolveI18n } from "@/shared/i18n";
 import type { Locale } from "@/shared/i18n";
 import { fmtRelative } from "@/frontend/lib/datetime";
+import { resolveServiceColor } from "@/frontend/lib/service-color";
 import type {
   CaseCardVM,
   CaseColumnVM,
@@ -134,9 +135,10 @@ export default async function LegalPage() {
         caseNumber: caseItem?.caseNumber ?? card.ref_id.slice(0, 8).toUpperCase(),
         clientName: caseItem?.clientName ?? "—",
         serviceLabel: serviceLabel || "—",
-        // Service icon/color not in AdminCaseListItem — GAP-3 (need enriched DTO)
-        serviceIcon: "folder",
-        serviceColor: "var(--ink-2)",
+        // Service icon/color come from the catalog (services.icon/color) via the
+        // enriched AdminCaseListItem; fall back to a neutral folder if unset.
+        serviceIcon: caseItem?.serviceIcon || "folder",
+        serviceColor: resolveServiceColor(caseItem?.serviceColor ?? null) ?? "var(--ink-2)",
         phaseLabel: phaseLabel || "",
         withLawyer,
         caseStatus,
@@ -146,7 +148,7 @@ export default async function LegalPage() {
           lawyerCorrections: alertsMap[card.ref_id]?.lawyerCorrections ?? false,
           generationFailed: alertsMap[card.ref_id]?.generationFailed ?? false,
           rfeOverdue: alertsMap[card.ref_id]?.rfeOverdue ?? false,
-          rfeInProgress: false,
+          rfeInProgress: alertsMap[card.ref_id]?.rfeInProgress ?? false,
         },
         pinnedNote: card.pinned_note ?? null,
         ageLabel,
@@ -174,6 +176,8 @@ export default async function LegalPage() {
     noteError: t("noteError"),
     orderError: t("orderError"),
     deleteError: t("deleteError"),
+    createError: t("createError"),
+    editError: t("editError"),
     // Raw templates: the client interpolates {n} per render via String.replace.
     bannerSingle: t.raw("bannerSingle"),
     bannerPlural: t.raw("bannerPlural"),
@@ -214,6 +218,8 @@ export default async function LegalPage() {
     timeInColumn: t("timeInColumn"),
     colMenuEdit: t("colMenuEdit"),
     colMenuDelete: t("colMenuDelete"),
+    colMenuMoveLeft: t("colMenuMoveLeft"),
+    colMenuMoveRight: t("colMenuMoveRight"),
     // Raw templates: client interpolates {title}/{caseNumber} per render.
     colMenuAria: t.raw("colMenuAria"),
     openCaseAria: t.raw("openCaseAria"),
@@ -236,6 +242,7 @@ export default async function LegalPage() {
       columns={columnVMs}
       cards={cardVMs}
       totalDocsToReview={totalDocsToReview}
+      reviewQueueHref="/legal/por-revisar"
       strings={strings}
       actions={{
         moveCard: moveKanbanCardAction,

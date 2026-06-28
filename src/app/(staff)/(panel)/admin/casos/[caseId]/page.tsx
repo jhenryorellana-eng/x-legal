@@ -134,8 +134,9 @@ export default async function AdminCasoDetailPage({
 
   // Visibility toggle is an admin + sales affordance (DOC-41 §3.5 decision).
   const canManageDocs = actor.role === "admin" || actor.role === "sales";
-  // Manual phase advance is an admin + paralegal affordance (hybrid progress model).
-  const canAdvancePhase = actor.role === "admin" || actor.role === "paralegal";
+  // Phase advance / milestone progression from the admin case detail (admin only;
+  // Andrium drives the day-to-day phase boundary from the print queue).
+  const canAdvancePhase = actor.role === "admin";
   // Adding a cita to the route needs calendar:edit (the service enforces it too).
   const canManageCalendar = actor.role === "admin" || actor.role === "sales";
 

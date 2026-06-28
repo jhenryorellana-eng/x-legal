@@ -15,10 +15,10 @@ import { getLocale, getTranslations } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
 import {
   listPrintQueue,
-  getCaseExpedientes,
+  getPrintHistory,
   ExpedienteError,
   type PrintQueueItemDto,
-  type ExpedienteRow,
+  type PrintHistoryAttemptRepo,
 } from "@/backend/modules/expediente";
 import type { Locale } from "@/shared/i18n";
 import {
@@ -32,6 +32,7 @@ import {
   markShippedAction,
   markFiledAction,
   getExpedientePdfUrlAction,
+  advancePhaseAction,
 } from "./actions";
 
 // ---------------------------------------------------------------------------
@@ -64,34 +65,29 @@ function toQueueVM(dto: PrintQueueItemDto, locale: Locale): PrintQueueItemVM {
 }
 
 // ---------------------------------------------------------------------------
-// Mapper: ExpedienteRow → PrintHistoryAttemptVM
+// Mapper: PrintHistoryAttemptRepo → PrintHistoryAttemptVM (API-EXP-20)
 //
-// NOTE: ExpedienteRow stores staff IDs (built_by, printed_by) not names.
-// Resolving IDs to display names requires a join not yet exposed by the
-// module-pub boundary. Until a dedicated DTO is provided, we render IDs
-// as truncated references (UI degrades gracefully).
-// TODO API-EXP-20: expose PrintHistoryDto with resolved names.
+// getPrintHistory resolves built_by / printed_by to display names and the
+// lawyer verdict (from legal_validations), so the panel shows real names.
 // ---------------------------------------------------------------------------
 
 function toHistoryVM(
-  row: ExpedienteRow,
+  row: PrintHistoryAttemptRepo,
   currentAttemptNo: number,
 ): PrintHistoryAttemptVM {
   return {
-    expedienteId: row.id,
-    attemptNo: row.attempt_no,
+    expedienteId: row.expedienteId,
+    attemptNo: row.attemptNo,
     status: row.status,
-    sentToFinanceAt: row.sent_to_finance_at ?? null,
-    printedAt: row.printed_at ?? null,
-    shippedAt: row.shipped_at ?? null,
-    filedAt: row.filed_at ?? null,
-    // IDs only — names require a join (TODO API-EXP-20)
-    builtByName: row.built_by ? row.built_by.slice(0, 8) : null,
-    printedByName: row.printed_by ? row.printed_by.slice(0, 8) : null,
-    // with_lawyer / lawyer_verdict not in ExpedienteRow — use DTO enrichment when available
-    withLawyer: false,
-    lawyerVerdict: null,
-    isCurrentAttempt: row.attempt_no === currentAttemptNo,
+    sentToFinanceAt: row.sentToFinanceAt,
+    printedAt: row.printedAt,
+    shippedAt: row.shippedAt,
+    filedAt: row.filedAt,
+    builtByName: row.builtByName,
+    printedByName: row.printedByName,
+    withLawyer: row.withLawyer,
+    lawyerVerdict: row.lawyerVerdict,
+    isCurrentAttempt: row.attemptNo === currentAttemptNo,
   };
 }
 
@@ -167,6 +163,13 @@ async function buildMessages(
     confirm: tRaw("confirm"),
     save: tRaw("save"),
     attemptChip: tRaw("attemptChip"),
+    advancePhase: tRaw("advancePhase"),
+    confirmAdvance: tRaw("confirmAdvance"),
+    confirmAdvanceBody: tRaw("confirmAdvanceBody"),
+    advanceOwnerLabel: tRaw("advanceOwnerLabel"),
+    advanceOwnerHint: tRaw("advanceOwnerHint"),
+    toastAdvanced: tRaw("toastAdvanced"),
+    toastCompleted: tRaw("toastCompleted"),
   };
 }
 
@@ -201,12 +204,11 @@ export default async function ImpresionPage() {
   await Promise.allSettled(
     uniqueCaseIds.map(async (caseId) => {
       try {
-        const rows = await getCaseExpedientes(actor, caseId);
+        // getPrintHistory already returns DESC by attempt_no with resolved names.
+        const rows = await getPrintHistory(actor, caseId);
         const currentAttemptNo =
           queueDtos.find((d) => d.caseId === caseId)?.attemptNo ?? 0;
-        // sort descending by attempt_no (latest first)
-        const sorted = [...rows].sort((a, b) => b.attempt_no - a.attempt_no);
-        historyMap[caseId] = sorted.map((r) => toHistoryVM(r, currentAttemptNo));
+        historyMap[caseId] = rows.map((r) => toHistoryVM(r, currentAttemptNo));
       } catch {
         // silently skip — history panel gracefully handles missing data
       }
@@ -223,6 +225,7 @@ export default async function ImpresionPage() {
         markShipped: markShippedAction,
         markFiled: markFiledAction,
         getPdfUrl: getExpedientePdfUrlAction,
+        advancePhase: advancePhaseAction,
       }}
     />
   );

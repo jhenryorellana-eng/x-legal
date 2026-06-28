@@ -153,6 +153,18 @@ export async function resolveAudience(
   if (audience.kind === "custom") {
     return fetchClientCandidates(orgId, audience.userIds);
   }
+  if (audience.kind === "completed") {
+    // Win-back → primary clients of cases that reached `completed`.
+    const supabase = createServiceClient();
+    const { data, error } = await supabase
+      .from("cases")
+      .select("primary_client_id")
+      .eq("org_id", orgId)
+      .eq("status", "completed");
+    if (error) throw new Error(`campaigns.repository: resolveAudience(completed) — ${error.message}`);
+    const ids = [...new Set((data ?? []).map((c) => c.primary_client_id).filter(Boolean))] as string[];
+    return fetchClientCandidates(orgId, ids);
+  }
   // by_service → clients who are the primary client of a case with that service
   if (audience.serviceIds.length === 0) return [];
   const supabase = createServiceClient();

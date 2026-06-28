@@ -118,6 +118,24 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
       deepLinkTemplate: "/ventas/clientes/{caseId}",
     },
   ],
+  // case.phase_advanced (cycle restart) → sales (Vanessa) starts the new phase;
+  // the client gets a progress nudge. Distinct rule.type → recipient-specific copy.
+  "case.phase_advanced": [
+    {
+      type: "case.phase_advanced",
+      recipients: [{ resolverKey: "sales_of_case" }],
+      channels: { push: true, email: false }, // ①② in-app + push
+      category: "case_updates",
+      deepLinkTemplate: "/ventas/clientes/{caseId}",
+    },
+    {
+      type: "case.phase_advanced.client",
+      recipients: [{ resolverKey: "clients_of_case" }],
+      channels: { push: true, email: false }, // ①② in-app + push
+      category: "case_updates",
+      deepLinkTemplate: "/caso/{caseId}/camino",
+    },
+  ],
   "contract.signed": [
     {
       type: "contract.signed",
@@ -495,6 +513,18 @@ function renderContent(
       bodyI18n: { en: "A new case was created for your client.", es: "Se creó un nuevo caso para tu cliente." },
       icon: "file-check",
       color: "accent",
+    },
+    "case.phase_advanced": {
+      titleI18n: { en: "New phase — start the tasks", es: "Nueva fase — inicia las tareas" },
+      bodyI18n: { en: "A case advanced to a new phase. Set up its appointment route and documents.", es: "Un caso avanzó a una nueva fase. Prepara su ruta de citas y documentos." },
+      icon: "chevrons-right",
+      color: "gold",
+    },
+    "case.phase_advanced.client": {
+      titleI18n: { en: "Your case advanced to a new phase", es: "Tu caso avanzó a una nueva fase" },
+      bodyI18n: { en: "Great news — your case moved forward. We'll guide you on the next steps.", es: "Buenas noticias — tu caso avanzó. Te guiaremos en los siguientes pasos." },
+      icon: "chevrons-right",
+      color: "green",
     },
     "contract.signed": {
       titleI18n: { en: "Contract signed", es: "Contrato firmado" },

@@ -98,6 +98,8 @@ export interface DianaKanbanStrings {
   noteError: string;
   orderError: string;
   deleteError: string;
+  createError: string;
+  editError: string;
   // banner
   bannerSingle: string;
   bannerPlural: string;
@@ -145,6 +147,8 @@ export interface DianaKanbanStrings {
   // column menu
   colMenuEdit: string;
   colMenuDelete: string;
+  colMenuMoveLeft: string;
+  colMenuMoveRight: string;
   // accessibility (templates with {title}/{caseNumber})
   colMenuAria: string;
   openCaseAria: string;
@@ -199,6 +203,12 @@ export interface DianaKanbanViewProps {
   cards: CaseCardVM[];
   /** Total docs-to-review count across all cases (for the banner). */
   totalDocsToReview: number;
+  /**
+   * Destination of the banner "open queue" CTA (the legal review queue). When
+   * omitted (sales / finance boards, which don't review documents) the banner
+   * renders without a CTA instead of a dead button.
+   */
+  reviewQueueHref?: string;
   strings: DianaKanbanStrings;
   actions: DianaKanbanActions;
 }
@@ -259,6 +269,7 @@ export function DianaKanbanView({
   columns: initialColumns,
   cards: initialCards,
   totalDocsToReview,
+  reviewQueueHref,
   strings,
   actions,
 }: DianaKanbanViewProps) {
@@ -268,9 +279,14 @@ export function DianaKanbanView({
   const [columns, setColumns] = React.useState<CaseColumnVM[]>(initialColumns);
   const [cards, setCards] = React.useState<CaseCardVM[]>(initialCards);
 
-  // Drag & drop
+  // Card drag & drop
   const [dragId, setDragId] = React.useState<string | null>(null);
   const [overCol, setOverCol] = React.useState<string | null>(null);
+
+  // Column drag & drop (reorder). Kept separate from card drag so the two never
+  // interfere (a column drag must not trigger a card drop and vice-versa).
+  const [colDragId, setColDragId] = React.useState<string | null>(null);
+  const [colOverId, setColOverId] = React.useState<string | null>(null);
 
   // Column manager modal
   const [colModal, setColModal] = React.useState<ColModalMode>({ kind: "closed" });
@@ -300,14 +316,75 @@ export function DianaKanbanView({
     const card = cards.find((c) => c.id === id);
     if (!card || card.columnId === col.id) return;
 
+    // Drop at the end of the destination column (positions are 1-indexed; the
+    // backend re-packs gaps). Counting the cards already there gives the slot.
+    const toPosition = cards.filter((c) => c.columnId === col.id).length + 1;
+
     // Optimistic update
     const prev = cards;
     setCards((cs) => cs.map((c) => c.id === id ? { ...c, columnId: col.id } : c));
 
-    const res = await actions.moveCard({ cardId: id, toColumnId: col.id, toPosition: 0 });
+    const res = await actions.moveCard({ cardId: id, toColumnId: col.id, toPosition });
     if (!res.ok) {
       setCards(prev);
       toast.error(strings.moveError);
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // Column reorder (drag the column header)
+  // -------------------------------------------------------------------------
+
+  const handleColReorder = async (targetCol: CaseColumnVM) => {
+    const srcId = colDragId;
+    setColDragId(null);
+    setColOverId(null);
+    if (!srcId || srcId === targetCol.id) return;
+
+    const ordered = [...columns].sort((a, b) => a.position - b.position);
+    const srcIdx = ordered.findIndex((c) => c.id === srcId);
+    const tgtIdx = ordered.findIndex((c) => c.id === targetCol.id);
+    if (srcIdx < 0 || tgtIdx < 0) return;
+
+    const prev = columns;
+    const next = [...ordered];
+    const [moved] = next.splice(srcIdx, 1);
+    next.splice(tgtIdx, 0, moved);
+    const repositioned = next.map((c, i) => ({ ...c, position: i + 1 }));
+
+    // Optimistic reorder; revert on error.
+    setColumns(repositioned);
+    const res = await actions.reorderColumns({
+      boardId,
+      orderedColumnIds: repositioned.map((c) => c.id),
+    });
+    if (!res.ok) {
+      setColumns(prev);
+      toast.error(strings.orderError);
+    }
+  };
+
+  // Keyboard/pointer-accessible reorder (WCAG 2.1.1 alternative to the drag):
+  // swap a column with its left/right neighbour from the column menu.
+  const moveColumn = async (col: CaseColumnVM, dir: "left" | "right") => {
+    const ordered = [...columns].sort((a, b) => a.position - b.position);
+    const idx = ordered.findIndex((c) => c.id === col.id);
+    const swapIdx = dir === "left" ? idx - 1 : idx + 1;
+    if (idx < 0 || swapIdx < 0 || swapIdx >= ordered.length) return;
+
+    const prev = columns;
+    const next = [...ordered];
+    [next[idx], next[swapIdx]] = [next[swapIdx], next[idx]];
+    const repositioned = next.map((c, i) => ({ ...c, position: i + 1 }));
+
+    setColumns(repositioned);
+    const res = await actions.reorderColumns({
+      boardId,
+      orderedColumnIds: repositioned.map((c) => c.id),
+    });
+    if (!res.ok) {
+      setColumns(prev);
+      toast.error(strings.orderError);
     }
   };
 
@@ -369,7 +446,7 @@ export function DianaKanbanView({
     if (colModal.kind === "create") {
       const res = await actions.createColumn({ boardId, label: colLabel.trim(), color: colColor });
       if (!res.ok) {
-        toast.error(strings.deleteError);
+        toast.error(strings.createError);
       } else {
         // Add optimistic column at end
         const newCol: CaseColumnVM = {
@@ -386,7 +463,7 @@ export function DianaKanbanView({
       const { columnId } = colModal;
       const res = await actions.updateColumn({ columnId, label: colLabel.trim(), color: colColor });
       if (!res.ok) {
-        toast.error(strings.deleteError);
+        toast.error(strings.editError);
       } else {
         setColumns((cols) =>
           cols.map((c) => c.id === columnId ? { ...c, title: colLabel.trim(), color: colColor } : c),
@@ -487,11 +564,14 @@ export function DianaKanbanView({
               String(totalDocsToReview),
             )}
           </span>
-          {/* TODO: wire to the SidePanel cola global (DOC-54 §1.6) when the
-              review-queue endpoint (API-CASE-09) is exposed via cases index */}
-          <button type="button" className="vbtn vbtn-ghost vbtn-sm">
-            {strings.bannerCta}
-          </button>
+          {/* Review queue (DOC-54 §1.6) — the global "por revisar" page lists every
+              uploaded document across the owner's cases. Only the legal board
+              passes a target; other boards show the banner without a CTA. */}
+          {reviewQueueHref && (
+            <Link href={reviewQueueHref} className="vbtn vbtn-ghost vbtn-sm">
+              {strings.bannerCta}
+            </Link>
+          )}
         </div>
       )}
 
@@ -515,14 +595,30 @@ export function DianaKanbanView({
 
       {/* ── Board ── */}
       <div className="kanban">
-        {sortedColumns.map((col) => {
+        {sortedColumns.map((col, colIdx) => {
           const colCards = cards.filter((c) => c.columnId === col.id);
           const otherCols = columns.filter((c) => c.id !== col.id);
 
           return (
-            <div className="kcol" key={col.id}>
-              {/* Column header */}
-              <div className="kcol-head">
+            <div
+              className="kcol"
+              key={col.id}
+              style={
+                colOverId === col.id && colDragId && colDragId !== col.id
+                  ? { outline: "2px dashed var(--accent)", outlineOffset: 2, borderRadius: 12 }
+                  : undefined
+              }
+            >
+              {/* Column header — drag to reorder columns (RF-DIA-004) */}
+              <div
+                className={`kcol-head${colDragId === col.id ? " dragging" : ""}`}
+                draggable
+                onDragStart={(e) => { setColDragId(col.id); e.dataTransfer.effectAllowed = "move"; }}
+                onDragEnd={() => { setColDragId(null); setColOverId(null); }}
+                onDragOver={(e) => { if (colDragId) { e.preventDefault(); setColOverId(col.id); } }}
+                onDrop={() => { if (colDragId) handleColReorder(col); }}
+                style={{ cursor: "grab" }}
+              >
                 <span className="kcol-dot" style={{ background: tokenToVar(col.color) }} />
                 <span className="kcol-title">{col.title}</span>
                 <span className="kcol-count">{colCards.length}</span>
@@ -534,6 +630,12 @@ export function DianaKanbanView({
                     otherCols={otherCols}
                     onEdit={() => openEdit(col)}
                     onDelete={() => openDelete(col)}
+                    canMoveLeft={colIdx > 0}
+                    canMoveRight={colIdx < sortedColumns.length - 1}
+                    onMoveLeft={() => moveColumn(col, "left")}
+                    onMoveRight={() => moveColumn(col, "right")}
+                    moveLeftLabel={strings.colMenuMoveLeft}
+                    moveRightLabel={strings.colMenuMoveRight}
                     delLastLabel={strings.delLastColumn}
                     editLabel={strings.colMenuEdit}
                     deleteLabel={strings.colMenuDelete}
@@ -542,12 +644,12 @@ export function DianaKanbanView({
                 </div>
               </div>
 
-              {/* Drop zone */}
+              {/* Drop zone (card drops only — guarded against column drags) */}
               <div
                 className={`kcol-body${overCol === col.id ? " dragover" : ""}`}
-                onDragOver={(e) => { e.preventDefault(); setOverCol(col.id); }}
+                onDragOver={(e) => { if (!colDragId) { e.preventDefault(); setOverCol(col.id); } }}
                 onDragLeave={(e) => { if (e.currentTarget === e.target) setOverCol(null); }}
-                onDrop={() => handleDrop(col)}
+                onDrop={() => { if (!colDragId) handleDrop(col); }}
               >
                 {colCards.length === 0 && (
                   <div className="kcol-empty">{strings.emptyCol}</div>
@@ -977,12 +1079,35 @@ function AlertChips({ card, strings }: { card: CaseCardVM; strings: DianaKanbanS
 // ColumnMenu (⋯ button with popover options)
 // ---------------------------------------------------------------------------
 
+function menuItemStyle(disabled: boolean): React.CSSProperties {
+  return {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    width: "100%",
+    padding: "8px 14px",
+    background: "none",
+    border: "none",
+    fontSize: 13,
+    fontWeight: 700,
+    color: disabled ? "var(--ink-3)" : "var(--ink)",
+    cursor: disabled ? "not-allowed" : "pointer",
+    textAlign: "left",
+  };
+}
+
 function ColumnMenu({
   col,
   isLast,
   onEdit,
   onDelete,
   otherCols: _otherCols,
+  canMoveLeft,
+  canMoveRight,
+  onMoveLeft,
+  onMoveRight,
+  moveLeftLabel,
+  moveRightLabel,
   delLastLabel,
   editLabel,
   deleteLabel,
@@ -993,6 +1118,12 @@ function ColumnMenu({
   otherCols: CaseColumnVM[];
   onEdit: () => void;
   onDelete: () => void;
+  canMoveLeft: boolean;
+  canMoveRight: boolean;
+  onMoveLeft: () => void;
+  onMoveRight: () => void;
+  moveLeftLabel: string;
+  moveRightLabel: string;
   delLastLabel: string;
   editLabel: string;
   deleteLabel: string;
@@ -1041,20 +1172,27 @@ function ColumnMenu({
           <button
             type="button"
             role="menuitem"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              width: "100%",
-              padding: "8px 14px",
-              background: "none",
-              border: "none",
-              fontSize: 13,
-              fontWeight: 700,
-              color: "var(--ink)",
-              cursor: "pointer",
-              textAlign: "left",
-            }}
+            disabled={!canMoveLeft}
+            style={menuItemStyle(!canMoveLeft)}
+            onClick={() => { if (canMoveLeft) { setOpen(false); onMoveLeft(); } }}
+          >
+            <MSym name="chevron_left" size={16} />
+            {moveLeftLabel}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!canMoveRight}
+            style={menuItemStyle(!canMoveRight)}
+            onClick={() => { if (canMoveRight) { setOpen(false); onMoveRight(); } }}
+          >
+            <MSym name="chevron_right" size={16} />
+            {moveRightLabel}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            style={menuItemStyle(false)}
             onClick={() => { setOpen(false); onEdit(); }}
           >
             <MSym name="edit" size={16} />

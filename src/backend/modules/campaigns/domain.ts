@@ -17,7 +17,9 @@ export type CampaignStatus =
 export type AudienceSpec =
   | { kind: "all_clients" }
   | { kind: "by_service"; serviceIds: string[] }
-  | { kind: "custom"; userIds: string[] };
+  | { kind: "custom"; userIds: string[] }
+  // Win-back / re-engagement: clients whose case reached `completed` (DOC-13 §F retención).
+  | { kind: "completed" };
 
 // ---------------------------------------------------------------------------
 // State machine (DOC-47 §5.4)
@@ -60,12 +62,14 @@ export function parseAudience(raw: unknown): AudienceSpec {
     const ids = (a.user_ids ?? a.userIds ?? []) as string[];
     return { kind: "custom", userIds: Array.isArray(ids) ? ids : [] };
   }
+  if (a.kind === "completed") return { kind: "completed" };
   return { kind: "all_clients" };
 }
 
 export function audienceToJson(a: AudienceSpec): Record<string, unknown> {
   if (a.kind === "by_service") return { kind: "by_service", service_ids: a.serviceIds };
   if (a.kind === "custom") return { kind: "custom", user_ids: a.userIds };
+  if (a.kind === "completed") return { kind: "completed" };
   return { kind: "all_clients" };
 }
 

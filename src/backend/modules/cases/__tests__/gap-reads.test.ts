@@ -35,6 +35,7 @@ const {
   mockFindCasesWithLawyerCorrections,
   mockFindCasesWithGenerationFailed,
   mockFindCasesWithRfeOverdue,
+  mockFindCasesWithRfeInProgress,
   mockCan,
 } = vi.hoisted(() => ({
   mockListCases: vi.fn(),
@@ -46,6 +47,7 @@ const {
   mockFindCasesWithLawyerCorrections: vi.fn().mockResolvedValue([]),
   mockFindCasesWithGenerationFailed: vi.fn().mockResolvedValue([]),
   mockFindCasesWithRfeOverdue: vi.fn().mockResolvedValue([]),
+  mockFindCasesWithRfeInProgress: vi.fn().mockResolvedValue([]),
   mockCan: vi.fn(),
 }));
 
@@ -102,6 +104,7 @@ vi.mock("../repository", async (importOriginal) => {
     findCasesWithLawyerCorrections: mockFindCasesWithLawyerCorrections,
     findCasesWithGenerationFailed: mockFindCasesWithGenerationFailed,
     findCasesWithRfeOverdue: mockFindCasesWithRfeOverdue,
+    findCasesWithRfeInProgress: mockFindCasesWithRfeInProgress,
     // Non-GAP repo functions — neutral mocks to avoid accidental calls
     findCaseById: vi.fn().mockResolvedValue(null),
     findCaseByCaseId: vi.fn().mockResolvedValue(null),
@@ -180,6 +183,8 @@ const makeCase = (id: string) => ({
 const makeServiceLite = () => ({
   id: SERVICE_ID,
   label_i18n: { en: "Immigration Service", es: "Servicio Migratorio" },
+  icon: "scale",
+  color: "accent",
 });
 
 const makePhases = () => [
@@ -245,6 +250,9 @@ describe("cases: listCasesByOwner", () => {
     });
     // serviceLabelI18n must be {en, es}
     expect(result[0].serviceLabelI18n).toMatchObject({ en: "Immigration Service", es: "Servicio Migratorio" });
+    // service icon/color come straight from the catalog row (GAP-3 fix)
+    expect(result[0].serviceIcon).toBe("scale");
+    expect(result[0].serviceColor).toBe("accent");
   });
 
   it("returns multiple items when multiple cases assigned", async () => {
@@ -272,6 +280,8 @@ describe("cases: listCasesByOwner", () => {
     const result = await listCasesByOwner(ACTOR);
     // asI18n(null) returns null — the page must handle null serviceLabelI18n
     expect(result[0].serviceLabelI18n).toBeNull();
+    expect(result[0].serviceIcon).toBeNull();
+    expect(result[0].serviceColor).toBeNull();
     expect(result[0].planKind).toBeNull();
     expect(result[0].clientName).toBeNull();
   });
@@ -289,6 +299,7 @@ describe("cases: getCaseBoardAlerts", () => {
     mockFindCasesWithLawyerCorrections.mockResolvedValue([]);
     mockFindCasesWithGenerationFailed.mockResolvedValue([]);
     mockFindCasesWithRfeOverdue.mockResolvedValue([]);
+    mockFindCasesWithRfeInProgress.mockResolvedValue([]);
   });
 
   it("enforces can(actor,'cases','view')", async () => {
@@ -310,6 +321,7 @@ describe("cases: getCaseBoardAlerts", () => {
       lawyerCorrections: false,
       generationFailed: false,
       rfeOverdue: false,
+      rfeInProgress: false,
     });
   });
 
@@ -339,6 +351,21 @@ describe("cases: getCaseBoardAlerts", () => {
     expect(result[CASE_ID_1].rfeOverdue).toBe(true);
   });
 
+  it("maps rfeInProgress=true when a rejected RFE is not yet overdue", async () => {
+    mockFindCasesWithRfeInProgress.mockResolvedValue([CASE_ID_1]);
+    const result = await getCaseBoardAlerts(ACTOR, [CASE_ID_1]);
+    expect(result[CASE_ID_1].rfeInProgress).toBe(true);
+    expect(result[CASE_ID_1].rfeOverdue).toBe(false);
+  });
+
+  it("suppresses rfeInProgress when the same case is also overdue", async () => {
+    mockFindCasesWithRfeOverdue.mockResolvedValue([CASE_ID_1]);
+    mockFindCasesWithRfeInProgress.mockResolvedValue([CASE_ID_1]);
+    const result = await getCaseBoardAlerts(ACTOR, [CASE_ID_1]);
+    expect(result[CASE_ID_1].rfeOverdue).toBe(true);
+    expect(result[CASE_ID_1].rfeInProgress).toBe(false);
+  });
+
   it("correctly isolates signals between two cases", async () => {
     mockCountUploadedDocsByCases.mockResolvedValue([
       { case_id: CASE_ID_1, count: 2 },
@@ -354,12 +381,14 @@ describe("cases: getCaseBoardAlerts", () => {
       lawyerCorrections: false,
       generationFailed: true,
       rfeOverdue: false,
+      rfeInProgress: false,
     });
     expect(result[CASE_ID_2]).toEqual({
       needsReview: 0,
       lawyerCorrections: true,
       generationFailed: false,
       rfeOverdue: true,
+      rfeInProgress: false,
     });
   });
 
@@ -375,6 +404,7 @@ describe("cases: getCaseBoardAlerts", () => {
       lawyerCorrections: true,
       generationFailed: true,
       rfeOverdue: true,
+      rfeInProgress: false,
     });
   });
 

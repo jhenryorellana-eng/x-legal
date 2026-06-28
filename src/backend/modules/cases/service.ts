@@ -108,6 +108,7 @@ import {
   findCasesWithLawyerCorrections,
   findCasesWithGenerationFailed,
   findCasesWithRfeOverdue,
+  findCasesWithRfeInProgress,
   getActiveCasesEnriched,
   insertStageHistory,
   listCaseStageHistory,
@@ -147,6 +148,7 @@ export class CaseError extends Error {
       | "CASE_NOTE_REQUIRED"
       | "CASE_PHASE_INVALID"
       | "CASE_ALREADY_LAST_PHASE"
+      | "CASE_PHASE_NOT_PRINTED"
       | "CASE_ALREADY_LAST_MILESTONE"
       | "CASE_NO_MILESTONES"
       | "CASE_SERVICE_NOT_AVAILABLE"
@@ -1903,13 +1905,17 @@ export async function changeCaseStatus(
 }
 
 // ---------------------------------------------------------------------------
-// advanceCasePhase — manual phase progression (admin/paralegal)
+// advanceCasePhase — phase boundary = close phase & restart the cycle
 // ---------------------------------------------------------------------------
 
 const AdvancePhaseSchema = z.object({
   caseId: zUuid,
   /** Explicit later phase; when omitted, advances to the next phase by position. */
   toPhaseId: zUuid.nullable().optional(),
+  /** Sales owner for the new phase (required only when several are eligible). */
+  toOwnerId: zUuid.nullable().optional(),
+  /** Admin-only: bypass the "expediente printed" gate. */
+  force: z.boolean().optional(),
   note: z.string().trim().max(500).nullable().optional(),
 });
 
@@ -1917,18 +1923,30 @@ export type AdvanceCasePhaseInput = z.infer<typeof AdvancePhaseSchema>;
 
 export interface AdvanceCasePhaseResult {
   phaseId: string;
-  /** 1-based index of the new phase. */
+  /** 1-based index of the resulting phase. */
   phaseIndex: number;
   phaseCount: number;
   labelI18n: I18nValue | null;
+  /** True when this advance completed the case (last phase). */
+  completed: boolean;
+  /** Stage the case lands in after advancing ('sales' on a new phase, 'done' on completion). */
+  stage: CaseStage;
+  /** New responsible (the sales owner), or null when completed. */
+  ownerId: string | null;
 }
 
 /**
- * Moves a case forward to the next service phase (or an explicit later phase).
- * Manual, staff-driven — admin + paralegal only (the phase boundary tracks an
- * external legal event the system cannot observe). The within-phase % stays
- * automatic (computePhaseProgress). Records the transition in case_phase_history,
- * surfaces it on the client timeline, and audits it.
+ * Crosses the phase boundary: closes the current phase and either restarts the
+ * cycle on the next phase (back to the `sales` stage / Vanessa) or completes the
+ * case when there is no next phase. Manual, staff-driven — **admin + finance**
+ * (Andrium prints the phase's expediente, then advances). Gated on the current
+ * phase's expediente being `printed` (admin may `force`).
+ *
+ * On a next-phase advance it resets `current_stage='sales'`, reassigns the case
+ * to a sales owner, moves the kanban card (case.owner_changed), records the
+ * phase + stage transitions, surfaces it on the client timeline, and notifies
+ * sales + client (case.phase_advanced). On the last phase it marks the case
+ * `completed` and emits `case.completed` for retention hooks.
  *
  * @api-id API-CASE-26 (advance phase)
  */
@@ -1936,20 +1954,51 @@ export async function advanceCasePhase(
   actor: Actor,
   input: AdvanceCasePhaseInput,
 ): Promise<AdvanceCasePhaseResult> {
-  can(actor, "cases", "edit");
-  // Only admin + paralegal advance the legal phase (sales/finance excluded).
+  // The phase boundary is an operations action (it follows printing). Andrium
+  // (finance) holds `printing:edit`; admin bypasses. Sales/paralegal excluded.
   if (
     actor.kind !== "staff" ||
-    (actor.role !== "admin" && actor.role !== "paralegal")
+    (actor.role !== "admin" && actor.role !== "finance")
   ) {
     throw new AuthzError("forbidden_module");
   }
+  can(actor, "printing", "edit");
   const parsed = AdvancePhaseSchema.parse(input);
   await requireCaseAccess(actor, parsed.caseId);
 
   const caseRow = await findCaseById(parsed.caseId);
   if (!caseRow) throw new CaseError("CASE_NOT_FOUND");
   if (!caseRow.current_phase_id) throw new CaseError("CASE_PHASE_INVALID");
+
+  const fromStage = (caseRow.current_stage ?? "operations") as CaseStage;
+  const fromOwnerId = caseRow.current_owner_id;
+  const isAdmin = actor.role === "admin";
+
+  // Gate: only advance from the operations stage (right after printing) with the
+  // current phase's expediente `printed`. The stage guard also prevents a double
+  // advance (the printed expediente lingers as the latest until the next phase
+  // builds one). Admin may `force` past both checks.
+  if (!(isAdmin && parsed.force)) {
+    if (fromStage !== "operations") {
+      throw new CaseError("STAGE_NOT_READY");
+    }
+    let latestExpedienteStatus: string | null = null;
+    try {
+      const exp = (await import("@/backend/modules/expediente")) as {
+        getCaseExpedientes: (a: Actor, c: string) => Promise<Array<{ status: string; attempt_no: number }>>;
+      };
+      const rows = await exp.getCaseExpedientes(actor, caseRow.id);
+      // DESC by attempt_no → the first row is the current phase's latest expediente.
+      latestExpedienteStatus = rows[0]?.status ?? null;
+    } catch (err) {
+      // Fail closed: an unreadable expediente status blocks the advance below.
+      logger.warn({ err, caseId: caseRow.id }, "advanceCasePhase: expediente gate read failed");
+      latestExpedienteStatus = null;
+    }
+    if (latestExpedienteStatus !== "printed") {
+      throw new CaseError("CASE_PHASE_NOT_PRINTED");
+    }
+  }
 
   const phases = await listServicePhases(caseRow.service_id);
   const refs = phases.map((p) => ({ id: p.id, position: p.position }));
@@ -1966,20 +2015,109 @@ export async function advanceCasePhase(
   } else {
     target = resolveNextPhase(refs, caseRow.current_phase_id);
   }
-  if (!target) throw new CaseError("CASE_ALREADY_LAST_PHASE");
+
+  // ── Last phase: advancing completes the case ─────────────────────────────
+  if (!target) {
+    await updateCase(caseRow.id, {
+      current_stage: "done",
+      current_owner_id: null,
+      status: "completed",
+      completed_at: new Date().toISOString(),
+    });
+    await insertStageHistory({
+      caseId: caseRow.id,
+      fromStage,
+      toStage: "done",
+      fromOwnerId,
+      toOwnerId: null,
+      actorId: actor.userId,
+      note: parsed.note ?? "case completed",
+    });
+    await writeTimeline({
+      caseId: caseRow.id,
+      eventType: "case.completed",
+      actorKind: "team",
+      actorUserId: actor.userId,
+      visibleToClient: true,
+      titleI18n: {
+        es: "¡Tu caso fue completado! Gracias por confiar en nosotros.",
+        en: "Your case is complete! Thank you for trusting us.",
+      },
+    });
+    await writeAudit(actor, "case.completed", "cases", caseRow.id, {
+      before: { status: caseRow.status, stage: fromStage },
+      after: { status: "completed", stage: "done" },
+    });
+    // Remove the kanban card from the operations board + fire retention hooks.
+    await appEvents.emitAndWait({
+      type: "case.owner_changed",
+      payload: { caseId: caseRow.id, orgId: actor.orgId, fromOwnerId, toOwnerId: null },
+      occurredAt: new Date(),
+    });
+    await appEvents.emitAndWait({
+      type: "case.completed",
+      payload: { caseId: caseRow.id, orgId: actor.orgId, clientId: caseRow.primary_client_id },
+      occurredAt: new Date(),
+    });
+    const currentPhase = phases.find((p) => p.id === caseRow.current_phase_id);
+    return {
+      phaseId: caseRow.current_phase_id,
+      phaseIndex: phases.findIndex((p) => p.id === caseRow.current_phase_id) + 1,
+      phaseCount: phases.length,
+      labelI18n: asI18n(currentPhase?.label_i18n),
+      completed: true,
+      stage: "done",
+      ownerId: null,
+    };
+  }
+
+  // ── Next phase: restart the cycle at the sales stage (back to Vanessa) ───
+  const salesCandidates = await eligibleOwnersForStage(actor.orgId, "sales");
+  let salesOwnerId: string;
+  if (parsed.toOwnerId) {
+    if (!salesCandidates.some((c) => c.userId === parsed.toOwnerId)) {
+      throw new CaseError("STAGE_INVALID_OWNER");
+    }
+    salesOwnerId = parsed.toOwnerId;
+  } else if (
+    caseRow.assigned_sales_id &&
+    salesCandidates.some((c) => c.userId === caseRow.assigned_sales_id)
+  ) {
+    salesOwnerId = caseRow.assigned_sales_id;
+  } else if (salesCandidates.length === 1) {
+    salesOwnerId = salesCandidates[0].userId;
+  } else if (salesCandidates.length === 0) {
+    throw new CaseError("STAGE_NO_OWNER");
+  } else {
+    throw new CaseError("STAGE_OWNER_REQUIRED", { candidates: salesCandidates });
+  }
 
   const targetPhase = phases.find((p) => p.id === target!.id)!;
   const labelI18n = asI18n(targetPhase.label_i18n);
   const phaseName = (l: "es" | "en") => (labelI18n ? (labelI18n[l] ?? "") : "");
 
-  await updateCase(caseRow.id, { current_phase_id: target.id });
+  await updateCase(caseRow.id, {
+    current_phase_id: target.id,
+    current_stage: "sales",
+    current_owner_id: salesOwnerId,
+    assigned_sales_id: salesOwnerId,
+    status: "active",
+  });
   await insertPhaseHistory({
     caseId: caseRow.id,
     phaseId: target.id,
     enteredBy: actor.userId,
     note: parsed.note ?? null,
   });
-
+  await insertStageHistory({
+    caseId: caseRow.id,
+    fromStage,
+    toStage: "sales",
+    fromOwnerId,
+    toOwnerId: salesOwnerId,
+    actorId: actor.userId,
+    note: "phase advanced — cycle restart",
+  });
   await writeTimeline({
     caseId: caseRow.id,
     eventType: "phase.advanced",
@@ -1991,14 +2129,37 @@ export async function advanceCasePhase(
       en: `Your case advanced to phase: ${phaseName("en")}`,
     },
   });
-
   await writeAudit(actor, "case.phase_advanced", "cases", caseRow.id, {
-    before: { phaseId: caseRow.current_phase_id },
-    after: { phaseId: target.id },
+    before: { phaseId: caseRow.current_phase_id, stage: fromStage, ownerId: fromOwnerId },
+    after: { phaseId: target.id, stage: "sales", ownerId: salesOwnerId },
+  });
+  // Move the kanban card to the new sales owner (off the operations board).
+  await appEvents.emitAndWait({
+    type: "case.owner_changed",
+    payload: { caseId: caseRow.id, orgId: actor.orgId, fromOwnerId, toOwnerId: salesOwnerId },
+    occurredAt: new Date(),
+  });
+  // Notify sales (Vanessa) + client (consumer → notifyFromEvent via the F2 matrix).
+  await appEvents.emitAndWait({
+    type: "case.phase_advanced",
+    payload: {
+      caseId: caseRow.id,
+      orgId: actor.orgId,
+      phaseEs: phaseName("es"),
+      phaseEn: phaseName("en"),
+    },
+    occurredAt: new Date(),
   });
 
-  const phaseIndex = phases.findIndex((p) => p.id === target!.id) + 1;
-  return { phaseId: target.id, phaseIndex, phaseCount: phases.length, labelI18n };
+  return {
+    phaseId: target.id,
+    phaseIndex: phases.findIndex((p) => p.id === target!.id) + 1,
+    phaseCount: phases.length,
+    labelI18n,
+    completed: false,
+    stage: "sales",
+    ownerId: salesOwnerId,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -2160,6 +2321,10 @@ export interface AdminCaseListItem {
   status: string;
   clientName: string | null;
   serviceLabelI18n: I18nValue | null;
+  /** Brand/Material icon name for the service (catalog `services.icon`). */
+  serviceIcon: string | null;
+  /** Service accent color token/hex (catalog `services.color`). */
+  serviceColor: string | null;
   planKind: string | null;
   phaseLabelI18n: I18nValue | null;
   phaseIndex: number;
@@ -2212,6 +2377,8 @@ export async function listCasesAdmin(
         status: c.status,
         clientName,
         serviceLabelI18n: asI18n(service?.label_i18n),
+        serviceIcon: service?.icon ?? null,
+        serviceColor: service?.color ?? null,
         planKind,
         phaseLabelI18n: asI18n(currentPhase?.label_i18n),
         phaseIndex: currentIdx >= 0 ? currentIdx + 1 : 0,
@@ -4337,6 +4504,8 @@ export async function listCasesByOwner(
         status: c.status,
         clientName,
         serviceLabelI18n: asI18n(service?.label_i18n),
+        serviceIcon: service?.icon ?? null,
+        serviceColor: service?.color ?? null,
         planKind,
         phaseLabelI18n: asI18n(currentPhase?.label_i18n),
         phaseIndex: currentIdx >= 0 ? currentIdx + 1 : 0,
@@ -4725,6 +4894,8 @@ export interface CaseBoardAlert {
   lawyerCorrections: boolean;
   generationFailed: boolean;
   rfeOverdue: boolean;
+  /** RFE awaiting client re-submission, not yet past its due date (amber rail). */
+  rfeInProgress: boolean;
 }
 
 export async function getCaseBoardAlerts(
@@ -4734,26 +4905,31 @@ export async function getCaseBoardAlerts(
   can(actor, "cases", "view");
   if (caseIds.length === 0) return {};
 
-  const [uploadedCounts, lawyerCorrectionIds, generationFailedIds, rfeOverdueIds] =
+  const [uploadedCounts, lawyerCorrectionIds, generationFailedIds, rfeOverdueIds, rfeInProgressIds] =
     await Promise.all([
       countUploadedDocsByCases(caseIds),
       findCasesWithLawyerCorrections(caseIds),
       findCasesWithGenerationFailed(caseIds),
       findCasesWithRfeOverdue(caseIds),
+      findCasesWithRfeInProgress(caseIds),
     ]);
 
   const uploadedByCase = new Map(uploadedCounts.map((r) => [r.case_id, r.count]));
   const lawyerSet = new Set(lawyerCorrectionIds);
   const genFailedSet = new Set(generationFailedIds);
   const rfeSet = new Set(rfeOverdueIds);
+  const rfeInProgressSet = new Set(rfeInProgressIds);
 
   const result: Record<string, CaseBoardAlert> = {};
   for (const id of caseIds) {
+    const overdue = rfeSet.has(id);
     result[id] = {
       needsReview: uploadedByCase.get(id) ?? 0,
       lawyerCorrections: lawyerSet.has(id),
       generationFailed: genFailedSet.has(id),
-      rfeOverdue: rfeSet.has(id),
+      rfeOverdue: overdue,
+      // An overdue RFE is not also "in progress" — the card shows the stronger signal.
+      rfeInProgress: !overdue && rfeInProgressSet.has(id),
     };
   }
   return result;

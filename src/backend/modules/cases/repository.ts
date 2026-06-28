@@ -1534,3 +1534,29 @@ export async function findCasesWithRfeOverdue(
   if (error) throw new Error(`cases.repository: findCasesWithRfeOverdue — ${error.message}`);
   return [...new Set((data ?? []).map((r) => r.case_id))];
 }
+
+/**
+ * Returns the set of caseIds that have an RFE in progress but NOT yet overdue.
+ *
+ * In progress = case_documents with:
+ *   - status = 'rejected'  — awaiting client re-submission
+ *   - correction_due_at IS NOT NULL AND correction_due_at >= now()
+ *
+ * Used by getCaseBoardAlerts → rfeInProgress signal (amber left rail on the card).
+ */
+export async function findCasesWithRfeInProgress(
+  caseIds: string[],
+): Promise<string[]> {
+  if (caseIds.length === 0) return [];
+  const supabase = createServiceClient();
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("case_documents")
+    .select("case_id")
+    .in("case_id", caseIds)
+    .eq("status", "rejected")
+    .not("correction_due_at", "is", null)
+    .gte("correction_due_at", now);
+  if (error) throw new Error(`cases.repository: findCasesWithRfeInProgress — ${error.message}`);
+  return [...new Set((data ?? []).map((r) => r.case_id))];
+}

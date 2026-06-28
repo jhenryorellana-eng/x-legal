@@ -57,14 +57,19 @@ export {
   createCorrectionAttempt,
 } from "./service";
 
-// Print queue (Andrium — RF-AND-023)
+// Print queue + history (Andrium — RF-AND-023, RF-AND-027)
 export {
   listPrintQueue,
+  getPrintHistory,
 } from "./service";
 
 export type {
   PrintQueueItemDto,
 } from "./service";
+
+export type {
+  PrintHistoryAttemptRepo,
+} from "./repository";
 
 // Handoff to Andrium (printing)
 export {

@@ -629,6 +629,7 @@ export type Database = {
       broadcast_campaigns: {
         Row: {
           audience: Json
+          body_blocks: Json | null
           body_html: string
           created_at: string
           created_by: string | null
@@ -643,6 +644,7 @@ export type Database = {
         }
         Insert: {
           audience: Json
+          body_blocks?: Json | null
           body_html: string
           created_at?: string
           created_by?: string | null
@@ -657,6 +659,7 @@ export type Database = {
         }
         Update: {
           audience?: Json
+          body_blocks?: Json | null
           body_html?: string
           created_at?: string
           created_by?: string | null
@@ -3231,6 +3234,7 @@ export type Database = {
           case_updates: boolean
           channels: Json
           created_at: string
+          marketing: boolean
           messages: boolean
           payment_reminders: boolean
           updated_at: string
@@ -3241,6 +3245,7 @@ export type Database = {
           case_updates?: boolean
           channels?: Json
           created_at?: string
+          marketing?: boolean
           messages?: boolean
           payment_reminders?: boolean
           updated_at?: string
@@ -3251,6 +3256,7 @@ export type Database = {
           case_updates?: boolean
           channels?: Json
           created_at?: string
+          marketing?: boolean
           messages?: boolean
           payment_reminders?: boolean
           updated_at?: string
@@ -3609,6 +3615,147 @@ export type Database = {
           },
         ]
       }
+      promotion_redemptions: {
+        Row: {
+          amount_cents: number | null
+          case_id: string | null
+          id: string
+          org_id: string
+          promotion_id: string
+          redeemed_at: string
+          redeemed_by: string | null
+          user_id: string | null
+        }
+        Insert: {
+          amount_cents?: number | null
+          case_id?: string | null
+          id?: string
+          org_id: string
+          promotion_id: string
+          redeemed_at?: string
+          redeemed_by?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          amount_cents?: number | null
+          case_id?: string | null
+          id?: string
+          org_id?: string
+          promotion_id?: string
+          redeemed_at?: string
+          redeemed_by?: string | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "promotion_redemptions_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "promotion_redemptions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "orgs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "promotion_redemptions_promotion_id_fkey"
+            columns: ["promotion_id"]
+            isOneToOne: false
+            referencedRelation: "promotions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "promotion_redemptions_redeemed_by_fkey"
+            columns: ["redeemed_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "promotion_redemptions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      promotions: {
+        Row: {
+          code: string
+          created_at: string
+          created_by: string | null
+          currency: string
+          description: string | null
+          id: string
+          is_active: boolean
+          kind: string
+          max_uses: number | null
+          org_id: string
+          service_scope: Json | null
+          updated_at: string
+          used_count: number
+          valid_from: string | null
+          valid_until: string | null
+          value: number
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          kind: string
+          max_uses?: number | null
+          org_id: string
+          service_scope?: Json | null
+          updated_at?: string
+          used_count?: number
+          valid_from?: string | null
+          valid_until?: string | null
+          value: number
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          kind?: string
+          max_uses?: number | null
+          org_id?: string
+          service_scope?: Json | null
+          updated_at?: string
+          used_count?: number
+          valid_from?: string | null
+          valid_until?: string | null
+          value?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "promotions_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "promotions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "orgs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       push_subscriptions: {
         Row: {
           created_at: string
@@ -3641,6 +3788,122 @@ export type Database = {
           {
             foreignKeyName: "push_subscriptions_user_id_fkey"
             columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      referral_codes: {
+        Row: {
+          code: string
+          created_at: string
+          id: string
+          is_active: boolean
+          org_id: string
+          referrer_user_id: string
+          updated_at: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          org_id: string
+          referrer_user_id: string
+          updated_at?: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          org_id?: string
+          referrer_user_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "referral_codes_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "orgs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_codes_referrer_user_id_fkey"
+            columns: ["referrer_user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      referrals: {
+        Row: {
+          converted_at: string | null
+          created_at: string
+          id: string
+          org_id: string
+          referral_code_id: string
+          referred_lead_id: string | null
+          referred_user_id: string | null
+          reward: Json | null
+          rewarded_at: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          converted_at?: string | null
+          created_at?: string
+          id?: string
+          org_id: string
+          referral_code_id: string
+          referred_lead_id?: string | null
+          referred_user_id?: string | null
+          reward?: Json | null
+          rewarded_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          converted_at?: string | null
+          created_at?: string
+          id?: string
+          org_id?: string
+          referral_code_id?: string
+          referred_lead_id?: string | null
+          referred_user_id?: string | null
+          reward?: Json | null
+          rewarded_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "referrals_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "orgs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referrals_referral_code_id_fkey"
+            columns: ["referral_code_id"]
+            isOneToOne: false
+            referencedRelation: "referral_codes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referrals_referred_lead_id_fkey"
+            columns: ["referred_lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referrals_referred_user_id_fkey"
+            columns: ["referred_user_id"]
             isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["id"]
@@ -3717,6 +3980,73 @@ export type Database = {
             columns: ["service_phase_id"]
             isOneToOne: false
             referencedRelation: "service_phases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reviews: {
+        Row: {
+          body: string | null
+          case_id: string | null
+          created_at: string
+          id: string
+          is_public: boolean
+          nps: number | null
+          org_id: string
+          rating: number | null
+          requested_at: string | null
+          submitted_at: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          body?: string | null
+          case_id?: string | null
+          created_at?: string
+          id?: string
+          is_public?: boolean
+          nps?: number | null
+          org_id: string
+          rating?: number | null
+          requested_at?: string | null
+          submitted_at?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          body?: string | null
+          case_id?: string | null
+          created_at?: string
+          id?: string
+          is_public?: boolean
+          nps?: number | null
+          org_id?: string
+          rating?: number | null
+          requested_at?: string | null
+          submitted_at?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reviews_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reviews_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "orgs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reviews_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
             referencedColumns: ["id"]
           },
         ]
@@ -4348,6 +4678,7 @@ export type Database = {
     }
     Functions: {
       auth_org_id: { Args: never; Returns: string }
+      claim_promotion_use: { Args: { p_promo_id: string }; Returns: boolean }
       create_case_atomic: { Args: { p: Json }; Returns: Json }
       custom_access_token_hook: { Args: { event: Json }; Returns: Json }
       has_module: {

@@ -43,7 +43,7 @@ import {
 } from "@/backend/modules/messaging/actions";
 import { mapNotificationRow } from "@/frontend/features/notifications/types";
 import { resolveI18n, type Locale } from "@/shared/i18n";
-import { STAFF_NAV, filterNav } from "@/frontend/lib/nav";
+import { navForRole, filterNav } from "@/frontend/lib/nav";
 import {
   StaffShell,
   type StaffShellMessages,
@@ -84,7 +84,7 @@ export default async function StaffPanelLayout({
   // sees everything EXCEPT the per-department personal "Configuración" entries
   // (`hiddenForAdmin`) — it already has the org-wide one (settings), so those
   // would otherwise show up as four duplicate "Configuración" items.
-  const filtered = filterNav(STAFF_NAV, (item) => {
+  const filtered = filterNav(navForRole(actor.role), (item) => {
     if (actor.role === "admin") return !item.hiddenForAdmin;
     const p = actor.permissions.get(item.module);
     return Boolean(p && (p.view || p.edit));

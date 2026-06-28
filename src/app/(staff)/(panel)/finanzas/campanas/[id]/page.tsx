@@ -67,6 +67,7 @@ export default async function CampanaEditorPage({
     name: campaign.name,
     subject: campaign.subject,
     bodyHtml: campaign.bodyHtml,
+    bodyBlocks: campaign.bodyBlocks,
     status: campaign.status,
     audience: campaign.audience,
     scheduledAt: campaign.scheduledAt,

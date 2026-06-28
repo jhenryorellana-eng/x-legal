@@ -36,6 +36,11 @@ const MATRIX: Record<ModuleKey, { sales: Cell; paralegal: Cell; finance: Cell }>
   messaging: { sales: "E", paralegal: "E", finance: "E" },
   community: { sales: "-", paralegal: "-", finance: "E" },
   audit: { sales: "-", paralegal: "-", finance: "-" },
+  // Lifecycle "después" / fidelización — Andrium (finance) owns these surfaces.
+  promotions: { sales: "-", paralegal: "-", finance: "E" },
+  referrals: { sales: "-", paralegal: "-", finance: "E" },
+  reviews: { sales: "-", paralegal: "-", finance: "E" },
+  retention: { sales: "-", paralegal: "-", finance: "E" },
 };
 
 function presetFor(role: "sales" | "paralegal" | "finance"): RolePreset {

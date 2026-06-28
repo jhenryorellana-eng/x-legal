@@ -68,10 +68,12 @@ import {
   listApprovedDocumentsForMaterial,
   findCasePlanRequiresLawyerValidation,
   listPrintQueue as repoPrintQueue,
+  listPrintHistory as repoPrintHistory,
   type ExpedienteRow,
   type ExpedienteItemRow,
   type CoverTemplateRow,
   type CoverRenderRow,
+  type PrintHistoryAttemptRepo,
 } from "./repository";
 
 // ---------------------------------------------------------------------------
@@ -1292,6 +1294,18 @@ export async function listPrintQueue(
 ): Promise<PrintQueueItemDto[]> {
   can(actor, "printing", "view");
   return repoPrintQueue(actor.orgId, input?.status);
+}
+
+/**
+ * Per-case expediente attempt history for the Andrium print panel — staff names
+ * resolved + lawyer verdict (API-EXP-20, RF-AND-027). Org-scoped (printing:view).
+ */
+export async function getPrintHistory(
+  actor: Actor,
+  caseId: string,
+): Promise<PrintHistoryAttemptRepo[]> {
+  can(actor, "printing", "view");
+  return repoPrintHistory(actor.orgId, caseId);
 }
 
 /**

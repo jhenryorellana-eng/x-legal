@@ -28,6 +28,11 @@ export const MODULE_KEYS = [
   "messaging",
   "community",
   "audit",
+  // Lifecycle "después" / fidelización (retención) — F6 extension.
+  "promotions",
+  "referrals",
+  "reviews",
+  "retention",
 ] as const;
 
 export type ModuleKey = (typeof MODULE_KEYS)[number];

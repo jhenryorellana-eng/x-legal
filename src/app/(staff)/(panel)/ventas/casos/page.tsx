@@ -25,6 +25,7 @@ import type { AdminCaseListItem, CaseBoardAlert } from "@/backend/modules/cases"
 import { resolveI18n } from "@/shared/i18n";
 import type { Locale } from "@/shared/i18n";
 import { fmtRelative } from "@/frontend/lib/datetime";
+import { resolveServiceColor } from "@/frontend/lib/service-color";
 import type {
   CaseCardVM,
   CaseColumnVM,
@@ -123,8 +124,8 @@ export default async function VentasCasosPage() {
         caseNumber: caseItem?.caseNumber ?? card.ref_id.slice(0, 8).toUpperCase(),
         clientName: caseItem?.clientName ?? "—",
         serviceLabel: serviceLabel || "—",
-        serviceIcon: "folder",
-        serviceColor: "var(--ink-2)",
+        serviceIcon: caseItem?.serviceIcon || "folder",
+        serviceColor: resolveServiceColor(caseItem?.serviceColor) ?? "var(--ink-2)",
         phaseLabel: phaseLabel || "",
         withLawyer,
         caseStatus,
@@ -134,7 +135,7 @@ export default async function VentasCasosPage() {
           lawyerCorrections: alertsMap[card.ref_id]?.lawyerCorrections ?? false,
           generationFailed: alertsMap[card.ref_id]?.generationFailed ?? false,
           rfeOverdue: alertsMap[card.ref_id]?.rfeOverdue ?? false,
-          rfeInProgress: false,
+          rfeInProgress: alertsMap[card.ref_id]?.rfeInProgress ?? false,
         },
         pinnedNote: card.pinned_note ?? null,
         ageLabel,
@@ -162,6 +163,8 @@ export default async function VentasCasosPage() {
     noteError: t("noteError"),
     orderError: t("orderError"),
     deleteError: t("deleteError"),
+    createError: t("createError"),
+    editError: t("editError"),
     bannerSingle: t.raw("bannerSingle"),
     bannerPlural: t.raw("bannerPlural"),
     bannerCta: t("bannerCta"),
@@ -201,6 +204,8 @@ export default async function VentasCasosPage() {
     timeInColumn: t("timeInColumn"),
     colMenuEdit: t("colMenuEdit"),
     colMenuDelete: t("colMenuDelete"),
+    colMenuMoveLeft: t("colMenuMoveLeft"),
+    colMenuMoveRight: t("colMenuMoveRight"),
     colMenuAria: t.raw("colMenuAria"),
     openCaseAria: t.raw("openCaseAria"),
   };

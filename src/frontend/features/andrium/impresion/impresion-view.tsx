@@ -126,6 +126,20 @@ export interface ImpresionViewMessages {
   confirm: string;
   save: string;
   attemptChip: string;
+  // Phase advance (cycle restart)
+  advancePhase: string;
+  confirmAdvance: string;
+  confirmAdvanceBody: string;
+  advanceOwnerLabel: string;
+  advanceOwnerHint: string;
+  toastAdvanced: string;
+  toastCompleted: string;
+}
+
+export interface AdvanceOwnerOptionVM {
+  userId: string;
+  displayName: string;
+  role: string;
 }
 
 export interface ImpresionViewActions {
@@ -133,6 +147,15 @@ export interface ImpresionViewActions {
   markShipped: (expedienteId: string, trackingRef?: string) => Promise<{ ok: boolean; error?: { code: string } }>;
   markFiled: (expedienteId: string) => Promise<{ ok: boolean; error?: { code: string } }>;
   getPdfUrl: (expedienteId: string) => Promise<{ ok: boolean; data?: string; error?: { code: string } }>;
+  /** Close the printed phase and restart the cycle (or complete the case). */
+  advancePhase: (input: { caseId: string; toOwnerId?: string | null }) => Promise<{
+    ok: boolean;
+    completed?: boolean;
+    phaseIndex?: number;
+    phaseCount?: number;
+    candidates?: AdvanceOwnerOptionVM[];
+    error?: { code: string };
+  }>;
 }
 
 export interface ImpresionViewProps {
@@ -402,6 +425,90 @@ function ShipmentModal({
 }
 
 // ---------------------------------------------------------------------------
+// Advance-phase modal (cycle restart)
+// ---------------------------------------------------------------------------
+
+interface AdvanceModalProps {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  messages: ImpresionViewMessages;
+  busy: boolean;
+  candidates: AdvanceOwnerOptionVM[] | null;
+  selectedOwner: string;
+  onSelectOwner: (id: string) => void;
+  onConfirm: () => void;
+}
+
+function AdvanceModal({
+  open,
+  onOpenChange,
+  messages,
+  busy,
+  candidates,
+  selectedOwner,
+  onSelectOwner,
+  onConfirm,
+}: AdvanceModalProps) {
+  const needsOwner = !!candidates && candidates.length > 0;
+  const confirmDisabled = busy || (needsOwner && !selectedOwner);
+  return (
+    <Modal
+      open={open}
+      onOpenChange={onOpenChange}
+      title={messages.confirmAdvance}
+      footer={
+        <>
+          <GhostBtn size="md" full={false} onClick={() => onOpenChange(false)} disabled={busy}>
+            {messages.cancel}
+          </GhostBtn>
+          <GradientBtn size="md" full={false} onClick={onConfirm} disabled={confirmDisabled}>
+            {busy ? "…" : messages.advancePhase}
+          </GradientBtn>
+        </>
+      }
+    >
+      <p style={{ margin: 0, fontSize: 15, lineHeight: 1.6, color: "var(--ink-2)" }}>
+        {messages.confirmAdvanceBody}
+      </p>
+      {needsOwner && (
+        <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 8 }}>
+          <label
+            htmlFor="advance-owner-select"
+            style={{ fontSize: 14, fontWeight: 700, color: "var(--ink-2)" }}
+          >
+            {messages.advanceOwnerLabel}
+          </label>
+          <select
+            id="advance-owner-select"
+            value={selectedOwner}
+            onChange={(e) => onSelectOwner(e.target.value)}
+            style={{
+              height: 44,
+              borderRadius: 12,
+              border: "2px solid var(--line)",
+              padding: "0 12px",
+              fontSize: 15,
+              color: "var(--ink)",
+              background: "var(--card)",
+              outline: "none",
+              fontFamily: "var(--font-title)",
+            }}
+          >
+            <option value="">—</option>
+            {candidates!.map((c) => (
+              <option key={c.userId} value={c.userId}>
+                {c.displayName}
+              </option>
+            ))}
+          </select>
+          <span style={{ fontSize: 12, color: "var(--ink-3)" }}>{messages.advanceOwnerHint}</span>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // PDF viewer modal
 // ---------------------------------------------------------------------------
 
@@ -622,6 +729,7 @@ interface TableRowProps {
   onMarkPrinted: (item: PrintQueueItemVM) => void;
   onLogShipment: (item: PrintQueueItemVM) => void;
   onMarkFiled: (item: PrintQueueItemVM) => void;
+  onAdvance: (item: PrintQueueItemVM) => void;
   onOpenHistory: (item: PrintQueueItemVM) => void;
 }
 
@@ -633,6 +741,7 @@ function PrintRow({
   onMarkPrinted,
   onLogShipment,
   onMarkFiled,
+  onAdvance,
   onOpenHistory,
 }: TableRowProps) {
   const [hovered, setHovered] = React.useState(false);
@@ -808,6 +917,20 @@ function PrintRow({
             onLogShipment={() => onLogShipment(item)}
             onMarkFiled={() => onMarkFiled(item)}
           />
+
+          {/* Avanzar de fase — visible once the expediente is printed */}
+          {item.status === "printed" && (
+            <GhostBtn
+              size="md"
+              full={false}
+              icon="chevR"
+              onClick={() => onAdvance(item)}
+              aria-label={messages.advancePhase}
+              style={{ color: "var(--gold-deep)", borderColor: "var(--gold)" }}
+            >
+              {messages.advancePhase}
+            </GhostBtn>
+          )}
         </div>
       </td>
     </tr>
@@ -852,6 +975,7 @@ export function ImpresionView({
   const [confirmPrintOpen, setConfirmPrintOpen] = React.useState(false);
   const [shipmentOpen, setShipmentOpen] = React.useState(false);
   const [confirmFiledOpen, setConfirmFiledOpen] = React.useState(false);
+  const [advanceOpen, setAdvanceOpen] = React.useState(false);
   const [pdfOpen, setPdfOpen] = React.useState(false);
   const [historyOpen, setHistoryOpen] = React.useState(false);
 
@@ -866,6 +990,11 @@ export function ImpresionView({
   const [busyPrint, setBusyPrint] = React.useState(false);
   const [busyShip, setBusyShip] = React.useState(false);
   const [busyFiled, setBusyFiled] = React.useState(false);
+  const [busyAdvance, setBusyAdvance] = React.useState(false);
+
+  // --- advance-phase owner selection (when several sales owners are eligible) ---
+  const [advanceCandidates, setAdvanceCandidates] = React.useState<AdvanceOwnerOptionVM[] | null>(null);
+  const [advanceOwner, setAdvanceOwner] = React.useState("");
 
   // --- local items (optimistic reload on window.location.reload) ---
   const [items] = React.useState(initialItems);
@@ -950,6 +1079,13 @@ export function ImpresionView({
     setConfirmFiledOpen(true);
   }
 
+  function requestAdvance(item: PrintQueueItemVM) {
+    setSelectedItem(item);
+    setAdvanceCandidates(null);
+    setAdvanceOwner("");
+    setAdvanceOpen(true);
+  }
+
   async function handleConfirmPrint() {
     if (!selectedItem) return;
     setBusyPrint(true);
@@ -998,6 +1134,29 @@ export function ImpresionView({
       }
     } finally {
       setBusyFiled(false);
+    }
+  }
+
+  async function handleConfirmAdvance() {
+    if (!selectedItem) return;
+    setBusyAdvance(true);
+    try {
+      const res = await actions.advancePhase({
+        caseId: selectedItem.caseId,
+        toOwnerId: advanceOwner || undefined,
+      });
+      if (res.ok) {
+        toast.success(res.completed ? messages.toastCompleted : messages.toastAdvanced);
+        setAdvanceOpen(false);
+        window.location.reload();
+      } else if (res.error?.code === "STAGE_OWNER_REQUIRED" && res.candidates) {
+        // Several sales owners are eligible — keep the modal open and ask.
+        setAdvanceCandidates(res.candidates);
+      } else {
+        toast.error(`${messages.toastError} [${res.error?.code ?? "?"}]`);
+      }
+    } finally {
+      setBusyAdvance(false);
     }
   }
 
@@ -1241,6 +1400,7 @@ export function ImpresionView({
                         onMarkPrinted={requestMarkPrinted}
                         onLogShipment={requestLogShipment}
                         onMarkFiled={requestMarkFiled}
+                        onAdvance={requestAdvance}
                         onOpenHistory={openHistory}
                       />
                     </React.Fragment>
@@ -1283,6 +1443,18 @@ export function ImpresionView({
         busy={busyFiled}
         onConfirm={handleConfirmFiled}
         cancelLabel={messages.cancel}
+      />
+
+      {/* Advance-phase modal */}
+      <AdvanceModal
+        open={advanceOpen}
+        onOpenChange={setAdvanceOpen}
+        messages={messages}
+        busy={busyAdvance}
+        candidates={advanceCandidates}
+        selectedOwner={advanceOwner}
+        onSelectOwner={setAdvanceOwner}
+        onConfirm={handleConfirmAdvance}
       />
 
       {/* PDF viewer modal */}
