@@ -42,6 +42,27 @@ describe("buildAnnexesSection", () => {
     expect(md).toContain("2025-03-01");
   });
 
+  it("renders only Exhibit A when there are no country conditions", () => {
+    const md = buildAnnexesSection({ analysis: null, jurisprudence: BUNDLE.jurisprudence, country_conditions: [] });
+    expect(md).toContain("Exhibit A");
+    expect(md).not.toContain("Exhibit B");
+  });
+
+  it("renders only Exhibit B when there is no jurisprudence", () => {
+    const md = buildAnnexesSection({ analysis: null, jurisprudence: [], country_conditions: BUNDLE.country_conditions });
+    expect(md).toContain("Exhibit B");
+    expect(md).not.toContain("Exhibit A");
+  });
+
+  it("falls back to the summary when full_context is empty", () => {
+    const md = buildAnnexesSection({
+      analysis: null,
+      jurisprudence: [],
+      country_conditions: [{ source_name: "Src", author: "", summary: "Short summary here.", full_context: "", why_it_helps: "W", url: "https://x", published_date: "" }],
+    });
+    expect(md).toContain("Short summary here.");
+  });
+
   it("escapes pipe characters in exhibit fields (table safety not required, but no broken md)", () => {
     const md = buildAnnexesSection({
       analysis: null,

@@ -48,9 +48,12 @@ export async function checkUrlReachable(
   try {
     let res = await attempt("HEAD");
     if (!res.ok && (res.status === 405 || res.status === 501 || res.status === 403)) {
+      res.body?.cancel().catch(() => {}); // release the HEAD socket before the GET
       res = await attempt("GET");
     }
-    return { url, reachable: res.ok, statusCode: res.status };
+    const result = { url, reachable: res.ok, statusCode: res.status };
+    res.body?.cancel().catch(() => {}); // we only need the status — free the socket
+    return result;
   } catch (err) {
     return { url, reachable: false, error: err instanceof Error ? err.message : String(err) };
   }

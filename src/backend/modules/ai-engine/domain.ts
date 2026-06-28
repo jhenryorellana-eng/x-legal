@@ -924,7 +924,7 @@ export function buildAnnexesSection(bundle: ResearchBundle): string {
         `**Exhibit B-${i + 1}: ${s.source_name}${s.published_date ? ` (${s.published_date})` : ""}**`,
         `Guide Note — Source: ${s.source_name}${s.author ? `, ${s.author}` : ""}. Summary: ${s.summary} Why it corroborates the claim: ${s.why_it_helps}`,
         "",
-        s.full_context,
+        s.full_context.trim() ? s.full_context : s.summary,
         ...(s.url ? [`Source: ${s.url}`] : []),
       );
     });
