@@ -22,6 +22,7 @@ import {
   buildResearchContextBlock,
   buildSectionUserMessage,
   buildWebSearchTool,
+  stripLeadingHeading,
   buildCoverPage,
   buildChronologyTable,
   assembleDocument,
@@ -116,7 +117,7 @@ async function main() {
   console.log("\n=== 5) ASSEMBLE (cover + section + chronology + closing) ===");
   const cover = buildCoverPage(analysis, { applicantName: "Juan Carlos Méndez", caseNumber: "ULP-TEST-0001" });
   const chrono = analysis && analysis.chronology.length ? buildChronologyTable(analysis.chronology) : undefined;
-  const doc = assembleDocument([section], [`## ${section.heading}\n\n${sr.text.trim()}`], { cover: true, toc: true, chronology: true, closing: "I declare under penalty of perjury that the foregoing is true and correct." }, { cover, chronology: chrono });
+  const doc = assembleDocument([section], [`## ${section.heading}\n\n${stripLeadingHeading(sr.text.trim())}`], { cover: true, toc: true, chronology: true, closing: "I declare under penalty of perjury that the foregoing is true and correct." }, { cover, chronology: chrono });
   const outPath = path.resolve(__dirname, "asylum-live-smoke-output.md");
   fs.writeFileSync(outPath, doc, "utf8");
   console.log("assembled doc words:", countWords(doc), "| written:", outPath);
