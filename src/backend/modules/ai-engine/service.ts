@@ -498,17 +498,29 @@ async function callAnthropic(
           text: b.text,
           ...(b.cacheControl ? { cache_control: { type: "ephemeral" as const } } : {}),
         }));
-  const stream = client.messages.stream(
-    {
-      model: args.model,
-      max_tokens: args.maxTokens,
-      system,
-      messages: [{ role: "user" as const, content: args.user }],
-      ...(args.tools ? { tools: args.tools } : {}),
-    },
-    { timeout: args.timeoutMs ?? CALL_TIMEOUT_MS, maxRetries: 1 },
-  );
-  const message = await stream.finalMessage();
+  // Hard wall-clock bound via AbortController. The SDK's `timeout` option does NOT
+  // bound a stream that keeps emitting events: with the web_search server tool the
+  // stream stays "active" (keep-alives while the server searches) and the timeout
+  // never fires, so a slow/stuck search can hang the job for many minutes. An
+  // explicit abort timer force-aborts the request regardless of stream activity.
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), args.timeoutMs ?? CALL_TIMEOUT_MS);
+  let message;
+  try {
+    const stream = client.messages.stream(
+      {
+        model: args.model,
+        max_tokens: args.maxTokens,
+        system,
+        messages: [{ role: "user" as const, content: args.user }],
+        ...(args.tools ? { tools: args.tools } : {}),
+      },
+      { timeout: args.timeoutMs ?? CALL_TIMEOUT_MS, maxRetries: 1, signal: ctrl.signal },
+    );
+    message = await stream.finalMessage();
+  } finally {
+    clearTimeout(timer);
+  }
   const usage: AnthropicUsage = {
     inputTokens: message.usage?.input_tokens ?? 0,
     outputTokens: message.usage?.output_tokens ?? 0,
