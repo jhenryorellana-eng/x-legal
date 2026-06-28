@@ -107,7 +107,7 @@ describe("assembleDocument", () => {
   });
   it("adds a TOC and closing when configured", () => {
     const doc = assembleDocument(secs, parts, { toc: true, closing: "Respectfully submitted." });
-    expect(doc).toContain("## Index");
+    expect(doc).toContain("## Table of Contents");
     expect(doc).toContain("- I.1 Intro");
     expect(doc).toContain("- I.2 Jurisdiction");
     expect(doc).toContain("Respectfully submitted.");

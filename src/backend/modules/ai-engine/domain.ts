@@ -91,6 +91,35 @@ export const DEFAULT_GENERATION_RULES = [
   "R8. Write clean, professional prose for a court filing. Use plain ASCII punctuation (straight quotes and hyphens). Do NOT use decorative symbols, bullet glyphs, box-drawing characters, emojis, ASCII-art separators, or markdown decoration in the legal body — use complete sentences and standard paragraphs. Start each section with its assigned heading and nothing else.",
 ].join("\n");
 
+/**
+ * Document-structure config, editable from the admin form-editor. `blocks` is an
+ * ordered, toggleable list of structural blocks (supersedes the legacy booleans
+ * when present), so each letter type defines its own structure without code
+ * changes. `cover_page` defines the first-page title + rows (label + value, where
+ * value may contain {{tokens}} resolved from the case/extraction context).
+ */
+export type AssemblyBlockType =
+  | "cover" | "toc" | "body" | "chronology" | "conclusions" | "annexes" | "closing";
+export interface AssemblyBlockSpec {
+  type: AssemblyBlockType;
+  enabled?: boolean;
+}
+export interface CoverRowSpec {
+  label: string;
+  value: string;
+}
+export interface AssemblyConfig {
+  // Legacy booleans — still read when `blocks` is absent (backward compatible).
+  cover?: boolean;
+  toc?: boolean;
+  chronology?: boolean;
+  annexes?: boolean;
+  closing?: string | null;
+  // Structured, admin-orderable structure (preferred when present).
+  blocks?: AssemblyBlockSpec[];
+  cover_page?: { title?: string; rows?: CoverRowSpec[] };
+}
+
 export interface ConfigSnapshot {
   system_prompt: string;
   input_document_slugs: string[];
@@ -108,7 +137,7 @@ export interface ConfigSnapshot {
   sections?: GenerationSectionSpec[];
   rules_enabled?: boolean;
   rules_text?: string | null;
-  assembly?: { cover?: boolean; toc?: boolean; chronology?: boolean; closing?: string | null; annexes?: boolean } | null;
+  assembly?: AssemblyConfig | null;
   /**
    * Run-derived verified research (analysis + jurisprudence + country conditions),
    * persisted ONCE so every section cites consistently AND the annexes can reuse
@@ -872,33 +901,48 @@ export function buildExpansionUserMessage(sectionUserContent: string, draft: str
   ].join("\n");
 }
 
-/** Court-grade cover page (title + data table), built from the analysis + case meta. */
-export interface CoverMeta {
-  applicantName?: string;
-  caseNumber?: string;
-  country?: string;
-  court?: string;
-  aNumber?: string;
-  derivatives?: string;
-  entryDate?: string;
-  title?: string;
+/** Default cover title + rows for an immigration memorandum (used when the config
+ *  does not define its own — keeps every existing letter working). Values are
+ *  {{token}} templates resolved from the case/extraction context. */
+export const DEFAULT_COVER_TITLE = "LEGAL MEMORANDUM AND APPLICANT DECLARATION IN SUPPORT OF ASYLUM";
+export const DEFAULT_COVER_ROWS: CoverRowSpec[] = [
+  { label: "Country of nationality", value: "{{nationality}}" },
+  { label: "Court / jurisdiction", value: "{{court}}" },
+  { label: "A-Number of principal applicant", value: "{{a_number}}" },
+  { label: "Derivative applicant(s) included", value: "{{derivatives}}" },
+  { label: "Date of entry into the United States", value: "{{entry_date}}" },
+  { label: "Principal theory", value: "{{principal_theory}}" },
+];
+
+/** Resolves `{{token}}` placeholders against a flat context map (case data,
+ *  document-extraction fields, research analysis). Unknown tokens collapse to ""
+ *  so the caller can substitute a placeholder. */
+export function resolveTemplate(tpl: string, ctx: Record<string, string | undefined | null>): string {
+  return tpl
+    .replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_m, key: string) => {
+      const v = ctx[key];
+      return v != null && String(v).trim() ? String(v).trim() : "";
+    })
+    .trim();
 }
 
-export function buildCoverPage(analysis: ResearchAnalysis | null, meta: CoverMeta): string {
-  const applicant = meta.applicantName?.trim() || "[Applicant]";
-  const title = meta.title?.trim() || "LEGAL MEMORANDUM AND APPLICANT DECLARATION IN SUPPORT OF ASYLUM";
-  const rows: Array<[string, string]> = [
-    ["Applicant", applicant],
-    ["Country of nationality", meta.country?.trim() || analysis?.nationality || "—"],
-    ["Court / jurisdiction", meta.court?.trim() || "Pending confirmation"],
-    ["A-Number", meta.aNumber?.trim() || "Pending assignment"],
-    ["Derivative applicants", meta.derivatives?.trim() || "None"],
-    ["Date of entry", meta.entryDate?.trim() || "Pending confirmation"],
-    ["Case number", meta.caseNumber?.trim() || "—"],
-    ["Principal theory", analysis?.principal_theory?.trim() || "—"],
-  ];
+/**
+ * Court-grade cover page (title + data table). Both the title and the rows come
+ * from the admin-editable config (`cover_page`); each row value is a template
+ * resolved from `ctx`. Falls back to the default immigration cover when the config
+ * has none. No internal system code or firm/brand identity — the client files pro
+ * se, so nothing tying the document to a service provider belongs on page one.
+ */
+export function buildCoverPage(
+  coverCfg: { title?: string; rows?: CoverRowSpec[] } | null | undefined,
+  ctx: Record<string, string | undefined | null>,
+): string {
+  const title = (coverCfg?.title?.trim() || DEFAULT_COVER_TITLE).replace(/\r?\n/g, " ");
+  const applicant = String(ctx.applicant_name ?? ctx.full_name ?? "[Applicant]").replace(/\r?\n/g, " ").trim() || "[Applicant]";
+  const specs = coverCfg?.rows?.length ? coverCfg.rows : DEFAULT_COVER_ROWS;
+  const rows = specs.map((r) => [r.label, resolveTemplate(r.value, ctx) || "—"] as [string, string]);
   const table = ["| Field | Information |", "| --- | --- |", ...rows.map(([k, v]) => `| ${mdCell(k)} | ${mdCell(v)} |`)].join("\n");
-  return [`# ${title.replace(/\r?\n/g, " ")}`, `## ${applicant.replace(/\r?\n/g, " ")}`, "", table].join("\n");
+  return [`# ${title}`, `## ${applicant}`, "", table].join("\n");
 }
 
 /**
@@ -908,18 +952,37 @@ export function buildCoverPage(analysis: ResearchAnalysis | null, meta: CoverMet
  * it + short summary + source data) followed by the detailed text and source URL.
  * Empty string when there is nothing verified to annex.
  */
+function exhibitTable(rows: Array<[string, string]>): string {
+  return [
+    "| Field | Information |",
+    "| --- | --- |",
+    ...rows.filter(([, v]) => v && v.trim()).map(([k, v]) => `| ${mdCell(k)} | ${mdCell(v)} |`),
+  ].join("\n");
+}
+
 export function buildAnnexesSection(bundle: ResearchBundle): string {
   if (bundle.jurisprudence.length === 0 && bundle.country_conditions.length === 0) return "";
-  const out: string[] = ["## ANNEXES — INDEX OF EXHIBITS"];
+  const out: string[] = [
+    "## Annexes — Index of Exhibits",
+    "",
+    "Each exhibit below is summarized on its own cover sheet (one table per exhibit). In the filed package, each sheet is followed by a complete copy of the underlying authority or report; every public source has a working link so the Court can retrieve and print it.",
+  ];
   if (bundle.jurisprudence.length > 0) {
     out.push("", "### Exhibit A — Legal Authorities (Federal Asylum Precedent)");
     bundle.jurisprudence.forEach((c, i) => {
       out.push(
         "",
-        `**Exhibit A-${i + 1}: ${c.name}${c.citation ? `, ${c.citation}` : ""}${c.court ? ` (${c.court}${c.year ? `, ${c.year}` : ""})` : ""}**`,
-        `Holding: ${c.holding}`,
-        `Factual analogy to the applicant: ${c.factual_analogy}`,
-        c.url ? `Source: ${c.url}` : "Source: citation verified; public copy on file.",
+        `#### Exhibit A-${i + 1}: ${c.name}`,
+        "",
+        exhibitTable([
+          ["Case name", c.name],
+          ["Citation", c.citation],
+          ["Court / authority", c.court],
+          ["Year", c.year],
+          ["Holding", c.holding],
+          ["Application to the present case", c.factual_analogy],
+          ["Public source", c.url || "Citation verified; public copy on file."],
+        ]),
       );
     });
   }
@@ -928,11 +991,17 @@ export function buildAnnexesSection(bundle: ResearchBundle): string {
     bundle.country_conditions.forEach((s, i) => {
       out.push(
         "",
-        `**Exhibit B-${i + 1}: ${s.source_name}${s.published_date ? ` (${s.published_date})` : ""}**`,
-        `Guide Note — Source: ${s.source_name}${s.author ? `, ${s.author}` : ""}. Summary: ${s.summary} Why it corroborates the claim: ${s.why_it_helps}`,
+        `#### Exhibit B-${i + 1}: ${s.source_name}`,
         "",
-        s.full_context.trim() ? s.full_context : s.summary,
-        ...(s.url ? [`Source: ${s.url}`] : []),
+        exhibitTable([
+          ["Title of exhibit", s.source_name],
+          ["Source / author", s.author || s.source_name],
+          ["Date", s.published_date],
+          ["Short summary", s.summary],
+          ["Why it helps", s.why_it_helps],
+          ["Detailed context for the record", s.full_context.trim() ? s.full_context : s.summary],
+          ["Link", s.url],
+        ]),
       );
     });
   }
@@ -940,34 +1009,98 @@ export function buildAnnexesSection(bundle: ResearchBundle): string {
 }
 
 /**
- * Assembles section parts into one court-grade markdown document. Order:
- * cover → TOC → sections → chronology table → closing (perjury/signature) →
- * annexes (exhibits). The cover/chronology/annexes markdown are pre-built by the
- * caller and passed via `extras` (keeps this function pure). Every block is gated
- * on its `assembly` flag.
+ * Page-break sentinel: a standalone marker line that `renderMarkdownToPdf` splits
+ * on to start a new physical page (mupdf's HTML engine ignores CSS page-break-*).
+ * It is a plain-string contract across the module boundary (pdf.ts cannot import
+ * from ai-engine) — the renderer hardcodes the same literal. The DOCX/markdown
+ * renderers strip or translate it so it never shows as literal text.
+ */
+export const PAGE_BREAK = "<<<PAGEBREAK>>>";
+
+/** Blocks that begin on a fresh physical page. The narrative blocks (chronology,
+ *  conclusions) flow continuously after the body. */
+const PAGE_START_BLOCKS = new Set<AssemblyBlockType>(["cover", "toc", "body", "annexes", "closing"]);
+
+/** Legacy → ordered blocks (used when `assembly.blocks` is absent). Conclusions
+ *  stays folded into the body, preserving each pre-existing letter's behavior. */
+function defaultAssemblyBlocks(a: AssemblyConfig | null | undefined): AssemblyBlockSpec[] {
+  return [
+    { type: "cover", enabled: !!a?.cover },
+    { type: "toc", enabled: !!a?.toc },
+    { type: "body", enabled: true },
+    { type: "chronology", enabled: !!a?.chronology },
+    { type: "annexes", enabled: !!a?.annexes },
+    { type: "closing", enabled: !!(a?.closing && a.closing.trim()) },
+  ];
+}
+
+/**
+ * Assembles section parts into one court-grade markdown document whose STRUCTURE
+ * is config-driven: `assembly.blocks` is an ordered, toggleable list of blocks
+ * (cover, toc, body, chronology, conclusions, annexes, closing). A `conclusions`
+ * block renders the LAST section on its own (the body then renders the rest), so
+ * the chronology can sit between the analysis and the conclusion. Page-starting
+ * blocks begin a new page (the `<<<PAGEBREAK>>>` sentinel). The cover/chronology/
+ * annexes markdown are pre-built by the caller and passed via `extras`; the TOC is
+ * generated to mirror the block order. Falls back to the legacy boolean flags when
+ * `blocks` is absent.
  */
 export function assembleDocument(
   sections: GenerationSectionSpec[],
   parts: string[],
-  assembly?: { cover?: boolean; toc?: boolean; chronology?: boolean; closing?: string | null; annexes?: boolean } | null,
+  assembly?: AssemblyConfig | null,
   extras?: { cover?: string; chronology?: string; annexes?: string } | null,
 ): string {
+  const blocks = (assembly?.blocks?.length ? assembly.blocks : defaultAssemblyBlocks(assembly)).filter(
+    (b) => b.enabled !== false,
+  );
+
+  const splitConclusion = blocks.some((b) => b.type === "conclusions") && parts.length >= 2;
+  const bodyParts = splitConclusion ? parts.slice(0, -1) : parts;
+  const conclusionPart = splitConclusion ? parts[parts.length - 1] : "";
+  const bodyHeadings = splitConclusion ? sections.slice(0, -1) : sections;
+  const conclusionHeading = splitConclusion ? sections[sections.length - 1] : null;
+
+  const chronoMd = extras?.chronology?.trim()
+    ? ["## Chronological Analysis Table", "", extras.chronology.trim()].join("\n")
+    : null;
+  const annexesMd = extras?.annexes?.trim() || null;
+  const coverMd = extras?.cover?.trim() || null;
+  const closingMd =
+    assembly?.closing && assembly.closing.trim()
+      ? ["## Declaration Under Penalty of Perjury", "", assembly.closing.trim()].join("\n")
+      : null;
+
+  // TOC mirrors the block order.
+  const tocEntries: string[] = [];
+  for (const b of blocks) {
+    if (b.type === "body") bodyHeadings.forEach((s) => tocEntries.push(`- ${s.heading}`));
+    else if (b.type === "conclusions" && conclusionHeading) tocEntries.push(`- ${conclusionHeading.heading}`);
+    else if (b.type === "chronology" && chronoMd) tocEntries.push("- Chronological Analysis Table");
+    else if (b.type === "annexes" && annexesMd) tocEntries.push("- Annexes — Index of Exhibits");
+    else if (b.type === "closing" && closingMd) tocEntries.push("- Declaration Under Penalty of Perjury");
+  }
+  const tocMd = ["## Table of Contents", ...tocEntries].join("\n");
+
+  const content = (t: AssemblyBlockType): string | null => {
+    switch (t) {
+      case "cover": return coverMd;
+      case "toc": return tocMd;
+      case "body": return bodyParts.length ? bodyParts.join("\n\n") : null;
+      case "chronology": return chronoMd;
+      case "conclusions": return conclusionPart || null;
+      case "annexes": return annexesMd;
+      case "closing": return closingMd;
+      default: return null;
+    }
+  };
+
   const out: string[] = [];
-  if (assembly?.cover && extras?.cover?.trim()) {
-    out.push(extras.cover.trim());
-  }
-  if (assembly?.toc) {
-    out.push(["## Index", ...sections.map((s) => `- ${s.heading}`)].join("\n"));
-  }
-  out.push(parts.join("\n\n"));
-  if (assembly?.chronology && extras?.chronology?.trim()) {
-    out.push(["## Chronological Analysis Table", "", extras.chronology.trim()].join("\n"));
-  }
-  if (assembly?.closing && assembly.closing.trim()) {
-    out.push(["---", "", assembly.closing.trim()].join("\n"));
-  }
-  if (assembly?.annexes && extras?.annexes?.trim()) {
-    out.push(extras.annexes.trim());
+  for (const b of blocks) {
+    const md = content(b.type);
+    if (!md) continue;
+    if (out.length && PAGE_START_BLOCKS.has(b.type)) out.push(PAGE_BREAK);
+    out.push(md);
   }
   return out.join("\n\n");
 }

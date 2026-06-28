@@ -81,7 +81,7 @@ import {
   type SectionedProgress,
   type ResearchBundle,
   type ResolvedInputs,
-  type CoverMeta,
+  type ResearchAnalysis,
   type SystemBlock,
   // ChunkProgress: used in progress column typing (F4-2). Prefixed to suppress unused warning.
   type ChunkProgress as _ChunkProgress,
@@ -689,20 +689,30 @@ async function reEnqueueSelf(run: GenerationRunRow & { orgId: string }, step: nu
 
 /** Best-effort cover metadata pulled from extraction payloads (names are not
  *  PII-masked; A-numbers/case meta stay placeholders the staff completes). */
-function deriveCoverMeta(inputs: ResolvedInputs): CoverMeta {
-  const pick = (keys: string[]): string | undefined => {
-    for (const d of inputs.documents) {
-      for (const k of keys) {
-        const v = d.extractionPayload[k];
-        if (typeof v === "string" && v.trim()) return v.trim();
-      }
+/**
+ * Flattens the case/extraction data into a {{token}} resolution context for the
+ * cover page. Carries every string field from the input documents' extraction
+ * payloads (so an admin can reference any extracted field by name) plus canonical
+ * aliases the default cover rows use (applicant_name, nationality, entry_date,
+ * principal_theory). Research analysis fills nationality / principal_theory.
+ */
+function deriveCoverContext(inputs: ResolvedInputs, analysis: ResearchAnalysis | null): Record<string, string> {
+  const ctx: Record<string, string> = {};
+  for (const d of inputs.documents) {
+    for (const [k, v] of Object.entries(d.extractionPayload ?? {})) {
+      if (typeof v === "string" && v.trim()) ctx[k] = v.trim();
     }
+  }
+  const pick = (...keys: string[]): string | undefined => {
+    for (const k of keys) if (ctx[k]?.trim()) return ctx[k].trim();
     return undefined;
   };
-  return {
-    applicantName: pick(["full_name", "name", "applicant_name", "nombre_completo"]),
-    entryDate: pick(["date_of_entry", "entry_date", "fecha_entrada"]),
-  };
+  const set = (k: string, v?: string) => { if (v?.trim() && !ctx[k]) ctx[k] = v.trim(); };
+  set("applicant_name", pick("full_name", "name", "applicant_name", "nombre_completo"));
+  set("entry_date", pick("date_of_entry", "entry_date", "fecha_entrada"));
+  set("nationality", pick("nationality", "country", "nacionalidad", "pais") ?? analysis?.nationality ?? undefined);
+  set("principal_theory", analysis?.principal_theory ?? undefined);
+  return ctx;
 }
 
 /**
@@ -887,13 +897,12 @@ async function runSectionedGeneration(
     return handleAnthropicError(err, run);
   }
 
-  // ── Court assembly ────────────────────────────────────────────────────────
-  const coverMd = snapshot.assembly?.cover ? buildCoverPage(bundle.analysis, deriveCoverMeta(inputs)) : undefined;
+  // ── Court assembly (structure is config-driven; assembleDocument gates each
+  //    block, so the extras are built whenever their data exists) ──────────────
+  const coverMd = buildCoverPage(snapshot.assembly?.cover_page ?? null, deriveCoverContext(inputs, bundle.analysis));
   const chronoMd =
-    snapshot.assembly?.chronology && bundle.analysis && bundle.analysis.chronology.length
-      ? buildChronologyTable(bundle.analysis.chronology)
-      : undefined;
-  const annexesMd = snapshot.assembly?.annexes ? buildAnnexesSection(bundle) || undefined : undefined;
+    bundle.analysis && bundle.analysis.chronology.length ? buildChronologyTable(bundle.analysis.chronology) : undefined;
+  const annexesMd = buildAnnexesSection(bundle) || undefined;
   const outputText = assembleDocument(sections, parts, snapshot.assembly ?? null, {
     cover: coverMd,
     chronology: chronoMd,
@@ -939,10 +948,11 @@ async function renderAndStore(
     return path;
   }
 
-  // md: store raw text
+  // md: store raw text (drop the PDF page-break markers — they have no meaning here)
+  const mdText = outputText.replace(/\n*<<<PAGEBREAK>>>\n*/g, "\n\n");
   const { error } = await supabase.storage
     .from("generated")
-    .upload(path, new TextEncoder().encode(outputText), { contentType: "text/markdown", upsert: true });
+    .upload(path, new TextEncoder().encode(mdText), { contentType: "text/markdown", upsert: true });
   if (error) throw error;
   return path;
 }

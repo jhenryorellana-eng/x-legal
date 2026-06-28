@@ -37,7 +37,7 @@ const anthropic = new Anthropic();
 const supa = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
 // ── A rich, clearly-fictional asylum fact pattern (the client's questionnaire) ─
-const CASE_CONTEXT = `## CLIENT QUESTIONNAIRE (I-589 Parts B/C) AND SWORN DECLARATION (fictional test client)
+export const CASE_CONTEXT = `## CLIENT QUESTIONNAIRE (I-589 Parts B/C) AND SWORN DECLARATION (fictional test client)
 - full_name: Carlos Andrés Mendoza Rivas
 - nationality: Venezuela; from Valencia, Carabobo state
 - entry_to_US: March 18, 2023 (parole at the southern border)
@@ -74,7 +74,7 @@ const log = (m: string) => console.log(`[${new Date().toISOString().slice(11, 19
  * per Henry's hard requirement. URLs that bot-block automated checks (Justia/OHCHR
  * → 403) are left blank — the citation itself is the authority for a court filing.
  */
-const CURATED_JURISPRUDENCE = [
+export const CURATED_JURISPRUDENCE = [
   { name: "INS v. Cardoza-Fonseca", citation: "480 U.S. 421", court: "U.S. Supreme Court", year: "1987", holding: "The asylum 'well-founded fear' standard (INA 208) is more generous than withholding's 'clear probability'; an applicant may establish a well-founded fear with as little as a 10% chance of persecution — a 'reasonable possibility' suffices.", factual_analogy: "The applicant need not prove persecution is more likely than not; his documented threats, detention, and the corroborated pattern of state repression readily establish the 'reasonable possibility' Cardoza-Fonseca requires for asylum.", url: "https://www.law.cornell.edu/supremecourt/text/480/421" },
   { name: "INS v. Elias-Zacarias", citation: "502 U.S. 478", court: "U.S. Supreme Court", year: "1992", holding: "Persecution 'on account of' political opinion requires evidence the persecutor was motivated by the victim's (actual or imputed) political opinion; the opinion may be shown by direct or circumstantial evidence.", factual_analogy: "Unlike the generalized recruitment in Elias-Zacarias, the applicant was expressly targeted for his organized opposition activity — the persecutors named his political work, establishing direct nexus to an actual and imputed political opinion.", url: "https://www.law.cornell.edu/supremecourt/text/502/478" },
   { name: "Navas v. INS", citation: "217 F.3d 646", court: "9th Cir.", year: "2000", holding: "Persecution by state agents on account of imputed political opinion — including opinion imputed through family or association — compels a finding of past persecution and a well-founded fear; the agency must consider the cumulative record.", factual_analogy: "As in Navas, the applicant was pursued by state-linked agents who imputed an opposition political opinion to him; the threats against his family mirror the imputed-opinion theory the Ninth Circuit credited.", url: "https://www.courtlistener.com/opinion/767252/jose-rodas-navas-v-immigration-and-naturalization-service/" },
@@ -82,7 +82,7 @@ const CURATED_JURISPRUDENCE = [
   { name: "Matter of M-E-V-G-", citation: "26 I&N Dec. 227", court: "BIA", year: "2014", holding: "A cognizable particular social group must be (1) composed of members sharing an immutable characteristic, (2) defined with particularity, and (3) socially distinct within the society in question.", factual_analogy: "To the extent the claim is framed as membership in a socially distinct group of identified regime opponents, M-E-V-G- supplies the controlling three-part test, each prong of which the record satisfies.", url: "" },
   { name: "Matter of Mogharrabi", citation: "19 I&N Dec. 439", court: "BIA", year: "1987", holding: "A well-founded fear is established where a reasonable person in the applicant's circumstances would fear persecution; a specific threat directed at the individual, tied to a protected ground, meets the standard.", factual_analogy: "The applicant was individually identified, named, and threatened by the persecutors — precisely the particularized targeting Mogharrabi holds sufficient for a well-founded fear.", url: "" },
 ];
-const CURATED_COUNTRY = [
+export const CURATED_COUNTRY = [
   { source_name: "Human Rights Watch — World Report 2024: Venezuela", author: "Human Rights Watch", summary: "Documents arbitrary detention, torture and persecution of perceived government opponents by Venezuelan security forces (SEBIN, DGCIM) and pro-government colectivos.", full_context: "Human Rights Watch's World Report 2024 chapter on Venezuela finds that the government of Nicolás Maduro continues to detain, prosecute and abuse real and perceived opponents. Intelligence services (SEBIN and DGCIM) carry out arbitrary detentions, hold detainees incommunicado, and subject them to torture and cruel treatment to extract confessions or punish dissent. Armed pro-government groups (colectivos) operate with state acquiescence to intimidate and attack protesters and opposition organizers. The justice system lacks independence, and impunity for security-force abuses is the norm.", why_it_helps: "Corroborates that the applicant's persecutors (state intelligence agents and colectivos) systematically target opposition organizers, that the harm is state-driven, and that internal protection is unavailable.", url: "https://www.hrw.org/world-report/2024/country-chapters/venezuela", published_date: "2024-01-11" },
   { source_name: "U.S. Department of State — 2023 Country Report on Human Rights Practices: Venezuela", author: "U.S. Department of State, Bureau of Democracy, Human Rights, and Labor", summary: "Official U.S. government reporting on unlawful killings, torture, arbitrary detention of political prisoners, and the absence of an independent judiciary in Venezuela.", full_context: "The State Department's 2023 human rights report on Venezuela documents significant human rights issues including unlawful or arbitrary killings by security forces, enforced disappearance, torture and cruel treatment by government agents, harsh and life-threatening prison conditions, arbitrary arrest and detention of regime critics, political prisoners, and serious restrictions on free expression and peaceful assembly. The report attributes these abuses to security and intelligence bodies controlled by the Maduro government and finds that authorities rarely investigate or punish officials who commit abuses.", why_it_helps: "An authoritative, government-issued source confirming the existence and state-sponsored character of the persecution the applicant describes, and the futility of seeking state protection.", url: "https://www.state.gov/reports/2023-country-reports-on-human-rights-practices/venezuela/", published_date: "2024-04-22" },
   { source_name: "Amnesty International — Venezuela", author: "Amnesty International", summary: "Reports a policy of repression against dissent: criminalization of opposition figures, NGO workers and protesters, and use of the justice system as a tool of persecution.", full_context: "Amnesty International documents that Venezuelan authorities have intensified a policy of repression designed to silence dissent, including the arbitrary detention and criminal prosecution of human rights defenders, journalists, union leaders and political opponents. Amnesty describes patterns of short-term enforced disappearances, fabricated criminal charges, and judicial harassment used to punish and deter opposition activity, and concludes that these acts form part of a widespread and systematic attack on the civilian population.", why_it_helps: "Independent international corroboration that opposition organizers like the applicant are deliberately targeted through detention and sham prosecutions, supporting both nexus and the well-founded-fear analysis.", url: "https://www.amnesty.org/en/location/americas/south-america/venezuela/report-venezuela/", published_date: "2024-03-01" },
@@ -208,11 +208,18 @@ async function main() {
     log(`section ${i + 1}/${sections.length} ${sec.key}: ${words} words`);
   }
 
-  // 4) ASSEMBLY + render.
-  const coverMeta = { applicantName: "Carlos Andrés Mendoza Rivas", caseNumber: "ULP-DEMO-ASILO-0001", country: "Venezuela" };
-  const cover = cfg.assembly?.cover ? buildCoverPage(analysis, coverMeta) : undefined;
-  const chrono = cfg.assembly?.chronology && analysis && analysis.chronology.length ? buildChronologyTable(analysis.chronology) : undefined;
-  const annexes = cfg.assembly?.annexes ? buildAnnexesSection(bundle) || undefined : undefined;
+  // 4) ASSEMBLY + render. Cover values come from the case/extraction context (here
+  //    the fictional client's data) and resolve into the config-driven cover rows.
+  const coverCtx: Record<string, string> = {
+    applicant_name: "Carlos Andrés Mendoza Rivas",
+    nationality: "Venezuela",
+    derivatives: "Spouse and one minor child",
+    entry_date: "March 18, 2023",
+    principal_theory: analysis?.principal_theory ?? "",
+  };
+  const cover = buildCoverPage(cfg.assembly?.cover_page ?? null, coverCtx);
+  const chrono = analysis && analysis.chronology.length ? buildChronologyTable(analysis.chronology) : undefined;
+  const annexes = buildAnnexesSection(bundle) || undefined;
   const doc = assembleDocument(sections, parts, cfg.assembly, { cover, chronology: chrono, annexes });
 
   const mdPath = path.resolve(__dirname, "asylum-full-output.md");
@@ -237,4 +244,4 @@ async function main() {
   console.log(`tokens in=${inTok} out=${outTok}  minutes=${((Date.now() - started) / 60000).toFixed(1)}`);
 }
 
-main().catch((e) => { console.error("PIPELINE FAILED:", e); process.exit(1); });
+if (require.main === module) main().catch((e) => { console.error("PIPELINE FAILED:", e); process.exit(1); });

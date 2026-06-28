@@ -20,22 +20,24 @@ describe("buildAnnexesSection", () => {
     expect(buildAnnexesSection({ analysis: null, jurisprudence: [], country_conditions: [] })).toBe("");
   });
 
-  it("renders Exhibit A (jurisprudence) with holding, factual analogy and a real URL", () => {
+  it("renders Exhibit A (jurisprudence) as a field table with holding, application and a real URL", () => {
     const md = buildAnnexesSection(BUNDLE);
-    expect(md).toContain("ANNEXES");
-    expect(md).toContain("Exhibit A");
-    expect(md).toContain("Navas v. INS");
+    expect(md).toContain("Annexes — Index of Exhibits");
+    expect(md).toContain("Exhibit A-1: Navas v. INS");
+    expect(md).toContain("| Holding |"); // table-driven cover sheet
+    expect(md).toContain("| Application to the present case |");
     expect(md).toContain("217 F.3d 646");
     expect(md).toContain("Imputed political opinion suffices.");
     expect(md).toContain("Like the applicant");
     expect(md).toContain("https://courtlistener.com/navas");
   });
 
-  it("renders Exhibit B (country conditions) with a Guide Note then the detailed text", () => {
+  it("renders Exhibit B (country conditions) as a field table with summary + detailed text", () => {
     const md = buildAnnexesSection(BUNDLE);
-    expect(md).toContain("Exhibit B");
+    expect(md).toContain("Exhibit B-1");
     expect(md).toContain("Human Rights Watch");
-    expect(md).toContain("Guide Note"); // who said it + short summary + source data
+    expect(md).toContain("| Short summary |");
+    expect(md).toContain("| Detailed context for the record |");
     expect(md).toContain("Crackdown on opposition continues."); // summary
     expect(md).toContain("Detailed reporting on detentions"); // full detailed text
     expect(md).toContain("https://hrw.org/venezuela-2025");
@@ -63,13 +65,13 @@ describe("buildAnnexesSection", () => {
     expect(md).toContain("Short summary here.");
   });
 
-  it("escapes pipe characters in exhibit fields (table safety not required, but no broken md)", () => {
+  it("escapes pipe characters in exhibit table cells so the markdown table is not broken", () => {
     const md = buildAnnexesSection({
       analysis: null,
       jurisprudence: [],
       country_conditions: [{ source_name: "A | B News", author: "", summary: "S", full_context: "C", why_it_helps: "W", url: "https://x", published_date: "" }],
     });
-    expect(md).toContain("A | B News");
+    expect(md).toContain("A \\| B News"); // escaped inside the table cell
   });
 });
 

@@ -4,7 +4,6 @@ import {
   buildCoverPage,
   buildSectionUserMessage,
   stripLeadingHeading,
-  type ResearchAnalysis,
   type GenerationSectionSpec,
 } from "../domain";
 
@@ -44,43 +43,39 @@ function section(over: Partial<GenerationSectionSpec> = {}): GenerationSectionSp
   return { key: "i1", heading: "I.1 Intro", min_words: 0, max_tokens: 4000, guidance: "", type: "analysis", ...over };
 }
 
-const analysis: ResearchAnalysis = {
-  nationality: "Venezuela",
-  persecution_type: "political opinion",
-  protected_grounds: ["political opinion"],
-  perpetrator: "GNB",
-  state_action: "state actor",
-  principal_theory: "Individualized persecution by state agents.",
-  summary: "…",
-  chronology: [],
-};
-
 describe("buildCoverPage", () => {
-  it("renders the title and a data table from caseMeta + analysis", () => {
-    const md = buildCoverPage(analysis, {
-      applicantName: "Juan Pérez",
-      caseNumber: "ULP-2026-0009",
-      court: "Pending",
-      aNumber: "Pending",
-      entryDate: "2024-03-15",
+  it("resolves {{tokens}} from the context into the default cover rows; no internal case number", () => {
+    const md = buildCoverPage(null, {
+      applicant_name: "Juan Pérez",
+      nationality: "Venezuela",
+      principal_theory: "Individualized persecution by state agents.",
+      entry_date: "2024-03-15",
     });
-    expect(md).toContain("Juan Pérez");
+    expect(md).toContain("Juan Pérez"); // heading
     expect(md).toContain("Venezuela");
     expect(md).toContain("Individualized persecution by state agents.");
     expect(md).toContain("2024-03-15");
-    expect(md).toContain("ULP-2026-0009");
+    expect(md).not.toMatch(/case number/i); // internal code never on a court cover
   });
 
-  it("falls back gracefully when analysis is null", () => {
-    const md = buildCoverPage(null, { applicantName: "Ana" });
-    expect(md).toContain("Ana");
-    expect(md).toContain("Pending");
+  it("uses the configured title + rows (config-driven, supports static text)", () => {
+    const md = buildCoverPage(
+      { title: "MY CUSTOM TITLE", rows: [{ label: "Client", value: "{{applicant_name}}" }, { label: "File", value: "Static text" }] },
+      { applicant_name: "Ana" },
+    );
+    expect(md).toContain("# MY CUSTOM TITLE");
+    expect(md).toContain("| Client | Ana |");
+    expect(md).toContain("| File | Static text |");
   });
 
-  it("escapes pipe characters so a malicious/odd value cannot break the table", () => {
-    const md = buildCoverPage(null, { applicantName: "Evil | Name", court: "A | B" });
+  it("renders an em-dash for a row whose tokens do not resolve", () => {
+    const md = buildCoverPage({ rows: [{ label: "Court", value: "{{court}}" }] }, {});
+    expect(md).toContain("| Court | — |");
+  });
+
+  it("escapes pipe characters so an odd value cannot break the table", () => {
+    const md = buildCoverPage({ rows: [{ label: "Name", value: "{{applicant_name}}" }] }, { applicant_name: "Evil | Name" });
     expect(md).toContain("Evil \\| Name");
-    expect(md).toContain("A \\| B");
   });
 });
 
@@ -109,6 +104,40 @@ describe("assembleDocument — court assembly", () => {
     const doc = assembleDocument(secs, parts, { closing: "I declare under penalty of perjury…" });
     expect(doc).toContain("I declare under penalty of perjury…");
     expect(doc.indexOf("body2")).toBeLessThan(doc.indexOf("penalty of perjury"));
+  });
+
+  it("honors the configured block order, splitting the last section as the conclusions", () => {
+    const secs3 = [section({ heading: "I.1 A" }), section({ key: "i2", heading: "I.2 B" }), section({ key: "i3", heading: "I.3 Conclusions" })];
+    const parts3 = ["## I.1 A\n\nAAA", "## I.2 B\n\nBBB", "## I.3 Conclusions\n\nCCC"];
+    const doc = assembleDocument(
+      secs3,
+      parts3,
+      {
+        blocks: [{ type: "body" }, { type: "chronology" }, { type: "conclusions" }, { type: "annexes" }, { type: "closing" }],
+        closing: "PERJURY TEXT",
+      },
+      { chronology: "| Date |\n| --- |\n| 2021 |", annexes: "## Annexes\n\nEXHIBIT" },
+    );
+    // order: body(AAA,BBB) → chronology → conclusions(CCC) → annexes → closing
+    expect(doc.indexOf("BBB")).toBeLessThan(doc.indexOf("| Date |"));
+    expect(doc.indexOf("| Date |")).toBeLessThan(doc.indexOf("CCC"));
+    expect(doc.indexOf("CCC")).toBeLessThan(doc.indexOf("EXHIBIT"));
+    expect(doc.indexOf("EXHIBIT")).toBeLessThan(doc.indexOf("PERJURY TEXT"));
+    // the body block must not carry the conclusion section
+    expect(doc.indexOf("BBB")).toBeLessThan(doc.indexOf("CCC"));
+  });
+
+  it("disabled blocks are skipped even if their extra is provided", () => {
+    const doc = assembleDocument(secs, parts, { blocks: [{ type: "body" }, { type: "annexes", enabled: false }] }, { annexes: "## Annexes\n\nEXHIBIT" });
+    expect(doc).toContain("body1");
+    expect(doc).not.toContain("EXHIBIT");
+  });
+
+  it("inserts a page break before page-starting blocks (cover/toc/annexes/closing)", () => {
+    const doc = assembleDocument(secs, parts, { cover: true, annexes: true }, { cover: "# COVER", annexes: "## Annexes\n\nEXHIBIT" });
+    // cover is first (no leading break); body and annexes start fresh pages
+    expect(doc).toContain("<<<PAGEBREAK>>>");
+    expect(doc.split("<<<PAGEBREAK>>>").length - 1).toBeGreaterThanOrEqual(2);
   });
 });
 

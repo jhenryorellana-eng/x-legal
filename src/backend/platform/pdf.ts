@@ -42,68 +42,73 @@ export interface AcroFillValues {
 // ---------------------------------------------------------------------------
 
 /**
+ * Page-break sentinel — must match ai-engine's `PAGE_BREAK` constant. A standalone
+ * line carrying this marker starts a new physical page (mupdf's HTML engine ignores
+ * CSS `page-break-*`, so we render each segment to its own PDF and merge them).
+ */
+const PDF_PAGE_BREAK = "<<<PAGEBREAK>>>";
+
+/** Court-document stylesheet: justified serif body, spaced headings, and bordered
+ *  two-column tables (cover data, exhibit cover-sheets, the chronology). */
+const MEMO_STYLE = `<style>
+  body{font-family:'Times New Roman',serif;font-size:11pt;line-height:1.45;margin:72pt;color:#111}
+  h1{font-size:19pt;text-align:center;font-weight:bold;margin:0 0 14pt;line-height:1.25}
+  h2{font-size:14.5pt;font-weight:bold;margin:18pt 0 8pt}
+  h3{font-size:12.5pt;font-weight:bold;margin:14pt 0 6pt}
+  h4{font-size:11.5pt;font-weight:bold;margin:12pt 0 5pt}
+  p{margin:0 0 9pt;text-align:justify}
+  ul{margin:0 0 9pt 0;padding-left:20pt}
+  li{margin:0 0 4pt 0}
+  table{border-collapse:collapse;width:100%;margin:6pt 0 14pt}
+  th,td{border:0.75pt solid #555;padding:5pt 8pt;text-align:left;vertical-align:top}
+  th{background:#ececec;font-weight:bold}
+  td:first-child{font-weight:bold;background:#f7f7f7}
+  a{color:#111;text-decoration:none}
+</style>`;
+
+/**
  * Renders a markdown string to a US Letter PDF (612x792 pt) via mupdf.
  *
- * Pipeline: markdown-it (md→HTML) → mupdf html→pdf.
- * Uses server-side dynamic import of mupdf (ESM/WASM — not bundled by Next.js).
+ * Pipeline: markdown-it (md→HTML) → mupdf html→pdf. The markdown may contain
+ * `<<<PAGEBREAK>>>` marker lines; each delimited segment is laid out and rendered
+ * independently, then merged (graftPage) so it starts on a fresh page. Uses
+ * server-side dynamic import of mupdf (ESM/WASM — not bundled by Next.js).
  *
  * @returns Uint8Array of PDF bytes (starts with %PDF)
  */
 export async function renderMarkdownToPdf(md: string): Promise<Uint8Array> {
-  // markdown-it: md → HTML
   const MarkdownIt = (await import("markdown-it")).default;
   const mdi = new MarkdownIt({ html: false, linkify: false });
-  const html = `<!DOCTYPE html><html><body style="font-family:serif;font-size:11pt;margin:72pt">${mdi.render(md)}</body></html>`;
+  const wrap = (bodyHtml: string) => `<!DOCTYPE html><html><head>${MEMO_STYLE}</head><body>${bodyHtml}</body></html>`;
 
-  // mupdf: HTML → PDF (dynamic import — ESM module, not bundled)
+  const segments = md.split(PDF_PAGE_BREAK).map((s) => s.trim()).filter(Boolean);
+  const htmls = (segments.length ? segments : [md]).map((seg) => wrap(mdi.render(seg)));
+
+  // Single page-group → render directly.
+  if (htmls.length === 1) return htmlToPdf(htmls[0]);
+
+  // Multi page-group → render each to PDF, then graft every page into one document
+  // so each group starts on a new page (the proven compileExpedientePdf pattern).
   const mupdf = await import("mupdf");
 
-  const buf = new TextEncoder().encode(html);
-   
-  const htmlDoc = (mupdf.Document as any).openDocument(buf, "text/html");
-
+  const M = mupdf as any;
+  const dst = new M.PDFDocument();
   try {
-  // US Letter: 612 × 792 pt, 11pt base font
-   
-  (htmlDoc as any).layout(612, 792, 11);
-
-   
-  const n = (htmlDoc as any).countPages();
-
-  // Preferred path: toPDFDocument()
-   
-  if (typeof (htmlDoc as any).toPDFDocument === "function") {
-     
-    const pdf = (htmlDoc as any).toPDFDocument();
-     
-    return (pdf.saveToBuffer("") as any).asUint8Array() as Uint8Array;
-  }
-
-  // Fallback: DocumentWriter
-   
-  const writerBuf = new (mupdf as any).Buffer();
-   
-  const writer = new (mupdf as any).DocumentWriter(writerBuf, "pdf", "");
-  for (let i = 0; i < n; i++) {
-     
-    const page = (htmlDoc as any).loadPage(i);
-     
-    const bounds = (page as any).getBounds();
-     
-    const dev = (writer as any).beginPage(bounds);
-     
-    (page as any).run(dev, (mupdf as any).Matrix.identity);
-     
-    (writer as any).endPage();
-  }
-   
-  (writer as any).close();
-   
-  return (writerBuf as any).asUint8Array() as Uint8Array;
+    for (const html of htmls) {
+      const bytes = await htmlToPdf(html);
+      const src = M.Document.openDocument(bytes, "application/pdf");
+      try {
+        const n = src.countPages();
+        for (let i = 0; i < n; i++) dst.graftPage(dst.countPages(), src, i);
+      } finally {
+        try { src.destroy?.(); } catch { /* freed */ }
+      }
+    }
+    // garbage=4 deduplicates the identical font/resource objects each grafted
+    // segment carries (otherwise the merged PDF bloats ~8x); compress streams.
+    return dst.saveToBuffer("garbage=4,compress=yes").asUint8Array() as Uint8Array;
   } finally {
-    // Release the mupdf WASM document (linear allocator — avoid a per-call leak).
-     
-    try { (htmlDoc as any).destroy?.(); } catch { /* already freed */ }
+    try { dst.destroy?.(); } catch { /* freed */ }
   }
 }
 
@@ -119,7 +124,7 @@ export async function renderMarkdownToPdf(md: string): Promise<Uint8Array> {
  * Complex constructs (tables, blockquotes) are rendered as plain paragraphs.
  */
 export async function renderMarkdownToDocx(md: string): Promise<Uint8Array> {
-  const { Document, Paragraph, TextRun, HeadingLevel, Packer } = await import("docx");
+  const { Document, Paragraph, TextRun, HeadingLevel, Packer, PageBreak } = await import("docx");
 
   // Parse markdown into a list of paragraph-like structures
   const paragraphs: InstanceType<typeof Paragraph>[] = [];
@@ -142,7 +147,13 @@ export async function renderMarkdownToDocx(md: string): Promise<Uint8Array> {
   for (const line of lines) {
     const trimmed = line.trim();
 
-    if (trimmed.startsWith("### ")) {
+    if (trimmed === PDF_PAGE_BREAK) {
+      flushBullets();
+      paragraphs.push(new Paragraph({ children: [new PageBreak()] }));
+    } else if (trimmed.startsWith("#### ")) {
+      flushBullets();
+      paragraphs.push(new Paragraph({ text: trimmed.slice(5), heading: HeadingLevel.HEADING_4 }));
+    } else if (trimmed.startsWith("### ")) {
       flushBullets();
       paragraphs.push(new Paragraph({ text: trimmed.slice(4), heading: HeadingLevel.HEADING_3 }));
     } else if (trimmed.startsWith("## ")) {

@@ -466,7 +466,20 @@ export const GenerationSectionSchema = z.object({
 });
 export type GenerationSection = z.infer<typeof GenerationSectionSchema>;
 
+/** Structural blocks the document is assembled from, in admin-defined order. */
+export const ASSEMBLY_BLOCK_TYPES = ["cover", "toc", "body", "chronology", "conclusions", "annexes", "closing"] as const;
+export const AssemblyBlockSchema = z.object({
+  type: z.enum(ASSEMBLY_BLOCK_TYPES),
+  enabled: z.boolean().default(true),
+});
+/** One cover-page row: a fixed label + a value that may contain {{tokens}} resolved
+ *  from the case / document-extraction context at generation time. */
+export const CoverRowSchema = z.object({
+  label: z.string().default(""),
+  value: z.string().default(""),
+});
 export const GenerationAssemblySchema = z.object({
+  // Legacy on/off flags — kept for backward compatibility; superseded by `blocks`.
   cover: z.boolean().default(false),
   toc: z.boolean().default(false),
   // Insert the research-derived chronology table into the body (court documents).
@@ -474,6 +487,14 @@ export const GenerationAssemblySchema = z.object({
   // Append the "ANNEXES — INDEX OF EXHIBITS" block (jurisprudence + country sources).
   annexes: z.boolean().default(false),
   closing: z.string().nullable().optional(),
+  // --- structured, admin-orderable document structure (preferred when present) ---
+  blocks: z.array(AssemblyBlockSchema).optional(),
+  cover_page: z
+    .object({
+      title: z.string().optional(),
+      rows: z.array(CoverRowSchema).optional(),
+    })
+    .optional(),
 });
 export type GenerationAssembly = z.infer<typeof GenerationAssemblySchema>;
 
