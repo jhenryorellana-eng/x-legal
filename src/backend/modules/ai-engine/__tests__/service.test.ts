@@ -1173,11 +1173,12 @@ describe("executeGenerationJob (sectioned + research)", () => {
     expect(outcome).toBe("completed");
     // 3 research calls + 2 section calls
     expect(mocks.anthropic.finalMessage).toHaveBeenCalledTimes(5);
-    // research persisted into config_snapshot
-    const researchPatch = mocks.repo.patchConfigSnapshot.mock.calls.find((c) => "research" in (c[1] ?? {}));
-    expect(researchPatch).toBeTruthy();
-    expect(researchPatch![1].research.jurisprudence).toHaveLength(1);
-    expect(researchPatch![1].research.country_conditions).toHaveLength(1);
+    // research persisted INCREMENTALLY (one patch per sub-step: analysis, jurisprudence, conditions)
+    const researchPatches = mocks.repo.patchConfigSnapshot.mock.calls.filter((c) => "research" in (c[1] ?? {}));
+    expect(researchPatches.length).toBe(3);
+    const finalResearch = researchPatches[researchPatches.length - 1][1].research;
+    expect(finalResearch.jurisprudence).toHaveLength(1);
+    expect(finalResearch.country_conditions).toHaveLength(1);
     // assembled output carries cover + both sections + closing
     const completeArg = mocks.repo.completeRun.mock.calls[0][1];
     expect(completeArg.outputText).toContain("LEGAL MEMORANDUM");
@@ -1218,6 +1219,48 @@ describe("executeGenerationJob (sectioned + research)", () => {
     const completeArg = mocks.repo.completeRun.mock.calls[0][1];
     expect(completeArg.outputText).toContain("I.1 Introduction");
     expect(completeArg.outputText).toContain("I.2 Argument");
+  });
+
+  it("resumes research mid-phase (researchStep=1) without re-running the analysis call", async () => {
+    const snapshot = sectionedRun().config_snapshot;
+    mocks.repo.findRunById.mockResolvedValue(
+      sectionedRun({
+        config_snapshot: {
+          ...snapshot,
+          // analysis already done + persisted; jurisprudence/conditions still pending
+          research: {
+            analysis: { nationality: "Venezuela", persecution_type: "political opinion", protected_grounds: ["political opinion"], perpetrator: "state agents", state_action: "state actor", principal_theory: "T", summary: "S", chronology: [] },
+            jurisprudence: [],
+            country_conditions: [],
+          },
+        },
+        progress: {
+          kind: "sectioned",
+          sectionsDone: 0,
+          parts: [],
+          prevTail: "",
+          usage: { inputTokens: 5, outputTokens: 5, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+          costUsd: 0.1,
+          modelUsed: "claude-sonnet-4-6",
+          researchStep: 1,
+        },
+      }),
+    );
+    mocks.anthropic.finalMessage
+      .mockResolvedValueOnce(aiMessage(JSON.stringify({ cases: [{ name: "Doe v. INS", citation: "1 F.3d 2", court: "9th Cir.", year: "1999", holding: "H", factual_analogy_to_applicant: "FA", url: "https://x" }] })))
+      .mockResolvedValueOnce(aiMessage(JSON.stringify({ items: [{ source_name: "HRW", executive_summary: "Impunity.", full_context: "C", why_it_helps: "W", url: "https://y", published_date: "2025-01-01" }] })))
+      .mockResolvedValueOnce(aiMessage(`## I.1 Introduction\n\n${LONG_BODY}`))
+      .mockResolvedValueOnce(aiMessage(`## I.2 Argument\n\n${LONG_BODY}`));
+
+    const outcome = await executeGenerationJob({ runId: RUN_ID, orgId: ORG_ID } as never);
+
+    expect(outcome).toBe("completed");
+    // analysis NOT re-run: only jurisprudence + conditions (2) + 2 sections = 4 calls
+    expect(mocks.anthropic.finalMessage).toHaveBeenCalledTimes(4);
+    const researchPatches = mocks.repo.patchConfigSnapshot.mock.calls.filter((c) => "research" in (c[1] ?? {}));
+    const finalResearch = researchPatches[researchPatches.length - 1][1].research;
+    expect(finalResearch.jurisprudence).toHaveLength(1);
+    expect(finalResearch.country_conditions).toHaveLength(1);
   });
 
   it("still supports single-pass generation when there are no sections", async () => {

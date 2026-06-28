@@ -742,6 +742,13 @@ export interface SectionedProgress {
   costUsd: number;
   /** Last model used (drives completeRun's recorded model). */
   modelUsed: string;
+  /**
+   * Research sub-step checkpoint (resumable): 0 = not started, 1 = analysis done,
+   * 2 = jurisprudence done, 3 = research complete. Lets a re-enqueued invocation
+   * resume the research phase without re-running the expensive web_search calls,
+   * so research (analysis + two web_search calls) never blows maxDuration.
+   */
+  researchStep?: number;
 }
 
 /**

@@ -468,6 +468,13 @@ export async function executeGenerationJob(
  *  checkpoint and self-chain so a 100-page run never exceeds maxDuration. */
 const SECTION_SOFT_BUDGET_MS = 150_000;
 
+/** Per-Anthropic-call hard timeout. A streaming call — especially with the native
+ *  web_search server tool — can otherwise stall indefinitely (the stream stops
+ *  emitting while the server searches). Bounding it under maxDuration means a hung
+ *  call aborts and the job retries/resumes from its checkpoint instead of burning
+ *  the entire invocation on one stuck request. */
+const CALL_TIMEOUT_MS = 240_000;
+
 interface AnthropicCallResult {
   text: string;
   stopReason: string;
@@ -481,7 +488,7 @@ type AnthropicClient = ReturnType<typeof getAnthropicClient>;
  *  for large outputs and for the native web_search server tool. */
 async function callAnthropic(
   client: AnthropicClient,
-  args: { model: string; system: SystemBlock[] | string; user: string; maxTokens: number; tools?: ReturnType<typeof buildWebSearchTool>[] },
+  args: { model: string; system: SystemBlock[] | string; user: string; maxTokens: number; tools?: ReturnType<typeof buildWebSearchTool>[]; timeoutMs?: number },
 ): Promise<AnthropicCallResult> {
   const system =
     typeof args.system === "string"
@@ -491,13 +498,16 @@ async function callAnthropic(
           text: b.text,
           ...(b.cacheControl ? { cache_control: { type: "ephemeral" as const } } : {}),
         }));
-  const stream = client.messages.stream({
-    model: args.model,
-    max_tokens: args.maxTokens,
-    system,
-    messages: [{ role: "user" as const, content: args.user }],
-    ...(args.tools ? { tools: args.tools } : {}),
-  });
+  const stream = client.messages.stream(
+    {
+      model: args.model,
+      max_tokens: args.maxTokens,
+      system,
+      messages: [{ role: "user" as const, content: args.user }],
+      ...(args.tools ? { tools: args.tools } : {}),
+    },
+    { timeout: args.timeoutMs ?? CALL_TIMEOUT_MS, maxRetries: 1 },
+  );
   const message = await stream.finalMessage();
   const usage: AnthropicUsage = {
     inputTokens: message.usage?.input_tokens ?? 0,
@@ -719,6 +729,9 @@ async function runSectionedGeneration(
   let prevTail = prior?.prevTail ?? "";
   let sectionsDone = prior?.sectionsDone ?? 0;
   let modelUsed = prior?.modelUsed ?? draftDefaultModel;
+  // Research sub-step (resume): prefer the explicit checkpoint; fall back to "done"
+  // for runs whose research was persisted before this checkpoint existed.
+  let researchStep = prior?.researchStep ?? (snapshot.research ? 3 : 0);
 
   const account = (r: AnthropicCallResult) => {
     usage = addUsage(usage, r.usage);
@@ -726,63 +739,82 @@ async function runSectionedGeneration(
     modelUsed = r.model;
   };
   const checkpoint = () =>
-    updateRunProgress(run.id, { kind: "sectioned", sectionsDone, parts, prevTail, usage, costUsd: costAccum, modelUsed });
+    updateRunProgress(run.id, { kind: "sectioned", sectionsDone, parts, prevTail, usage, costUsd: costAccum, modelUsed, researchStep });
 
-  // ── Research phase (ONCE; persisted in config_snapshot.research) ──────────
+  // ── Research phase (resumable per sub-step; persisted incrementally in
+  //    config_snapshot.research). researchStep: 1 = analysis, 2 = jurisprudence,
+  //    3 = complete. Each web_search sub-step self-chains when over the soft budget,
+  //    so the research phase (analysis + two web_search calls) never blows
+  //    maxDuration and a re-enqueue never re-runs an already-finished sub-step. ──
   let bundle: ResearchBundle = snapshot.research ?? { analysis: null, jurisprudence: [], country_conditions: [] };
-  if (snapshot.web_search_enabled && !snapshot.research) {
-    try {
-      const tools = [buildWebSearchTool(snapshot.web_search_max_uses ?? 5, researchModel)];
-      const ap = buildAnalysisPrompt({ systemPrompt: snapshot.system_prompt, caseContext: baseUserContent });
-      const ar = await callAnthropic(client, { model: researchModel, system: ap.system, user: ap.user, maxTokens: 8000 });
-      account(ar);
-      const analysis = parseResearchAnalysis(ar.text);
+  if (snapshot.web_search_enabled && researchStep < 3) {
+    const tools = [buildWebSearchTool(snapshot.web_search_max_uses ?? 5, researchModel)];
 
-      // One retry-on-empty: web_search output varies run-to-run (the model
-      // occasionally narrates instead of returning the JSON array).
-      const callList = async <T>(p: { system: string; user: string }, parse: (t: string) => T[]): Promise<T[]> => {
-        let res = await callAnthropic(client, { model: researchModel, system: p.system, user: p.user, maxTokens: 8000, tools });
+    // One retry-on-empty: web_search output varies run-to-run (the model
+    // occasionally narrates instead of returning the JSON array).
+    const callList = async <T>(p: { system: string; user: string }, parse: (t: string) => T[]): Promise<T[]> => {
+      let res = await callAnthropic(client, { model: researchModel, system: p.system, user: p.user, maxTokens: 8000, tools });
+      account(res);
+      let list = parse(res.text);
+      if (list.length === 0) {
+        res = await callAnthropic(client, { model: researchModel, system: p.system, user: p.user, maxTokens: 8000, tools });
         account(res);
-        let list = parse(res.text);
-        if (list.length === 0) {
-          res = await callAnthropic(client, { model: researchModel, system: p.system, user: p.user, maxTokens: 8000, tools });
-          account(res);
-          list = parse(res.text);
-        }
-        return list;
-      };
+        list = parse(res.text);
+      }
+      return list;
+    };
 
-      const jp = buildJurisprudencePrompt({ instructions: snapshot.research_instructions ?? null, analysis });
-      const cp = buildCountryConditionsPrompt({ instructions: snapshot.research_instructions ?? null, analysis });
-      let jurisprudence = await callList(jp, parseJurisprudence);
-      let country_conditions = await callList(cp, parseCountryConditions);
+    // Persist the partial research + advance the sub-step checkpoint. Research is
+    // written BEFORE the progress checkpoint: in the sub-millisecond crash window
+    // between the two we only lose cost accounting, never the Opus research itself.
+    const saveResearch = async (step: number) => {
+      researchStep = step;
+      await patchConfigSnapshot(run.id, { research: bundle });
+      await checkpoint();
+    };
+    const overBudget = () => Date.now() - startedAt > SECTION_SOFT_BUDGET_MS;
 
-      // Verify URLs (Henry: each exhibit link must resolve so it can be downloaded
-      // and printed). Jurisprudence keeps the case even if its URL is dead (the
-      // citation is the authority) — only the dead URL is blanked. Country-conditions
-      // news REQUIRES a live link, so unreachable / URL-less sources are dropped.
-      jurisprudence = await Promise.all(
-        jurisprudence.map(async (c) => (c.url && !(await checkUrlReachable(c.url)).reachable ? { ...c, url: "" } : c)),
-      );
-      country_conditions = await keepReachable(country_conditions);
+    try {
+      if (researchStep < 1) {
+        const ap = buildAnalysisPrompt({ systemPrompt: snapshot.system_prompt, caseContext: baseUserContent });
+        const ar = await callAnthropic(client, { model: researchModel, system: ap.system, user: ap.user, maxTokens: 8000 });
+        account(ar);
+        bundle = { ...bundle, analysis: parseResearchAnalysis(ar.text) };
+        await saveResearch(1);
+        if (overBudget()) { await reEnqueueSelf(run, sectionsDone); return "deferred"; }
+      }
 
-      bundle = { analysis, jurisprudence, country_conditions };
+      if (researchStep < 2) {
+        const jp = buildJurisprudencePrompt({ instructions: snapshot.research_instructions ?? null, analysis: bundle.analysis });
+        let jurisprudence = await callList(jp, parseJurisprudence);
+        // Verify URLs (Henry: each exhibit link must resolve so it can be downloaded
+        // and printed). Jurisprudence keeps the case even if its URL is dead (the
+        // citation is the authority) — only the dead URL is blanked.
+        jurisprudence = await Promise.all(
+          jurisprudence.map(async (c) => (c.url && !(await checkUrlReachable(c.url)).reachable ? { ...c, url: "" } : c)),
+        );
+        bundle = { ...bundle, jurisprudence };
+        await saveResearch(2);
+        if (overBudget()) { await reEnqueueSelf(run, sectionsDone); return "deferred"; }
+      }
+
+      if (researchStep < 3) {
+        const cp = buildCountryConditionsPrompt({ instructions: snapshot.research_instructions ?? null, analysis: bundle.analysis });
+        let country_conditions = await callList(cp, parseCountryConditions);
+        // Country-conditions news REQUIRES a live link, so unreachable / URL-less
+        // sources are dropped.
+        country_conditions = await keepReachable(country_conditions);
+        bundle = { ...bundle, country_conditions };
+        await saveResearch(3);
+        if (overBudget()) { await reEnqueueSelf(run, sectionsDone); return "deferred"; }
+      }
     } catch (err) {
-      // Research failed. Non-retryable 4xx → mark the run failed; transient/5xx →
-      // re-throw so QStash retries the whole job (research re-runs from scratch —
-      // nothing is persisted yet — and the job-failed callback is the terminal
-      // net). We do NOT silently emit a research-less court memo: the verified
-      // precedents are the whole point of this phase.
+      // Research failed. Non-retryable 4xx → mark the run failed; transient/5xx /
+      // timeout → re-throw so QStash retries the job, which resumes from the last
+      // saved research sub-step (analysis / jurisprudence already persisted are NOT
+      // re-run). We never emit a research-less court memo: the verified precedents
+      // are the whole point of this phase.
       return handleAnthropicError(err, run);
-    }
-    // Persist research BEFORE the checkpoint. In the (sub-millisecond) crash window
-    // between these two writes we lose only the research-cost accounting — we never
-    // re-run the expensive Opus research (snapshot.research is already populated).
-    await patchConfigSnapshot(run.id, { research: bundle });
-    await checkpoint();
-    if (Date.now() - startedAt > SECTION_SOFT_BUDGET_MS) {
-      await reEnqueueSelf(run, sectionsDone);
-      return "deferred";
     }
   }
 
