@@ -3,9 +3,23 @@ import {
   assembleDocument,
   buildCoverPage,
   buildSectionUserMessage,
+  stripLeadingHeading,
   type ResearchAnalysis,
   type GenerationSectionSpec,
 } from "../domain";
+
+describe("stripLeadingHeading", () => {
+  it("removes a leading markdown heading the model echoed (avoids a duplicate)", () => {
+    expect(stripLeadingHeading("## I.11 Nexus\n\nThe nexus analysis...")).toBe("The nexus analysis...");
+    expect(stripLeadingHeading("###   I.5 Narrative\nFirst incident...")).toBe("First incident...");
+  });
+  it("leaves a body that does not start with a heading untouched", () => {
+    expect(stripLeadingHeading("The nexus analysis...")).toBe("The nexus analysis...");
+  });
+  it("tolerates leading blank lines before the heading", () => {
+    expect(stripLeadingHeading("\n\n## I.11 Nexus\n\nbody")).toBe("body");
+  });
+});
 
 function section(over: Partial<GenerationSectionSpec> = {}): GenerationSectionSpec {
   return { key: "i1", heading: "I.1 Intro", min_words: 0, max_tokens: 4000, guidance: "", type: "analysis", ...over };

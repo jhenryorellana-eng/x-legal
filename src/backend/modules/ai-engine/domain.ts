@@ -970,6 +970,16 @@ export function mdCell(s: string): string {
   return s.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 }
 
+/**
+ * Strips a leading markdown heading the model sometimes echoes back, so the
+ * assembled section (which prepends its own `## heading`) never double-prints it.
+ */
+export function stripLeadingHeading(text: string): string {
+  const t = text.replace(/^\s+/, "");
+  const m = t.match(/^#{1,6}[ \t][^\n]*\n+/);
+  return m ? t.slice(m[0].length) : t;
+}
+
 /** Renders the timeline as a markdown table (empty string when there are no events). */
 export function buildChronologyTable(events: ChronologyEvent[]): string {
   if (events.length === 0) return "";
