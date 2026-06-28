@@ -82,11 +82,12 @@ function shortDayLabel(instant: Date, staffTz: string, locale: Locale): string {
 // Page
 // ---------------------------------------------------------------------------
 
-export default async function VentasCitasPage({
-  searchParams,
-}: {
-  searchParams?: Promise<Record<string, string | undefined>>;
-}) {
+export default async function VentasCitasPage(
+  props: {
+    searchParams?: Promise<Record<string, string | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
   const actor = await getActor();
   if (!actor || actor.kind !== "staff") redirect("/login");
 
@@ -98,7 +99,7 @@ export default async function VentasCitasPage({
   // 1. Resolve the week start from searchParams or current date (staff TZ)
   // --------------------------------------------------------------------------
 
-  const sp = searchParams ? await searchParams : {};
+  const sp = searchParams ?? {};
   const now = new Date();
 
   // Resolve the week start in the ACTOR's own timezone (DOC-23 §6.5) so the

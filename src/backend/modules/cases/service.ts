@@ -441,7 +441,7 @@ export async function createCaseFromContract(
   let serviceRow: { id: string; is_active: boolean; label_i18n: unknown } | null = null;
   let planRow: { id: string; kind: string; price_cents: number } | null = null;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const catalogModule = await import("@/backend/modules/catalog") as any;
     // findServiceById is exposed as a catalog repo helper — we call through the
     // service to respect the module boundary. listContractableServices is the
@@ -1162,7 +1162,7 @@ export async function onDownpaymentConfirmed(payload: {
   let firstPhaseId: string | null = null;
   let firstMilestoneId: string | null = null;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const catalogModule = await import("@/backend/modules/catalog") as any;
     if (typeof catalogModule.getCatalogFirstPhase === "function") {
       const phase = await catalogModule.getCatalogFirstPhase(caseRow.service_id);
@@ -1744,7 +1744,7 @@ export async function setRequirementVisibility(
   // so a previously-hidden item can be located and restored).
   const parties = await getCaseParties(input.caseId);
   const overrides = await getRequirementOverrides(input.caseId);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const catalog = (await import("@/backend/modules/catalog")) as any;
   const resolved = await catalog.getCaseRequirements({
     service_id: caseRow.service_id,
@@ -2731,7 +2731,7 @@ async function buildDocumentsMatrix(
   // catalog module's runtime resolver (no cross-table read inside catalog).
   // includeHidden=true (staff) keeps hidden requirements flagged; the client
   // view (default) drops them entirely.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const catalog = (await import("@/backend/modules/catalog")) as any;
   const resolved = await catalog.getCaseRequirements({
     service_id: caseRow.service_id,
@@ -2932,7 +2932,7 @@ export async function getCaseTimeline(
   const caseRow = await findCaseById(caseId);
   if (!caseRow) throw new CaseError("CASE_NOT_FOUND");
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const catalog = (await import("@/backend/modules/catalog")) as any;
   const cron = await catalog.getServiceCronograma(caseRow.service_id);
 
@@ -3258,10 +3258,10 @@ export async function getCaseProgressTimeline(
   const caseRow = await findCaseById(caseId);
   if (!caseRow) throw new CaseError("CASE_NOT_FOUND");
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const catalog = (await import("@/backend/modules/catalog")) as any;
   const cron = await catalog.getServiceCronograma(caseRow.service_id);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const scheduling = (await import("@/backend/modules/scheduling")) as any;
   const appts: Array<{
     id: string;

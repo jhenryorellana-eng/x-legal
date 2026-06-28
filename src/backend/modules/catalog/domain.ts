@@ -1069,7 +1069,7 @@ export function validateExtractionSchema(schema: unknown): { valid: boolean; rea
 export function jsonPathExistsInSchema(schema: object, jsonPath: string): boolean {
   try {
     const parts = jsonPath.split(".").filter(Boolean);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     let node: any = schema;
     for (const part of parts) {
       if (!node || typeof node !== "object") return false;

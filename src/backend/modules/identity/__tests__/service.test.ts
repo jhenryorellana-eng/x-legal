@@ -163,16 +163,16 @@ describe("loginClientByPhone", () => {
     vi.mocked(checkClientEligibility).mockResolvedValue({ eligible: true });
     vi.mocked(checkClientEligibilityById).mockResolvedValue({ eligible: true });
     const client = buildServerClient();
-    vi.mocked(createServerClient).mockResolvedValue(// eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.mocked(createServerClient).mockResolvedValue( 
 client as any);
     const serviceClient = buildServiceClient();
-    vi.mocked(createServiceClient).mockReturnValue(// eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.mocked(createServiceClient).mockReturnValue( 
 serviceClient as any);
   });
 
   it("signs the client in by email with the derived password (happy path)", async () => {
     const client = buildServerClient();
-    vi.mocked(createServerClient).mockResolvedValue(// eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.mocked(createServerClient).mockResolvedValue( 
 client as any);
 
     const result = await loginClientByPhone(validPhone, ip);
@@ -195,7 +195,7 @@ client as any);
   it("throws wrong_kind (uniform) when no client has that phone — no sign-in attempt", async () => {
     vi.mocked(findClientByPhone).mockResolvedValue(null);
     const client = buildServerClient();
-    vi.mocked(createServerClient).mockResolvedValue(// eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.mocked(createServerClient).mockResolvedValue( 
 client as any);
 
     await expect(loginClientByPhone(validPhone, ip)).rejects.toThrow(
@@ -207,7 +207,7 @@ client as any);
   it("throws wrong_kind (uniform) when the client exists but is NOT eligible", async () => {
     vi.mocked(checkClientEligibility).mockResolvedValue({ eligible: false });
     const client = buildServerClient();
-    vi.mocked(createServerClient).mockResolvedValue(// eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.mocked(createServerClient).mockResolvedValue( 
 client as any);
 
     await expect(loginClientByPhone(validPhone, ip)).rejects.toThrow(
@@ -223,12 +223,12 @@ client as any);
       .mockResolvedValueOnce({ data: { user: null }, error: { message: "Invalid login credentials" } })
       .mockResolvedValueOnce({ data: { user: { id: userId } }, error: null });
     const client = buildServerClient({ signInWithPassword: signInMock });
-    vi.mocked(createServerClient).mockResolvedValue(// eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.mocked(createServerClient).mockResolvedValue( 
 client as any);
     const updateByIdMock = vi.fn().mockResolvedValue({ error: null });
     vi.mocked(createServiceClient).mockReturnValue({
       auth: { admin: { updateUserById: updateByIdMock } },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
     } as any);
 
     const result = await loginClientByPhone(validPhone, ip);
@@ -242,7 +242,7 @@ client as any);
   it("re-gate: signs out and throws when no longer eligible after sign-in", async () => {
     const signOutMock = vi.fn().mockResolvedValue({ error: null });
     const client = buildServerClient({ signOut: signOutMock });
-    vi.mocked(createServerClient).mockResolvedValue(// eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.mocked(createServerClient).mockResolvedValue( 
 client as any);
     vi.mocked(checkClientEligibilityById).mockResolvedValue({ eligible: false });
 
@@ -282,7 +282,7 @@ describe("requestStaffPasswordReset", () => {
     const client = buildServerClient({
       resetPasswordForEmail: vi.fn().mockResolvedValue({ error: null }),
     });
-    vi.mocked(createServerClient).mockResolvedValue(// eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.mocked(createServerClient).mockResolvedValue( 
 client as any);
 
     const result = await requestStaffPasswordReset("anyone@example.com", "https://app/reset");
@@ -293,7 +293,7 @@ client as any);
     const client = buildServerClient({
       resetPasswordForEmail: vi.fn().mockResolvedValue({ error: { message: "User not found" } }),
     });
-    vi.mocked(createServerClient).mockResolvedValue(// eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.mocked(createServerClient).mockResolvedValue( 
 client as any);
 
     const result = await requestStaffPasswordReset("unknown@example.com", "https://app/reset");
@@ -308,7 +308,7 @@ client as any);
 describe("updateStaffPassword", () => {
   beforeEach(() => {
     const serviceClient = buildServiceClient();
-    vi.mocked(createServiceClient).mockReturnValue(// eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.mocked(createServiceClient).mockReturnValue( 
 serviceClient as any);
   });
 
@@ -367,13 +367,13 @@ serviceClient as any);
 
     const updateUserMock = vi.fn().mockResolvedValue({ error: null });
     const client = buildServerClient({ updateUser: updateUserMock });
-    vi.mocked(createServerClient).mockResolvedValue(// eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.mocked(createServerClient).mockResolvedValue( 
 client as any);
 
     const updateByIdMock = vi.fn().mockResolvedValue({ error: null });
     vi.mocked(createServiceClient).mockReturnValue({
       auth: { admin: { updateUserById: updateByIdMock } },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
     } as any);
 
     // A password that doesn't match weak patterns and is >= 12 chars
