@@ -121,6 +121,7 @@ export function buildFormEditorVM(data: RawFormEditorData, datasets: RawDataset[
           sections: (cfg.sections as import("./types").GenerationSectionVM[]) ?? [],
           rules_enabled: (cfg.rules_enabled as boolean) ?? true,
           rules_text: (cfg.rules_text as string | null) ?? null,
+          assembly: (cfg.assembly as import("./types").GenerationAssemblyVM | null) ?? null,
         }
       : null,
     datasets: datasets.map((d) => ({ id: d.id, name: d.name, tokens: d.total_tokens, active: d.is_active })),

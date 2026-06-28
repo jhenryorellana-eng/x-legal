@@ -23,7 +23,7 @@
 import { createServiceClient } from "@/backend/platform/supabase";
 import { logger } from "@/backend/platform/logger";
 import type { Tables, TablesInsert, TablesUpdate } from "@/shared/database.types";
-import type { ConfigSnapshot, ChunkProgress, DatasetItem } from "./domain";
+import type { ConfigSnapshot, ChunkProgress, SectionedProgress, DatasetItem } from "./domain";
 
 // ---------------------------------------------------------------------------
 // Row type aliases
@@ -283,7 +283,7 @@ export async function isCancelled(runId: string): Promise<boolean> {
  */
 export async function updateRunProgress(
   runId: string,
-  progress: ChunkProgress,
+  progress: ChunkProgress | SectionedProgress,
 ): Promise<void> {
   const client = createServiceClient();
   const { error } = await client

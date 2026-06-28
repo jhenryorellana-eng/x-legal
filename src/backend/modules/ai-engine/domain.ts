@@ -71,6 +71,8 @@ export interface GenerationSectionSpec {
   max_tokens: number;
   guidance: string;
   type: "doctrinal" | "narrative" | "analysis";
+  /** Optional per-section model override (e.g. Opus for the dense nexus section). */
+  model?: string | null;
 }
 
 /**
@@ -105,7 +107,14 @@ export interface ConfigSnapshot {
   sections?: GenerationSectionSpec[];
   rules_enabled?: boolean;
   rules_text?: string | null;
-  assembly?: { cover?: boolean; toc?: boolean; closing?: string | null } | null;
+  assembly?: { cover?: boolean; toc?: boolean; chronology?: boolean; closing?: string | null } | null;
+  /**
+   * Run-derived verified research (analysis + jurisprudence + country conditions),
+   * persisted ONCE so every section cites consistently AND the annexes can reuse
+   * it later. Follows the existing `dataset_injection` precedent (run output kept
+   * in config_snapshot — survives completion, no extra column/migration needed).
+   */
+  research?: ResearchBundle | null;
   resolved_inputs: {
     documents: Array<{
       slug: string;
@@ -715,6 +724,26 @@ export interface ChunkProgress {
 }
 
 /**
+ * Checkpoint for the resumable sectioned long-form engine (v1's self-chaining
+ * generalized). Stored in `ai_generation_runs.progress`; carries the accumulated
+ * section bodies + continuity tail so a re-enqueued invocation resumes exactly
+ * where the previous one stopped (timeout-safe). Cleared on completion.
+ */
+export interface SectionedProgress {
+  kind: "sectioned";
+  /** Drafting checkpoint: how many sections are already accumulated in `parts`. */
+  sectionsDone: number;
+  /** Accumulated section markdown (already assembled per section). */
+  parts: string[];
+  /** Continuity tail handed to the next section. */
+  prevTail: string;
+  usage: AnthropicUsage;
+  costUsd: number;
+  /** Last model used (drives completeRun's recorded model). */
+  modelUsed: string;
+}
+
+/**
  * Sums usage across multiple API calls (multi-chunk runs, validation retries).
  * Returns a merged usage object suitable for cost calculation and token logging.
  */
@@ -796,11 +825,13 @@ export function buildSectionUserMessage(
   section: GenerationSectionSpec,
   prevTail: string,
   researchInstructions?: string | null,
+  sectionContext?: string | null,
 ): string {
   const parts = [baseUserContent, "", `## SECTION TO WRITE NOW: ${section.heading}`];
   if (section.guidance.trim()) parts.push(section.guidance.trim());
   if (section.min_words > 0) parts.push(`Target at least ${section.min_words} words, developed in depth (no filler).`);
   if (researchInstructions && researchInstructions.trim()) parts.push(`Research guidance: ${researchInstructions.trim()}`);
+  if (sectionContext && sectionContext.trim()) parts.push("", sectionContext.trim());
   if (prevTail.trim()) {
     parts.push(
       "",
@@ -825,21 +856,403 @@ export function buildExpansionUserMessage(sectionUserContent: string, draft: str
   ].join("\n");
 }
 
-/** Assembles section parts into one markdown document (optional TOC + closing). */
+/** Court-grade cover page (title + data table), built from the analysis + case meta. */
+export interface CoverMeta {
+  applicantName?: string;
+  caseNumber?: string;
+  country?: string;
+  court?: string;
+  aNumber?: string;
+  derivatives?: string;
+  entryDate?: string;
+  title?: string;
+}
+
+export function buildCoverPage(analysis: ResearchAnalysis | null, meta: CoverMeta): string {
+  const applicant = meta.applicantName?.trim() || "[Applicant]";
+  const title = meta.title?.trim() || "LEGAL MEMORANDUM AND APPLICANT DECLARATION IN SUPPORT OF ASYLUM";
+  const rows: Array<[string, string]> = [
+    ["Applicant", applicant],
+    ["Country of nationality", meta.country?.trim() || analysis?.nationality || "—"],
+    ["Court / jurisdiction", meta.court?.trim() || "Pending confirmation"],
+    ["A-Number", meta.aNumber?.trim() || "Pending assignment"],
+    ["Derivative applicants", meta.derivatives?.trim() || "None"],
+    ["Date of entry", meta.entryDate?.trim() || "Pending confirmation"],
+    ["Case number", meta.caseNumber?.trim() || "—"],
+    ["Principal theory", analysis?.principal_theory?.trim() || "—"],
+  ];
+  const table = ["| Field | Information |", "| --- | --- |", ...rows.map(([k, v]) => `| ${mdCell(k)} | ${mdCell(v)} |`)].join("\n");
+  return [`# ${title.replace(/\r?\n/g, " ")}`, `## ${applicant.replace(/\r?\n/g, " ")}`, "", table].join("\n");
+}
+
+/**
+ * Assembles section parts into one court-grade markdown document. Order:
+ * cover → TOC → sections → chronology table → closing (perjury/signature). The
+ * cover & chronology markdown are pre-built by the caller and passed via `extras`
+ * (keeps this function pure). Every block is gated on its `assembly` flag.
+ */
 export function assembleDocument(
   sections: GenerationSectionSpec[],
   parts: string[],
-  assembly?: { cover?: boolean; toc?: boolean; closing?: string | null } | null,
+  assembly?: { cover?: boolean; toc?: boolean; chronology?: boolean; closing?: string | null } | null,
+  extras?: { cover?: string; chronology?: string } | null,
 ): string {
   const out: string[] = [];
+  if (assembly?.cover && extras?.cover?.trim()) {
+    out.push(extras.cover.trim());
+  }
   if (assembly?.toc) {
-    out.push(["## Index", ...sections.map((s) => `- ${s.heading}`)].join("\n"), "");
+    out.push(["## Index", ...sections.map((s) => `- ${s.heading}`)].join("\n"));
   }
   out.push(parts.join("\n\n"));
+  if (assembly?.chronology && extras?.chronology?.trim()) {
+    out.push(["## Chronological Analysis Table", "", extras.chronology.trim()].join("\n"));
+  }
   if (assembly?.closing && assembly.closing.trim()) {
-    out.push("", "---", "", assembly.closing.trim());
+    out.push(["---", "", assembly.closing.trim()].join("\n"));
   }
   return out.join("\n\n");
+}
+
+// ---------------------------------------------------------------------------
+// Chronology (v1's chronological-window engine for the narrative sections)
+// ---------------------------------------------------------------------------
+
+/**
+ * One row of the case timeline, derived in the research phase from the client's
+ * record. Drives both the in-body chronology table and the chronological windows
+ * handed to the narrative sections (I.5/I.6/I.7).
+ */
+export interface ChronologyEvent {
+  /** ISO-ish date ("YYYY-MM-DD"); partial values like "2021-05-XX" are allowed. */
+  date: string;
+  /** What happened and who was involved. */
+  event: string;
+  /** Direct consequence for the applicant. */
+  consequence: string;
+  /** Optional exhibit reference (e.g. "A-3"); null when none. */
+  exhibit?: string | null;
+}
+
+export interface ChronologyWindows {
+  early: ChronologyEvent[];
+  middle: ChronologyEvent[];
+  final: ChronologyEvent[];
+}
+
+/**
+ * Splits the (chronologically sorted) timeline into three contiguous windows for
+ * the three narrative parts. The remainder is **front-loaded** onto the earlier
+ * windows (onset/escalation tend to carry more documented incidents than the
+ * final flight), mirroring v1's ~3400/3400/2800-word narrative split.
+ */
+export function splitChronologyWindows(events: ChronologyEvent[]): ChronologyWindows {
+  // Sort is stable for full YYYY-MM-DD values. Partial dates like "2021-05-XX"
+  // sort lexicographically after the digit characters, so they may not match
+  // calendar intent — normalise partials (e.g. "2021-05-01") upstream if exact
+  // ordering matters for the narrative.
+  const sorted = [...events].sort((a, b) => a.date.localeCompare(b.date));
+  const n = sorted.length;
+  const base = Math.floor(n / 3);
+  const rem = n % 3;
+  const earlyCount = base + (rem >= 1 ? 1 : 0);
+  const middleCount = base + (rem >= 2 ? 1 : 0);
+  return {
+    early: sorted.slice(0, earlyCount),
+    middle: sorted.slice(earlyCount, earlyCount + middleCount),
+    final: sorted.slice(earlyCount + middleCount),
+  };
+}
+
+/** Escapes a value for safe inclusion in a markdown table cell (pipes / newlines
+ *  in extraction- or AI-derived text would otherwise break the table structure). */
+export function mdCell(s: string): string {
+  return s.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+}
+
+/** Renders the timeline as a markdown table (empty string when there are no events). */
+export function buildChronologyTable(events: ChronologyEvent[]): string {
+  if (events.length === 0) return "";
+  const header = "| Date | Event & Parties Involved | Direct Consequences | Exhibit |";
+  const divider = "| --- | --- | --- | --- |";
+  const rows = events.map(
+    (e) =>
+      `| ${mdCell(e.date)} | ${mdCell(e.event)} | ${mdCell(e.consequence)} | ${e.exhibit && e.exhibit.trim() ? mdCell(e.exhibit) : "—"} |`,
+  );
+  return [header, divider, ...rows].join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Research phase (v1's two-phase pipeline: structured analysis + verified
+// jurisprudence + country conditions gathered ONCE, persisted, and injected into
+// EVERY section so citations are consistent). The machinery here is generic; the
+// domain-specific guidance (system_prompt + research_instructions) comes from the
+// config, editable in the admin form-editor — never hardcoded.
+// ---------------------------------------------------------------------------
+
+export interface ResearchAnalysis {
+  nationality: string;
+  persecution_type: string;
+  protected_grounds: string[];
+  perpetrator: string;
+  state_action: string;
+  /** One-line theory of the case — drives the cover page. */
+  principal_theory: string;
+  /** Narrative summary used to seed the research queries. */
+  summary: string;
+  chronology: ChronologyEvent[];
+}
+
+export interface JurisprudenceCase {
+  name: string;
+  citation: string;
+  court: string;
+  year: string;
+  holding: string;
+  factual_analogy: string;
+  url: string;
+}
+
+export interface CountryConditionSource {
+  source_name: string;
+  author: string;
+  summary: string;
+  full_context: string;
+  why_it_helps: string;
+  url: string;
+  published_date: string;
+}
+
+/** Persisted in `ai_generation_runs.research`; also the feedstock for the annexes. */
+export interface ResearchBundle {
+  analysis: ResearchAnalysis | null;
+  jurisprudence: JurisprudenceCase[];
+  country_conditions: CountryConditionSource[];
+}
+
+// -- tolerant coercion helpers (model output is untrusted/loosely-shaped) ------
+
+function rstr(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (v == null) return "";
+  return String(v);
+}
+function rrec(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+function rarr(v: unknown): unknown[] | null {
+  return Array.isArray(v) ? v : null;
+}
+
+/**
+ * Extracts a JSON value from a model response that may wrap it in a ```json fence
+ * or surrounding prose. Returns null when no JSON can be recovered.
+ */
+export function extractJson(text: string): unknown {
+  if (!text) return null;
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidates = fence ? [fence[1], text] : [text];
+  for (const c of candidates) {
+    const parsed = tryParseJsonLoose(c);
+    if (parsed !== undefined) return parsed;
+  }
+  return null;
+}
+
+function tryParseJsonLoose(text: string): unknown {
+  const trimmed = text.trim();
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    /* fall through to bracket extraction */
+  }
+  const firstObj = trimmed.indexOf("{");
+  const firstArr = trimmed.indexOf("[");
+  if (firstObj === -1 && firstArr === -1) return undefined;
+  const useArr = firstArr !== -1 && (firstObj === -1 || firstArr < firstObj);
+  const start = useArr ? firstArr : firstObj;
+  const end = trimmed.lastIndexOf(useArr ? "]" : "}");
+  if (end <= start) return undefined;
+  try {
+    return JSON.parse(trimmed.slice(start, end + 1));
+  } catch {
+    return undefined;
+  }
+}
+
+/** Parses the structured analysis (E1-E8 + chronology); null when unrecoverable. */
+export function parseResearchAnalysis(text: string): ResearchAnalysis | null {
+  const r = rrec(extractJson(text));
+  if (!r) return null;
+  const nationality = rstr(r.nationality);
+  const summary = rstr(r.summary);
+  const chronoRaw = rarr(r.chronology);
+  if (!nationality && !summary && !chronoRaw) return null;
+  const chronology: ChronologyEvent[] = (chronoRaw ?? [])
+    .map(rrec)
+    .filter((e): e is Record<string, unknown> => e !== null)
+    .map((e) => ({
+      date: rstr(e.date),
+      event: rstr(e.event),
+      consequence: rstr(e.consequence),
+      exhibit: e.exhibit != null ? rstr(e.exhibit) : null,
+    }));
+  return {
+    nationality,
+    persecution_type: rstr(r.persecution_type),
+    protected_grounds: (rarr(r.protected_grounds) ?? []).map(rstr).filter(Boolean),
+    perpetrator: rstr(r.perpetrator),
+    state_action: rstr(r.state_action),
+    principal_theory: rstr(r.principal_theory),
+    summary,
+    chronology,
+  };
+}
+
+/** Parses verified jurisprudence; accepts `{cases:[…]}` or a bare array. */
+export function parseJurisprudence(text: string): JurisprudenceCase[] {
+  const json = extractJson(text);
+  const arr = rarr(json) ?? (rrec(json) ? rarr(rrec(json)!.cases) : null);
+  if (!arr) return [];
+  const out: JurisprudenceCase[] = [];
+  for (const raw of arr) {
+    const r = rrec(raw);
+    if (!r) continue;
+    const name = rstr(r.name);
+    const citation = rstr(r.citation);
+    if (!name || !citation) continue;
+    out.push({
+      name,
+      citation,
+      court: rstr(r.court),
+      year: rstr(r.year),
+      holding: rstr(r.holding),
+      factual_analogy: rstr(r.factual_analogy ?? r.factual_analogy_to_applicant),
+      url: rstr(r.url),
+    });
+  }
+  return out;
+}
+
+/** Parses verified country-conditions sources; accepts `{items:[…]}` or a bare array. */
+export function parseCountryConditions(text: string): CountryConditionSource[] {
+  const json = extractJson(text);
+  const arr = rarr(json) ?? (rrec(json) ? rarr(rrec(json)!.items) : null);
+  if (!arr) return [];
+  const out: CountryConditionSource[] = [];
+  for (const raw of arr) {
+    const r = rrec(raw);
+    if (!r) continue;
+    const source_name = rstr(r.source_name);
+    if (!source_name) continue;
+    out.push({
+      source_name,
+      author: rstr(r.author),
+      summary: rstr(r.summary ?? r.executive_summary),
+      full_context: rstr(r.full_context),
+      why_it_helps: rstr(r.why_it_helps),
+      url: rstr(r.url),
+      published_date: rstr(r.published_date ?? r.date),
+    });
+  }
+  return out;
+}
+
+function analysisSummaryText(a: ResearchAnalysis): string {
+  return [
+    `Nationality: ${a.nationality}`,
+    `Persecution type: ${a.persecution_type}`,
+    `Protected grounds: ${a.protected_grounds.join(", ")}`,
+    `Perpetrator: ${a.perpetrator}`,
+    `State action: ${a.state_action}`,
+    `Summary: ${a.summary}`,
+  ].join("\n");
+}
+
+/**
+ * Renders the verified research as a markdown block appended ONCE to the case
+ * context. Sections may cite ONLY from here (rule R4). Empty when nothing verified.
+ */
+export function buildResearchContextBlock(bundle: ResearchBundle): string {
+  const parts: string[] = [];
+  if (bundle.jurisprudence.length > 0) {
+    parts.push("<verified_jurisprudence>");
+    bundle.jurisprudence.forEach((c, i) => {
+      parts.push(
+        `${i + 1}. ${c.name} — ${c.citation}${c.court ? ` (${c.court}${c.year ? `, ${c.year}` : ""})` : ""}`,
+        `   Holding: ${c.holding}`,
+        `   Factual analogy: ${c.factual_analogy}`,
+        ...(c.url ? [`   Source: ${c.url}`] : []),
+      );
+    });
+    parts.push("</verified_jurisprudence>");
+  }
+  if (bundle.country_conditions.length > 0) {
+    if (parts.length) parts.push("");
+    parts.push("<country_conditions>");
+    bundle.country_conditions.forEach((s, i) => {
+      parts.push(
+        `${i + 1}. ${s.source_name}${s.published_date ? ` (${s.published_date})` : ""}: ${s.summary}`,
+        `   Why it helps: ${s.why_it_helps}`,
+        ...(s.url ? [`   Source: ${s.url}`] : []),
+      );
+    });
+    parts.push("</country_conditions>");
+  }
+  if (parts.length === 0) return "";
+  return ["## VERIFIED RESEARCH (cite ONLY from here — never fabricate)", ...parts].join("\n");
+}
+
+/** Analysis-phase prompt: folds the admin `system_prompt` over a generic JSON contract. */
+export function buildAnalysisPrompt(args: { systemPrompt: string; caseContext: string }): {
+  system: string;
+  user: string;
+} {
+  const system = [
+    args.systemPrompt.trim(),
+    "",
+    "You are now in the ANALYSIS phase. Read the client's record and produce a STRUCTURED JSON analysis — no prose outside the JSON.",
+    'Output ONLY a JSON object with these keys: { "nationality": string, "persecution_type": string, "protected_grounds": string[], "perpetrator": string, "state_action": string, "principal_theory": string, "summary": string, "chronology": [{ "date": "YYYY-MM-DD", "event": string, "consequence": string, "exhibit": string|null }] }',
+    "Trace every fact to the record; never invent. Order the chronology earliest→latest.",
+  ].join("\n");
+  const user = ["<case_record>", args.caseContext, "</case_record>", "", "Produce the structured analysis JSON now."].join("\n");
+  return { system, user };
+}
+
+/** Jurisprudence-search prompt: generic web_search + strict-JSON contract + admin instructions. */
+export function buildJurisprudencePrompt(args: { instructions: string | null; analysis: ResearchAnalysis | null }): {
+  system: string;
+  user: string;
+} {
+  const system = [
+    "You are a Senior Federal Immigration Attorney. Use the web_search tool to find REAL, verified, favorable published precedents. NEVER fabricate a case, citation, holding or URL — every case must trace to a search result with a working source link.",
+    'Output ONLY strict JSON, no prose, no code fences: { "cases": [ { "name": string, "citation": string, "court": string, "year": string, "holding": string, "factual_analogy_to_applicant": string, "url": string } ] }',
+  ].join("\n");
+  const user = [
+    args.instructions?.trim() || "Find favorable, verified federal precedents matched to the applicant's profile.",
+    "",
+    args.analysis ? `<applicant_profile>\n${analysisSummaryText(args.analysis)}\n</applicant_profile>` : "",
+    "Return the JSON now.",
+  ].join("\n");
+  return { system, user };
+}
+
+/** Country-conditions prompt: generic web_search + strict-JSON contract + admin instructions. */
+export function buildCountryConditionsPrompt(args: { instructions: string | null; analysis: ResearchAnalysis | null }): {
+  system: string;
+  user: string;
+} {
+  const system = [
+    "You are a Senior Federal Immigration Attorney assembling corroborating country-conditions sources. Use web_search to find recent, verified, reputable reporting (HRW, U.S. State Department, major outlets). NEVER fabricate a source, quote, statistic or URL.",
+    'Output ONLY strict JSON, no prose, no code fences: { "items": [ { "source_name": string, "author": string, "executive_summary": string, "full_context": string, "why_it_helps": string, "url": string, "published_date": string } ] }',
+  ].join("\n");
+  const user = [
+    args.instructions?.trim() || "Find recent country-conditions reporting corroborating the applicant's claim.",
+    "",
+    args.analysis ? `<applicant_profile>\n${analysisSummaryText(args.analysis)}\n</applicant_profile>` : "",
+    "Return the JSON now.",
+  ].join("\n");
+  return { system, user };
 }
 
 // ---------------------------------------------------------------------------

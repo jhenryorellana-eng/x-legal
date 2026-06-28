@@ -134,6 +134,7 @@ export const formEditorAiMock: FormEditorVM = {
     sections: [],
     rules_enabled: true,
     rules_text: null,
+    assembly: null,
   },
 };
 

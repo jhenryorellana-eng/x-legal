@@ -48,7 +48,6 @@ import {
   canTransitionRun,
   nextVersion,
   evaluateBudget,
-  decideChunking,
   selectDatasetItems,
   assemblePrompt,
   validateGenerationOutput,
@@ -61,11 +60,26 @@ import {
   buildSectionUserMessage,
   buildExpansionUserMessage,
   assembleDocument,
+  buildCoverPage,
+  buildChronologyTable,
+  splitChronologyWindows,
+  buildResearchContextBlock,
+  buildAnalysisPrompt,
+  buildJurisprudencePrompt,
+  buildCountryConditionsPrompt,
+  parseResearchAnalysis,
+  parseJurisprudence,
+  parseCountryConditions,
   curateInternalFields,
   sumUsage as _sumUsage,
   type GenerationRequest,
   type ConfigSnapshot,
   type GenerationSectionSpec,
+  type SectionedProgress,
+  type ResearchBundle,
+  type ResolvedInputs,
+  type CoverMeta,
+  type SystemBlock,
   // ChunkProgress: used in progress column typing (F4-2). Prefixed to suppress unused warning.
   type ChunkProgress as _ChunkProgress,
   type BudgetCheck,
@@ -82,7 +96,7 @@ import {
   completeRun,
   markRunFailed as repoMarkRunFailed,
   isCancelled,
-  updateRunProgress as _updateRunProgress,
+  updateRunProgress,
   patchConfigSnapshot,
   countRunningByOrg,
   listRunsForCase,
@@ -434,127 +448,115 @@ export async function executeGenerationJob(
 
   const prompt = assemblePrompt(snapshot, inputs, selected);
 
-  // Call Anthropic (streaming transport, DOC-74 §2.5). Optional native web_search
-  // tool (live research) + optional sectioned long-form generation (generalizes v1).
-  const model = snapshot.model ?? DEFAULT_GENERATION_MODEL;
+  // Sectioned long-form (v1-grade: research → resumable drafting → court assembly)
+  // vs single-pass. Both finalize through finalizeRun.
   const sections = snapshot.sections ?? [];
-  const tools = snapshot.web_search_enabled
-    ? [buildWebSearchTool(snapshot.web_search_max_uses ?? 5)]
-    : undefined;
-  const needsChunking = decideChunking(snapshot.max_output_tokens, 10000);
+  if (sections.length > 0) {
+    return runSectionedGeneration(run, snapshot, prompt, inputs, sections);
+  }
+  return runSinglePassGeneration(run, snapshot, prompt);
+}
 
-  let outputText: string;
-  let stopReason = "end_turn";
-  let usage: AnthropicUsage = { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 };
-  let modelUsed = model;
+// ---------------------------------------------------------------------------
+// Generation engine helpers (Anthropic call, error handling, finalize)
+// ---------------------------------------------------------------------------
 
-  try {
-    const client = getAnthropicClient();
+/** Soft wall-clock budget per job invocation; over it (with sections left) we
+ *  checkpoint and self-chain so a 100-page run never exceeds maxDuration. */
+const SECTION_SOFT_BUDGET_MS = 150_000;
 
-    // Build system blocks for Anthropic API with cache_control (stable prefix).
-    const systemBlocks = prompt.system.map((block) => ({
-      type: "text" as const,
-      text: block.text,
-      ...(block.cacheControl ? { cache_control: { type: "ephemeral" as const } } : {}),
-    }));
+interface AnthropicCallResult {
+  text: string;
+  stopReason: string;
+  usage: AnthropicUsage;
+  model: string;
+}
 
-    // One Anthropic call → normalized result. Streaming required for large outputs.
-    const streamOnce = async (userContent: string, maxTokens: number) => {
-      const stream = client.messages.stream({
-        model,
-        max_tokens: maxTokens,
-        system: systemBlocks,
-        messages: [{ role: "user" as const, content: userContent }],
-        ...(tools ? { tools } : {}),
-      });
-      const message = await stream.finalMessage();
-      const u: AnthropicUsage = {
-        inputTokens: message.usage?.input_tokens ?? 0,
-        outputTokens: message.usage?.output_tokens ?? 0,
-        cacheCreationInputTokens:
-          ((message.usage as unknown) as Record<string, number> | null)?.["cache_creation_input_tokens"] ?? 0,
-        cacheReadInputTokens:
-          ((message.usage as unknown) as Record<string, number> | null)?.["cache_read_input_tokens"] ?? 0,
-      };
-      const text = message.content
-        .filter((b) => b.type === "text")
-        .map((b) => (b as { type: "text"; text: string }).text)
-        .join("");
-      return { text, stopReason: message.stop_reason ?? "end_turn", usage: u, model: message.model ?? model };
-    };
+type AnthropicClient = ReturnType<typeof getAnthropicClient>;
 
-    const addU = (a: AnthropicUsage, b: AnthropicUsage): AnthropicUsage => ({
-      inputTokens: a.inputTokens + b.inputTokens,
-      outputTokens: a.outputTokens + b.outputTokens,
-      cacheCreationInputTokens: a.cacheCreationInputTokens + b.cacheCreationInputTokens,
-      cacheReadInputTokens: a.cacheReadInputTokens + b.cacheReadInputTokens,
+/** One Anthropic streaming call → normalized text + usage. Streaming is required
+ *  for large outputs and for the native web_search server tool. */
+async function callAnthropic(
+  client: AnthropicClient,
+  args: { model: string; system: SystemBlock[] | string; user: string; maxTokens: number; tools?: ReturnType<typeof buildWebSearchTool>[] },
+): Promise<AnthropicCallResult> {
+  const system =
+    typeof args.system === "string"
+      ? args.system
+      : args.system.map((b) => ({
+          type: "text" as const,
+          text: b.text,
+          ...(b.cacheControl ? { cache_control: { type: "ephemeral" as const } } : {}),
+        }));
+  const stream = client.messages.stream({
+    model: args.model,
+    max_tokens: args.maxTokens,
+    system,
+    messages: [{ role: "user" as const, content: args.user }],
+    ...(args.tools ? { tools: args.tools } : {}),
+  });
+  const message = await stream.finalMessage();
+  const usage: AnthropicUsage = {
+    inputTokens: message.usage?.input_tokens ?? 0,
+    outputTokens: message.usage?.output_tokens ?? 0,
+    cacheCreationInputTokens:
+      ((message.usage as unknown) as Record<string, number> | null)?.["cache_creation_input_tokens"] ?? 0,
+    cacheReadInputTokens:
+      ((message.usage as unknown) as Record<string, number> | null)?.["cache_read_input_tokens"] ?? 0,
+  };
+  const text = message.content
+    .filter((b) => b.type === "text")
+    .map((b) => (b as { type: "text"; text: string }).text)
+    .join("");
+  return { text, stopReason: message.stop_reason ?? "end_turn", usage, model: message.model ?? args.model };
+}
+
+function addUsage(a: AnthropicUsage, b: AnthropicUsage): AnthropicUsage {
+  return {
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    cacheCreationInputTokens: a.cacheCreationInputTokens + b.cacheCreationInputTokens,
+    cacheReadInputTokens: a.cacheReadInputTokens + b.cacheReadInputTokens,
+  };
+}
+
+/** Maps an Anthropic error to a JobOutcome: non-retryable 4xx → failed (2xx ack),
+ *  otherwise re-throws so QStash retries (and the run resumes from its checkpoint). */
+async function handleAnthropicError(
+  err: unknown,
+  run: GenerationRunRow & { orgId: string },
+): Promise<JobOutcome> {
+  const errMsg = err instanceof Error ? err.message : String(err);
+  logger.error({ err, runId: run.id }, "run-generation: Anthropic call failed");
+  const isNonRetryable = ["400", "401", "403", "413"].some((c) => errMsg.includes(c));
+  if (isNonRetryable) {
+    await repoMarkRunFailed(run.id, errMsg);
+    emitGenerationFailed({
+      caseId: run.case_id,
+      runId: run.id,
+      formDefinitionId: run.form_definition_id,
+      partyId: run.party_id,
+      version: run.version,
+      error: errMsg,
+      isTest: run.is_test,
     });
-
-    const baseUserContent = prompt.messages[0]?.content ?? "";
-
-    if (sections.length > 0) {
-      // Sectioned long-form: generate each section in order, enforce the word
-      // floor (one expansion pass below floor), accumulate, then assemble.
-      const parts: string[] = [];
-      let prevTail = "";
-      for (const sec of sections) {
-        if (await isCancelled(run.id)) return "cancelled";
-        const secContent = buildSectionUserMessage(baseUserContent, sec, prevTail, snapshot.research_instructions);
-        let res = await streamOnce(secContent, sec.max_tokens);
-        usage = addU(usage, res.usage);
-        if (sec.min_words > 0 && countWords(res.text) < sec.min_words) {
-          const exp = await streamOnce(buildExpansionUserMessage(secContent, res.text, sec.min_words), sec.max_tokens);
-          usage = addU(usage, exp.usage);
-          if (countWords(exp.text) > countWords(res.text)) res = exp;
-        }
-        parts.push(`## ${sec.heading}\n\n${res.text.trim()}`);
-        prevTail = lastWords(res.text, 1200);
-        modelUsed = res.model;
-      }
-      outputText = assembleDocument(sections, parts, snapshot.assembly ?? null);
-    } else {
-      const res = await streamOnce(baseUserContent, snapshot.max_output_tokens);
-      outputText = res.text;
-      stopReason = res.stopReason;
-      usage = res.usage;
-      modelUsed = res.model;
-    }
-  } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    logger.error({ err, runId: run.id, model }, "run-generation: Anthropic call failed");
-
-    // Non-retryable 4xx → mark failed, 2xx response
-    const isNonRetryable =
-      errMsg.includes("400") ||
-      errMsg.includes("401") ||
-      errMsg.includes("403") ||
-      errMsg.includes("413");
-
-    if (isNonRetryable) {
-      await repoMarkRunFailed(run.id, errMsg);
-      emitGenerationFailed({
-        caseId: run.case_id,
-        runId: run.id,
-        formDefinitionId: run.form_definition_id,
-        partyId: run.party_id,
-        version: run.version,
-        error: errMsg,
-        isTest: run.is_test,
-      });
-      return "failed";
-    }
-    // Retryable: throw so QStash retries
-    throw err;
+    return "failed";
   }
+  throw err;
+}
 
-  // Handle chunking (simplified — full chunking impl is multi-chunk)
-  if (needsChunking) {
-    // For now: if chunking needed, store partial progress for future continuation
-    // Full chunking with multi-part Storage writes is a follow-up optimization
-    logger.info({ runId: run.id }, "run-generation: chunking noted but executing as single pass");
-  }
+/** Validates, renders, and atomically completes a run. Shared by both engines. */
+async function finalizeRun(args: {
+  run: GenerationRunRow & { orgId: string };
+  snapshot: ConfigSnapshot;
+  outputText: string;
+  stopReason: string;
+  usage: AnthropicUsage;
+  modelUsed: string;
+  costUsd: number | null;
+}): Promise<JobOutcome> {
+  const { run, snapshot, outputText, stopReason, usage, modelUsed, costUsd } = args;
 
-  // Validate output
   const validation = validateGenerationOutput(outputText, stopReason, MIN_OUTPUT_CHARS);
   if (!validation.ok) {
     await repoMarkRunFailed(run.id, `AI_OUTPUT_INVALID: ${validation.reason}`);
@@ -570,10 +572,8 @@ export async function executeGenerationJob(
     return "failed";
   }
 
-  // Check cancellation before writing (DOC-42 §3.2 / DOC-26 §1.3.4)
   if (await isCancelled(run.id)) return "cancelled";
 
-  // Render output
   let outputPath: string | null = null;
   try {
     outputPath = await renderAndStore(outputText, run, snapshot);
@@ -581,18 +581,8 @@ export async function executeGenerationJob(
     logger.warn({ err: renderErr, runId: run.id }, "run-generation: render failed — continuing with text only");
   }
 
-  // Summarize (T5: Haiku; non-fatal)
-  let outputSummary: string | null = null;
-  try {
-    outputSummary = outputText.slice(0, 400).trim();
-  } catch {
-    // Summary never blocks the run
-  }
+  const outputSummary = outputText.slice(0, 400).trim();
 
-  // Compute cost
-  const costUsd = computeAnthropicCost(usage, modelUsed);
-
-  // Complete run (conditional WHERE status='running')
   const { rowsAffected } = await completeRun(run.id, {
     outputPath,
     outputText,
@@ -606,7 +596,6 @@ export async function executeGenerationJob(
   });
 
   if (rowsAffected === 0) {
-    // Another delivery already closed the run (unlikely but safe)
     logger.warn({ runId: run.id }, "run-generation: completeRun affected 0 rows — already closed");
     return "skipped";
   }
@@ -619,20 +608,220 @@ export async function executeGenerationJob(
     version: run.version,
     isTest: run.is_test,
   });
-
   logger.info(
-    {
-      job: "run-generation",
-      runId: run.id,
-      model: modelUsed,
-      inputTokens: usage.inputTokens,
-      outputTokens: usage.outputTokens,
-      costUsd,
-    },
+    { job: "run-generation", runId: run.id, model: modelUsed, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, costUsd },
     "run-generation: completed",
   );
-
   return "completed";
+}
+
+/** Single-call generation (no sections): unchanged legacy path. */
+async function runSinglePassGeneration(
+  run: GenerationRunRow & { orgId: string },
+  snapshot: ConfigSnapshot,
+  prompt: ReturnType<typeof assemblePrompt>,
+): Promise<JobOutcome> {
+  const client = getAnthropicClient();
+  const model = snapshot.model ?? DEFAULT_GENERATION_MODEL;
+  const tools = snapshot.web_search_enabled ? [buildWebSearchTool(snapshot.web_search_max_uses ?? 5)] : undefined;
+  let res: AnthropicCallResult;
+  try {
+    res = await callAnthropic(client, {
+      model,
+      system: prompt.system,
+      user: prompt.messages[0]?.content ?? "",
+      maxTokens: snapshot.max_output_tokens,
+      tools,
+    });
+  } catch (err) {
+    return handleAnthropicError(err, run);
+  }
+  return finalizeRun({
+    run,
+    snapshot,
+    outputText: res.text,
+    stopReason: res.stopReason,
+    usage: res.usage,
+    modelUsed: res.model,
+    costUsd: computeAnthropicCost(res.usage, res.model),
+  });
+}
+
+/** Re-enqueues this run to continue on a fresh invocation (self-chaining). */
+async function reEnqueueSelf(run: GenerationRunRow & { orgId: string }, step: number): Promise<void> {
+  await enqueueJob(
+    {
+      jobKey: "run-generation",
+      entityId: run.id,
+      attempt: 1,
+      dedupeId: `run-generation:${run.id}:v${run.version}:chain-${step}`,
+      runId: run.id,
+      orgId: run.orgId,
+    },
+    { delay: 1, retries: 2 },
+  );
+}
+
+/** Best-effort cover metadata pulled from extraction payloads (names are not
+ *  PII-masked; A-numbers/case meta stay placeholders the staff completes). */
+function deriveCoverMeta(inputs: ResolvedInputs): CoverMeta {
+  const pick = (keys: string[]): string | undefined => {
+    for (const d of inputs.documents) {
+      for (const k of keys) {
+        const v = d.extractionPayload[k];
+        if (typeof v === "string" && v.trim()) return v.trim();
+      }
+    }
+    return undefined;
+  };
+  return {
+    applicantName: pick(["full_name", "name", "applicant_name", "nombre_completo"]),
+    entryDate: pick(["date_of_entry", "entry_date", "fecha_entrada"]),
+  };
+}
+
+/**
+ * Sectioned, resumable, v1-grade engine: research (analysis + verified
+ * jurisprudence + country conditions, ONCE) → per-section drafting with a word
+ * floor + chronological windows + continuity tail → court assembly (cover, TOC,
+ * chronology, perjury closing). Checkpoints after research and after each section;
+ * self-chains when over the soft time budget so it never exceeds maxDuration.
+ */
+async function runSectionedGeneration(
+  run: GenerationRunRow & { orgId: string },
+  snapshot: ConfigSnapshot,
+  prompt: ReturnType<typeof assemblePrompt>,
+  inputs: ResolvedInputs,
+  sections: GenerationSectionSpec[],
+): Promise<JobOutcome> {
+  const client = getAnthropicClient();
+  const startedAt = Date.now();
+  const researchModel = snapshot.research_model || snapshot.model || DEFAULT_GENERATION_MODEL;
+  const draftDefaultModel = snapshot.model || DEFAULT_GENERATION_MODEL;
+  const baseUserContent = prompt.messages[0]?.content ?? "";
+
+  // Restore checkpoint (resume) — parts/tail/usage survive a re-enqueue.
+  const prior =
+    run.progress && (run.progress as { kind?: string }).kind === "sectioned"
+      ? ((run.progress as unknown) as SectionedProgress)
+      : null;
+  let usage: AnthropicUsage = prior?.usage ?? {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheCreationInputTokens: 0,
+    cacheReadInputTokens: 0,
+  };
+  let costAccum = prior?.costUsd ?? 0;
+  const parts: string[] = prior?.parts ?? [];
+  let prevTail = prior?.prevTail ?? "";
+  let sectionsDone = prior?.sectionsDone ?? 0;
+  let modelUsed = prior?.modelUsed ?? draftDefaultModel;
+
+  const account = (r: AnthropicCallResult) => {
+    usage = addUsage(usage, r.usage);
+    costAccum += computeAnthropicCost(r.usage, r.model) ?? 0;
+    modelUsed = r.model;
+  };
+  const checkpoint = () =>
+    updateRunProgress(run.id, { kind: "sectioned", sectionsDone, parts, prevTail, usage, costUsd: costAccum, modelUsed });
+
+  // ── Research phase (ONCE; persisted in config_snapshot.research) ──────────
+  let bundle: ResearchBundle = snapshot.research ?? { analysis: null, jurisprudence: [], country_conditions: [] };
+  if (snapshot.web_search_enabled && !snapshot.research) {
+    try {
+      const tools = [buildWebSearchTool(snapshot.web_search_max_uses ?? 5)];
+      const ap = buildAnalysisPrompt({ systemPrompt: snapshot.system_prompt, caseContext: baseUserContent });
+      const ar = await callAnthropic(client, { model: researchModel, system: ap.system, user: ap.user, maxTokens: 8000 });
+      account(ar);
+      const analysis = parseResearchAnalysis(ar.text);
+      const jp = buildJurisprudencePrompt({ instructions: snapshot.research_instructions ?? null, analysis });
+      const jr = await callAnthropic(client, { model: researchModel, system: jp.system, user: jp.user, maxTokens: 8000, tools });
+      account(jr);
+      const cp = buildCountryConditionsPrompt({ instructions: snapshot.research_instructions ?? null, analysis });
+      const cr = await callAnthropic(client, { model: researchModel, system: cp.system, user: cp.user, maxTokens: 8000, tools });
+      account(cr);
+      bundle = { analysis, jurisprudence: parseJurisprudence(jr.text), country_conditions: parseCountryConditions(cr.text) };
+    } catch (err) {
+      // Research failed. Non-retryable 4xx → mark the run failed; transient/5xx →
+      // re-throw so QStash retries the whole job (research re-runs from scratch —
+      // nothing is persisted yet — and the job-failed callback is the terminal
+      // net). We do NOT silently emit a research-less court memo: the verified
+      // precedents are the whole point of this phase.
+      return handleAnthropicError(err, run);
+    }
+    // Persist research BEFORE the checkpoint. In the (sub-millisecond) crash window
+    // between these two writes we lose only the research-cost accounting — we never
+    // re-run the expensive Opus research (snapshot.research is already populated).
+    await patchConfigSnapshot(run.id, { research: bundle });
+    await checkpoint();
+    if (Date.now() - startedAt > SECTION_SOFT_BUDGET_MS) {
+      await reEnqueueSelf(run, sectionsDone);
+      return "deferred";
+    }
+  }
+
+  // ── Drafting (resumable) ──────────────────────────────────────────────────
+  const researchBlock = buildResearchContextBlock(bundle);
+  const draftBase = researchBlock ? `${baseUserContent}\n\n${researchBlock}` : baseUserContent;
+  const windows = bundle.analysis ? splitChronologyWindows(bundle.analysis.chronology) : null;
+  const narrativeIdx = new Map<number, number>();
+  sections.forEach((s, i) => {
+    if (s.type === "narrative") narrativeIdx.set(i, narrativeIdx.size);
+  });
+
+  try {
+    for (let i = sectionsDone; i < sections.length; i++) {
+      if (await isCancelled(run.id)) return "cancelled";
+      const sec = sections[i];
+
+      let sectionContext: string | undefined;
+      const ni = narrativeIdx.get(i);
+      if (ni !== undefined && windows) {
+        // Three windows for the canonical I.5/I.6/I.7 split; a 4th+ narrative
+        // section (unusual) falls back to the final window.
+        const w = ni === 0 ? windows.early : ni === 1 ? windows.middle : windows.final;
+        if (w.length) {
+          sectionContext = `<chronological_window>\n${buildChronologyTable(w)}\n</chronological_window>\nCover ONLY the events within this window for this section.`;
+        }
+      }
+
+      const secModel = sec.model || draftDefaultModel;
+      const secContent = buildSectionUserMessage(draftBase, sec, prevTail, snapshot.research_instructions, sectionContext);
+      let res = await callAnthropic(client, { model: secModel, system: prompt.system, user: secContent, maxTokens: sec.max_tokens });
+      account(res);
+      if (sec.min_words > 0 && countWords(res.text) < sec.min_words) {
+        const exp = await callAnthropic(client, {
+          model: secModel,
+          system: prompt.system,
+          user: buildExpansionUserMessage(secContent, res.text, sec.min_words),
+          maxTokens: sec.max_tokens,
+        });
+        account(exp);
+        if (countWords(exp.text) > countWords(res.text)) res = exp;
+      }
+      parts.push(`## ${sec.heading}\n\n${res.text.trim()}`);
+      prevTail = lastWords(res.text, 1200);
+      sectionsDone = i + 1;
+      await checkpoint();
+
+      if (sectionsDone < sections.length && Date.now() - startedAt > SECTION_SOFT_BUDGET_MS) {
+        await reEnqueueSelf(run, sectionsDone);
+        return "deferred";
+      }
+    }
+  } catch (err) {
+    return handleAnthropicError(err, run);
+  }
+
+  // ── Court assembly ────────────────────────────────────────────────────────
+  const coverMd = snapshot.assembly?.cover ? buildCoverPage(bundle.analysis, deriveCoverMeta(inputs)) : undefined;
+  const chronoMd =
+    snapshot.assembly?.chronology && bundle.analysis && bundle.analysis.chronology.length
+      ? buildChronologyTable(bundle.analysis.chronology)
+      : undefined;
+  const outputText = assembleDocument(sections, parts, snapshot.assembly ?? null, { cover: coverMd, chronology: chronoMd });
+
+  return finalizeRun({ run, snapshot, outputText, stopReason: "end_turn", usage, modelUsed, costUsd: costAccum });
 }
 
 // ---------------------------------------------------------------------------

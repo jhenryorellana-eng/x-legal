@@ -239,6 +239,7 @@ vi.mock("@/backend/platform/supabase", () => {
 
 import {
   startGeneration,
+  executeGenerationJob,
   cancelGeneration,
   markRunFailedByCallback,
   markExtractionFailed,
@@ -1090,5 +1091,158 @@ describe("assessDocumentLegibility", () => {
     const v = await assessDocumentLegibility({ bytes: new Uint8Array([1]), mimeType: "image/png" });
     expect(v.legible).toBe(true);
     expect(v.blurLevel).toBe("none");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// executeGenerationJob — sectioned, resumable, v1-grade engine
+// ---------------------------------------------------------------------------
+
+describe("executeGenerationJob (sectioned + research)", () => {
+  const LONG_BODY = "Detailed legal analysis paragraph. ".repeat(40); // ~1.4k chars
+
+  function aiMessage(text: string) {
+    return {
+      usage: { input_tokens: 1000, output_tokens: 2000 },
+      content: [{ type: "text", text }],
+      stop_reason: "end_turn",
+      model: "claude-sonnet-4-6",
+    };
+  }
+
+  function sectionedRun(over: Record<string, unknown> = {}) {
+    return {
+      ...BASE_RUN,
+      status: "running" as const,
+      orgId: ORG_ID,
+      progress: null,
+      config_snapshot: {
+        system_prompt: "You are a federal immigration attorney.",
+        input_document_slugs: [],
+        input_form_slugs: [],
+        dataset_id: null,
+        model: "claude-sonnet-4-6",
+        research_model: "claude-opus-4-7",
+        max_output_tokens: 16000,
+        output_format: "pdf",
+        output_language: "en",
+        web_search_enabled: true,
+        web_search_max_uses: 6,
+        research_instructions: "Find favorable federal precedents.",
+        sections: [
+          { key: "i1", heading: "I.1 Introduction", min_words: 0, max_tokens: 4000, guidance: "Intro.", type: "analysis" },
+          { key: "i2", heading: "I.2 Argument", min_words: 0, max_tokens: 4000, guidance: "Argue.", type: "analysis" },
+        ],
+        assembly: { cover: true, toc: true, chronology: false, closing: "I declare under penalty of perjury that the foregoing is true." },
+        resolved_inputs: { documents: [], forms: [] },
+        dataset_injection: null,
+      },
+      ...over,
+    };
+  }
+
+  beforeEach(() => {
+    mocks.repo.loadResolvedInputs.mockResolvedValue({ documents: [], forms: [] });
+    mocks.repo.loadDatasetItems.mockResolvedValue([]);
+    mocks.repo.isCancelled.mockResolvedValue(false);
+    mocks.repo.completeRun.mockResolvedValue({ rowsAffected: 1 });
+    mocks.repo.updateRunProgress.mockResolvedValue(undefined);
+    mocks.repo.patchConfigSnapshot.mockResolvedValue(undefined);
+    mocks.pdf.renderMarkdownToPdf.mockResolvedValue(new Uint8Array([1]));
+  });
+
+  it("runs research once, drafts every section, assembles, and completes in one pass", async () => {
+    mocks.repo.findRunById.mockResolvedValue(sectionedRun());
+    mocks.anthropic.finalMessage
+      .mockResolvedValueOnce(aiMessage(JSON.stringify({ nationality: "Venezuela", persecution_type: "political opinion", protected_grounds: ["political opinion"], perpetrator: "state agents", state_action: "state actor", principal_theory: "Individualized persecution.", summary: "Targeted for opposition.", chronology: [{ date: "2021-05-01", event: "Threat", consequence: "Fled", exhibit: null }] })))
+      .mockResolvedValueOnce(aiMessage(JSON.stringify({ cases: [{ name: "Doe v. INS", citation: "1 F.3d 2", court: "9th Cir.", year: "1999", holding: "H", factual_analogy_to_applicant: "FA", url: "https://x" }] })))
+      .mockResolvedValueOnce(aiMessage(JSON.stringify({ items: [{ source_name: "HRW", executive_summary: "Impunity.", full_context: "C", why_it_helps: "W", url: "https://y", published_date: "2025-01-01" }] })))
+      .mockResolvedValueOnce(aiMessage(`## I.1 Introduction\n\n${LONG_BODY}`))
+      .mockResolvedValueOnce(aiMessage(`## I.2 Argument\n\n${LONG_BODY}`));
+
+    const outcome = await executeGenerationJob({ runId: RUN_ID, orgId: ORG_ID } as never);
+
+    expect(outcome).toBe("completed");
+    // 3 research calls + 2 section calls
+    expect(mocks.anthropic.finalMessage).toHaveBeenCalledTimes(5);
+    // research persisted into config_snapshot
+    const researchPatch = mocks.repo.patchConfigSnapshot.mock.calls.find((c) => "research" in (c[1] ?? {}));
+    expect(researchPatch).toBeTruthy();
+    expect(researchPatch![1].research.jurisprudence).toHaveLength(1);
+    expect(researchPatch![1].research.country_conditions).toHaveLength(1);
+    // assembled output carries cover + both sections + closing
+    const completeArg = mocks.repo.completeRun.mock.calls[0][1];
+    expect(completeArg.outputText).toContain("LEGAL MEMORANDUM");
+    expect(completeArg.outputText).toContain("I.1 Introduction");
+    expect(completeArg.outputText).toContain("I.2 Argument");
+    expect(completeArg.outputText).toContain("penalty of perjury");
+    // not deferred
+    expect(mocks.qstash.enqueueJob).not.toHaveBeenCalled();
+    expect(mocks.events.emitGenerationCompleted).toHaveBeenCalledTimes(1);
+  });
+
+  it("resumes from a checkpoint without redoing research or completed sections", async () => {
+    const snapshot = sectionedRun().config_snapshot;
+    mocks.repo.findRunById.mockResolvedValue(
+      sectionedRun({
+        config_snapshot: {
+          ...snapshot,
+          research: { analysis: null, jurisprudence: [], country_conditions: [] },
+        },
+        progress: {
+          kind: "sectioned",
+          sectionsDone: 1,
+          parts: [`## I.1 Introduction\n\n${LONG_BODY}`],
+          prevTail: "tail",
+          usage: { inputTokens: 10, outputTokens: 20, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+          costUsd: 0.5,
+          modelUsed: "claude-sonnet-4-6",
+        },
+      }),
+    );
+    mocks.anthropic.finalMessage.mockResolvedValueOnce(aiMessage(`## I.2 Argument\n\n${LONG_BODY}`));
+
+    const outcome = await executeGenerationJob({ runId: RUN_ID, orgId: ORG_ID } as never);
+
+    expect(outcome).toBe("completed");
+    // only section 2 drafted — no research, no section 1 redo
+    expect(mocks.anthropic.finalMessage).toHaveBeenCalledTimes(1);
+    const completeArg = mocks.repo.completeRun.mock.calls[0][1];
+    expect(completeArg.outputText).toContain("I.1 Introduction");
+    expect(completeArg.outputText).toContain("I.2 Argument");
+  });
+
+  it("still supports single-pass generation when there are no sections", async () => {
+    mocks.repo.findRunById.mockResolvedValue(
+      sectionedRun({ config_snapshot: { ...sectionedRun().config_snapshot, sections: [], web_search_enabled: false } }),
+    );
+    mocks.anthropic.finalMessage.mockResolvedValueOnce(aiMessage(LONG_BODY));
+
+    const outcome = await executeGenerationJob({ runId: RUN_ID, orgId: ORG_ID } as never);
+
+    expect(outcome).toBe("completed");
+    expect(mocks.anthropic.finalMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails the run on a non-retryable (4xx) research error — never a zombie", async () => {
+    mocks.repo.findRunById.mockResolvedValue(sectionedRun());
+    mocks.anthropic.finalMessage.mockRejectedValueOnce(new Error("401 unauthorized"));
+
+    const outcome = await executeGenerationJob({ runId: RUN_ID, orgId: ORG_ID } as never);
+
+    expect(outcome).toBe("failed");
+    expect(mocks.repo.markRunFailed).toHaveBeenCalledTimes(1);
+    expect(mocks.events.emitGenerationFailed).toHaveBeenCalledTimes(1);
+    expect(mocks.repo.completeRun).not.toHaveBeenCalled();
+  });
+
+  it("re-throws a transient (5xx) research error so QStash retries (no zombie, not marked failed)", async () => {
+    mocks.repo.findRunById.mockResolvedValue(sectionedRun());
+    mocks.anthropic.finalMessage.mockRejectedValueOnce(new Error("529 Service overloaded"));
+
+    await expect(executeGenerationJob({ runId: RUN_ID, orgId: ORG_ID } as never)).rejects.toThrow("529");
+    // Transient → re-thrown for retry; the run is NOT permanently marked failed here.
+    expect(mocks.repo.markRunFailed).not.toHaveBeenCalled();
+    expect(mocks.repo.completeRun).not.toHaveBeenCalled();
   });
 });

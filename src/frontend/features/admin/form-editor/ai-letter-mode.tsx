@@ -43,8 +43,12 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
     sections: [],
     rules_enabled: true,
     rules_text: null,
+    assembly: null,
   };
   const [cfg, setCfg] = React.useState<GenerationConfigVM>(initial);
+  const asm = cfg.assembly ?? { cover: false, toc: false, chronology: false, closing: null };
+  const updateAssembly = (patch: Partial<NonNullable<GenerationConfigVM["assembly"]>>) =>
+    setCfg({ ...cfg, assembly: { ...asm, ...patch } });
   const [saving, setSaving] = React.useState(false);
 
   // Test column state
@@ -76,6 +80,7 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
       sections: cfg.sections,
       rules_enabled: cfg.rules_enabled,
       rules_text: cfg.rules_text,
+      assembly: cfg.assembly,
     });
     setSaving(false);
     if (!r.success) return toast.error(r.error?.code ?? "Error");
@@ -209,9 +214,18 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
             </label>
             {cfg.web_search_enabled && (
               <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-                <div style={{ maxWidth: 220 }}>
-                  <FieldLabel>Máx. búsquedas</FieldLabel>
-                  <TextInput type="number" value={String(cfg.web_search_max_uses)} aria-label="Máximo de búsquedas" onChange={(e) => setCfg({ ...cfg, web_search_max_uses: Math.max(1, Math.min(10, Number(e.target.value) || 5)) })} />
+                <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 10 }}>
+                  <div>
+                    <FieldLabel>Máx. búsquedas</FieldLabel>
+                    <TextInput type="number" value={String(cfg.web_search_max_uses)} aria-label="Máximo de búsquedas" onChange={(e) => setCfg({ ...cfg, web_search_max_uses: Math.max(1, Math.min(10, Number(e.target.value) || 5)) })} />
+                  </div>
+                  <div>
+                    <FieldLabel>Modelo de investigación (jurisprudencia)</FieldLabel>
+                    <SelectInput value={cfg.research_model ?? ""} aria-label="Modelo de investigación" onChange={(e) => setCfg({ ...cfg, research_model: e.target.value || null })}>
+                      <option value="">{strings.none ?? "—"} (usa el modelo de redacción)</option>
+                      {GENERATION_MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
+                    </SelectInput>
+                  </div>
                 </div>
                 <div>
                   <FieldLabel>Instrucciones de investigación</FieldLabel>
@@ -243,15 +257,40 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
                   <TextInput value={s.heading} placeholder="Título de la sección" aria-label={`Título sección ${i + 1}`} onChange={(e) => updateSection(i, { heading: e.target.value })} />
                   <button type="button" onClick={() => removeSection(i)} aria-label={`Eliminar sección ${i + 1}`} style={{ border: "none", background: "none", color: "var(--red)", cursor: "pointer", display: "inline-flex" }}><Icon name="x" size={16} /></button>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
                   <div><FieldLabel>Mín. palabras</FieldLabel><TextInput type="number" value={String(s.min_words)} aria-label={`Mín palabras sección ${i + 1}`} onChange={(e) => updateSection(i, { min_words: Math.max(0, Number(e.target.value) || 0) })} /></div>
                   <div><FieldLabel>Máx. tokens</FieldLabel><TextInput type="number" value={String(s.max_tokens)} aria-label={`Máx tokens sección ${i + 1}`} onChange={(e) => updateSection(i, { max_tokens: Math.max(256, Math.min(16000, Number(e.target.value) || 4000)) })} /></div>
                   <div><FieldLabel>Tipo</FieldLabel><SelectInput value={s.type} aria-label={`Tipo sección ${i + 1}`} onChange={(e) => updateSection(i, { type: e.target.value as GenerationSectionVM["type"] })}><option value="doctrinal">Doctrinal</option><option value="narrative">Narrativa</option><option value="analysis">Análisis</option></SelectInput></div>
+                  <div><FieldLabel>Modelo</FieldLabel><SelectInput value={s.model ?? ""} aria-label={`Modelo sección ${i + 1}`} onChange={(e) => updateSection(i, { model: e.target.value || null })}><option value="">Por defecto</option>{GENERATION_MODELS.map((m) => <option key={m} value={m}>{m}</option>)}</SelectInput></div>
                 </div>
                 <textarea value={s.guidance} placeholder="Guía: qué debe cubrir esta sección" aria-label={`Guía sección ${i + 1}`} onChange={(e) => updateSection(i, { guidance: e.target.value })} style={{ width: "100%", minHeight: 56, borderRadius: 10, border: "1.5px solid var(--line)", background: "var(--panel-2, var(--card-alt))", padding: 10, fontSize: 12.5, color: "var(--ink)", resize: "vertical", boxSizing: "border-box" }} />
               </div>
             ))}
             <button type="button" onClick={addSection} style={{ border: "none", background: "none", color: "var(--accent)", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>+ Agregar sección</button>
+          </div>
+
+          {/* Ensamblado del documento (court assembly) */}
+          <div>
+            <FieldLabel>Ensamblado del documento</FieldLabel>
+            <p style={{ fontSize: 11.5, color: "var(--ink-3)", margin: "0 0 10px" }}>Cómo se compone el documento final de corte: carátula, índice, tabla cronológica y cierre (declaración bajo perjurio / firma).</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <Switch checked={asm.cover} onCheckedChange={(c) => updateAssembly({ cover: c })} aria-label="Carátula" />
+                <span style={{ fontSize: 13, color: "var(--ink)" }}>Carátula (portada con tabla de datos del caso)</span>
+              </label>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <Switch checked={asm.toc} onCheckedChange={(c) => updateAssembly({ toc: c })} aria-label="Índice" />
+                <span style={{ fontSize: 13, color: "var(--ink)" }}>Índice (tabla de contenidos)</span>
+              </label>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <Switch checked={asm.chronology} onCheckedChange={(c) => updateAssembly({ chronology: c })} aria-label="Tabla cronológica" />
+                <span style={{ fontSize: 13, color: "var(--ink)" }}>Tabla cronológica en el cuerpo</span>
+              </label>
+              <div>
+                <FieldLabel>Cierre (declaración bajo perjurio / firma)</FieldLabel>
+                <textarea value={asm.closing ?? ""} aria-label="Cierre del documento" placeholder="Ej. I declare under penalty of perjury under the laws of the United States that the foregoing is true and correct…" onChange={(e) => updateAssembly({ closing: e.target.value || null })} style={{ width: "100%", minHeight: 60, borderRadius: 12, border: "1.5px solid var(--line)", background: "var(--panel-2, var(--card-alt))", padding: 10, fontSize: 12.5, color: "var(--ink)", resize: "vertical", boxSizing: "border-box" }} />
+              </div>
+            </div>
           </div>
         </div>
 

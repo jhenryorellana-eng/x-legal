@@ -94,6 +94,15 @@ export interface GenerationSectionVM {
   max_tokens: number;
   guidance: string;
   type: "doctrinal" | "narrative" | "analysis";
+  /** Optional per-section model override (e.g. Opus for the dense nexus section). */
+  model?: string | null;
+}
+
+export interface GenerationAssemblyVM {
+  cover: boolean;
+  toc: boolean;
+  chronology: boolean;
+  closing: string | null;
 }
 
 export interface GenerationConfigVM {
@@ -113,6 +122,7 @@ export interface GenerationConfigVM {
   sections: GenerationSectionVM[];
   rules_enabled: boolean;
   rules_text: string | null;
+  assembly: GenerationAssemblyVM | null;
 }
 
 /* Injected action shapes (structurally identical to the app server actions). */

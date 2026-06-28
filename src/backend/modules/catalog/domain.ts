@@ -461,12 +461,16 @@ export const GenerationSectionSchema = z.object({
   max_tokens: z.number().int().min(256).max(16000).default(4000),
   guidance: z.string().default(""),
   type: z.enum(["doctrinal", "narrative", "analysis"]).default("analysis"),
+  // Optional per-section model override (e.g. Opus for the dense nexus section).
+  model: z.enum(GENERATION_MODELS).nullable().optional(),
 });
 export type GenerationSection = z.infer<typeof GenerationSectionSchema>;
 
 export const GenerationAssemblySchema = z.object({
   cover: z.boolean().default(false),
   toc: z.boolean().default(false),
+  // Insert the research-derived chronology table into the body (court documents).
+  chronology: z.boolean().default(false),
   closing: z.string().nullable().optional(),
 });
 export type GenerationAssembly = z.infer<typeof GenerationAssemblySchema>;
