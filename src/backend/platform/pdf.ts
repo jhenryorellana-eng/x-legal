@@ -59,50 +59,50 @@ export async function renderMarkdownToPdf(md: string): Promise<Uint8Array> {
   const mupdf = await import("mupdf");
 
   const buf = new TextEncoder().encode(html);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const htmlDoc = (mupdf.Document as any).openDocument(buf, "text/html");
 
   try {
   // US Letter: 612 × 792 pt, 11pt base font
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   (htmlDoc as any).layout(612, 792, 11);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const n = (htmlDoc as any).countPages();
 
   // Preferred path: toPDFDocument()
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   if (typeof (htmlDoc as any).toPDFDocument === "function") {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const pdf = (htmlDoc as any).toPDFDocument();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     return (pdf.saveToBuffer("") as any).asUint8Array() as Uint8Array;
   }
 
   // Fallback: DocumentWriter
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const writerBuf = new (mupdf as any).Buffer();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const writer = new (mupdf as any).DocumentWriter(writerBuf, "pdf", "");
   for (let i = 0; i < n; i++) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const page = (htmlDoc as any).loadPage(i);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const bounds = (page as any).getBounds();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const dev = (writer as any).beginPage(bounds);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     (page as any).run(dev, (mupdf as any).Matrix.identity);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     (writer as any).endPage();
   }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   (writer as any).close();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   return (writerBuf as any).asUint8Array() as Uint8Array;
   } finally {
     // Release the mupdf WASM document (linear allocator — avoid a per-call leak).
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     try { (htmlDoc as any).destroy?.(); } catch { /* already freed */ }
   }
 }
@@ -217,16 +217,16 @@ export async function renderMarkdownToDocx(md: string): Promise<Uint8Array> {
 export async function detectAcroFields(bytes: Uint8Array): Promise<DetectedField[]> {
   const mupdf = await import("mupdf");
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const doc = (mupdf.Document as any).openDocument(bytes, "application/pdf");
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const n = (doc as any).countPages();
   const fields: DetectedField[] = [];
 
   for (let i = 0; i < n; i++) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const page = (doc as any).loadPage(i);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const widgets: any[] = (page as any).getWidgets?.() ?? [];
     for (const w of widgets) {
       const name: string = w.getName?.() ?? "";
@@ -254,17 +254,17 @@ export async function detectAcroFields(bytes: Uint8Array): Promise<DetectedField
  */
 export async function extractPdfText(bytes: Uint8Array, maxCharsPerPage = 2400): Promise<string> {
   const mupdf = await import("mupdf");
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const doc = (mupdf.Document as any).openDocument(bytes, "application/pdf");
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const n = (doc as any).countPages();
   const out: string[] = [];
   for (let i = 0; i < n; i++) {
     let pageText = "";
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       const page = (doc as any).loadPage(i);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       const stext = (page as any).toStructuredText?.("preserve-whitespace");
       if (stext) {
         // mupdf StructuredText: prefer asText(); fall back to parsing asJSON().
@@ -315,9 +315,9 @@ export async function fillAcroForm(
 ): Promise<Uint8Array> {
   const mupdf = await import("mupdf");
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const doc = (mupdf.Document as any).openDocument(bytes, "application/pdf") as any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const pdfDoc = doc as any;
 
   // Step 1: Drop XFA so AcroForm static layer wins
@@ -375,7 +375,7 @@ export async function fillAcroForm(
   }
 
   const outBuf = pdfDoc.saveToBuffer?.("") ?? pdfDoc.save?.("");
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   return (outBuf as any).asUint8Array() as Uint8Array;
 }
 
@@ -447,7 +447,7 @@ const GOLD = "#c8a24a";
  * Mirrors renderMarkdownToPdf: prefer toPDFDocument(), else DocumentWriter. */
 export async function htmlToPdf(html: string): Promise<Uint8Array> {
   const mupdf = await import("mupdf");
-  /* eslint-disable @typescript-eslint/no-explicit-any */
+   
   const M = mupdf as any;
   const doc = M.Document.openDocument(new TextEncoder().encode(html), "text/html");
   try {
@@ -469,7 +469,7 @@ export async function htmlToPdf(html: string): Promise<Uint8Array> {
   } finally {
     try { doc.destroy?.(); } catch { /* freed */ }
   }
-  /* eslint-enable @typescript-eslint/no-explicit-any */
+   
 }
 
 /**
@@ -526,7 +526,7 @@ export interface CompiledExpediente {
  */
 export async function compileExpedientePdf(items: ExpedienteItemInput[]): Promise<CompiledExpediente> {
   const mupdf = await import("mupdf");
-  /* eslint-disable @typescript-eslint/no-explicit-any */
+   
   const M = mupdf as any;
 
   // Open each item as a PDFDocument (graftPage needs PDF source + copies objects
@@ -612,7 +612,7 @@ export async function compileExpedientePdf(items: ExpedienteItemInput[]): Promis
   try { tocPdf?.destroy?.(); } catch { /* freed */ }
   for (const o of opened) { try { o.doc.destroy?.(); } catch { /* freed */ } }
   try { dst.destroy?.(); } catch { /* freed */ }
-  /* eslint-enable @typescript-eslint/no-explicit-any */
+   
 
   return { pdf, pageCount: totalPages, toc };
 }

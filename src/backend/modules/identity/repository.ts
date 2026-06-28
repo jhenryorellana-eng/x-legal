@@ -199,9 +199,9 @@ export async function listStaffMembers(): Promise<EmployeeRow[]> {
 
   return (data ?? []).map((row) => ({
     userId: row.user_id,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     email: (row.users as any)?.email ?? "",
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     isActive: (row.users as any)?.is_active ?? true,
     displayName: row.display_name,
     role: row.role,
@@ -337,7 +337,7 @@ export async function findStaffById(
 
   if (!data) return null;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const role = (data.staff_profiles as any)?.[0]?.role ?? (data.staff_profiles as any)?.role ?? "staff";
 
   return {

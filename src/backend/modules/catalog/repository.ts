@@ -640,7 +640,7 @@ export async function publishVersionTx(versionId: string): Promise<void> {
   const client = createServiceClient();
 
   // Try the RPC first (catalog_publish_version — migration §4.4)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const { error: rpcError } = await (client.rpc as any)("catalog_publish_version", {
     p_version_id: versionId,
   });

@@ -229,7 +229,7 @@ export const getActor = cache(async (): Promise<Actor | null> => {
   // getClaims() validates the JWT (JWKS / Auth server) and returns the full
   // payload INCLUDING hook-injected custom claims — getUser() does NOT carry
   // them (it returns the DB user record). userId comes from the `sub` claim.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const claimsResult = await (supabase.auth as any).getClaims?.();
   let jwtClaims: Record<string, unknown> | null = null;
   let userId: string | null = null;

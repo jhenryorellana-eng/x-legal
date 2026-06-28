@@ -78,7 +78,7 @@ import {
 // Audit module — imported via dynamic require to avoid circular deps at module load
 // (audit → platform only; identity → platform; no true cycle but dynamic avoids
 // potential init ordering issues in tests)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 let _audit: { writeAudit: (...args: any[]) => Promise<void> } | null = null;
 async function getAudit() {
   if (!_audit) {
@@ -231,7 +231,7 @@ function getZxcvbnFactory(): ZxcvbnFactory {
   // issues in server-side ESM environments.
   // Cast via `any` because @zxcvbn-ts/core Options requires all fields but
   // the constructor accepts a partial subset at runtime.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   _zxcvbnFactory = new ZxcvbnFactory({ graphs: adjacencyGraphs, dictionary } as any);
   return _zxcvbnFactory;
 }

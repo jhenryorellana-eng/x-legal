@@ -97,7 +97,7 @@ interface CustomClaims {
   user_role: "admin" | "sales" | "paralegal" | "finance" | null;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 function extractCustomClaims(jwtClaims: Record<string, any> | null): CustomClaims {
   if (!jwtClaims) {
     return { user_kind: "unprovisioned", org_id: null, user_role: null };
@@ -235,7 +235,7 @@ export async function middleware(request: NextRequest) {
 
   try {
     // Try getClaims() first (validated JWT payload — faster than getUser())
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const claimsResult = await (supabase.auth as any).getClaims?.();
     if (claimsResult && !claimsResult.error && claimsResult.data?.claims) {
       jwtClaims = claimsResult.data.claims;

@@ -27,14 +27,6 @@ const withSerwist = withSerwistInit({
 });
 
 const nextConfig: NextConfig = {
-  // The Next 15.5 SWC server minifier intermittently mangles a shared server
-  // chunk, making `next build` fail static prerender with "Cannot read
-  // properties of undefined (reading 'call')" on a non-deterministic page
-  // (varies per run; disabling server minification builds clean 100% of the
-  // time). Server-only impact (browser bundles are unaffected). TODO: drop this
-  // once the upstream minifier bug is fixed / Next is upgraded.
-  experimental: { serverMinification: false },
-
   // mupdf is an ESM/WASM package — must NOT be bundled by Next.js webpack.
   // It loads its own .wasm file at runtime via Node.js resolution.
   // Without this, the build fails with "WASM module not found" errors.

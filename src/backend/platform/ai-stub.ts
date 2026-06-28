@@ -20,7 +20,7 @@
  *   - Gemini `models.generateContent()` → { text, candidates:[{content:{parts:[{text}]}}], usageMetadata }
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 /**
  * True when the deterministic AI stub must be used. Throws (fail loud) if the

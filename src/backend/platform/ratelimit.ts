@@ -101,7 +101,7 @@ function makeLimiter(
       const success = count <= tokens;
       return { success, limit: tokens, remaining, reset, pending: Promise.resolve() };
     },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
   } as any;
 }
 
