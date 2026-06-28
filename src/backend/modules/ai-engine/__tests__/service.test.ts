@@ -1149,9 +1149,24 @@ describe("executeGenerationJob (sectioned + research)", () => {
     };
   }
 
+  // A curated precedent the engine sources jurisprudence from (web_search case-law is
+  // unreliable; the dataset is the source of truth). datasetToJurisprudence parses the
+  // citation/court/year from the title and the URL from meta.
+  const PRECEDENT_ITEM = {
+    id: "ds-prec-1",
+    title: "Doe v. INS, 1 F.3d 2 (9th Cir. 1999)",
+    content: "Imputed political opinion suffices to establish nexus.",
+    tags: ["political_opinion", "nexus"],
+    outcome: "granted",
+    token_count: 40,
+    created_at: "2025-01-01",
+    jurisdiction: "9th Cir.",
+    meta: { kind: "precedent" as const, url: "https://x" },
+  };
+
   beforeEach(() => {
     mocks.repo.loadResolvedInputs.mockResolvedValue({ documents: [], forms: [] });
-    mocks.repo.loadDatasetItems.mockResolvedValue([]);
+    mocks.repo.loadDatasetItems.mockResolvedValue([PRECEDENT_ITEM]);
     mocks.repo.isCancelled.mockResolvedValue(false);
     mocks.repo.completeRun.mockResolvedValue({ rowsAffected: 1 });
     mocks.repo.updateRunProgress.mockResolvedValue(undefined);
@@ -1163,7 +1178,7 @@ describe("executeGenerationJob (sectioned + research)", () => {
     mocks.repo.findRunById.mockResolvedValue(sectionedRun());
     mocks.anthropic.finalMessage
       .mockResolvedValueOnce(aiMessage(JSON.stringify({ nationality: "Venezuela", persecution_type: "political opinion", protected_grounds: ["political opinion"], perpetrator: "state agents", state_action: "state actor", principal_theory: "Individualized persecution.", summary: "Targeted for opposition.", chronology: [{ date: "2021-05-01", event: "Threat", consequence: "Fled", exhibit: null }] })))
-      .mockResolvedValueOnce(aiMessage(JSON.stringify({ cases: [{ name: "Doe v. INS", citation: "1 F.3d 2", court: "9th Cir.", year: "1999", holding: "H", factual_analogy_to_applicant: "FA", url: "https://x" }] })))
+      .mockResolvedValueOnce(aiMessage(JSON.stringify({ analogies: [{ i: 1, factual_analogy: "Applies directly to the applicant's facts." }] })))
       .mockResolvedValueOnce(aiMessage(JSON.stringify({ items: [{ source_name: "HRW", executive_summary: "Impunity.", full_context: "C", why_it_helps: "W", url: "https://y", published_date: "2025-01-01" }] })))
       .mockResolvedValueOnce(aiMessage(`## I.1 Introduction\n\n${LONG_BODY}`))
       .mockResolvedValueOnce(aiMessage(`## I.2 Argument\n\n${LONG_BODY}`));
@@ -1247,7 +1262,7 @@ describe("executeGenerationJob (sectioned + research)", () => {
       }),
     );
     mocks.anthropic.finalMessage
-      .mockResolvedValueOnce(aiMessage(JSON.stringify({ cases: [{ name: "Doe v. INS", citation: "1 F.3d 2", court: "9th Cir.", year: "1999", holding: "H", factual_analogy_to_applicant: "FA", url: "https://x" }] })))
+      .mockResolvedValueOnce(aiMessage(JSON.stringify({ analogies: [{ i: 1, factual_analogy: "Applies directly to the applicant's facts." }] })))
       .mockResolvedValueOnce(aiMessage(JSON.stringify({ items: [{ source_name: "HRW", executive_summary: "Impunity.", full_context: "C", why_it_helps: "W", url: "https://y", published_date: "2025-01-01" }] })))
       .mockResolvedValueOnce(aiMessage(`## I.1 Introduction\n\n${LONG_BODY}`))
       .mockResolvedValueOnce(aiMessage(`## I.2 Argument\n\n${LONG_BODY}`));
@@ -1283,7 +1298,7 @@ describe("executeGenerationJob (sectioned + research)", () => {
     );
     mocks.anthropic.finalMessage
       .mockResolvedValueOnce(aiMessage(JSON.stringify({ nationality: "Venezuela", persecution_type: "political opinion", protected_grounds: ["political opinion"], perpetrator: "state agents", state_action: "state actor", principal_theory: "P", summary: "S", chronology: [] })))
-      .mockResolvedValueOnce(aiMessage(JSON.stringify({ cases: [{ name: "Doe v. INS", citation: "1 F.3d 2", court: "9th Cir.", year: "1999", holding: "H", factual_analogy_to_applicant: "FA", url: "https://x" }] })))
+      .mockResolvedValueOnce(aiMessage(JSON.stringify({ analogies: [{ i: 1, factual_analogy: "Applies directly to the applicant's facts." }] })))
       .mockResolvedValueOnce(aiMessage(JSON.stringify({ items: [{ source_name: "HRW", executive_summary: "Impunity.", full_context: "C", why_it_helps: "W", url: "https://y", published_date: "2025-01-01" }] })))
       .mockResolvedValueOnce(aiMessage(`## I.1 Introduction\n\n${LONG_BODY}`))
       .mockResolvedValueOnce(aiMessage(`## I.2 Argument\n\n${LONG_BODY}`));

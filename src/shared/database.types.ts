@@ -49,6 +49,7 @@ export type Database = {
           file_path: string | null
           id: string
           jurisdiction: string | null
+          meta: Json
           outcome: string | null
           tags: string[]
           title: string
@@ -63,6 +64,7 @@ export type Database = {
           file_path?: string | null
           id?: string
           jurisdiction?: string | null
+          meta?: Json
           outcome?: string | null
           tags?: string[]
           title: string
@@ -77,6 +79,7 @@ export type Database = {
           file_path?: string | null
           id?: string
           jurisdiction?: string | null
+          meta?: Json
           outcome?: string | null
           tags?: string[]
           title?: string

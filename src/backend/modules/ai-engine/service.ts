@@ -68,11 +68,13 @@ import {
   splitChronologyWindows,
   buildResearchContextBlock,
   buildAnalysisPrompt,
-  buildJurisprudencePrompt,
   buildCountryConditionsPrompt,
   parseResearchAnalysis,
-  parseJurisprudence,
   parseCountryConditions,
+  datasetToJurisprudence,
+  datasetToCountry,
+  buildJurisprudenceAnalogyPrompt,
+  parseAnalogies,
   curateInternalFields,
   sumUsage as _sumUsage,
   type GenerationRequest,
@@ -82,6 +84,8 @@ import {
   type ResearchBundle,
   type ResolvedInputs,
   type ResearchAnalysis,
+  type CountryConditionSource,
+  type DatasetItem,
   type SystemBlock,
   // ChunkProgress: used in progress column typing (F4-2). Prefixed to suppress unused warning.
   type ChunkProgress as _ChunkProgress,
@@ -437,7 +441,10 @@ export async function executeGenerationJob(
   const inputs = await loadResolvedInputs(snapshot);
   const datasetItems = await loadDatasetItems(snapshot.dataset_id);
   const runContext: RunContext = {};
-  const selected = selectDatasetItems(datasetItems, runContext, DATASET_BUDGET);
+  // The few-shot reference is precedents + model declarations; country-condition
+  // items (meta.kind === "country") are annex feedstock, not style examples — keep
+  // them out of the prompt XML (they still feed the country fallback).
+  const selected = selectDatasetItems(datasetItems.filter((i) => i.meta?.kind !== "country"), runContext, DATASET_BUDGET);
 
   // Persist dataset_injection if not already set
   if (!snapshot.dataset_injection && selected.selectedItems.length > 0) {
@@ -455,7 +462,7 @@ export async function executeGenerationJob(
   // vs single-pass. Both finalize through finalizeRun.
   const sections = snapshot.sections ?? [];
   if (sections.length > 0) {
-    return runSectionedGeneration(run, snapshot, prompt, inputs, sections);
+    return runSectionedGeneration(run, snapshot, prompt, inputs, sections, datasetItems);
   }
   return runSinglePassGeneration(run, snapshot, prompt);
 }
@@ -474,6 +481,19 @@ const SECTION_SOFT_BUDGET_MS = 150_000;
  *  call aborts and the job retries/resumes from its checkpoint instead of burning
  *  the entire invocation on one stuck request. */
 const CALL_TIMEOUT_MS = 240_000;
+
+/** Research timeouts. Analysis / analogy are tool-free and fast. The country
+ *  web_search runs minutes, so (a) we defer it to a fresh invocation when the
+ *  earlier sub-steps already burned the budget, and (b) we bound it by the
+ *  remaining wall-clock so it aborts in time for the DB save inside maxDuration
+ *  (300s) — otherwise Vercel kills the process mid-call and forces a QStash retry. */
+const RESEARCH_ANALYSIS_TIMEOUT_MS = 120_000;
+/** Self-chain BEFORE the country web_search if this much wall-clock is already gone
+ *  (leaves ~200s for the ~190s search + the DB save within the 300s budget). */
+const RESEARCH_PRE_COUNTRY_BUDGET_MS = 90_000;
+/** The country web_search must abort by this wall-clock mark (leaves ~15s headroom
+ *  before the 300s hard kill for saveResearch + accounting). */
+const MAX_RESEARCH_WALLCLOCK_MS = 285_000;
 
 interface AnthropicCallResult {
   text: string;
@@ -728,6 +748,7 @@ async function runSectionedGeneration(
   prompt: ReturnType<typeof assemblePrompt>,
   inputs: ResolvedInputs,
   sections: GenerationSectionSpec[],
+  datasetItems: DatasetItem[],
 ): Promise<JobOutcome> {
   const client = getAnthropicClient();
   const startedAt = Date.now();
@@ -768,31 +789,17 @@ async function runSectionedGeneration(
     updateRunProgress(run.id, { kind: "sectioned", sectionsDone, parts, prevTail, usage, costUsd: costAccum, modelUsed, researchStep });
 
   // ── Research phase (resumable per sub-step; persisted incrementally in
-  //    config_snapshot.research). researchStep: 1 = analysis, 2 = jurisprudence,
-  //    3 = complete. Each web_search sub-step self-chains when over the soft budget,
-  //    so the research phase (analysis + two web_search calls) never blows
-  //    maxDuration and a re-enqueue never re-runs an already-finished sub-step. ──
+  //    config_snapshot.research). researchStep: 1 = analysis, 2 = jurisprudence
+  //    (from the CURATED DATASET — reliable case law; open-ended web_search for
+  //    precedents hangs or returns nothing), 3 = country conditions (web_search,
+  //    which is reliable for news, with the dataset as the fallback). Each sub-step
+  //    self-chains over the soft budget so research never blows maxDuration. ──
   let bundle: ResearchBundle = snapshot.research ?? { analysis: null, jurisprudence: [], country_conditions: [] };
-  if (snapshot.web_search_enabled && researchStep < 3) {
-    const tools = [buildWebSearchTool(snapshot.web_search_max_uses ?? 5, researchModel)];
-
-    // One retry-on-empty: web_search output varies run-to-run (the model
-    // occasionally narrates instead of returning the JSON array).
-    const callList = async <T>(p: { system: string; user: string }, parse: (t: string) => T[]): Promise<T[]> => {
-      let res = await callAnthropic(client, { model: researchModel, system: p.system, user: p.user, maxTokens: 8000, tools });
-      account(res);
-      let list = parse(res.text);
-      if (list.length === 0) {
-        res = await callAnthropic(client, { model: researchModel, system: p.system, user: p.user, maxTokens: 8000, tools });
-        account(res);
-        list = parse(res.text);
-      }
-      return list;
-    };
-
+  const researchEnabled = (snapshot.web_search_enabled || !!snapshot.dataset_id) ?? false;
+  if (researchEnabled && researchStep < 3) {
     // Persist the partial research + advance the sub-step checkpoint. Research is
     // written BEFORE the progress checkpoint: in the sub-millisecond crash window
-    // between the two we only lose cost accounting, never the Opus research itself.
+    // between the two we only lose cost accounting, never the research itself.
     const saveResearch = async (step: number) => {
       researchStep = step;
       await patchConfigSnapshot(run.id, { research: bundle });
@@ -801,45 +808,74 @@ async function runSectionedGeneration(
     const overBudget = () => Date.now() - startedAt > SECTION_SOFT_BUDGET_MS;
 
     try {
+      // Step 1 — case analysis (tool-free, fast).
       if (researchStep < 1) {
         const ap = buildAnalysisPrompt({ systemPrompt: snapshot.system_prompt, caseContext: baseUserContent });
-        const ar = await callAnthropic(client, { model: researchModel, system: ap.system, user: ap.user, maxTokens: 8000 });
+        const ar = await callAnthropic(client, { model: researchModel, system: ap.system, user: ap.user, maxTokens: 8000, timeoutMs: RESEARCH_ANALYSIS_TIMEOUT_MS });
         account(ar);
         bundle = { ...bundle, analysis: parseResearchAnalysis(ar.text) };
         await saveResearch(1);
         if (overBudget()) { await reEnqueueSelf(run, sectionsDone); return "deferred"; }
       }
 
+      // Step 2 — jurisprudence from the curated dataset (real precedents + holdings),
+      // with a per-case factual analogy generated in ONE tool-free call. The citation
+      // is always present (the authority) even if a URL is dead/absent.
       if (researchStep < 2) {
-        const jp = buildJurisprudencePrompt({ instructions: snapshot.research_instructions ?? null, analysis: bundle.analysis });
-        let jurisprudence = await callList(jp, parseJurisprudence);
-        // Verify URLs (Henry: each exhibit link must resolve so it can be downloaded
-        // and printed). Jurisprudence keeps the case even if its URL is dead (the
-        // citation is the authority) — only the dead URL is blanked.
+        let jurisprudence = datasetToJurisprudence(datasetItems, bundle.analysis, 6);
+        if (jurisprudence.length > 0) {
+          const anp = buildJurisprudenceAnalogyPrompt({ analysis: bundle.analysis, cases: jurisprudence });
+          const anr = await callAnthropic(client, { model: draftDefaultModel, system: anp.system, user: anp.user, maxTokens: 6000, timeoutMs: RESEARCH_ANALYSIS_TIMEOUT_MS });
+          account(anr);
+          const analogies = parseAnalogies(anr.text, jurisprudence.length);
+          jurisprudence = jurisprudence.map((c, i) => ({ ...c, factual_analogy: analogies[i] || c.factual_analogy }));
+        }
         jurisprudence = await Promise.all(
           jurisprudence.map(async (c) => (c.url && !(await checkUrlReachable(c.url)).reachable ? { ...c, url: "" } : c)),
         );
         bundle = { ...bundle, jurisprudence };
         await saveResearch(2);
-        if (overBudget()) { await reEnqueueSelf(run, sectionsDone); return "deferred"; }
+        // Defer the country web_search to a fresh invocation if the budget is already
+        // mostly gone — the search needs ~190s and must finish + save within 300s.
+        if (Date.now() - startedAt > RESEARCH_PRE_COUNTRY_BUDGET_MS) { await reEnqueueSelf(run, sectionsDone); return "deferred"; }
       }
 
+      // Step 3 — country conditions via web_search (reliable for news; capped to 4
+      // searches, wall-clock-bounded). A failure/empty result falls back to the curated
+      // dataset country items — never re-throws — so the annexes are never empty.
       if (researchStep < 3) {
-        const cp = buildCountryConditionsPrompt({ instructions: snapshot.research_instructions ?? null, analysis: bundle.analysis });
-        let country_conditions = await callList(cp, parseCountryConditions);
-        // Country-conditions news REQUIRES a live link, so unreachable / URL-less
-        // sources are dropped.
-        country_conditions = await keepReachable(country_conditions);
-        bundle = { ...bundle, country_conditions };
+        let country: CountryConditionSource[] = [];
+        if (snapshot.web_search_enabled) {
+          const cp = buildCountryConditionsPrompt({ instructions: snapshot.research_instructions ?? null, analysis: bundle.analysis });
+          const tools = [buildWebSearchTool(Math.min(snapshot.web_search_max_uses ?? 3, 3), researchModel)];
+          // Bound by the remaining wall-clock so the call aborts in time for saveResearch.
+          const searchTimeout = Math.max(60_000, MAX_RESEARCH_WALLCLOCK_MS - (Date.now() - startedAt));
+          try {
+            const res = await callAnthropic(client, { model: researchModel, system: cp.system, user: cp.user, maxTokens: 12000, tools, timeoutMs: searchTimeout });
+            account(res);
+            country = await keepReachable(parseCountryConditions(res.text));
+          } catch (e) {
+            // Fall back to the dataset on ANY error (never fail the run on country).
+            // A permanent 4xx (e.g. 400/413 — a structurally broken prompt) is logged at
+            // error level so an operator can act; a timeout/5xx is just transient.
+            const msg = e instanceof Error ? e.message : String(e);
+            const detail = { err: e, runId: run.id };
+            if (["400", "413"].some((c) => msg.includes(c))) logger.error(detail, "ai-engine: country web_search permanent error; using dataset fallback");
+            else logger.warn(detail, "ai-engine: country web_search timeout/transient; using dataset fallback");
+          }
+        }
+        if (country.length === 0) {
+          country = await keepReachable(datasetToCountry(datasetItems));
+          if (country.length === 0) logger.warn({ runId: run.id, datasetId: snapshot.dataset_id }, "ai-engine: no country conditions from web_search or dataset");
+        }
+        bundle = { ...bundle, country_conditions: country };
         await saveResearch(3);
         if (overBudget()) { await reEnqueueSelf(run, sectionsDone); return "deferred"; }
       }
     } catch (err) {
-      // Research failed. Non-retryable 4xx → mark the run failed; transient/5xx /
-      // timeout → re-throw so QStash retries the job, which resumes from the last
-      // saved research sub-step (analysis / jurisprudence already persisted are NOT
-      // re-run). We never emit a research-less court memo: the verified precedents
-      // are the whole point of this phase.
+      // Non-retryable 4xx → mark failed; transient/5xx/timeout → re-throw so QStash
+      // retries, resuming from the last saved research sub-step (already-saved
+      // analysis/jurisprudence are NOT re-run).
       return handleAnthropicError(err, run);
     }
   }

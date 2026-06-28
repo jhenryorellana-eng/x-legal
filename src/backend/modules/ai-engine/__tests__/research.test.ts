@@ -8,8 +8,17 @@ import {
   buildAnalysisPrompt,
   buildJurisprudencePrompt,
   buildCountryConditionsPrompt,
+  parsePrecedent,
+  datasetToJurisprudence,
+  datasetToCountry,
+  parseAnalogies,
   type ResearchBundle,
+  type DatasetItem,
 } from "../domain";
+
+function dsItem(over: Partial<DatasetItem> = {}): DatasetItem {
+  return { id: "x", title: "", content: "", tags: [], outcome: "granted", token_count: 10, created_at: "2025-01-01", jurisdiction: null, ...over };
+}
 
 describe("extractJson", () => {
   it("parses a raw JSON object", () => {
@@ -185,5 +194,68 @@ describe("research prompt builders (config-driven)", () => {
     const { system, user } = buildCountryConditionsPrompt({ instructions: "Find recent HRW reporting.", analysis: null });
     expect(system).toContain("items");
     expect(user).toContain("Find recent HRW reporting.");
+  });
+});
+
+describe("parsePrecedent", () => {
+  it("parses name/citation/court/year from a title and url from meta", () => {
+    const c = parsePrecedent(dsItem({ title: "Navas v. INS, 217 F.3d 646 (9th Cir. 2000)", content: "Imputed political opinion suffices.", jurisdiction: "9th Cir.", meta: { kind: "precedent", url: "https://courtlistener.com/x" } }));
+    expect(c).not.toBeNull();
+    expect(c!.name).toBe("Navas v. INS");
+    expect(c!.citation).toBe("217 F.3d 646");
+    expect(c!.year).toBe("2000");
+    expect(c!.court).toBe("9th Cir.");
+    expect(c!.holding).toContain("Imputed political opinion");
+    expect(c!.url).toBe("https://courtlistener.com/x");
+    expect(c!.factual_analogy).toBe(""); // filled later by the analogy step
+  });
+  it("falls back to the citation in content when the title lacks it", () => {
+    const c = parsePrecedent(dsItem({ title: "Matter of Acosta (BIA 1985)", content: "Matter of Acosta, 19 I&N Dec. 211 (BIA 1985): immutable characteristic.", jurisdiction: "BIA", meta: { kind: "precedent" } }));
+    expect(c!.citation).toBe("19 I&N Dec. 211");
+    expect(c!.name).toBe("Matter of Acosta");
+  });
+  it("returns null for NGO model declarations and country sources", () => {
+    expect(parsePrecedent(dsItem({ title: "CLINIC toolkit", outcome: "model", meta: { kind: "model" } }))).toBeNull();
+    expect(parsePrecedent(dsItem({ title: "HRW Venezuela", meta: { kind: "country" } }))).toBeNull();
+  });
+});
+
+describe("datasetToJurisprudence", () => {
+  const items = [
+    dsItem({ id: "a", title: "INS v. Cardoza-Fonseca, 480 U.S. 421 (1987)", content: "WFF standard.", tags: ["well_founded_fear"], outcome: "granted" }),
+    dsItem({ id: "b", title: "Sangha v. INS, 103 F.3d 1482 (9th Cir. 1997)", content: "Nexus.", tags: ["political_opinion", "nexus"], outcome: "denied" }),
+    dsItem({ id: "c", title: "CLINIC toolkit", outcome: "model", meta: { kind: "model" } }),
+  ];
+  it("returns only precedents, ranked by tag overlap with the analysis then granted", () => {
+    const analysis = { nationality: "Venezuela", persecution_type: "political opinion", protected_grounds: ["political opinion"], perpetrator: "state", state_action: "state actor" as const, principal_theory: "T", summary: "S", chronology: [] };
+    const cases = datasetToJurisprudence(items, analysis, 6);
+    expect(cases).toHaveLength(2); // model excluded
+    expect(cases[0].name).toBe("Sangha v. INS"); // higher tag overlap (political_opinion)
+  });
+  it("respects the max", () => {
+    expect(datasetToJurisprudence(items, null, 1)).toHaveLength(1);
+  });
+});
+
+describe("parseAnalogies", () => {
+  it("aligns analogies to precedent indices", () => {
+    const out = parseAnalogies(JSON.stringify({ analogies: [{ i: 2, factual_analogy: "B" }, { i: 1, factual_analogy: "A" }] }), 3);
+    expect(out).toEqual(["A", "B", ""]);
+  });
+  it("returns empty strings on unparseable input", () => {
+    expect(parseAnalogies("not json", 2)).toEqual(["", ""]);
+  });
+});
+
+describe("datasetToCountry", () => {
+  it("maps only items explicitly tagged kind=country", () => {
+    const out = datasetToCountry([
+      dsItem({ title: "HRW Venezuela", content: "Crackdown.", meta: { kind: "country", url: "https://hrw.org", year: "2024" } }),
+      dsItem({ title: "Cardoza", meta: { kind: "precedent" } }),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].source_name).toBe("HRW Venezuela");
+    expect(out[0].url).toBe("https://hrw.org");
+    expect(out[0].published_date).toBe("2024");
   });
 });

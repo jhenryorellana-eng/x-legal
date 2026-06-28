@@ -181,6 +181,17 @@ export interface PromptAssembly {
 // Dataset item type
 // ---------------------------------------------------------------------------
 
+/** Structured annex metadata on a dataset item (migration 0051). Drives the
+ *  dataset-sourced jurisprudence exhibits when web_search case-law is unreliable. */
+export interface DatasetItemMeta {
+  kind?: "precedent" | "country" | "model";
+  citation?: string;
+  court?: string;
+  year?: string;
+  url?: string;
+  holding?: string;
+}
+
 export interface DatasetItem {
   id: string;
   title: string;
@@ -190,6 +201,7 @@ export interface DatasetItem {
   token_count: number; // already filtered: never null when passed to selectDatasetItems
   created_at: string;
   jurisdiction: string | null;
+  meta?: DatasetItemMeta;
 }
 
 // ---------------------------------------------------------------------------
@@ -1521,6 +1533,107 @@ export function buildCountryConditionsPrompt(args: { instructions: string | null
     "Return the JSON now.",
   ].join("\n");
   return { system, user };
+}
+
+// ---------------------------------------------------------------------------
+// Jurisprudence from the curated dataset (reliable; replaces the flaky open-ended
+// web_search for case law — web_search hangs/returns nothing when asked to find
+// "6-10 published federal precedents", but the curated dataset already holds real
+// precedents with citations + holdings + a denial-reason taxonomy in tags).
+// ---------------------------------------------------------------------------
+
+/** Citation patterns: 480 U.S. 421 · 217 F.3d 646 · 45 F.4th 192 · 19 I&N Dec. 211. */
+const CITATION_RE = /(\d+\s+(?:U\.S\.|S\.\s?Ct\.|L\.\s?Ed\.\s?\d?d?|F\.\s?\d+(?:th|d)|F\.\s?Supp\.\s?\d?d?|I&N\s+Dec\.)\s+\d+)/;
+/** Normalizes a tag for overlap matching: strips diacritics (so "persecución" and
+ *  "persecucion" match) before ASCII-folding. */
+const normTag = (s: string) =>
+  s.normalize("NFD").replace(/\p{Mn}/gu, "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+
+/** Maps a dataset item to a JurisprudenceCase exhibit (analogy filled in later).
+ *  Returns null for non-precedent items (NGO models, country sources). */
+export function parsePrecedent(item: DatasetItem): JurisprudenceCase | null {
+  const meta = item.meta ?? {};
+  if (meta.kind === "country" || meta.kind === "model" || item.outcome === "model") return null;
+  const title = item.title ?? "";
+  const citation = (meta.citation ?? "").trim() || title.match(CITATION_RE)?.[1] || item.content?.match(CITATION_RE)?.[1] || "";
+  if (!citation && meta.kind !== "precedent") return null; // not clearly a precedent
+  const year = (meta.year ?? "").trim() || title.match(/\((?:[^)]*?\s)?(\d{4})\)/)?.[1] || "";
+  const court = (meta.court ?? "").trim() || item.jurisdiction || "";
+  let name = title.replace(CITATION_RE, "").replace(/\([^)]*\d{4}\)/g, "").replace(/[,\s]+$/g, "").replace(/\s{2,}/g, " ").trim();
+  if (!name) name = title.trim();
+  return { name, citation, court, year, holding: (meta.holding ?? "").trim() || (item.content ?? "").trim(), factual_analogy: "", url: (meta.url ?? "").trim() };
+}
+
+/** Selects the most relevant precedents from the dataset for the applicant's profile
+ *  (tag overlap with persecution type + protected grounds, preferring granted). */
+export function datasetToJurisprudence(items: DatasetItem[], analysis: ResearchAnalysis | null, max = 6): JurisprudenceCase[] {
+  const ctx = analysis ? [analysis.persecution_type, ...(analysis.protected_grounds ?? [])].filter(Boolean).map(normTag) : [];
+  const scored = items
+    .map((it) => ({ it, cas: parsePrecedent(it) }))
+    .filter((x): x is { it: DatasetItem; cas: JurisprudenceCase } => x.cas !== null)
+    .map(({ it, cas }) => ({
+      cas,
+      overlap: it.tags.map(normTag).filter((t) => ctx.includes(t)).length,
+      granted: it.outcome === "granted" ? 1 : 0,
+      created: it.created_at,
+    }));
+  scored.sort((a, b) => b.overlap - a.overlap || b.granted - a.granted || b.created.localeCompare(a.created));
+  return scored.slice(0, max).map((s) => s.cas);
+}
+
+/** Prompt to generate a per-precedent factual analogy to THIS applicant (no tools;
+ *  reliable, unlike the web_search case-law search). */
+export function buildJurisprudenceAnalogyPrompt(args: { analysis: ResearchAnalysis | null; cases: JurisprudenceCase[] }): {
+  system: string;
+  user: string;
+} {
+  const system = [
+    "You are a Senior Federal Immigration Attorney. For each precedent, write ONE concise, persuasive paragraph APPLYING its holding to THIS applicant's specific facts (the factual analogy) — do not merely restate the holding.",
+    'Output ONLY strict JSON, no prose, no code fences: { "analogies": [ { "i": number, "factual_analogy": string } ] } where i is the 1-based precedent index.',
+  ].join("\n");
+  const caseList = args.cases
+    .map((c, i) => `${i + 1}. ${c.name}${c.citation ? `, ${c.citation}` : ""} — Holding: ${c.holding}`)
+    .join("\n");
+  const user = [
+    args.analysis ? `<applicant_profile>\n${analysisSummaryText(args.analysis)}\n</applicant_profile>` : "",
+    "<precedents>",
+    caseList,
+    "</precedents>",
+    "Return the JSON now — exactly one factual_analogy per precedent index.",
+  ].join("\n");
+  return { system, user };
+}
+
+/** Maps dataset items explicitly tagged as country-condition sources (meta.kind ===
+ *  "country") to CountryConditionSource exhibits — the fallback used when the
+ *  web_search country pass yields nothing, so the annexes are never empty. */
+export function datasetToCountry(items: DatasetItem[], max = 6): CountryConditionSource[] {
+  return items
+    .filter((it) => it.meta?.kind === "country")
+    .slice(0, max)
+    .map((it) => ({
+      source_name: it.title,
+      author: (it.meta?.court ?? "").trim(),
+      summary: (it.content ?? "").slice(0, 400).trim(),
+      full_context: (it.content ?? "").trim(),
+      why_it_helps: "Corroborates the documented country conditions relevant to the applicant's claim.",
+      url: (it.meta?.url ?? "").trim(),
+      published_date: (it.meta?.year ?? "").trim(),
+    }));
+}
+
+/** Parses the analogy JSON into an array aligned to the precedent order. */
+export function parseAnalogies(text: string, count: number): string[] {
+  const out: string[] = new Array(count).fill("");
+  const json = extractJson(text) as { analogies?: unknown[]; items?: unknown[] } | unknown[] | null;
+  const arr = Array.isArray(json) ? json : (json?.analogies ?? json?.items ?? []);
+  if (!Array.isArray(arr)) return out;
+  for (const a of arr as Array<Record<string, unknown>>) {
+    const i = Number(a?.i ?? a?.index);
+    const txt = String(a?.factual_analogy ?? a?.analogy ?? "").trim();
+    if (Number.isInteger(i) && i >= 1 && i <= count && txt) out[i - 1] = txt;
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

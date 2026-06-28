@@ -762,7 +762,7 @@ export async function loadDatasetItems(
   const client = createServiceClient();
   const { data, error } = await client
     .from("ai_dataset_items")
-    .select("id, title, content, tags, outcome, token_count, created_at, jurisdiction")
+    .select("id, title, content, tags, outcome, token_count, created_at, jurisdiction, meta")
     .eq("dataset_id", datasetId)
     .not("token_count", "is", null);
 
@@ -780,6 +780,7 @@ export async function loadDatasetItems(
     token_count: item.token_count!,
     created_at: item.created_at,
     jurisdiction: item.jurisdiction,
+    meta: ((item as { meta?: unknown }).meta ?? {}) as import("./domain").DatasetItemMeta,
   }));
 }
 
