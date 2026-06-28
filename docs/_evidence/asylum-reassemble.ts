@@ -6,6 +6,7 @@
  */
 import * as fs from "fs";
 import * as path from "path";
+import { createClient } from "@supabase/supabase-js";
 import { CURATED_JURISPRUDENCE, CURATED_COUNTRY } from "./asylum-full-pipeline";
 import {
   buildCoverPage, buildChronologyTable, buildAnnexesSection, assembleDocument,
@@ -42,6 +43,18 @@ export const ASYLUM_ASSEMBLY: AssemblyConfig = {
 };
 
 (async () => {
+  // Pull the DEPLOYED assembly straight from prod so this verifies the migration's
+  // stored structure (blocks + cover_page) — not a hardcoded copy.
+  const supa = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+  const { data: cfgRow } = await supa
+    .from("ai_generation_configs")
+    .select("assembly, form_definitions!inner(slug)")
+    .eq("form_definitions.slug", "memorandum-de-miedo-creible")
+    .single();
+  const assembly: AssemblyConfig = ((cfgRow as { assembly?: AssemblyConfig } | null)?.assembly) ?? ASYLUM_ASSEMBLY;
+  const blockOrder = (assembly.blocks ?? []).map((b) => `${b.type}${b.enabled === false ? "(off)" : ""}`).join(" → ");
+  console.log(`deployed assembly: blocks=[${blockOrder || "(legacy default)"}] cover_rows=${assembly.cover_page?.rows?.length ?? 0}`);
+
   const mdPath = path.resolve(__dirname, "asylum-full-output.md");
   const md = fs.readFileSync(mdPath, "utf8");
 
@@ -72,10 +85,10 @@ export const ASYLUM_ASSEMBLY: AssemblyConfig = {
     applicant_name: "Carlos Andrés Mendoza Rivas", nationality: "Venezuela",
     derivatives: "Spouse and one minor child", entry_date: "March 18, 2023", principal_theory,
   };
-  const cover = buildCoverPage(ASYLUM_ASSEMBLY.cover_page ?? null, ctx);
+  const cover = buildCoverPage(assembly.cover_page ?? null, ctx);
   const chrono = buildChronologyTable(chronology);
   const annexes = buildAnnexesSection(bundle) || undefined;
-  const doc = assembleDocument(sections, parts, ASYLUM_ASSEMBLY, { cover, chronology: chrono, annexes });
+  const doc = assembleDocument(sections, parts, assembly, { cover, chronology: chrono, annexes });
 
   fs.writeFileSync(mdPath, doc.replace(/\n*<<<PAGEBREAK>>>\n*/g, "\n\n"), "utf8");
   const pdf = await renderMarkdownToPdf(doc);
