@@ -1458,6 +1458,51 @@ export type Database = {
           },
         ]
       }
+      case_status_history: {
+        Row: {
+          case_id: string
+          changed_by: string | null
+          created_at: string
+          from_status: string | null
+          id: string
+          note: string | null
+          to_status: string
+        }
+        Insert: {
+          case_id: string
+          changed_by?: string | null
+          created_at?: string
+          from_status?: string | null
+          id?: string
+          note?: string | null
+          to_status: string
+        }
+        Update: {
+          case_id?: string
+          changed_by?: string | null
+          created_at?: string
+          from_status?: string | null
+          id?: string
+          note?: string | null
+          to_status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_status_history_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_status_history_changed_by_fkey"
+            columns: ["changed_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       case_timeline: {
         Row: {
           actor_kind: string
@@ -2937,6 +2982,51 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "orgs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      lead_status_history: {
+        Row: {
+          changed_by: string | null
+          created_at: string
+          from_status: string | null
+          id: string
+          lead_id: string
+          note: string | null
+          to_status: string
+        }
+        Insert: {
+          changed_by?: string | null
+          created_at?: string
+          from_status?: string | null
+          id?: string
+          lead_id: string
+          note?: string | null
+          to_status: string
+        }
+        Update: {
+          changed_by?: string | null
+          created_at?: string
+          from_status?: string | null
+          id?: string
+          lead_id?: string
+          note?: string | null
+          to_status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lead_status_history_changed_by_fkey"
+            columns: ["changed_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lead_status_history_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
             referencedColumns: ["id"]
           },
         ]
@@ -4677,6 +4767,56 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      analytics_activity_by_day: {
+        Args: { p_from: string; p_org: string; p_to: string; p_tz: string }
+        Returns: {
+          bucket: string
+          count: number
+          event_type: string
+        }[]
+      }
+      analytics_ai_cost: {
+        Args: { p_from: string; p_org: string; p_to: string }
+        Returns: {
+          by_model: Json
+          runs: number
+          total_usd: number
+        }[]
+      }
+      analytics_cases_by: {
+        Args: { p_dim: string; p_org: string }
+        Returns: {
+          count: number
+          key: string
+        }[]
+      }
+      analytics_finance_kpis: {
+        Args: { p_from: string; p_org: string; p_to: string }
+        Returns: {
+          income_cents: number
+          overdue_cases: number
+          overdue_cents: number
+          overdue_count: number
+        }[]
+      }
+      analytics_handoffs_by_week: {
+        Args: { p_from: string; p_org: string; p_to: string; p_tz: string }
+        Returns: {
+          count: number
+          from_stage: string
+          to_stage: string
+          week: string
+        }[]
+      }
+      analytics_lead_funnel: {
+        Args: { p_from?: string; p_org: string; p_to?: string; p_user?: string }
+        Returns: {
+          contacted: number
+          lost: number
+          new_leads: number
+          won: number
+        }[]
+      }
       auth_org_id: { Args: never; Returns: string }
       claim_promotion_use: { Args: { p_promo_id: string }; Returns: boolean }
       create_case_atomic: { Args: { p: Json }; Returns: Json }
