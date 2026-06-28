@@ -741,9 +741,13 @@ async function runSectionedGeneration(
   let prevTail = prior?.prevTail ?? "";
   let sectionsDone = prior?.sectionsDone ?? 0;
   let modelUsed = prior?.modelUsed ?? draftDefaultModel;
-  // Research sub-step (resume): prefer the explicit checkpoint; fall back to "done"
-  // for runs whose research was persisted before this checkpoint existed.
-  let researchStep = prior?.researchStep ?? (snapshot.research ? 3 : 0);
+  // Research sub-step (resume): prefer the explicit checkpoint. The fallback "done"
+  // (3) is ONLY for old-format runs — a progress row that predates this field, which
+  // always carried complete research. It must NOT fire when there is no progress row
+  // at all (prior === null): a first invocation that crashed between the research
+  // write and the checkpoint would otherwise be read as complete and skip the
+  // still-pending jurisprudence/country sub-steps, yielding a citation-less memo.
+  let researchStep = prior?.researchStep ?? (prior !== null && snapshot.research ? 3 : 0);
 
   const account = (r: AnthropicCallResult) => {
     usage = addUsage(usage, r.usage);

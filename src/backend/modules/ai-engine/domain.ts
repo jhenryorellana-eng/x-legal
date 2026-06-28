@@ -1050,7 +1050,13 @@ export function stripLeadingHeading(text: string, expectedHeading?: string): str
       while ((mm = headingRe.exec(t)) !== null) {
         if (mm.index > 1500) break; // only consider an echo near the top
         const got = norm(mm[1]);
-        if (got === want || got.startsWith(want) || want.startsWith(got)) {
+        // Exact (normalized) match only. The real echoes differ from the assigned
+        // heading only in cosmetic punctuation (em-dash vs --, & vs and), which the
+        // normalizer already squashes — so an exact match catches them. A prefix
+        // match would silently drop a legitimate intro paragraph whenever a section
+        // has a subheading that is a prefix of its title (e.g. "## Legal" under a
+        // "Legal Analysis" section), so it is deliberately NOT used.
+        if (got === want) {
           // Cut up to and including the echoed heading and return — do NOT fall
           // through to the leading-heading strip, which would eat the section's
           // first legitimate subheading now sitting on top.

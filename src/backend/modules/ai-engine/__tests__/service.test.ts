@@ -1263,6 +1263,42 @@ describe("executeGenerationJob (sectioned + research)", () => {
     expect(finalResearch.country_conditions).toHaveLength(1);
   });
 
+  it("re-runs research when a partial bundle was persisted but no progress row exists (first-invocation crash window)", async () => {
+    // Crash between patchConfigSnapshot(research) and checkpoint() on the very first
+    // invocation: DB has a partial research bundle (analysis only) but progress is
+    // null. The job MUST re-run research, not treat the partial bundle as complete.
+    const snapshot = sectionedRun().config_snapshot;
+    mocks.repo.findRunById.mockResolvedValue(
+      sectionedRun({
+        progress: null,
+        config_snapshot: {
+          ...snapshot,
+          research: {
+            analysis: { nationality: "Venezuela", persecution_type: "political opinion", protected_grounds: ["political opinion"], perpetrator: "state agents", state_action: "state actor", principal_theory: "T", summary: "S", chronology: [] },
+            jurisprudence: [],
+            country_conditions: [],
+          },
+        },
+      }),
+    );
+    mocks.anthropic.finalMessage
+      .mockResolvedValueOnce(aiMessage(JSON.stringify({ nationality: "Venezuela", persecution_type: "political opinion", protected_grounds: ["political opinion"], perpetrator: "state agents", state_action: "state actor", principal_theory: "P", summary: "S", chronology: [] })))
+      .mockResolvedValueOnce(aiMessage(JSON.stringify({ cases: [{ name: "Doe v. INS", citation: "1 F.3d 2", court: "9th Cir.", year: "1999", holding: "H", factual_analogy_to_applicant: "FA", url: "https://x" }] })))
+      .mockResolvedValueOnce(aiMessage(JSON.stringify({ items: [{ source_name: "HRW", executive_summary: "Impunity.", full_context: "C", why_it_helps: "W", url: "https://y", published_date: "2025-01-01" }] })))
+      .mockResolvedValueOnce(aiMessage(`## I.1 Introduction\n\n${LONG_BODY}`))
+      .mockResolvedValueOnce(aiMessage(`## I.2 Argument\n\n${LONG_BODY}`));
+
+    const outcome = await executeGenerationJob({ runId: RUN_ID, orgId: ORG_ID } as never);
+
+    expect(outcome).toBe("completed");
+    // research re-ran (3 calls) + 2 sections = 5 — NOT skipped (which would be 2)
+    expect(mocks.anthropic.finalMessage).toHaveBeenCalledTimes(5);
+    const researchPatches = mocks.repo.patchConfigSnapshot.mock.calls.filter((c) => "research" in (c[1] ?? {}));
+    const finalResearch = researchPatches[researchPatches.length - 1][1].research;
+    expect(finalResearch.jurisprudence).toHaveLength(1);
+    expect(finalResearch.country_conditions).toHaveLength(1);
+  });
+
   it("still supports single-pass generation when there are no sections", async () => {
     mocks.repo.findRunById.mockResolvedValue(
       sectionedRun({ config_snapshot: { ...sectionedRun().config_snapshot, sections: [], web_search_enabled: false } }),
