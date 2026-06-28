@@ -869,7 +869,7 @@ async function runSectionedGeneration(
         account(exp);
         if (countWords(exp.text) > countWords(res.text)) res = exp;
       }
-      parts.push(`## ${sec.heading}\n\n${stripLeadingHeading(res.text.trim())}`);
+      parts.push(`## ${sec.heading}\n\n${stripLeadingHeading(res.text.trim(), sec.heading)}`);
       prevTail = lastWords(res.text, 1200);
       sectionsDone = i + 1;
       await checkpoint();

@@ -19,6 +19,25 @@ describe("stripLeadingHeading", () => {
   it("tolerates leading blank lines before the heading", () => {
     expect(stripLeadingHeading("\n\n## I.11 Nexus\n\nbody")).toBe("body");
   });
+  it("removes an echoed section heading that follows an orphan continuity fragment + separator", () => {
+    // The model bled the previous section's tail into a lead-in, then re-stated its
+    // own heading (em-dash → --, & → and) before the real content.
+    const expected = "I.7 Narrative of Past Persecution — Part C: Final Events, Flight & Arrival";
+    const body =
+      "the sworn account corroborates the country-conditions evidence.\n\n---\n\n## I.7 Narrative of Past Persecution -- Part C: Final Events, Flight, and Arrival\n\n### A. The Point of No Return\n\nThe events documented in Part B...";
+    const out = stripLeadingHeading(body, expected);
+    expect(out.startsWith("### A. The Point of No Return")).toBe(true);
+    expect(out).not.toContain("the sworn account corroborates");
+    expect(out).not.toContain("## I.7");
+  });
+  it("strips the leading heading when it matches the expected heading (clean case)", () => {
+    expect(stripLeadingHeading("## I.11 Nexus & Application\n\nThe nexus...", "I.11 Nexus & Application")).toBe("The nexus...");
+  });
+  it("does not strip a non-matching heading when an expected heading is given", () => {
+    const out = stripLeadingHeading("Some intro paragraph.\n\n### A. Background\n\nbody text here", "I.5 Narrative of Past Persecution");
+    expect(out).toContain("### A. Background");
+    expect(out).toContain("body text here");
+  });
 });
 
 function section(over: Partial<GenerationSectionSpec> = {}): GenerationSectionSpec {

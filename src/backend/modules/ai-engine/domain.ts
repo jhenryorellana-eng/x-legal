@@ -1032,8 +1032,34 @@ export function mdCell(s: string): string {
  * Strips a leading markdown heading the model sometimes echoes back, so the
  * assembled section (which prepends its own `## heading`) never double-prints it.
  */
-export function stripLeadingHeading(text: string): string {
-  const t = text.replace(/^\s+/, "");
+export function stripLeadingHeading(text: string, expectedHeading?: string): string {
+  let t = text.replace(/^\s+/, "");
+  // The model sometimes bleeds the previous section's continuity tail into a short
+  // orphan lead-in, then re-states its OWN assigned heading (often with cosmetic
+  // differences: em-dash vs --, "&" vs "and") before the real content. The assigned
+  // heading is prepended separately by the assembler, so when we know the expected
+  // heading, cut everything up to and including the echoed copy near the top
+  // (orphan fragment + any `---` separator + the duplicate heading line).
+  if (expectedHeading) {
+    const norm = (s: string) =>
+      s.toLowerCase().replace(/[—–]/g, "-").replace(/&/g, "and").replace(/[^a-z0-9]+/g, " ").trim();
+    const want = norm(expectedHeading);
+    if (want) {
+      const headingRe = /^#{1,6}[ \t]([^\n]+?)\s*$/gm;
+      let mm: RegExpExecArray | null;
+      while ((mm = headingRe.exec(t)) !== null) {
+        if (mm.index > 1500) break; // only consider an echo near the top
+        const got = norm(mm[1]);
+        if (got === want || got.startsWith(want) || want.startsWith(got)) {
+          // Cut up to and including the echoed heading and return — do NOT fall
+          // through to the leading-heading strip, which would eat the section's
+          // first legitimate subheading now sitting on top.
+          return t.slice(mm.index + mm[0].length).replace(/^\s+/, "");
+        }
+      }
+    }
+  }
+  // Strip a leading heading line (the clean case, or any heading still left on top).
   const m = t.match(/^#{1,6}[ \t][^\n]*\n+/);
   return m ? t.slice(m[0].length) : t;
 }
