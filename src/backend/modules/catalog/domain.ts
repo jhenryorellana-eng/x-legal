@@ -471,6 +471,8 @@ export const GenerationAssemblySchema = z.object({
   toc: z.boolean().default(false),
   // Insert the research-derived chronology table into the body (court documents).
   chronology: z.boolean().default(false),
+  // Append the "ANNEXES — INDEX OF EXHIBITS" block (jurisprudence + country sources).
+  annexes: z.boolean().default(false),
   closing: z.string().nullable().optional(),
 });
 export type GenerationAssembly = z.infer<typeof GenerationAssemblySchema>;

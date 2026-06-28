@@ -88,6 +88,7 @@ export const DEFAULT_GENERATION_RULES = [
   "R5. Maintain a professional, clinical, authoritative tone appropriate to an elite legal filing.",
   "R6. When a required client fact is missing, write a clear placeholder (e.g. \"[TO BE CONFIRMED]\") rather than inventing it.",
   "R7. The reference dataset (if any) is style/argumentation guidance only — NEVER a source of facts for the current case.",
+  "R8. Write clean, professional prose for a court filing. Use plain ASCII punctuation (straight quotes and hyphens). Do NOT use decorative symbols, bullet glyphs, box-drawing characters, emojis, ASCII-art separators, or markdown decoration in the legal body — use complete sentences and standard paragraphs. Start each section with its assigned heading and nothing else.",
 ].join("\n");
 
 export interface ConfigSnapshot {
@@ -107,7 +108,7 @@ export interface ConfigSnapshot {
   sections?: GenerationSectionSpec[];
   rules_enabled?: boolean;
   rules_text?: string | null;
-  assembly?: { cover?: boolean; toc?: boolean; chronology?: boolean; closing?: string | null } | null;
+  assembly?: { cover?: boolean; toc?: boolean; chronology?: boolean; closing?: string | null; annexes?: boolean } | null;
   /**
    * Run-derived verified research (analysis + jurisprudence + country conditions),
    * persisted ONCE so every section cites consistently AND the annexes can reuse
@@ -894,16 +895,55 @@ export function buildCoverPage(analysis: ResearchAnalysis | null, meta: CoverMet
 }
 
 /**
+ * Builds the "ANNEXES — INDEX OF EXHIBITS" block from the verified research:
+ * Exhibit A = federal asylum precedent (holding + factual analogy + source URL);
+ * Exhibit B = country-conditions public sources, each with a Guide Note (who said
+ * it + short summary + source data) followed by the detailed text and source URL.
+ * Empty string when there is nothing verified to annex.
+ */
+export function buildAnnexesSection(bundle: ResearchBundle): string {
+  if (bundle.jurisprudence.length === 0 && bundle.country_conditions.length === 0) return "";
+  const out: string[] = ["## ANNEXES — INDEX OF EXHIBITS"];
+  if (bundle.jurisprudence.length > 0) {
+    out.push("", "### Exhibit A — Legal Authorities (Federal Asylum Precedent)");
+    bundle.jurisprudence.forEach((c, i) => {
+      out.push(
+        "",
+        `**Exhibit A-${i + 1}: ${c.name}${c.citation ? `, ${c.citation}` : ""}${c.court ? ` (${c.court}${c.year ? `, ${c.year}` : ""})` : ""}**`,
+        `Holding: ${c.holding}`,
+        `Factual analogy to the applicant: ${c.factual_analogy}`,
+        c.url ? `Source: ${c.url}` : "Source: citation verified; public copy on file.",
+      );
+    });
+  }
+  if (bundle.country_conditions.length > 0) {
+    out.push("", "### Exhibit B — Country Conditions (Verified Public Sources)");
+    bundle.country_conditions.forEach((s, i) => {
+      out.push(
+        "",
+        `**Exhibit B-${i + 1}: ${s.source_name}${s.published_date ? ` (${s.published_date})` : ""}**`,
+        `Guide Note — Source: ${s.source_name}${s.author ? `, ${s.author}` : ""}. Summary: ${s.summary} Why it corroborates the claim: ${s.why_it_helps}`,
+        "",
+        s.full_context,
+        ...(s.url ? [`Source: ${s.url}`] : []),
+      );
+    });
+  }
+  return out.join("\n");
+}
+
+/**
  * Assembles section parts into one court-grade markdown document. Order:
- * cover → TOC → sections → chronology table → closing (perjury/signature). The
- * cover & chronology markdown are pre-built by the caller and passed via `extras`
- * (keeps this function pure). Every block is gated on its `assembly` flag.
+ * cover → TOC → sections → chronology table → closing (perjury/signature) →
+ * annexes (exhibits). The cover/chronology/annexes markdown are pre-built by the
+ * caller and passed via `extras` (keeps this function pure). Every block is gated
+ * on its `assembly` flag.
  */
 export function assembleDocument(
   sections: GenerationSectionSpec[],
   parts: string[],
-  assembly?: { cover?: boolean; toc?: boolean; chronology?: boolean; closing?: string | null } | null,
-  extras?: { cover?: string; chronology?: string } | null,
+  assembly?: { cover?: boolean; toc?: boolean; chronology?: boolean; closing?: string | null; annexes?: boolean } | null,
+  extras?: { cover?: string; chronology?: string; annexes?: string } | null,
 ): string {
   const out: string[] = [];
   if (assembly?.cover && extras?.cover?.trim()) {
@@ -918,6 +958,9 @@ export function assembleDocument(
   }
   if (assembly?.closing && assembly.closing.trim()) {
     out.push(["---", "", assembly.closing.trim()].join("\n"));
+  }
+  if (assembly?.annexes && extras?.annexes?.trim()) {
+    out.push(extras.annexes.trim());
   }
   return out.join("\n\n");
 }

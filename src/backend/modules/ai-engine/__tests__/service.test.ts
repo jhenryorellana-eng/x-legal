@@ -186,6 +186,14 @@ vi.mock("@/backend/platform/pdf", () => ({
   renderMarkdownToDocx: mocks.pdf.renderMarkdownToDocx,
 }));
 
+// URL verification hits the network — stub it so research sources aren't dropped
+// in unit tests (the reachability logic itself is covered in url-utils.test.ts).
+vi.mock("@/backend/platform/url-utils", () => ({
+  checkUrlReachable: vi.fn().mockResolvedValue({ reachable: true }),
+  keepReachable: vi.fn(async (items: unknown[]) => items),
+  isLikelyUrl: () => true,
+}));
+
 vi.mock("../events", () => ({
   emitGenerationCompleted: mocks.events.emitGenerationCompleted,
   emitGenerationFailed: mocks.events.emitGenerationFailed,

@@ -42,6 +42,7 @@ import {
 import { logger } from "@/backend/platform/logger";
 import { writeAudit } from "@/backend/modules/audit";
 import { renderMarkdownToPdf, renderMarkdownToDocx } from "@/backend/platform/pdf";
+import { checkUrlReachable, keepReachable } from "@/backend/platform/url-utils";
 import { DEFAULT_GENERATION_MODEL } from "@/shared/constants/ai-models";
 
 import {
@@ -61,6 +62,7 @@ import {
   buildExpansionUserMessage,
   stripLeadingHeading,
   assembleDocument,
+  buildAnnexesSection,
   buildCoverPage,
   buildChronologyTable,
   splitChronologyWindows,
@@ -735,13 +737,36 @@ async function runSectionedGeneration(
       const ar = await callAnthropic(client, { model: researchModel, system: ap.system, user: ap.user, maxTokens: 8000 });
       account(ar);
       const analysis = parseResearchAnalysis(ar.text);
+
+      // One retry-on-empty: web_search output varies run-to-run (the model
+      // occasionally narrates instead of returning the JSON array).
+      const callList = async <T>(p: { system: string; user: string }, parse: (t: string) => T[]): Promise<T[]> => {
+        let res = await callAnthropic(client, { model: researchModel, system: p.system, user: p.user, maxTokens: 8000, tools });
+        account(res);
+        let list = parse(res.text);
+        if (list.length === 0) {
+          res = await callAnthropic(client, { model: researchModel, system: p.system, user: p.user, maxTokens: 8000, tools });
+          account(res);
+          list = parse(res.text);
+        }
+        return list;
+      };
+
       const jp = buildJurisprudencePrompt({ instructions: snapshot.research_instructions ?? null, analysis });
-      const jr = await callAnthropic(client, { model: researchModel, system: jp.system, user: jp.user, maxTokens: 8000, tools });
-      account(jr);
       const cp = buildCountryConditionsPrompt({ instructions: snapshot.research_instructions ?? null, analysis });
-      const cr = await callAnthropic(client, { model: researchModel, system: cp.system, user: cp.user, maxTokens: 8000, tools });
-      account(cr);
-      bundle = { analysis, jurisprudence: parseJurisprudence(jr.text), country_conditions: parseCountryConditions(cr.text) };
+      let jurisprudence = await callList(jp, parseJurisprudence);
+      let country_conditions = await callList(cp, parseCountryConditions);
+
+      // Verify URLs (Henry: each exhibit link must resolve so it can be downloaded
+      // and printed). Jurisprudence keeps the case even if its URL is dead (the
+      // citation is the authority) — only the dead URL is blanked. Country-conditions
+      // news REQUIRES a live link, so unreachable / URL-less sources are dropped.
+      jurisprudence = await Promise.all(
+        jurisprudence.map(async (c) => (c.url && !(await checkUrlReachable(c.url)).reachable ? { ...c, url: "" } : c)),
+      );
+      country_conditions = await keepReachable(country_conditions);
+
+      bundle = { analysis, jurisprudence, country_conditions };
     } catch (err) {
       // Research failed. Non-retryable 4xx → mark the run failed; transient/5xx →
       // re-throw so QStash retries the whole job (research re-runs from scratch —
@@ -820,7 +845,12 @@ async function runSectionedGeneration(
     snapshot.assembly?.chronology && bundle.analysis && bundle.analysis.chronology.length
       ? buildChronologyTable(bundle.analysis.chronology)
       : undefined;
-  const outputText = assembleDocument(sections, parts, snapshot.assembly ?? null, { cover: coverMd, chronology: chronoMd });
+  const annexesMd = snapshot.assembly?.annexes ? buildAnnexesSection(bundle) || undefined : undefined;
+  const outputText = assembleDocument(sections, parts, snapshot.assembly ?? null, {
+    cover: coverMd,
+    chronology: chronoMd,
+    annexes: annexesMd,
+  });
 
   return finalizeRun({ run, snapshot, outputText, stopReason: "end_turn", usage, modelUsed, costUsd: costAccum });
 }
