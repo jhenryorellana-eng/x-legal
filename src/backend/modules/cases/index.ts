@@ -48,6 +48,7 @@ export {
   // Staff reads
   getCaseExtractions,
   getCaseFormResponsesForStaff,
+  getPriorPhaseMaterials,
   // GAP reads — kanban board support (F5-Ola3)
   listCasesByOwner,
   getCaseBoardAlerts,
@@ -95,6 +96,10 @@ export type {
   ClientFormListItem,
   StaffFormResponseItem,
   DocumentExtractionSummary,
+  // Prior-phase materials (Etapa C)
+  PriorPhaseGroup,
+  PriorPhaseDoc,
+  PriorPhaseForm,
 } from "./service";
 
 // Client-surface read DTO types

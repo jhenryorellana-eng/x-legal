@@ -904,6 +904,7 @@ export type Database = {
           required_document_type_id: string | null
           reviewed_at: string | null
           reviewed_by: string | null
+          service_phase_id: string | null
           size_bytes: number
           status: string
           storage_path: string
@@ -925,6 +926,7 @@ export type Database = {
           required_document_type_id?: string | null
           reviewed_at?: string | null
           reviewed_by?: string | null
+          service_phase_id?: string | null
           size_bytes: number
           status?: string
           storage_path: string
@@ -946,6 +948,7 @@ export type Database = {
           required_document_type_id?: string | null
           reviewed_at?: string | null
           reviewed_by?: string | null
+          service_phase_id?: string | null
           size_bytes?: number
           status?: string
           storage_path?: string
@@ -1009,6 +1012,7 @@ export type Database = {
           form_definition_id: string
           id: string
           party_id: string | null
+          service_phase_id: string | null
           status: string
           submitted_at: string | null
           translation_status: string
@@ -1024,6 +1028,7 @@ export type Database = {
           form_definition_id: string
           id?: string
           party_id?: string | null
+          service_phase_id?: string | null
           status?: string
           submitted_at?: string | null
           translation_status?: string
@@ -1039,6 +1044,7 @@ export type Database = {
           form_definition_id?: string
           id?: string
           party_id?: string | null
+          service_phase_id?: string | null
           status?: string
           submitted_at?: string | null
           translation_status?: string

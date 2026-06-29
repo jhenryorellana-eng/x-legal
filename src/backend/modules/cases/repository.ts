@@ -502,6 +502,7 @@ export async function insertFormResponse(row: {
   automation_version_id: string | null;
   party_id: string | null;
   status: string;
+  service_phase_id?: string | null;
 }): Promise<CaseFormResponseRow> {
   const supabase = createServiceClient();
   const { data, error } = await supabase
@@ -512,6 +513,7 @@ export async function insertFormResponse(row: {
       automation_version_id: row.automation_version_id,
       party_id: row.party_id,
       status: row.status,
+      service_phase_id: row.service_phase_id ?? null,
       answers: {},
     })
     .select()

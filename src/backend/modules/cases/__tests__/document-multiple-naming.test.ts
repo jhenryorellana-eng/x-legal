@@ -85,6 +85,8 @@ vi.mock("../repository", async (importOriginal) => {
   return {
     ...original,
     findCurrentChainHead: mockFindCurrentChainHead,
+    // Etapa C: confirmDocumentUpload now reads the case's current phase to tag the doc.
+    findCaseById: vi.fn().mockResolvedValue({ current_phase_id: null }),
     insertCaseDocument: mockInsertCaseDocument,
     updateDocument: mockUpdateDocument,
     deleteCaseDocumentRow: mockDeleteCaseDocumentRow,

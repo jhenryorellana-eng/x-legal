@@ -1425,6 +1425,9 @@ export async function confirmDocumentUpload(
     }
   }
 
+  // Tag the document with the phase active now (Etapa C — prior-phase visibility).
+  const caseForPhase = await findCaseById(parsed.caseId);
+
   const doc = await insertCaseDocument({
     case_id: parsed.caseId,
     required_document_type_id: parsed.requirementId ?? null,
@@ -1436,6 +1439,7 @@ export async function confirmDocumentUpload(
     mime_type: mimeType,
     size_bytes: 0, // size validated by storage, exact value not critical here
     status: "uploaded",
+    service_phase_id: caseForPhase?.current_phase_id ?? null,
     // Only the rejected→correction case keeps a traceable chain link; a
     // hard-overwritten 'uploaded' predecessor is deleted, so no link remains.
     replaces_document_id: prev?.status === "rejected" ? prev.id : null,
@@ -3935,6 +3939,109 @@ export async function getCaseFormResponsesForStaff(
 }
 
 // ---------------------------------------------------------------------------
+// Prior-phase materials (Etapa C) — staff read-only view of docs + forms from
+// phases the case has already passed.
+// ---------------------------------------------------------------------------
+
+export interface PriorPhaseDoc {
+  documentId: string;
+  displayName: string;
+  status: string;
+  mimeType: string;
+  createdAt: string;
+  partyName: string | null;
+}
+export interface PriorPhaseForm {
+  responseId: string;
+  formDefinitionId: string;
+  label: { es: string; en: string };
+  status: string;
+  partyName: string | null;
+  filledPdfPath: string | null;
+  submittedAt: string | null;
+}
+export interface PriorPhaseGroup {
+  phaseId: string;
+  label: { es: string; en: string };
+  position: number;
+  documents: PriorPhaseDoc[];
+  forms: PriorPhaseForm[];
+}
+
+/**
+ * Read-only materials (documents + form responses) from phases the case has
+ * already PASSED (position < current phase). Grouped by phase, newest phase
+ * first. Empty phases are omitted. Staff-facing; requires case access.
+ *
+ * @api-id API-CASE-PRIORPHASE
+ */
+export async function getPriorPhaseMaterials(
+  actor: Actor,
+  caseId: string,
+): Promise<{ phases: PriorPhaseGroup[] }> {
+  await requireCaseAccess(actor, caseId);
+  const caseRow = await findCaseById(caseId);
+  if (!caseRow) return { phases: [] };
+
+  const phases = await listServicePhases(caseRow.service_id);
+  const currentPos =
+    phases.find((p) => p.id === caseRow.current_phase_id)?.position ?? Number.POSITIVE_INFINITY;
+  const priorPhases = phases.filter((p) => p.position < currentPos);
+  if (priorPhases.length === 0) return { phases: [] };
+
+  const [docs, forms, parties] = await Promise.all([
+    listCaseDocuments(caseId),
+    listFormResponsesForCase(caseId),
+    getCaseParties(caseId),
+  ]);
+  const partyNameById = new Map<string, string | null>();
+  for (const p of parties) partyNameById.set(p.id, await resolvePartyName(p));
+
+  const phaseId = (r: { service_phase_id?: string | null }) => r.service_phase_id ?? null;
+
+  const groups = await Promise.all(
+    priorPhases
+      .sort((a, b) => b.position - a.position) // newest passed phase first
+      .map(async (ph) => {
+        const documents: PriorPhaseDoc[] = docs
+          .filter((d) => phaseId(d) === ph.id && d.status !== "replaced")
+          .map((d) => ({
+            documentId: d.id,
+            displayName: d.display_name ?? d.original_filename,
+            status: d.status,
+            mimeType: d.mime_type,
+            createdAt: d.created_at,
+            partyName: d.party_id ? (partyNameById.get(d.party_id) ?? null) : null,
+          }));
+        const formsForPhase = forms.filter((f) => phaseId(f) === ph.id);
+        const formItems: PriorPhaseForm[] = await Promise.all(
+          formsForPhase.map(async (f) => {
+            const formDef = await findFormDefinitionById(f.form_definition_id);
+            return {
+              responseId: f.id,
+              formDefinitionId: f.form_definition_id,
+              label: asI18n(formDef?.label_i18n) ?? { en: "", es: "" },
+              status: f.status,
+              partyName: f.party_id ? (partyNameById.get(f.party_id) ?? null) : null,
+              filledPdfPath: f.filled_pdf_path,
+              submittedAt: f.submitted_at,
+            };
+          }),
+        );
+        return {
+          phaseId: ph.id,
+          label: asI18n(ph.label_i18n) ?? { en: "", es: "" },
+          position: ph.position,
+          documents,
+          forms: formItems,
+        } satisfies PriorPhaseGroup;
+      }),
+  );
+
+  return { phases: groups.filter((g) => g.documents.length > 0 || g.forms.length > 0) };
+}
+
+// ---------------------------------------------------------------------------
 // API-CASE-16: saveFormDraft
 // ---------------------------------------------------------------------------
 
@@ -3984,12 +4091,14 @@ export async function saveFormDraft(
       throw new CaseError("FORM_VERSION_NOT_PUBLISHED");
     }
 
+    const caseForPhase = await findCaseById(parsed.caseId);
     response = await insertFormResponse({
       case_id: parsed.caseId,
       form_definition_id: parsed.formDefinitionId,
       automation_version_id: published?.id ?? null,
       party_id: partyId,
       status: "draft",
+      service_phase_id: caseForPhase?.current_phase_id ?? null,
     });
   } else {
     // Existing response: only draft can be edited
