@@ -25,6 +25,8 @@ export interface BuildTabsInput {
   documentsToReview: number;
   hasChat: boolean;
   requiresLawyerValidation: boolean;
+  /** The case has materials in already-passed phases → show the read-only tab. */
+  hasPriorPhases: boolean;
 }
 
 export function buildTabs(input: BuildTabsInput): TabConfig[] {
@@ -42,6 +44,7 @@ export function buildTabs(input: BuildTabsInput): TabConfig[] {
       { id: "expediente", label: tb.expediente },
     );
     if (input.requiresLawyerValidation) tabs.push({ id: "validacion", label: tb.validacion });
+    if (input.hasPriorPhases) tabs.push({ id: "fasesAnteriores", label: tb.fasesAnteriores });
     tabs.push(
       { id: "citas", label: tb.citasRoute },
       { id: "traspaso", label: tb.traspaso },
@@ -63,6 +66,7 @@ export function buildTabs(input: BuildTabsInput): TabConfig[] {
       { id: "expediente", label: tb.expediente },
     );
     if (input.requiresLawyerValidation) tabs.push({ id: "validacion", label: tb.validacion });
+    if (input.hasPriorPhases) tabs.push({ id: "fasesAnteriores", label: tb.fasesAnteriores });
     tabs.push(
       { id: "traspaso", label: tb.traspaso },
       { id: "pagos", label: tb.pagos },
@@ -81,6 +85,9 @@ export function buildTabs(input: BuildTabsInput): TabConfig[] {
     { id: "documentos", label: tb.documentos, badge: input.documentsToReview },
     { id: "formularios", label: tb.informacion },
     { id: "cartas", label: tb.cartas },
+  );
+  if (input.hasPriorPhases) tabs.push({ id: "fasesAnteriores", label: tb.fasesAnteriores });
+  tabs.push(
     { id: "traspaso", label: tb.traspaso },
     { id: "historial", label: tb.historial },
   );

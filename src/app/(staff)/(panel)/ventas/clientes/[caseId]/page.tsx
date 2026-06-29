@@ -19,6 +19,7 @@ import {
   getClientFormsForCase,
   getTimeline,
   getCaseStageInfo,
+  getPriorPhaseMaterials,
   CaseError,
 } from "@/backend/modules/cases";
 import { getPaymentPlanForCase } from "@/backend/modules/billing";
@@ -58,6 +59,7 @@ import {
   translateDocumentAction,
   getDocumentTranslationAction,
 } from "../../../admin/casos/actions";
+import { getFormResponsePdfUrlAction } from "../../../admin/casos/[caseId]/formularios/actions";
 
 export const dynamic = "force-dynamic";
 
@@ -82,7 +84,7 @@ export default async function VentasCasoDetailPage({
     throw err;
   }
 
-  const [documents, plan, contract, timeline, forms, runs, matrix, rutaRaw] = await Promise.all([
+  const [documents, plan, contract, timeline, forms, runs, matrix, rutaRaw, priorPhasesRaw] = await Promise.all([
     getCaseDocuments(actor, caseId).catch(() => []),
     getPaymentPlanForCase(actor, caseId).catch(() => null),
     getContractForCase(actor, caseId).catch(() => null),
@@ -91,6 +93,7 @@ export default async function VentasCasoDetailPage({
     getRunsForCase(actor, caseId).catch(() => []),
     getDocumentsMatrix(actor, caseId, { includeHidden: true }).catch(() => null),
     getCaseRuta(actor, caseId).catch(() => null),
+    getPriorPhaseMaterials(actor, caseId).catch(() => ({ phases: [] })),
   ]);
 
   // Responsable / etapa (eje propio) — staff-only; degrade to null on failure.
@@ -173,6 +176,14 @@ export default async function VentasCasoDetailPage({
 
   const ruta = buildRutaVM(rutaRaw, locale);
 
+  const priorPhases = priorPhasesRaw.phases.map((g) => ({
+    phaseId: g.phaseId,
+    label: resolveI18n(g.label, locale),
+    position: g.position,
+    documents: g.documents,
+    forms: g.forms.map((f) => ({ ...f, label: resolveI18n(f.label, locale) })),
+  }));
+
   const vm: CaseWorkspaceVM = {
     header: {
       caseId,
@@ -231,6 +242,7 @@ export default async function VentasCasoDetailPage({
     generations,
     validations: [],
     expedientes: [],
+    priorPhases,
   };
 
   return (
@@ -238,6 +250,7 @@ export default async function VentasCasoDetailPage({
       vm={vm}
       actions={{
         reviewDocument: reviewDocumentAction,
+        getFilledPdfUrl: getFormResponsePdfUrlAction,
         setRequirementVisibility: canManageDocs ? setRequirementVisibilityAction : undefined,
         registerPayment: registerPaymentAction,
         resendSigningLink: resendSigningLinkAction,

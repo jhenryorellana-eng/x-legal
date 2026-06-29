@@ -1330,7 +1330,13 @@
           "pagos": "Pagos",
           "expediente": "Expediente",
           "validacion": "Validación",
+          "fasesAnteriores": "Fases anteriores",
           "mensajes": "Mensajes"
+        },
+        "fasesAnteriores": {
+          "sub": "Documentos y formularios de fases que el caso ya completó (solo lectura).",
+          "empty": "Este caso aún no tiene fases anteriores con materiales.",
+          "noPdf": "PDF no generado"
         },
         "progressTitle": "Progreso del expediente",
         "progressDocs": "Documentos",

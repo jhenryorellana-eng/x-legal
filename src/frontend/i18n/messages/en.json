@@ -1330,7 +1330,13 @@
           "pagos": "Payments",
           "expediente": "File",
           "validacion": "Validation",
+          "fasesAnteriores": "Previous phases",
           "mensajes": "Messages"
+        },
+        "fasesAnteriores": {
+          "sub": "Documents and forms from phases the case has already completed (read-only).",
+          "empty": "This case has no previous phases with materials yet.",
+          "noPdf": "PDF not generated"
         },
         "progressTitle": "File progress",
         "progressDocs": "Documents",

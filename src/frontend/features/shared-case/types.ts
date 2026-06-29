@@ -27,6 +27,7 @@ export type CaseTabId =
   | "pagos"
   | "expediente"
   | "validacion"
+  | "fasesAnteriores"
   | "mensajes";
 
 export type StaffRoleVM = "sales" | "paralegal" | "finance" | "admin";
@@ -164,6 +165,37 @@ export interface ExpedienteVM {
   createdAt: string;
 }
 
+/**
+ * Read-only materials (documents + form responses) from phases the case has
+ * already PASSED (Etapa C). Backed by cases.getPriorPhaseMaterials; labels are
+ * already locale-resolved by the RSC page. Grouped by phase, newest first.
+ */
+export interface PriorPhaseDocVM {
+  documentId: string;
+  displayName: string;
+  status: string;
+  mimeType: string;
+  createdAt: string;
+  partyName: string | null;
+}
+export interface PriorPhaseFormVM {
+  responseId: string;
+  formDefinitionId: string;
+  label: string;
+  status: string;
+  partyName: string | null;
+  /** Path to the generated filled PDF (null = not generated → no download). */
+  filledPdfPath: string | null;
+  submittedAt: string | null;
+}
+export interface PriorPhaseGroupVM {
+  phaseId: string;
+  label: string;
+  position: number;
+  documents: PriorPhaseDocVM[];
+  forms: PriorPhaseFormVM[];
+}
+
 /** A single objective inside a cita of the appointment route (locale-resolved). */
 export interface RutaCitaObjectiveVM {
   id: string;
@@ -271,6 +303,8 @@ export interface CaseWorkspaceVM {
   validations: ValidationVM[];
   /** Expediente attempts (Expediente tab — admin). */
   expedientes: ExpedienteVM[];
+  /** Read-only docs + forms from already-passed phases (Fases anteriores tab). */
+  priorPhases?: PriorPhaseGroupVM[];
 }
 
 /** Client-facing view of a document translation (status + result). */
@@ -314,6 +348,14 @@ export interface CaseDetailActions {
   getDocumentUrl: (input: {
     documentId: string;
   }) => Promise<{ ok: boolean; url?: string; error?: { code: string } }>;
+  /**
+   * Returns a short-lived signed URL for the ALREADY-generated filled PDF of a
+   * form response (read-only; null url when not generated). Used by the
+   * "Fases anteriores" tab. Optional — only case-detail surfaces inject it.
+   */
+  getFilledPdfUrl?: (input: {
+    responseId: string;
+  }) => Promise<{ ok: boolean; url?: string | null; error?: { code: string } }>;
   /**
    * Request a translation (ES→EN by default) of an uploaded document into a
    * court-ready English PDF. Enqueues a QStash job; poll with getTranslation.
