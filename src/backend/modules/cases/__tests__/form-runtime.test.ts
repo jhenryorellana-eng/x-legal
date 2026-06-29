@@ -579,21 +579,27 @@ describe("saveFormDraft", () => {
     ).rejects.toThrow("FORM_VERSION_MISMATCH");
   });
 
-  it("throws FORM_VALIDATION_FAILED for invalid answer type", async () => {
+  it("PERSISTS a format-invalid partial value on draft autosave (does not brick — regression)", async () => {
+    // A value still being typed (e.g. a ZIP "330" before "33012", failing the field
+    // regex) must PERSIST on a draft autosave — never reject. Rejecting it bricks the
+    // whole-form autosave (the engine treats a rejection as permanent) and loses
+    // keystrokes. Format is enforced at SUBMIT, not on the draft (DOC-41 §3.8).
     mockFindFormResponse.mockResolvedValue(draftResponse);
     mockListQuestionGroups.mockResolvedValue([{ id: "grp1" }]);
     mockListQuestions.mockResolvedValue([
-      { id: "q1", field_type: "text", is_required: true, options: null, validation: { regex: "^\\d+$" } },
+      { id: "q1", field_type: "text", is_required: true, options: null, validation: { regex: "^\\d{5}$" } },
     ]);
+    mockFindFormResponseById.mockResolvedValue({ ...draftResponse, answers: { q1: "330" } });
 
-    await expect(
-      saveFormDraft(clientActor, {
-        caseId: CASE_ID,
-        formDefinitionId: FORM_DEF_ID,
-        partyId: null,
-        patch: { q1: "not-a-number" },
-      }),
-    ).rejects.toThrow("FORM_VALIDATION_FAILED");
+    const result = await saveFormDraft(clientActor, {
+      caseId: CASE_ID,
+      formDefinitionId: FORM_DEF_ID,
+      partyId: null,
+      patch: { q1: "330" }, // partial ZIP, fails ^\d{5}$
+    });
+
+    expect(mockMergeFormAnswers).toHaveBeenCalledWith(RESPONSE_ID, { q1: "330" });
+    expect(result.id).toBe(RESPONSE_ID);
   });
 
   it("allows staff to save any form (filled_by=staff)", async () => {

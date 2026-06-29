@@ -4055,14 +4055,44 @@ const SaveFormDraftSchema = z.object({
 export type SaveFormDraftInput = z.infer<typeof SaveFormDraftSchema>;
 
 /**
- * Creates or updates a form draft with a partial patch of answers.
- * Merge per-key: only keys present in patch are updated (RF-DIA-023).
- * Freezes automation_version_id to the published version on first create.
- * FORM_VERSION_MISMATCH if patch keys don't belong to the saved version.
+ * Creates or updates a form draft with a partial patch of answers (API-CASE-16).
+ *
+ * Thin wrapper around the implementation that logs EVERY rejection (errorCode + ids,
+ * PII-safe — never the answer values) so a blocked client autosave is diagnosable
+ * from the logs instead of guesswork, then re-throws unchanged.
  *
  * @api-id API-CASE-16
  */
 export async function saveFormDraft(
+  actor: Actor,
+  input: SaveFormDraftInput,
+): Promise<CaseFormResponseRow> {
+  try {
+    return await saveFormDraftImpl(actor, input);
+  } catch (err) {
+    if (err instanceof CaseError) {
+      logger.warn(
+        {
+          caseId: input.caseId,
+          formDefinitionId: input.formDefinitionId,
+          partyId: input.partyId ?? null,
+          errorCode: err.code,
+          details: err.details,
+        },
+        "saveFormDraft rejected",
+      );
+    }
+    throw err;
+  }
+}
+
+/**
+ * Creates or updates a form draft with a partial patch of answers.
+ * Merge per-key: only keys present in patch are updated (RF-DIA-023).
+ * Freezes automation_version_id to the published version on first create.
+ * FORM_VERSION_MISMATCH if patch keys don't belong to the saved version.
+ */
+async function saveFormDraftImpl(
   actor: Actor,
   input: SaveFormDraftInput,
 ): Promise<CaseFormResponseRow> {
@@ -4107,7 +4137,17 @@ export async function saveFormDraft(
     }
   }
 
-  // Validate answer types + check keys belong to the frozen version (FORM_VERSION_MISMATCH)
+  // Structural integrity ONLY: the patch keys must belong to the response's frozen
+  // version. A re-published form whose questions got new ids → the client is on a
+  // stale render (FORM_VERSION_MISMATCH). We deliberately do NOT validate VALUE
+  // FORMAT (regex / min / max / select whitelist) on a draft autosave: a draft is a
+  // work-in-progress and a partial value (a ZIP "330" before "33012", an A-number
+  // mid-entry, a number momentarily out of range) is EXPECTED while typing. Rejecting
+  // it here returns a "permanent" error that BRICKS the whole-form autosave for the
+  // rest of the session and silently drops keystrokes — the user then sees "No
+  // pudimos guardar" on every field. Format is enforced at SUBMIT (submitFormResponse,
+  // full validateAnswerTypes) and shown as inline UI hints — never as an autosave gate
+  // (DOC-41 §3.8: "validación pre-envío sin bloquear guardado parcial").
   if (response.automation_version_id && Object.keys(parsed.patch).length > 0) {
     const questions = await getQuestionsForVersion(response.automation_version_id);
 
@@ -4116,13 +4156,6 @@ export async function saveFormDraft(
       const unknownKeys = Object.keys(parsed.patch).filter((k) => !validQuestionIds.has(k));
       if (unknownKeys.length > 0) {
         throw new CaseError("FORM_VERSION_MISMATCH", { unknownKeys });
-      }
-
-      // Draft autosave: type-check only the answers in this patch — never enforce
-      // required-ness on fields the user hasn't reached yet (that's submit's job).
-      const errors = validateAnswerTypes(parsed.patch, questions, false);
-      if (errors.length > 0) {
-        throw new CaseError("FORM_VALIDATION_FAILED", { errors });
       }
     }
   }
