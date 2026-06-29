@@ -45,3 +45,10 @@ comment on column public.form_definitions.companion_questionnaire_id is
 -- (4) un questionnaire tiene versión sin PDF
 alter table public.form_automation_versions
   alter column source_pdf_path drop not null;
+
+-- (5) nuevo source 'ai_field' en form_questions (campo rellenado por IA)
+alter table public.form_questions
+  drop constraint if exists form_questions_source_check;
+alter table public.form_questions
+  add constraint form_questions_source_check
+  check (source in ('client_answer', 'document_extraction', 'generation_output', 'profile', 'ai_field'));
