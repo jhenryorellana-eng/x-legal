@@ -24,6 +24,22 @@ descarga el memo PDF → lo transcribe (Gemini) → embebe + recupera precedente
   `output_text`. Por tanto `assessPreMortemRisk` debe **caer a extraer texto del PDF** (`extractRawTextFromStorage`,
   bucket `generated`) cuando `output_text` es null — implementado como robustez (no parche).
 
+## Verificación E2E in-app (Playwright, dev :3100, Henry admin) — 2026-06-29
+1. **Flag admin**: en el form-editor del ai_letter `memorandum-de-miedo-creible`, el toggle
+   **"Pre-Mortem (análisis de riesgo)"** renderiza; activado + "Guardar configuración" → persistió
+   `ai_generation_configs.pre_mortem_enabled=true` (vía el server action de la app, NO SQL). ✔
+2. **Gating del tab**: en el caso ULP-2026-0011 (admin) apareció el tab **"Pre-Mortem"** (gating por
+   `isPreMortemEnabledForCase`); en empty state mostró el CTA "Analizar caso". ✔
+3. **Run end-to-end**: "Analizar caso" → `runPreMortemAction` → `assessPreMortemRisk` → **fallback de PDF**
+   (extrajo el memo del PDF vía Gemini) → embed → retrieve → **crítico Anthropic (claude-opus-4-7)** →
+   reporte renderizado: **"Riesgo general: Alto"** + resumen + **10 motivos** con label localizado
+   (Credibilidad 85% · Falta de corroboración 80% · Falta de nexo 75% · …), cada uno con "Por qué"/"Corrección"
+   citando precedentes (Mogharrabi, Navas, S-M-J-, Cardoza-Fonseca, REAL ID Act). ✔
+4. **Persistencia + coste**: 1 fila en `case_pre_mortem_assessments` (overall_risk=high, 10 motivos,
+   model claude-opus-4-7, in=2387/out=2031 tokens, **cost_usd=$0.1881**, created_by=Henry). ✔
+   Screenshot: `premortem-tab-inapp.png`.
+
 ## Conclusión
-El pipeline Pre-Mortem (embed → retrieve → crítico → JSON estructurado mapeado a la taxonomía) **funciona
-end-to-end con Anthropic real**. Falta: fallback de PDF en el in-app + flag admin + verificación E2E por UI.
+El Pre-Mortem está **verificado end-to-end in-app** (flag admin → gating del tab → run con Anthropic real +
+fallback de PDF + RAG → reporte localizado → persistencia con coste). Todo el wiring que los unit tests
+mockean quedó probado en vivo.
