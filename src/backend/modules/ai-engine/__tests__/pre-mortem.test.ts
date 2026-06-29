@@ -562,6 +562,45 @@ describe("assessPreMortemRisk", () => {
     expect(mocks.repo.findLatestEligibleRunForPreMortem).not.toHaveBeenCalled();
     expect(result.runId).toBe(RUN_ID);
   });
+
+  // -------------------------------------------------------------------------
+  // SECURITY CRIT-1: explicit runId from a DIFFERENT case → IDOR guard rejects
+  // -------------------------------------------------------------------------
+
+  it("rejects an explicit runId that belongs to a different case (cross-case/org IDOR)", async () => {
+    mocks.repo.findRunById.mockResolvedValue({
+      ...BASE_RUN,
+      case_id: "99999999-9999-4999-8999-999999999999", // a different case (e.g. another org)
+    });
+
+    await expect(
+      assessPreMortemRisk(ACTOR, { caseId: CASE_ID, runId: RUN_ID }),
+    ).rejects.toMatchObject({ name: "AuthzError", message: "forbidden_case" });
+
+    expect(mocks.anthropicClient.messages.stream).not.toHaveBeenCalled();
+    expect(mocks.repo.insertPreMortemAssessment).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // SECURITY HIGH-1: non-staff (client) actor → staff-only work product
+  // -------------------------------------------------------------------------
+
+  it("rejects a non-staff (client) actor — Pre-Mortem is staff-only", async () => {
+    const clientActor: Actor = { ...ACTOR, kind: "client", role: null };
+    mocks.repo.findLatestEligibleRunForPreMortem.mockResolvedValue({
+      runId: RUN_ID,
+      outputText: BASE_RUN.output_text,
+      formDefinitionId: FORM_DEF_ID,
+      model: "claude-opus-4-7",
+    });
+
+    await expect(
+      assessPreMortemRisk(clientActor, { caseId: CASE_ID }),
+    ).rejects.toMatchObject({ name: "AuthzError", message: "wrong_kind" });
+
+    expect(mocks.anthropicClient.messages.stream).not.toHaveBeenCalled();
+    expect(mocks.repo.insertPreMortemAssessment).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -634,6 +673,16 @@ describe("isPreMortemEnabledForCase", () => {
     const result = await isPreMortemEnabledForCase(ACTOR, CASE_ID);
 
     expect(result).toBe(false);
+  });
+
+  it("returns false for a non-staff actor without querying config (no tab for clients)", async () => {
+    mocks.repo.findPreMortemEnabledConfigForCase.mockResolvedValue(true);
+    const clientActor: Actor = { ...ACTOR, kind: "client", role: null };
+
+    const result = await isPreMortemEnabledForCase(clientActor, CASE_ID);
+
+    expect(result).toBe(false);
+    expect(mocks.repo.findPreMortemEnabledConfigForCase).not.toHaveBeenCalled();
   });
 });
 

@@ -3200,6 +3200,10 @@ export async function assessPreMortemRisk(
   input: { caseId: string; runId?: string },
 ): Promise<PreMortemAssessment> {
   await requireCaseAccess(actor, input.caseId);
+  // Staff-only work product (internal denial-risk strategy) — never exposed to
+  // clients, even case members. Server actions are POST endpoints, so the
+  // staff-only UI is not an authorization boundary on its own.
+  if (actor.kind !== "staff") throw new AuthzError("wrong_kind");
 
   // --- Step a/b: Resolve run + output_text ---
   let outputText: string;
@@ -3216,6 +3220,12 @@ export async function assessPreMortemRisk(
         reason: "Provided run not found",
         runId: input.runId,
       });
+    }
+    // The run MUST belong to the already-authorized case. findRunById takes a
+    // GLOBAL runId; without this an actor could pass their own caseId + another
+    // org's runId and exfiltrate that memo's PII (IDOR). Mirrors cancelGeneration.
+    if (run.case_id !== input.caseId) {
+      throw new AuthzError("forbidden_case");
     }
     outputText = await resolveMemoText(run.output_text, run.output_path);
     resolvedRunId = run.id;
@@ -3280,7 +3290,7 @@ export async function assessPreMortemRisk(
     "You MUST respond with valid JSON only, no prose before or after.";
 
   const userMessage =
-    "## LEGAL MEMORANDUM (PII masked)\n\n" +
+    "## LEGAL MEMORANDUM (sensitive — identifiers masked)\n\n" +
     maskedMemo +
     "\n\n---\n## SIMILAR PRECEDENTS\n\n" +
     precedentBlock +
@@ -3324,7 +3334,7 @@ export async function assessPreMortemRisk(
     modelUsed = result.model;
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    logger.error({ err, caseId: input.caseId, model }, "ai-engine: pre-mortem critic call failed");
+    logger.error({ err: errMsg, caseId: input.caseId, model }, "ai-engine: pre-mortem critic call failed");
     // Retry once with fallback model if the primary model was rejected
     if (model !== PREMORTEM_FALLBACK_MODEL && (errMsg.includes("400") || errMsg.includes("model"))) {
       try {
@@ -3445,6 +3455,7 @@ export async function getPreMortemAssessmentsForCase(
   caseId: string,
 ): Promise<PreMortemAssessment[]> {
   await requireCaseAccess(actor, caseId);
+  if (actor.kind !== "staff") throw new AuthzError("wrong_kind"); // staff-only work product
 
   const rows = await listPreMortemAssessmentsForCase(caseId);
 
@@ -3474,6 +3485,7 @@ export async function isPreMortemEnabledForCase(
   caseId: string,
 ): Promise<boolean> {
   await requireCaseAccess(actor, caseId);
+  if (actor.kind !== "staff") return false; // staff-only feature → no tab for clients
   return findPreMortemEnabledConfigForCase(caseId);
 }
 
