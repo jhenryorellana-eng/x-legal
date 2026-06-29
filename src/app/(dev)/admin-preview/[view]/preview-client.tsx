@@ -244,6 +244,7 @@ const formEditorNoopActions: FormEditorActions = {
   duplicateVersion: async () => ({ success: true, data: { id: "ver-draft-new" } }),
   saveGenerationConfig: async () => ({ success: true }),
   testGeneration: async () => ({ success: true, data: { run_id: "run-demo-001" } }),
+  ensureCompanionQuestionnaire: async () => ({ success: true, data: { id: "form-q-demo", slug: "demo-cuestionario", created: true } }),
 };
 
 /** Public signing surface preview (mobile tokens). */

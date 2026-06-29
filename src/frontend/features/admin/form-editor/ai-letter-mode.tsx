@@ -50,6 +50,21 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
   const updateAssembly = (patch: Partial<NonNullable<GenerationConfigVM["assembly"]>>) =>
     setCfg({ ...cfg, assembly: { ...asm, ...patch } });
   const [saving, setSaving] = React.useState(false);
+  const [companionBusy, setCompanionBusy] = React.useState(false);
+
+  // Companion questionnaire (Etapa B): open the linked one, or create + open it.
+  async function openOrCreateCompanion() {
+    const existing = vm.form.companionQuestionnaireId;
+    if (existing) {
+      window.location.href = `/admin/catalogo/${vm.service.id}/formularios/${existing}`;
+      return;
+    }
+    setCompanionBusy(true);
+    const r = await actions.ensureCompanionQuestionnaire(vm.form.id);
+    setCompanionBusy(false);
+    if (!r.success || !r.data) return toast.error(r.error?.code ?? "Error");
+    window.location.href = `/admin/catalogo/${vm.service.id}/formularios/${r.data.id}`;
+  }
 
   // ── Assembly: ordered blocks (document structure) ──────────────────────────
   const BLOCK_META: { type: AssemblyBlockType; label: string }[] = [
@@ -199,6 +214,23 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
         {/* Inputs */}
         <MultiSelect label={strings.inputDocs} options={vm.sources.documents.map((d) => d.slug)} selected={cfg.input_document_slugs} onChange={(s) => setCfg({ ...cfg, input_document_slugs: s })} />
         <MultiSelect label={strings.inputForms} options={vm.sources.forms} selected={cfg.input_form_slugs} onChange={(s) => setCfg({ ...cfg, input_form_slugs: s })} />
+
+        {/* Companion questionnaire (Etapa B) */}
+        <div style={{ border: "1px solid var(--line)", borderRadius: 12, padding: "12px 14px", display: "flex", alignItems: "center", gap: 12, background: "var(--panel-2, var(--card-alt))" }}>
+          <Icon name="route" size={18} color="var(--accent)" />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p style={{ margin: 0, fontSize: 13, fontWeight: 800, color: "var(--ink)" }}>{strings.companionTitle}</p>
+            <p style={{ margin: "2px 0 0", fontSize: 11.5, color: "var(--ink-3)", lineHeight: 1.4 }}>{strings.companionHint}</p>
+          </div>
+          <button
+            type="button"
+            onClick={openOrCreateCompanion}
+            disabled={companionBusy}
+            style={{ flexShrink: 0, height: 34, padding: "0 14px", borderRadius: 999, border: `1.5px solid var(--accent)`, background: vm.form.companionQuestionnaireId ? "var(--card,#fff)" : "var(--accent-soft)", color: "var(--accent)", fontSize: 12.5, fontWeight: 800, cursor: companionBusy ? "default" : "pointer", opacity: companionBusy ? 0.6 : 1 }}
+          >
+            {companionBusy ? strings.saving : vm.form.companionQuestionnaireId ? strings.companionOpen : strings.companionCreate}
+          </button>
+        </div>
 
         {/* Dataset */}
         <div>

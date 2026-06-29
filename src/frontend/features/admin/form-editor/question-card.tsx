@@ -41,6 +41,8 @@ export interface QuestionCardProps {
   selected: boolean;
   duplicateMapping: boolean;
   detectedFields: DetectedFieldVM[];
+  /** Questionnaire mode: hide the AcroForm PDF-field mapping. */
+  noPdf?: boolean;
   sources: { documents: SourceDocumentVM[]; forms: string[]; profileFields: string[] };
   groups: { id: string; label: string }[];
   /** Other questions in the form (id + label) that a condition may depend on. */
@@ -60,6 +62,7 @@ export function QuestionCard({
   selected,
   duplicateMapping,
   detectedFields,
+  noPdf = false,
   sources,
   groups,
   siblingQuestions,
@@ -180,34 +183,36 @@ export function QuestionCard({
             <OptionsEditor question={q} strings={strings} readOnly={readOnly} onChange={onChange} />
           )}
 
-          {/* PDF mapping */}
-          <div>
-            <FieldLabel>{strings.pdfMapping}</FieldLabel>
-            <SelectInput
-              value={q.pdf_field_name ?? ""}
-              disabled={readOnly}
-              onChange={(e) => {
-                const v = e.target.value || null;
-                onChange({ pdf_field_name: v });
-                onFocusField(v);
-              }}
-              aria-label={strings.pdfMapping}
-              style={duplicateMapping ? { borderColor: "var(--gold-deep)" } : undefined}
-            >
-              <option value="">{strings.noPdfField}</option>
-              {detectedFields.map((f) => (
-                <option key={f.pdf_field_name} value={f.pdf_field_name}>
-                  {f.pdf_field_name} · {strings.pageLabel} {f.page} · {f.field_type}
-                </option>
-              ))}
-            </SelectInput>
-            {duplicateMapping && (
-              <p style={{ margin: "6px 0 0", fontSize: 12, color: "var(--gold-deep)" }}>{strings.dupFieldWarn}</p>
-            )}
-            {!readOnly && (
-              <p style={{ margin: "6px 0 0", fontSize: 11.5, color: "var(--ink-3)" }}>{strings.pdfMappingHint}</p>
-            )}
-          </div>
+          {/* PDF mapping (hidden in questionnaire mode — no AcroForm) */}
+          {!noPdf && (
+            <div>
+              <FieldLabel>{strings.pdfMapping}</FieldLabel>
+              <SelectInput
+                value={q.pdf_field_name ?? ""}
+                disabled={readOnly}
+                onChange={(e) => {
+                  const v = e.target.value || null;
+                  onChange({ pdf_field_name: v });
+                  onFocusField(v);
+                }}
+                aria-label={strings.pdfMapping}
+                style={duplicateMapping ? { borderColor: "var(--gold-deep)" } : undefined}
+              >
+                <option value="">{strings.noPdfField}</option>
+                {detectedFields.map((f) => (
+                  <option key={f.pdf_field_name} value={f.pdf_field_name}>
+                    {f.pdf_field_name} · {strings.pageLabel} {f.page} · {f.field_type}
+                  </option>
+                ))}
+              </SelectInput>
+              {duplicateMapping && (
+                <p style={{ margin: "6px 0 0", fontSize: 12, color: "var(--gold-deep)" }}>{strings.dupFieldWarn}</p>
+              )}
+              {!readOnly && (
+                <p style={{ margin: "6px 0 0", fontSize: 11.5, color: "var(--ink-3)" }}>{strings.pdfMappingHint}</p>
+              )}
+            </div>
+          )}
 
           {/* Origin segmented selector */}
           <div>

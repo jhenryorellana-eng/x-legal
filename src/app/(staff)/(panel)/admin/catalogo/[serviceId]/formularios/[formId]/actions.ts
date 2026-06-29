@@ -16,6 +16,7 @@ import {
   createAutomationVersionAction,
   redetectFieldsAction,
   aiProposeStructureAction,
+  ensureCompanionQuestionnaireAction,
   upsertQuestionGroupAction,
   deleteQuestionGroupAction,
   upsertQuestionAction,
@@ -67,6 +68,12 @@ export async function aiProposeStructureUi(input: {
   mode: "replace" | "merge";
 }): Promise<Res<{ groups: number; questions: number }>> {
   return envelope(await aiProposeStructureAction(input));
+}
+
+export async function ensureCompanionQuestionnaireUi(
+  aiLetterFormId: string,
+): Promise<Res<{ id: string; slug: string; created: boolean }>> {
+  return envelope(await ensureCompanionQuestionnaireAction(aiLetterFormId));
 }
 
 export async function upsertGroupUi(input: {

@@ -33,6 +33,7 @@ export {
   getCostsSummary,
   // Catalog editor assistance (consumed by catalog module)
   proposeFormSegmentation,
+  proposeQuestionnaireQuestions,
   proposeExtractionSchema,
   // Expediente assembly planner (consumed by expediente module)
   proposeExpedienteAssembly,

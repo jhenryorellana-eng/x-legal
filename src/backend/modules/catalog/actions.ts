@@ -506,6 +506,18 @@ export async function aiProposeStructureAction(
   }
 }
 
+/** @api-id API-CAT-35 — ensure an ai_letter's companion questionnaire (Etapa B) */
+export async function ensureCompanionQuestionnaireAction(
+  aiLetterFormId: string,
+): Promise<ActionResult<Awaited<ReturnType<typeof svc.ensureCompanionQuestionnaire>>>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.ensureCompanionQuestionnaire(actor, aiLetterFormId));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 /** @api-id API-CAT-42 — test PDF (in-memory). Returns base64 PDF + gaps. */
 export async function generateTestPdfAction(
   input: Parameters<typeof svc.generateTestPdf>[1],

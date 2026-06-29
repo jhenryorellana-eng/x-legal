@@ -186,7 +186,7 @@ export function PdfMode({ vm, strings, actions, activeVersionId, onSelectVersion
   );
 }
 
-function VersionChips({ versions, activeId, onSelect, strings }: { versions: VersionVM[]; activeId: string | null; onSelect: (id: string) => void; strings: FormEditorStrings }) {
+export function VersionChips({ versions, activeId, onSelect, strings }: { versions: VersionVM[]; activeId: string | null; onSelect: (id: string) => void; strings: FormEditorStrings }) {
   const statusLabel = (s: VersionVM["status"]) =>
     s === "draft" ? strings.versionDraft : s === "published" ? strings.versionPublished : strings.versionArchived;
   const statusColor = (s: VersionVM["status"]) =>

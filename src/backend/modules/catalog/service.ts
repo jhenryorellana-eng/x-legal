@@ -712,7 +712,97 @@ export async function createFormDefinition(
     dto as Parameters<typeof repo.insertFormDefinition>[0],
   );
   await writeAudit(actor, "catalog.form.created", "form_definitions", form.id, { after: form });
+
+  // A new ai_letter gets a companion questionnaire automatically (DOC-53 / Etapa B):
+  // a PDF-less form whose answers feed the generation. Best-effort — a failure here
+  // must NOT fail the ai_letter creation (the admin can retry via the editor button).
+  if (form.kind === "ai_letter") {
+    try {
+      await ensureCompanionQuestionnaire(actor, form.id);
+    } catch (err) {
+      logger.warn(
+        { err: err instanceof Error ? err.message : String(err), formId: form.id },
+        "catalog: companion questionnaire auto-creation failed (non-fatal)",
+      );
+    }
+  }
+
   return form as unknown as FormDefinition;
+}
+
+/**
+ * Ensures an ai_letter has a companion `questionnaire` (Etapa B): a PDF-less form
+ * whose answers feed the generation. Idempotent — if the link already points to an
+ * existing form, returns it. Otherwise creates the questionnaire + a draft version
+ * (no PDF), links it via `companion_questionnaire_id`, and adds its slug to the
+ * generation config's `input_form_slugs`. Returns the companion form id.
+ *
+ * @api-id API-CAT-34
+ */
+export async function ensureCompanionQuestionnaire(
+  actor: Actor,
+  aiLetterFormId: string,
+): Promise<{ id: string; slug: string; created: boolean }> {
+  can(actor, "catalog", "edit");
+
+  const letter = await repo.findFormDefinition(aiLetterFormId);
+  if (!letter) throw catalogError("CATALOG_FORM_NOT_FOUND");
+  if (letter.kind !== "ai_letter") throw catalogError("CATALOG_FORM_KIND_MISMATCH", "Companion questionnaires belong to ai_letter forms.");
+
+  // Idempotent: an existing, still-present companion is returned as-is.
+  const existingId = (letter as { companion_questionnaire_id?: string | null }).companion_questionnaire_id ?? null;
+  if (existingId) {
+    const existing = await repo.findFormDefinition(existingId);
+    if (existing) return { id: existing.id, slug: existing.slug, created: false };
+  }
+
+  // Create the questionnaire form (unique slug under the same phase).
+  let slug = `${letter.slug}-cuestionario`;
+  for (let i = 2; await repo.formSlugExists(letter.service_phase_id, slug); i++) {
+    slug = `${letter.slug}-cuestionario-${i}`;
+  }
+  const label = (letter.label_i18n ?? {}) as { es?: string; en?: string };
+  const questionnaire = await repo.insertFormDefinition({
+    service_phase_id: letter.service_phase_id,
+    slug,
+    kind: "questionnaire",
+    label_i18n: {
+      es: `${label.es ?? letter.slug} — Cuestionario`,
+      en: `${label.en ?? label.es ?? letter.slug} — Questionnaire`,
+    },
+    filled_by: "client",
+    is_active: true,
+    is_per_party: (letter as { is_per_party?: boolean }).is_per_party ?? false,
+  } as Parameters<typeof repo.insertFormDefinition>[0]);
+
+  // A questionnaire version holds the groups/questions but has NO PDF.
+  await repo.insertAutomationVersion({
+    form_definition_id: questionnaire.id,
+    version: 1,
+    source_pdf_path: null,
+    source_language: "es",
+    detected_fields: [],
+    status: "draft",
+    created_by: actor.userId,
+  } as Parameters<typeof repo.insertAutomationVersion>[0]);
+
+  // Link the ai_letter → questionnaire.
+  await repo.updateFormDefinition(letter.id, { companion_questionnaire_id: questionnaire.id });
+
+  // Feed the questionnaire into the generation: add its slug to input_form_slugs.
+  const cfg = await repo.findGenerationConfig(letter.id);
+  if (cfg) {
+    const slugs = new Set([...((cfg.input_form_slugs as string[] | null) ?? []), slug]);
+    await repo.upsertGenerationConfig({
+      ...(cfg as Parameters<typeof repo.upsertGenerationConfig>[0]),
+      input_form_slugs: Array.from(slugs),
+    });
+  }
+
+  await writeAudit(actor, "catalog.questionnaire.created", "form_definitions", questionnaire.id, {
+    after: { ai_letter_id: letter.id, slug },
+  });
+  return { id: questionnaire.id, slug, created: true };
 }
 
 /**
@@ -975,6 +1065,11 @@ export async function aiProposeStructure(
   if (!version) throw catalogError("CATALOG_VERSION_NOT_FOUND");
   if (version.status !== "draft") throw catalogError("CATALOG_VERSION_PUBLISHED_IMMUTABLE");
 
+  const formDef = await repo.findFormDefinition(version.form_definition_id);
+  // A questionnaire has NO PDF/AcroForm — its proposal is grounded in the parent
+  // ai_letter's purpose, not detected fields (Etapa B).
+  const isQuestionnaire = formDef?.kind === "questionnaire";
+
   const detectedFields = (version.detected_fields ?? []) as Array<{
     pdf_field_name: string;
     field_type: string;
@@ -982,13 +1077,13 @@ export async function aiProposeStructure(
     rect?: [number, number, number, number];
   }>;
 
-  if (detectedFields.length === 0) {
+  if (!isQuestionnaire && detectedFields.length === 0) {
     throw catalogError("CATALOG_NO_ACROFORM_FIELDS");
   }
 
-  // Narrow to group scope if re-proposing for a single group
+  // Narrow to group scope if re-proposing for a single group (PDF forms only)
   let scopeFields = detectedFields;
-  if (input.group_id) {
+  if (!isQuestionnaire && input.group_id) {
     const groupQs = await repo.listQuestions(input.group_id);
     const groupFieldNames = new Set(groupQs.map((q) => q.pdf_field_name).filter(Boolean));
     scopeFields = detectedFields.filter((f) => groupFieldNames.has(f.pdf_field_name));
@@ -1012,7 +1107,6 @@ export async function aiProposeStructure(
   const detectedNames = new Set(detectedFields.map((f) => f.pdf_field_name));
 
   // Form + service context so the AI can research the right official instructions.
-  const formDef = await repo.findFormDefinition(version.form_definition_id);
   const phase = formDef?.service_phase_id ? await repo.findPhaseById(formDef.service_phase_id) : null;
   const service = phase?.service_id ? await repo.findServiceById(phase.service_id) : null;
   const pickEs = (v: unknown): string | undefined => {
@@ -1043,38 +1137,51 @@ export async function aiProposeStructure(
   // M-4: Call AI FIRST, then delete existing groups — reduces the window where
   // the version is empty. If AI fails, existing groups are preserved intact.
   // Import ai-engine via its public index (module boundary — no direct service import)
-  const { proposeFormSegmentation } = await import("@/backend/modules/ai-engine");
-  const proposal = await proposeFormSegmentation(actor, {
-    detectedFields: aiFields,
-    pdfText,
-    groupScope: input.group_id ? [input.group_id] : undefined,
-    formName: pickEs(formDef?.label_i18n),
-    formSlug: formDef?.slug,
-    serviceName: pickEs(service?.label_i18n),
-    serviceContext,
-    profileFields: PROFILE_SOURCE_FIELDS,
-  });
+  const aiEngine = await import("@/backend/modules/ai-engine");
+  let proposal: Awaited<ReturnType<typeof aiEngine.proposeFormSegmentation>>;
+  if (isQuestionnaire) {
+    // The questionnaire's brief is the PARENT ai_letter's purpose (its system prompt),
+    // so the proposed questions gather exactly what a high-quality draft needs.
+    const parent = formDef ? await repo.findFormByCompanionQuestionnaireId(formDef.id) : null;
+    const parentCfg = parent ? await repo.findGenerationConfig(parent.id) : null;
+    proposal = await aiEngine.proposeQuestionnaireQuestions({
+      purpose: (parentCfg?.system_prompt as string | undefined) ?? pickEs(formDef?.label_i18n) ?? "",
+      formName: pickEs(formDef?.label_i18n),
+      serviceName: pickEs(service?.label_i18n),
+    });
+  } else {
+    proposal = await aiEngine.proposeFormSegmentation(actor, {
+      detectedFields: aiFields,
+      pdfText,
+      groupScope: input.group_id ? [input.group_id] : undefined,
+      formName: pickEs(formDef?.label_i18n),
+      formSlug: formDef?.slug,
+      serviceName: pickEs(service?.label_i18n),
+      serviceContext,
+      profileFields: PROFILE_SOURCE_FIELDS,
+    });
+  }
 
-  // Coverage accountability (DOC-74): surface detected fields the proposal left
-  // UNMAPPED so a silently-dropped applicant field is visible in the logs (purely
-  // internal/office-use fields are expected to be uncovered). Deterministic — does
-  // not trust the model to self-report.
-  const proposedPdfNames = new Set(
-    proposal.groups.flatMap((g) =>
-      g.questions.map((q) => q.pdf_field_name).filter((n): n is string => !!n),
-    ),
-  );
-  const uncovered = scopeFields.map((f) => f.pdf_field_name).filter((n) => !proposedPdfNames.has(n));
-  logger.info(
-    {
-      versionId: input.version_id,
-      detected: scopeFields.length,
-      mapped: proposedPdfNames.size,
-      uncovered: uncovered.length,
-      uncoveredSample: uncovered.slice(0, 25),
-    },
-    "catalog: aiProposeStructure — field coverage",
-  );
+  // Coverage accountability (DOC-74, PDF forms only): surface detected fields the
+  // proposal left UNMAPPED so a silently-dropped applicant field is visible in logs.
+  if (!isQuestionnaire) {
+    const proposedPdfNames = new Set(
+      proposal.groups.flatMap((g) =>
+        g.questions.map((q) => q.pdf_field_name).filter((n): n is string => !!n),
+      ),
+    );
+    const uncovered = scopeFields.map((f) => f.pdf_field_name).filter((n) => !proposedPdfNames.has(n));
+    logger.info(
+      {
+        versionId: input.version_id,
+        detected: scopeFields.length,
+        mapped: proposedPdfNames.size,
+        uncovered: uncovered.length,
+        uncoveredSample: uncovered.slice(0, 25),
+      },
+      "catalog: aiProposeStructure — field coverage",
+    );
+  }
 
   // Materialize proposal as draft groups + questions
   let totalQuestions = 0;
@@ -2577,7 +2684,7 @@ export interface FormEditorSourceOption {
 }
 
 export interface FormEditorData {
-  form: { id: string; slug: string; kind: string; label_i18n: import("./domain").I18nTextDraft; service_phase_id: string };
+  form: { id: string; slug: string; kind: string; label_i18n: import("./domain").I18nTextDraft; service_phase_id: string; companion_questionnaire_id: string | null };
   service: { id: string; slug: string; label_i18n: import("./domain").I18nTextDraft };
   versions: AutomationVersion[];
   /** Editor tree of the open version (the draft, or the version requested). */
@@ -2638,12 +2745,12 @@ export async function getFormEditorData(
   }
 
   const slugIndex = await repo.getServiceSlugIndex(service.id);
-  const documents: FormEditorSourceOption[] = Object.keys(slugIndex.documentsWithSchema).map(
-    (slug) => ({
-      slug,
-      paths: schemaPaths(slugIndex.documentsWithSchema[slug]),
-    }),
-  );
+  // ALL service documents (not only ai_extract ones): document_extraction needs the
+  // schema paths, but ai_field interprets the raw file and works with any document.
+  const documents: FormEditorSourceOption[] = slugIndex.documents.map((slug) => ({
+    slug,
+    paths: schemaPaths(slugIndex.documentsWithSchema[slug] ?? null),
+  }));
 
   const generationConfig =
     form.kind === "ai_letter"
@@ -2657,6 +2764,8 @@ export async function getFormEditorData(
       kind: form.kind,
       label_i18n: (form.label_i18n ?? {}) as import("./domain").I18nTextDraft,
       service_phase_id: form.service_phase_id,
+      companion_questionnaire_id:
+        (form as { companion_questionnaire_id?: string | null }).companion_questionnaire_id ?? null,
     },
     service: {
       id: service.id,

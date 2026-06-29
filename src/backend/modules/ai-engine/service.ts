@@ -2075,6 +2075,63 @@ export async function synthesizeLetterFields(input: {
 }
 
 /**
+ * Proposes the questions of a companion QUESTIONNAIRE (Etapa B) — the complementary
+ * form whose answers feed a generated document. Unlike proposeFormSegmentation there
+ * is NO PDF/AcroForm: the proposal is grounded in the generation's PURPOSE (the
+ * ai_letter system prompt) so the questions gather exactly the facts a high-quality
+ * draft needs. Every question is `client_answer` (the admin can later switch a field
+ * to ai_field / profile). Returns the same shape proposeFormSegmentation does, so the
+ * catalog materializer is reused unchanged. Best-effort: a parse failure → no groups.
+ */
+export async function proposeQuestionnaireQuestions(input: {
+  purpose: string;
+  formName?: string;
+  serviceName?: string;
+  model?: string | null;
+}): Promise<SegmentationProposal> {
+  if (isAiStubEnabled()) {
+    return {
+      groups: [
+        {
+          title_i18n: { es: "Datos del caso", en: "Case data" },
+          position: 0,
+          questions: [
+            { key: "q1", question_i18n: { es: "Describe brevemente tu situación.", en: "Briefly describe your situation." }, field_type: "textarea", source: "client_answer", is_required: true, position: 0 },
+          ],
+        },
+      ],
+    };
+  }
+  const model = input.model || DEFAULT_GENERATION_MODEL;
+  const system =
+    "Eres un asistente que diseña CUESTIONARIOS complementarios para nutrir la redacción " +
+    "de un documento legal generado por IA. Propón preguntas claras y específicas, agrupadas " +
+    "por tema, que recojan los hechos necesarios para una redacción de alta calidad. Cada " +
+    "pregunta la responde el cliente o el equipo (source='client_answer'). NO inventes campos " +
+    "de PDF (no uses pdf_field_name).";
+  const user =
+    "Documento a generar (propósito / prompt del sistema):\n" +
+    maskPii(input.purpose || "(sin descripción)") +
+    `\n\nFormulario: ${input.formName ?? ""}\nServicio: ${input.serviceName ?? ""}\n\n` +
+    'Devuelve SOLO JSON con esta forma: {"groups":[{"title_i18n":{"es":"...","en":"..."},' +
+    '"questions":[{"key":"q1","question_i18n":{"es":"...","en":"..."},"help_i18n":{"es":"...","en":"..."},' +
+    '"field_type":"text|textarea|date|number|select|checkbox","is_required":true}]}]}. ' +
+    "Usa 2–5 grupos y 3–8 preguntas por grupo. Las claves `key` deben ser únicas (q1, q2, …).";
+  try {
+    const client = getAnthropicClient();
+    const r = await callAnthropic(client, { model, system, user, maxTokens: 8000, timeoutMs: 180_000 });
+    const start = r.text.indexOf("{");
+    const end = r.text.lastIndexOf("}");
+    const json = start >= 0 && end > start ? r.text.slice(start, end + 1) : r.text;
+    const parsed = JSON.parse(json) as { groups?: ProposedGroup[] };
+    return { groups: Array.isArray(parsed.groups) ? parsed.groups : [] };
+  } catch (err) {
+    logger.warn({ err }, "ai-engine: proposeQuestionnaireQuestions failed — no groups proposed");
+    return { groups: [] };
+  }
+}
+
+/**
  * OCR/transcribes a stored document to plain text (Gemini multimodal). Used to make
  * uploaded dataset items (e.g. public won-case PDFs) injectable as reference material
  * for generation. Best-effort: returns null on failure (item kept without content).

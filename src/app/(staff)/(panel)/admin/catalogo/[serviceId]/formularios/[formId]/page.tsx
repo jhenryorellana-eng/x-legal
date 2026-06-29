@@ -33,6 +33,7 @@ import {
   duplicateVersionUi,
   updateGenerationConfigUi,
   testGenerationUi,
+  ensureCompanionQuestionnaireUi,
 } from "./actions";
 
 export default async function FormEditorPage({
@@ -74,6 +75,7 @@ export default async function FormEditorPage({
     duplicateVersion: duplicateVersionUi,
     saveGenerationConfig: updateGenerationConfigUi,
     testGeneration: testGenerationUi,
+    ensureCompanionQuestionnaire: ensureCompanionQuestionnaireUi,
   };
 
   return (

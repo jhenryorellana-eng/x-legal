@@ -27,6 +27,8 @@ export interface StructureEditorProps {
   lang: "es" | "en";
   strings: FormEditorStrings;
   actions: FormEditorActions;
+  /** Questionnaire mode: no PDF — single column, no viewer, no field mapping. */
+  noPdf?: boolean;
 }
 
 export function StructureEditor({
@@ -38,6 +40,7 @@ export function StructureEditor({
   readOnly,
   strings,
   actions,
+  noPdf = false,
 }: StructureEditorProps) {
   const [expandedQ, setExpandedQ] = React.useState<string | null>(null);
   const [selectedField, setSelectedField] = React.useState<string | null>(null);
@@ -222,13 +225,15 @@ export function StructureEditor({
             <Icon name="check" size={13} /> {strings.autosaved}
           </span>
         )}
-        <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--ink-2)" }}>
-          {strings.mappedCounter.replace("{n}", String(mappedNames.size)).replace("{total}", String(detectedFields.length))}
-        </span>
+        {!noPdf && (
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--ink-2)" }}>
+            {strings.mappedCounter.replace("{n}", String(mappedNames.size)).replace("{total}", String(detectedFields.length))}
+          </span>
+        )}
       </div>
 
-      {/* Two-panel grid */}
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.05fr)", gap: 16, alignItems: "start" }}>
+      {/* Two-panel grid (single column in questionnaire mode) */}
+      <div style={{ display: "grid", gridTemplateColumns: noPdf ? "minmax(0, 1fr)" : "minmax(0, 1fr) minmax(0, 1.05fr)", gap: 16, alignItems: "start" }}>
         {/* LEFT — groups + questions */}
         <div style={{ minWidth: 0 }}>
           {groups.length === 0 && (
@@ -265,6 +270,7 @@ export function StructureEditor({
                   selected={selectedField !== null && q.pdf_field_name === selectedField}
                   duplicateMapping={q.pdf_field_name !== null && dupNames.has(q.pdf_field_name)}
                   detectedFields={detectedFields}
+                  noPdf={noPdf}
                   sources={vm.sources}
                   groups={groupChoices}
                   siblingQuestions={allQuestions
@@ -286,17 +292,19 @@ export function StructureEditor({
           ))}
         </div>
 
-        {/* RIGHT — PDF viewer */}
-        <div style={{ position: "sticky", top: 12, height: "calc(100dvh - 220px)", minHeight: 460 }}>
-          <PdfViewer
-            src={pdfUrl}
-            fields={detectedFields}
-            mappedNames={mappedNames}
-            selectedField={selectedField}
-            onSelectField={handleSelectField}
-            strings={strings}
-          />
-        </div>
+        {/* RIGHT — PDF viewer (hidden in questionnaire mode) */}
+        {!noPdf && (
+          <div style={{ position: "sticky", top: 12, height: "calc(100dvh - 220px)", minHeight: 460 }}>
+            <PdfViewer
+              src={pdfUrl}
+              fields={detectedFields}
+              mappedNames={mappedNames}
+              selectedField={selectedField}
+              onSelectField={handleSelectField}
+              strings={strings}
+            />
+          </div>
+        )}
       </div>
 
       {/* AI overlay (up to 180s) */}

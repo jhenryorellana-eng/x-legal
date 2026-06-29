@@ -76,7 +76,7 @@ export interface SourceDocumentVM {
 }
 
 export interface FormEditorVM {
-  form: { id: string; slug: string; kind: "pdf_automation" | "ai_letter" | "questionnaire"; label: I18nValue; serviceLabel: I18nValue };
+  form: { id: string; slug: string; kind: "pdf_automation" | "ai_letter" | "questionnaire"; label: I18nValue; serviceLabel: I18nValue; companionQuestionnaireId: string | null };
   service: { id: string; slug: string };
   versions: VersionVM[];
   openVersion: { version: VersionVM; groups: QuestionGroupVM[] } | null;
@@ -161,6 +161,8 @@ export interface FormEditorActions {
   duplicateVersion: (versionId: string) => Promise<Res<{ id: string }>>;
   saveGenerationConfig: (input: Record<string, unknown>) => Promise<Res<unknown>>;
   testGeneration: (input: { form_definition_id: string; case_id: string; party_id?: string }) => Promise<Res<{ run_id: string }>>;
+  /** Ensure (create if missing) an ai_letter's companion questionnaire; returns its id. */
+  ensureCompanionQuestionnaire: (aiLetterFormId: string) => Promise<Res<{ id: string; slug: string; created: boolean }>>;
 }
 
 export const PDF_SOURCE_BASE = "/api/dev/catalog-pdf"; // replaced by signed URL in production

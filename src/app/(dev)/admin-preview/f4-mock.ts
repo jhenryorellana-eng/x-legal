@@ -24,6 +24,7 @@ export const formEditorPdfMock: FormEditorVM = {
     kind: "pdf_automation",
     label: { es: "I-360", en: "I-360" },
     serviceLabel: { es: "Visa Juvenil", en: "Juvenile Visa" },
+    companionQuestionnaireId: null,
   },
   service: { id: "svc-visa-juvenil", slug: "visa-juvenil" },
   versions: [
@@ -115,6 +116,7 @@ export const formEditorAiMock: FormEditorVM = {
     kind: "ai_letter",
     label: { es: "Memorándum de asilo", en: "Asylum memorandum" },
     serviceLabel: { es: "Reforzar Asilo", en: "Strengthen Asylum" },
+    companionQuestionnaireId: null,
   },
   versions: [],
   openVersion: null,

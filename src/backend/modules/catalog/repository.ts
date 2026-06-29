@@ -548,6 +548,18 @@ export async function updateFormDefinition(
   return throwOnError(data, error, "updateFormDefinition");
 }
 
+/** Finds the ai_letter that owns a given companion questionnaire (Etapa B). */
+export async function findFormByCompanionQuestionnaireId(
+  questionnaireId: string,
+): Promise<FormDefinitionRow | null> {
+  const { data } = await db()
+    .from("form_definitions")
+    .select("*")
+    .eq("companion_questionnaire_id", questionnaireId)
+    .maybeSingle();
+  return data;
+}
+
 export async function formSlugExists(phaseId: string, slug: string): Promise<boolean> {
   const { data } = await db()
     .from("form_definitions")

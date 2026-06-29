@@ -4,6 +4,7 @@ import * as React from "react";
 import { Icon, Chip } from "@/frontend/components/brand";
 import { PdfMode } from "./pdf-mode";
 import { AiLetterMode } from "./ai-letter-mode";
+import { QuestionnaireMode } from "./questionnaire-mode";
 import type { FormEditorVM, FormEditorActions } from "./types";
 import type { FormEditorStrings } from "./strings";
 
@@ -26,6 +27,14 @@ export function FormEditorView({ vm, strings, actions, lang, datasetsHref }: For
 
   const pick = (v: { es?: string; en?: string }) => (lang === "es" ? v.es : v.en) || v.es || v.en || "";
   const isPdf = vm.form.kind === "pdf_automation";
+  const isQuestionnaire = vm.form.kind === "questionnaire";
+
+  const onSelectVersion = (id: string) => {
+    setActiveVersionId(id);
+    const url = new URL(window.location.href);
+    url.searchParams.set("v", id);
+    window.location.href = url.toString();
+  };
 
   return (
     <div style={{ padding: 28 }}>
@@ -43,7 +52,7 @@ export function FormEditorView({ vm, strings, actions, lang, datasetsHref }: For
         <h1 style={{ margin: 0, fontFamily: "var(--font-title)", fontWeight: 900, fontSize: 24, letterSpacing: "-0.02em", color: "var(--navy)" }}>
           {pick(vm.form.label) || vm.form.slug}
         </h1>
-        {isPdf ? <Chip tone="blue">PDF oficial</Chip> : <Chip tone="gold">Generación IA</Chip>}
+        {isPdf ? <Chip tone="blue">PDF oficial</Chip> : isQuestionnaire ? <Chip tone="green">Cuestionario</Chip> : <Chip tone="gold">Generación IA</Chip>}
       </div>
 
       {isPdf ? (
@@ -52,13 +61,15 @@ export function FormEditorView({ vm, strings, actions, lang, datasetsHref }: For
           strings={strings}
           actions={actions}
           activeVersionId={activeVersionId}
-          onSelectVersion={(id) => {
-            setActiveVersionId(id);
-            // Reload with the version param so the RSC re-reads the chosen tree.
-            const url = new URL(window.location.href);
-            url.searchParams.set("v", id);
-            window.location.href = url.toString();
-          }}
+          onSelectVersion={onSelectVersion}
+        />
+      ) : isQuestionnaire ? (
+        <QuestionnaireMode
+          vm={vm}
+          strings={strings}
+          actions={actions}
+          activeVersionId={activeVersionId}
+          onSelectVersion={onSelectVersion}
         />
       ) : (
         <AiLetterMode vm={vm} strings={strings} actions={actions} datasetsHref={datasetsHref} />
