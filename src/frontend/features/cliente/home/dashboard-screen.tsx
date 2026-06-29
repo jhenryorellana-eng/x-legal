@@ -2,7 +2,6 @@ import * as React from "react";
 import Link from "next/link";
 import { Icon, type IconName } from "@/frontend/components/brand/icon";
 import { IconTile } from "@/frontend/components/brand/icon-tile";
-import { StatusPill, type StatusKind } from "@/frontend/components/brand/status-pill";
 import { Logo } from "@/frontend/components/brand/logo";
 import { HomeBell, type RefetchUnread } from "./home-bell";
 
@@ -27,11 +26,8 @@ export interface DashboardCase {
   serviceColor: string;
   progress: number;
   pendingDocuments: number;
-  /** When false, the card renders as a compact secondary row. */
-  highlighted: boolean;
-  /** Status text + pill kind for the compact secondary cards (e.g. "En proceso"). */
+  /** Status line shown when the case has no pending documents (e.g. "En revisión"). */
   statusText?: string;
-  statusKind?: StatusKind;
 }
 
 /**
@@ -111,9 +107,6 @@ export function DashboardScreen({
   locale,
   refetchUnread,
 }: DashboardScreenProps) {
-  const highlighted = cases.find((c) => c.highlighted);
-  const others = cases.filter((c) => !c.highlighted);
-
   return (
     <div
       style={{
@@ -206,219 +199,11 @@ export function DashboardScreen({
         <OnboardingCard key={oc.caseId} data={oc} labels={labels} />
       ))}
 
-      {/* Highlighted case */}
-      {highlighted && (
-        <Link
-          href={highlighted.href}
-          className="mp-lift"
-          style={{
-            position: "relative",
-            display: "block",
-            overflow: "hidden",
-            background: `linear-gradient(135deg, ${BRAND_NAVY}, #013a73)`,
-            borderRadius: 24,
-            padding: 20,
-            marginBottom: 14,
-            cursor: "pointer",
-            textDecoration: "none",
-            boxShadow:
-              "0 18px 40px color-mix(in srgb, var(--brand-navy) 25%, transparent)",
-          }}
-        >
-          <div
-            style={{
-              position: "absolute",
-              right: -30,
-              top: -30,
-              width: 140,
-              height: 140,
-              borderRadius: "50%",
-              background:
-                "radial-gradient(circle, color-mix(in srgb, var(--gold) 20%, transparent), transparent 70%)",
-            }}
-          />
-          <div
-            style={{
-              position: "relative",
-              display: "flex",
-              alignItems: "center",
-              gap: 13,
-              marginBottom: 16,
-            }}
-          >
-            <div
-              style={{
-                width: 50,
-                height: 50,
-                borderRadius: 15,
-                background: "rgba(255,255,255,0.14)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                flexShrink: 0,
-              }}
-            >
-              <Icon name={highlighted.serviceIcon} size={27} color="#fff" />
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div
-                className="t-title"
-                style={{ fontSize: 19, color: "#fff", fontWeight: 800 }}
-              >
-                {highlighted.title}
-              </div>
-              {highlighted.phaseLabel && (
-                <div
-                  style={{
-                    fontSize: 13.5,
-                    color: "rgba(255,255,255,0.72)",
-                    fontWeight: 600,
-                    marginTop: 1,
-                  }}
-                >
-                  {highlighted.phaseLabel}
-                </div>
-              )}
-            </div>
-          </div>
-          <div
-            style={{
-              position: "relative",
-              height: 9,
-              borderRadius: 999,
-              background: "rgba(255,255,255,0.16)",
-              overflow: "hidden",
-              marginBottom: 14,
-            }}
-          >
-            <div
-              style={{
-                width: `${highlighted.progress}%`,
-                height: "100%",
-                borderRadius: 999,
-                background: "linear-gradient(90deg, var(--gold), var(--gold-deep))",
-                transition: "width 0.9s cubic-bezier(.4,0,.2,1)",
-              }}
-            />
-          </div>
-          <div
-            style={{
-              position: "relative",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 10,
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 7,
-                color: "#fff",
-                fontSize: 14.5,
-                fontWeight: 700,
-              }}
-            >
-              <span
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: 999,
-                  background: "var(--gold)",
-                  boxShadow:
-                    "0 0 0 4px color-mix(in srgb, var(--gold) 20%, transparent)",
-                }}
-              />
-              {labels.documentsLeft.replace(
-                "{n}",
-                String(highlighted.pendingDocuments),
-              )}
-            </div>
-            <span
-              className="t-title"
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 5,
-                background: "#fff",
-                color: "var(--accent)",
-                borderRadius: 999,
-                padding: "9px 16px",
-                fontSize: 14.5,
-                fontWeight: 800,
-              }}
-            >
-              {labels.openCase}{" "}
-              <Icon name="chevR" size={17} color="var(--accent)" />
-            </span>
-          </div>
-        </Link>
-      )}
-
-      {/* Secondary cases */}
-      {others.map((c) => (
-        <Link
-          key={c.caseId}
-          href={c.href}
-          className="mp-lift"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 13,
-            background: "var(--card)",
-            borderRadius: 20,
-            padding: 16,
-            marginBottom: 14,
-            boxShadow: "var(--shadow-soft)",
-            cursor: "pointer",
-            textDecoration: "none",
-          }}
-        >
-          <IconTile
-            name={c.serviceIcon}
-            color={c.serviceColor}
-            size={46}
-            radius={13}
-            iconSize={24}
-          />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div
-              className="t-title"
-              style={{
-                fontSize: 16.5,
-                color: "var(--navy)",
-                fontWeight: 700,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {c.title}
-            </div>
-            {/* Sub line: where the case is in its journey ("Fase 1 de 3 · …").
-                The trailing pill carries the overall status, so the sub stays on
-                the phase to avoid echoing the same word twice. */}
-            {c.phaseLabel && (
-              <div
-                style={{
-                  fontSize: 13.5,
-                  color: "var(--ink-2)",
-                  fontWeight: 600,
-                  marginTop: 1,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {c.phaseLabel}
-              </div>
-            )}
-          </div>
-          {c.statusKind && c.statusText && (
-            <StatusPill kind={c.statusKind}>{c.statusText}</StatusPill>
-          )}
-        </Link>
+      {/* Active cases — one consistent card per case (DOC-51 §5; unified
+          June 2026: dropped the hero/compact split so every case reads the
+          same, regardless of position). */}
+      {cases.map((c) => (
+        <CaseCard key={c.caseId} data={c} labels={labels} />
       ))}
 
       {/* Accesos rápidos */}
@@ -516,6 +301,166 @@ export function DashboardScreen({
         ))}
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CaseCard — the single, consistent card for an active case. The navy "destacado"
+// primitive (DOC-51 §5) is now applied to EVERY case, not just the first, so the
+// list reads coherently. Shows the phase, a gold progress bar, and a bottom row
+// that surfaces pending documents when there are any — otherwise the case status
+// (so in-review / completed cases read clearly instead of "0 documents left").
+// ---------------------------------------------------------------------------
+
+function CaseCard({ data, labels }: { data: DashboardCase; labels: DashboardLabels }) {
+  const hasPending = data.pendingDocuments > 0;
+  const bottomLeft = hasPending
+    ? labels.documentsLeft.replace("{n}", String(data.pendingDocuments))
+    : data.statusText ?? "";
+  return (
+    <Link
+      href={data.href}
+      className="mp-lift"
+      style={{
+        position: "relative",
+        display: "block",
+        overflow: "hidden",
+        background: `linear-gradient(135deg, ${BRAND_NAVY}, #013a73)`,
+        borderRadius: 24,
+        padding: 20,
+        marginBottom: 14,
+        cursor: "pointer",
+        textDecoration: "none",
+        boxShadow: "0 18px 40px color-mix(in srgb, var(--brand-navy) 25%, transparent)",
+      }}
+    >
+      <div
+        aria-hidden
+        style={{
+          position: "absolute",
+          right: -30,
+          top: -30,
+          width: 140,
+          height: 140,
+          borderRadius: "50%",
+          background:
+            "radial-gradient(circle, color-mix(in srgb, var(--gold) 20%, transparent), transparent 70%)",
+        }}
+      />
+      <div
+        style={{
+          position: "relative",
+          display: "flex",
+          alignItems: "center",
+          gap: 13,
+          marginBottom: 16,
+        }}
+      >
+        <div
+          style={{
+            width: 50,
+            height: 50,
+            borderRadius: 15,
+            background: "rgba(255,255,255,0.14)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+          }}
+        >
+          <Icon name={data.serviceIcon} size={27} color="#fff" />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="t-title" style={{ fontSize: 19, color: "#fff", fontWeight: 800 }}>
+            {data.title}
+          </div>
+          {data.phaseLabel && (
+            <div
+              style={{
+                fontSize: 13.5,
+                color: "rgba(255,255,255,0.72)",
+                fontWeight: 600,
+                marginTop: 1,
+              }}
+            >
+              {data.phaseLabel}
+            </div>
+          )}
+        </div>
+      </div>
+      <div
+        style={{
+          position: "relative",
+          height: 9,
+          borderRadius: 999,
+          background: "rgba(255,255,255,0.16)",
+          overflow: "hidden",
+          marginBottom: 14,
+        }}
+      >
+        <div
+          style={{
+            width: `${data.progress}%`,
+            height: "100%",
+            borderRadius: 999,
+            background: "linear-gradient(90deg, var(--gold), var(--gold-deep))",
+            transition: "width 0.9s cubic-bezier(.4,0,.2,1)",
+          }}
+        />
+      </div>
+      <div
+        style={{
+          position: "relative",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 7,
+            color: "#fff",
+            fontSize: 14.5,
+            fontWeight: 700,
+            minWidth: 0,
+          }}
+        >
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: 999,
+              flexShrink: 0,
+              background: "var(--gold)",
+              boxShadow: "0 0 0 4px color-mix(in srgb, var(--gold) 20%, transparent)",
+            }}
+          />
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {bottomLeft}
+          </span>
+        </div>
+        <span
+          className="t-title"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 5,
+            flexShrink: 0,
+            background: "#fff",
+            color: "var(--accent)",
+            borderRadius: 999,
+            padding: "9px 16px",
+            fontSize: 14.5,
+            fontWeight: 800,
+          }}
+        >
+          {labels.openCase} <Icon name="chevR" size={17} color="var(--accent)" />
+        </span>
+      </div>
+    </Link>
   );
 }
 

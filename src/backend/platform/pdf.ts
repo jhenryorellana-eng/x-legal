@@ -507,7 +507,108 @@ export async function renderCoverPdf(data: CoverData): Promise<Uint8Array> {
 }
 
 // ---------------------------------------------------------------------------
-// F. compileExpedientePdf — merge ordered items into one PDF + TOC + page numbers
+// F. renderCertifiedTranslationPdf — certified translation document
+//    Title ("CERTIFIED ENGLISH TRANSLATION") + structured body (md→HTML) +
+//    translator's certification block. 100% local, no AI (DOC-42 §3.7 / §3.5).
+// ---------------------------------------------------------------------------
+
+export type TranslationDirection = "es-en" | "en-es";
+
+/** Court-ready stylesheet for the translated document: generous line spacing, a
+ *  centered title, justified body, and bordered tables for any tabular source. */
+const TRANSLATION_STYLE = `<style>
+  body{font-family:'Times New Roman',serif;font-size:12pt;line-height:1.5;margin:72pt;color:#111}
+  h1{font-size:16pt;text-align:center;font-weight:bold;letter-spacing:0.5pt;margin:0 0 20pt;line-height:1.3}
+  h2{font-size:13.5pt;font-weight:bold;margin:16pt 0 7pt}
+  h3{font-size:12.5pt;font-weight:bold;margin:13pt 0 5pt}
+  h4{font-size:12pt;font-weight:bold;margin:11pt 0 5pt}
+  p{margin:0 0 10pt;text-align:justify}
+  ul,ol{margin:0 0 10pt 0;padding-left:22pt}
+  li{margin:0 0 5pt 0}
+  table{border-collapse:collapse;width:100%;margin:8pt 0 14pt}
+  th,td{border:0.75pt solid #555;padding:5pt 8pt;text-align:left;vertical-align:top}
+  th{background:#ececec;font-weight:bold}
+  a{color:#111;text-decoration:none}
+</style>`;
+
+/**
+ * Composes the full HTML of a certified translation: a centered title, the
+ * already-rendered translated `bodyHtml`, and the translator's certification
+ * block (statement + signature / date / printed-name lines for a human to sign).
+ * Pure + synchronous so it can be unit-tested without the WASM renderer. All
+ * fixed strings are in the TARGET language (English for es-en, Spanish for en-es).
+ *
+ * @param bodyHtml HTML already rendered by markdown-it with `html:false` (so any
+ *   HTML in the source is escaped). It is injected VERBATIM into the document —
+ *   pass only markdown-it (or equivalently sanitized) output, never arbitrary
+ *   user/model HTML. The output is rendered to PDF by mupdf (not a browser), so
+ *   XSS does not apply, but this invariant keeps the function misuse-resistant.
+ */
+export function buildCertifiedTranslationHtml(bodyHtml: string, direction: TranslationDirection): string {
+  const toEnglish = direction === "es-en"; // the translated output is English
+  const esc = (s: string) =>
+    String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string));
+
+  const t = toEnglish
+    ? {
+        title: "CERTIFIED ENGLISH TRANSLATION",
+        certHeading: "TRANSLATOR'S CERTIFICATION",
+        certStmt:
+          "I certify that I am competent to translate from Spanish to English and that the above is a true and accurate translation of the attached document to the best of my knowledge and ability.",
+        signature: "Signature",
+        date: "Date",
+        name: "Printed name",
+      }
+    : {
+        title: "TRADUCCIÓN CERTIFICADA AL ESPAÑOL",
+        certHeading: "CERTIFICACIÓN DEL TRADUCTOR",
+        certStmt:
+          "Certifico que soy competente para traducir del inglés al español y que la anterior es una traducción verídica y exacta del documento adjunto según mi leal saber y entender.",
+        signature: "Firma",
+        date: "Fecha",
+        name: "Nombre en letra de imprenta",
+      };
+
+  const sigLine = (label: string, width: string) =>
+    `<div style="border-bottom:1pt solid #111;width:${width};height:24pt;margin-top:18pt"></div>` +
+    `<div style="font-size:9.5pt;color:#333;margin-top:2pt">${esc(label)}</div>`;
+
+  return (
+    `<!DOCTYPE html><html><head>${TRANSLATION_STYLE}</head><body>` +
+    `<h1>${esc(t.title)}</h1>` +
+    bodyHtml +
+    `<div style="border-top:1pt solid #999;margin-top:26pt"></div>` +
+    `<div style="font-size:12.5pt;font-weight:bold;margin-top:18pt">${esc(t.certHeading)}</div>` +
+    `<p style="text-align:justify;margin:8pt 0 14pt">${esc(t.certStmt)}</p>` +
+    sigLine(t.signature, "62%") +
+    sigLine(t.date, "40%") +
+    sigLine(t.name, "62%") +
+    `</body></html>`
+  );
+}
+
+/**
+ * Renders the translated text (Markdown) to a certified-translation PDF. The
+ * Markdown body is converted to HTML (preserving headings, paragraphs, line
+ * breaks, lists and tables → readable hierarchy), then wrapped with the title +
+ * certification block. mupdf's html→pdf layout paginates long bodies on its own.
+ */
+export async function renderCertifiedTranslationPdf(
+  bodyMarkdown: string,
+  direction: TranslationDirection,
+): Promise<Uint8Array> {
+  const MarkdownIt = (await import("markdown-it")).default;
+  // `breaks: true` keeps the document's line structure: a single newline becomes
+  // a <br> instead of collapsing to a space, so field lists ("Full name: …\nDate
+  // of birth: …") render one per line as in the source — the line breaks the
+  // translated document must preserve. `html: false` keeps the body injection safe.
+  const mdi = new MarkdownIt({ html: false, linkify: false, breaks: true });
+  const bodyHtml = mdi.render(bodyMarkdown);
+  return htmlToPdf(buildCertifiedTranslationHtml(bodyHtml, direction));
+}
+
+// ---------------------------------------------------------------------------
+// G. compileExpedientePdf — merge ordered items into one PDF + TOC + page numbers
 // ---------------------------------------------------------------------------
 
 export interface ExpedienteItemInput {

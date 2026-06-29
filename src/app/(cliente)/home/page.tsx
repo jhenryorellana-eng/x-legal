@@ -27,29 +27,11 @@ import {
 import { getNotifications } from "@/backend/modules/notifications";
 import { getUnreadCountAction } from "@/backend/modules/notifications/actions";
 import { pickLocale, coerceIcon, type Locale } from "@/frontend/features/cliente/shared/i18n";
-import type { StatusKind } from "@/frontend/components/brand/status-pill";
 import {
   DashboardScreen,
   type DashboardCase,
   type OnboardingCase,
 } from "@/frontend/features/cliente/home/dashboard-screen";
-
-/**
- * Case status → StatusPill kind for the secondary case cards (client voice).
- * Exhaustive over CaseStatus so adding a status to the enum fails compilation.
- * `pendiente`'s upload glyph would mis-signal "you must upload" on an in-progress
- * case, so `active`/`on_hold` use `revision` (a neutral clock) instead.
- */
-const STATUS_KIND: Record<CaseStatus, StatusKind> = {
-  payment_pending: "pendiente",
-  active: "revision",
-  in_validation: "revision",
-  ready_for_delivery: "aprobado",
-  delivered: "hecho",
-  completed: "hecho",
-  cancelled: "corregir",
-  on_hold: "revision",
-};
 
 export default async function HomePage() {
   const actor = await getActor();
@@ -64,27 +46,31 @@ export default async function HomePage() {
 
   // List the client's cases, then enrich each with its workspace (service/phase
   // /progress) AND its terms status (drives the card href). RLS scopes the list
-  // to cases the client is a member of. Parallelized per case — and the two
-  // reads per case run together — so the dashboard isn't an N+1 waterfall. A
-  // case the client can list but not fully read is dropped defensively; a terms
-  // read error fails open (the card then points at /camino).
+  // to cases the client is a member of. Parallelized per case — and the two reads
+  // per case run together — so the dashboard isn't an N+1 waterfall. If a case the
+  // client owns can't be fully read, we KEEP the row (workspace: null) so it still
+  // shows as a minimal card — a case must never silently disappear from the
+  // client's home. A terms read error fails open (the card then points at /camino).
   const casesPage = await getCasesForClient(actor, { limit: 20 });
-  type EnrichedCase = { workspace: CaseWorkspaceDto; terms: TermsStatusView | null };
-  const enriched: EnrichedCase[] = (
-    await Promise.all(
-      casesPage.items.map(async (c): Promise<EnrichedCase | null> => {
-        try {
-          const [workspace, terms] = await Promise.all([
-            getCaseWorkspace(actor, c.id),
-            getTermsStatusForCase(actor, c.id).catch(() => null),
-          ]);
-          return { workspace, terms };
-        } catch {
-          return null;
-        }
-      }),
-    )
-  ).filter((e): e is EnrichedCase => e !== null);
+  type CaseListRow = (typeof casesPage.items)[number];
+  type EnrichedCase = {
+    row: CaseListRow;
+    workspace: CaseWorkspaceDto | null;
+    terms: TermsStatusView | null;
+  };
+  const enriched: EnrichedCase[] = await Promise.all(
+    casesPage.items.map(async (c): Promise<EnrichedCase> => {
+      try {
+        const [workspace, terms] = await Promise.all([
+          getCaseWorkspace(actor, c.id),
+          getTermsStatusForCase(actor, c.id).catch(() => null),
+        ]);
+        return { row: c, workspace, terms };
+      } catch {
+        return { row: c, workspace: null, terms: null };
+      }
+    }),
+  );
 
   // Unread notifications: count from the first page (read_at is null).
   let unreadCount = 0;
@@ -105,81 +91,70 @@ export default async function HomePage() {
   // Split the client's cases into onboarding (payment_pending — the client must
   // sign the contract AND pay the initial fee before the workspace unlocks) and
   // active cases. Onboarding cases get a dedicated step card (sign → pay); active
-  // cases render as the highlighted/secondary cards exactly as before.
+  // cases all render with the same consistent CaseCard. A case whose workspace
+  // couldn't be read falls back to its row data (case number as title) so it
+  // still appears — never dropped.
   const onboardingCases: OnboardingCase[] = [];
-  const activeEnriched: EnrichedCase[] = [];
+  const cases: DashboardCase[] = [];
   for (const e of enriched) {
     const ws = e.workspace;
-    if (ws.status !== "payment_pending") {
-      activeEnriched.push(e);
+    const status = (ws?.status ?? e.row.status) as CaseStatus;
+    const serviceName = ws ? pickLocale(ws.service?.labelI18n, locale) : null;
+    const party = ws?.parties[0]?.name;
+    const title = serviceName
+      ? party
+        ? `${serviceName} — ${party}`
+        : serviceName
+      : e.row.case_number;
+    const serviceIcon = coerceIcon(ws?.service?.icon, "shield");
+    const serviceColor = ws?.service?.color || "var(--accent)";
+
+    if (status === "payment_pending") {
+      // Read the contract (membership-gated via requireCaseAccess) to know which
+      // onboarding step the client is on. `sent` → still to sign; `signed` →
+      // signed, waiting on the down payment; else (draft/cancelled/null) → preparing.
+      let step: OnboardingCase["step"] = "preparing";
+      let signHref: string | null = null;
+      try {
+        const contract = await getCaseOnboardingContract(actor, e.row.id);
+        if (contract?.status === "signed") {
+          step = "pay";
+        } else if (contract?.status === "sent" && contract.signingToken) {
+          step = "sign";
+          signHref = `/firma/${contract.signingToken}`;
+        }
+      } catch {
+        // Contract unreadable (rare) — leave as "preparing" (no actionable CTA).
+      }
+      onboardingCases.push({ caseId: e.row.id, title, serviceIcon, serviceColor, step, signHref });
       continue;
     }
-    const serviceName = pickLocale(ws.service?.labelI18n, locale);
-    const party = ws.parties[0]?.name;
-    const title = party ? `${serviceName} — ${party}` : serviceName;
 
-    // Read the contract (membership-gated via requireCaseAccess) to know which
-    // onboarding step the client is on. `sent` → still to sign; `signed` → signed,
-    // waiting on the down payment; anything else (draft/cancelled/null) → preparing.
-    let step: OnboardingCase["step"] = "preparing";
-    let signHref: string | null = null;
-    try {
-      const contract = await getCaseOnboardingContract(actor, ws.caseId);
-      if (contract?.status === "signed") {
-        step = "pay";
-      } else if (contract?.status === "sent" && contract.signingToken) {
-        step = "sign";
-        signHref = `/firma/${contract.signingToken}`;
-      }
-    } catch {
-      // Contract unreadable (rare) — leave as "preparing" (no actionable CTA).
-    }
-
-    onboardingCases.push({
-      caseId: ws.caseId,
-      title,
-      serviceIcon: coerceIcon(ws.service?.icon, "shield"),
-      serviceColor: ws.service?.color || "var(--accent)",
-      step,
-      signHref,
-    });
-  }
-
-  const cases: DashboardCase[] = activeEnriched.map(({ workspace: ws, terms }, idx) => {
-    const serviceName = pickLocale(ws.service?.labelI18n, locale);
-    const party = ws.parties[0]?.name;
-    const title = party ? `${serviceName} — ${party}` : serviceName;
-    const phaseName = pickLocale(ws.phase?.labelI18n, locale);
-    const phaseLabel = ws.phase
+    const phaseName = ws?.phase ? pickLocale(ws.phase.labelI18n, locale) : "";
+    const phaseLabel = ws?.phase
       ? phaseTpl
           .replace("{x}", String(ws.phaseIndex))
           .replace("{y}", String(ws.phaseCount))
           .replace("{phase}", phaseName)
       : null;
-    const status = ws.status as CaseStatus;
     // First entry to a case (an active terms version exists and isn't yet
     // accepted) must land on the disclaimer; afterwards — or when no terms are
     // published — go straight to the case path. Resolving the destination here
     // keeps the redirect off the hot path (caso/[caseId]/page.tsx is the
     // deep-link safety net), which is what avoids the soft-nav blank screen.
-    const termsAccepted = !terms?.terms || terms.alreadyAccepted;
-    return {
-      caseId: ws.caseId,
-      href: termsAccepted
-        ? `/caso/${ws.caseId}/camino`
-        : `/caso/${ws.caseId}/disclaimer`,
+    const termsAccepted = !e.terms?.terms || e.terms.alreadyAccepted;
+    cases.push({
+      caseId: e.row.id,
+      href: termsAccepted ? `/caso/${e.row.id}/camino` : `/caso/${e.row.id}/disclaimer`,
       title,
       phaseLabel,
-      serviceIcon: coerceIcon(ws.service?.icon, "shield"),
-      serviceColor: ws.service?.color || "var(--accent)",
-      progress: ws.phaseProgress,
-      pendingDocuments: ws.pendingDocuments,
-      // The first/most-recent active case is the highlighted hero card.
-      highlighted: idx === 0,
+      serviceIcon,
+      serviceColor,
+      progress: ws?.phaseProgress ?? 0,
+      pendingDocuments: ws?.pendingDocuments ?? 0,
       statusText: tStatus(status),
-      statusKind: STATUS_KIND[status],
-    };
-  });
+    });
+  }
 
   return (
     <DashboardScreen

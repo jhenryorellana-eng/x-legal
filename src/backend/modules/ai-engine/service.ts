@@ -41,7 +41,7 @@ import {
 } from "@/backend/platform/storage";
 import { logger } from "@/backend/platform/logger";
 import { writeAudit } from "@/backend/modules/audit";
-import { renderMarkdownToPdf, renderMarkdownToDocx } from "@/backend/platform/pdf";
+import { renderMarkdownToPdf, renderMarkdownToDocx, renderCertifiedTranslationPdf } from "@/backend/platform/pdf";
 import { checkUrlReachable, keepReachable } from "@/backend/platform/url-utils";
 import { embedText } from "@/backend/platform/embeddings";
 import { DEFAULT_GENERATION_MODEL } from "@/shared/constants/ai-models";
@@ -1574,6 +1574,14 @@ export interface TranslateDocumentJobPayload {
   direction: "es-en" | "en-es";
 }
 
+/** Strips a ```lang … ``` fence the model may wrap the whole answer in (Gemini
+ *  sometimes fences its Markdown), leaving the raw Markdown body to render. */
+function stripMarkdownFence(text: string): string {
+  const trimmed = text.trim();
+  const m = /^```[a-zA-Z0-9]*\n([\s\S]*?)\n?```$/.exec(trimmed);
+  return m ? m[1].trim() : trimmed;
+}
+
 /**
  * Executes document translation via Gemini.
  * @internal
@@ -1588,10 +1596,21 @@ export async function executeTranslationJob(
   const model = process.env.AI_GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL;
   const geminiModels = getGeminiModels();
 
-  const direction = translation.direction;
-  const promptText = direction === "es-en"
-    ? "Translate the following document from Spanish to English. Be faithful and do not summarize. Preserve names, numbers and dates exactly. Mark illegible text as [ilegible]."
-    : "Translate the following document from English to Spanish. Be faithful and do not summarize. Preserve names, numbers and dates exactly. Mark illegible text as [illegible].";
+  // Use payload.direction (statically typed 'es-en' | 'en-es') over
+  // translation.direction (DB `string`). The payload is delivered by QStash with a
+  // signature-verified body and carries the same value stored when the job was
+  // enqueued, so it is both trustworthy and strictly typed for the renderer.
+  const direction = payload.direction;
+  // Ask for clean Markdown so the rendered certified-translation PDF has real
+  // hierarchy and spacing (headings, paragraphs, line breaks, tables) — the
+  // document body is composed from this text (renderCertifiedTranslationPdf).
+  const formatGuidance =
+    " Format the result as clean Markdown that mirrors the source layout so it reads clearly: use headings (#, ##) for the document title and section headers, separate paragraphs with a blank line, keep line breaks and lists, and use a Markdown table where the source is tabular. Do not add notes or commentary, and do not wrap the answer in a code fence.";
+  const promptText =
+    (direction === "es-en"
+      ? "Translate the following document from Spanish to English. Be faithful and do not summarize. Preserve names, numbers and dates exactly. Mark illegible text as [illegible]."
+      : "Translate the following document from English to Spanish. Be faithful and do not summarize. Preserve names, numbers and dates exactly. Mark illegible text as [ilegible].") +
+    formatGuidance;
 
   let translatedText: string;
   let inputTokens = 0;
@@ -1668,7 +1687,7 @@ export async function executeTranslationJob(
       return "failed";
     }
 
-    translatedText = response.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    translatedText = stripMarkdownFence(response.candidates?.[0]?.content?.parts?.[0]?.text ?? "");
     inputTokens = response.usageMetadata?.promptTokenCount ?? 0;
     outputTokens = response.usageMetadata?.candidatesTokenCount ?? 0;
 
@@ -1694,7 +1713,7 @@ export async function executeTranslationJob(
   try {
     const docMeta = await getCaseDocumentForAi(translation.case_document_id);
     const caseId = docMeta?.caseId ?? "unknown";
-    const pdfBytes = await renderMarkdownToPdf(translatedText);
+    const pdfBytes = await renderCertifiedTranslationPdf(translatedText, direction);
     const pdfPath = `case/${caseId}/translations/${translation.id}.pdf`;
     await uploadBytesToStorage("generated", pdfPath, pdfBytes, "application/pdf");
     translatedPdfPath = pdfPath;

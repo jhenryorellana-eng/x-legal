@@ -15,6 +15,8 @@ import { resolveI18n, type Locale } from "@/shared/i18n";
 import { fmtRelative } from "@/frontend/lib/datetime";
 import type { CaseRowVM } from "@/frontend/features/vanessa";
 import { ClientesClient } from "./client";
+import { buildNewCaseModalData } from "../_lib/new-case-services";
+import { createCaseAction } from "../../admin/casos/actions";
 
 export const dynamic = "force-dynamic";
 
@@ -49,6 +51,10 @@ export default async function VentasClientesPage() {
 
   const ready = rows.find((r) => r.ready) ?? null;
 
+  // Data for the "Nuevo caso" modal (DOC-52 §2.7: "Mis clientes" launches the
+  // same modal as the Leads board, with no preset) — shared via the _lib helper.
+  const { newCaseServices, casosStrings } = await buildNewCaseModalData(actor.orgId, locale);
+
   const strings = {
     title: t("title"),
     sub: t("sub"),
@@ -75,6 +81,10 @@ export default async function VentasClientesPage() {
       strings={strings}
       readyClientName={ready?.clientName ?? null}
       readyCaseId={ready?.id ?? null}
+      newCaseServices={newCaseServices}
+      casosStrings={casosStrings}
+      createCaseAction={createCaseAction}
+      signingBaseUrl={process.env.NEXT_PUBLIC_APP_URL ?? ""}
     />
   );
 }

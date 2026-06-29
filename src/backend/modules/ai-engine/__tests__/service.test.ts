@@ -108,6 +108,7 @@ const mocks = vi.hoisted(() => {
   const pdf = {
     renderMarkdownToPdf: vi.fn(),
     renderMarkdownToDocx: vi.fn(),
+    renderCertifiedTranslationPdf: vi.fn(),
   };
 
   const events = {
@@ -186,6 +187,7 @@ vi.mock("@/backend/modules/audit", () => ({
 vi.mock("@/backend/platform/pdf", () => ({
   renderMarkdownToPdf: mocks.pdf.renderMarkdownToPdf,
   renderMarkdownToDocx: mocks.pdf.renderMarkdownToDocx,
+  renderCertifiedTranslationPdf: mocks.pdf.renderCertifiedTranslationPdf,
 }));
 
 // URL verification hits the network — stub it so research sources aren't dropped
@@ -648,7 +650,7 @@ describe("executeTranslationJob", () => {
     mocks.repo.getTranslationSource.mockReset();
     mocks.repo.getCaseDocumentForAi.mockReset();
     mocks.repo.completeTranslation.mockReset();
-    mocks.pdf.renderMarkdownToPdf.mockReset();
+    mocks.pdf.renderCertifiedTranslationPdf.mockReset();
     mocks.storage.uploadBytesToStorage.mockReset();
   });
 
@@ -664,13 +666,16 @@ describe("executeTranslationJob", () => {
       usageMetadata: { promptTokenCount: 120, candidatesTokenCount: 60 },
     });
     mocks.repo.getCaseDocumentForAi.mockResolvedValue({ id: CASE_DOC_ID, caseId: CASE_ID });
-    mocks.pdf.renderMarkdownToPdf.mockResolvedValue(new Uint8Array([1, 2, 3]));
+    mocks.pdf.renderCertifiedTranslationPdf.mockResolvedValue(new Uint8Array([1, 2, 3]));
     mocks.storage.uploadBytesToStorage.mockResolvedValue("ok");
 
     const outcome = await executeTranslationJob(JOB);
 
     expect(outcome).toBe("completed");
-    expect(mocks.pdf.renderMarkdownToPdf).toHaveBeenCalledWith("Birth certificate of Juan Pérez.");
+    expect(mocks.pdf.renderCertifiedTranslationPdf).toHaveBeenCalledWith(
+      "Birth certificate of Juan Pérez.",
+      "es-en",
+    );
     expect(mocks.storage.uploadBytesToStorage).toHaveBeenCalledWith(
       "generated",
       `case/${CASE_ID}/translations/${TRANSLATION_ID}.pdf`,
@@ -687,6 +692,30 @@ describe("executeTranslationJob", () => {
     );
   });
 
+  it("strips a Markdown code fence the model may wrap the answer in", async () => {
+    mocks.repo.findTranslationById.mockResolvedValue(PROCESSING_ROW);
+    mocks.repo.getTranslationSource.mockResolvedValue({ rawText: "Acta.", storagePath: null, mimeType: null });
+    mocks.geminiModels.generateContent.mockResolvedValue({
+      candidates: [{ content: { parts: [{ text: "```markdown\n# Birth Certificate\n\nJuan Pérez.\n```" }] } }],
+      usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 },
+    });
+    mocks.repo.getCaseDocumentForAi.mockResolvedValue({ id: CASE_DOC_ID, caseId: CASE_ID });
+    mocks.pdf.renderCertifiedTranslationPdf.mockResolvedValue(new Uint8Array([1]));
+    mocks.storage.uploadBytesToStorage.mockResolvedValue("ok");
+
+    await executeTranslationJob(JOB);
+
+    // The fence is stripped before both render and persistence.
+    expect(mocks.pdf.renderCertifiedTranslationPdf).toHaveBeenCalledWith(
+      "# Birth Certificate\n\nJuan Pérez.",
+      "es-en",
+    );
+    expect(mocks.repo.completeTranslation).toHaveBeenCalledWith(
+      TRANSLATION_ID,
+      expect.objectContaining({ translatedText: "# Birth Certificate\n\nJuan Pérez." }),
+    );
+  });
+
   it("still completes (translated text kept) when the PDF render fails", async () => {
     mocks.repo.findTranslationById.mockResolvedValue(PROCESSING_ROW);
     mocks.repo.getTranslationSource.mockResolvedValue({ rawText: "Texto.", storagePath: null, mimeType: null });
@@ -695,7 +724,7 @@ describe("executeTranslationJob", () => {
       usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 },
     });
     mocks.repo.getCaseDocumentForAi.mockResolvedValue({ id: CASE_DOC_ID, caseId: CASE_ID });
-    mocks.pdf.renderMarkdownToPdf.mockRejectedValue(new Error("render boom"));
+    mocks.pdf.renderCertifiedTranslationPdf.mockRejectedValue(new Error("render boom"));
 
     const outcome = await executeTranslationJob(JOB);
 
@@ -715,7 +744,7 @@ describe("executeTranslationJob", () => {
       usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 },
     });
     mocks.repo.getCaseDocumentForAi.mockResolvedValue({ id: CASE_DOC_ID, caseId: CASE_ID });
-    mocks.pdf.renderMarkdownToPdf.mockResolvedValue(new Uint8Array([1, 2, 3]));
+    mocks.pdf.renderCertifiedTranslationPdf.mockResolvedValue(new Uint8Array([1, 2, 3]));
     mocks.storage.uploadBytesToStorage.mockRejectedValue(new Error("upload boom"));
 
     const outcome = await executeTranslationJob(JOB);
