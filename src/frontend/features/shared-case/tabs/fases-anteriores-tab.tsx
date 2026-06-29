@@ -78,10 +78,15 @@ export function FasesAnterioresTab({
   async function onDownloadForm(responseId: string) {
     if (!actions.getFilledPdfUrl) return;
     setBusyForm(responseId);
-    const r = await actions.getFilledPdfUrl({ responseId });
-    setBusyForm(null);
-    if (r.ok && r.url) getBridge().share.openExternal(r.url);
-    else toast.error(strings.errorTitle);
+    try {
+      const r = await actions.getFilledPdfUrl({ responseId });
+      if (r.ok && r.url) getBridge().share.openExternal(r.url);
+      else toast.error(strings.errorTitle);
+    } finally {
+      // Always clear busy — a transport throw (lost network / expired session)
+      // must not leave the download button permanently disabled.
+      setBusyForm(null);
+    }
   }
 
   const subHead = (text: string) => (
@@ -210,7 +215,7 @@ export function FasesAnterioresTab({
 
       {previewDoc && (
         <DocumentPreviewModal
-          open={previewDoc !== null}
+          open
           onOpenChange={(o) => !o && setPreviewDoc(null)}
           src={`/api/v1/cases/${vm.header.caseId}/documents/${previewDoc.id}/preview?kind=source`}
           title={previewDoc.label}
