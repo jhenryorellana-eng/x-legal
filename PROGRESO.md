@@ -3,6 +3,9 @@
 > Archivo de continuidad entre sesiones (PROMPT-CONSTRUCCION-V2 §4). Actualizar al cierre de cada sesión.
 > Biblioteca SoT: `C:\Users\mauri\Documents\Trabajos\USALATINO V2\V2\docs\` · Supabase: **USALATINO V2** `uexxyokexcamyjcknxua`
 
+> **⚠️ CONTINUIDAD ACTUAL (2026-06-28):** la memoria viva del proyecto es `docs/historial/` (no este archivo, que quedó en la era F0–F8). Para retomar el trabajo en curso lee:
+> `docs/historial/2026-06-28-handoff-etapa-c-d.md` (handoff detallado: **Etapa B `ai_field` ✅ en prod** · **Etapa C backend en rama `feat/staff-prior-phase-docs`, UI pendiente** · **Etapa D RAG+Pre-Mortem sin empezar**).
+
 **Fase actual: F8 — cierre V2.0 ✅ (código completo; go-live = acciones externas de Henry). Olas: `8a shell móvil` ✅ · `8b PWA Serwist + offline + push` ✅ · `8c bilingüe ES/EN` ✅ · `8d platform-bridge / Capacitor-ready` ✅ · `8e seguridad CSP+RLS 30/30+migración` ✅ · `8f perf+a11y` ✅ · `8g go-live prep` ✅ (runbook `GO-LIVE.md`).** + **FIX tipografía** (Plus Jakarta Sans, ver abajo). **F8 código-completo: queda el evento de go-live (deploy/DNS/cuentas/seeds/schedules) guiado por `GO-LIVE.md`.**
 
 ### 2026-06-24 — "IA extrae": extracción de documentos (Gemini) → autocompletado de formularios con badge "IA" ✅ — 5 gates verdes + verificado en vivo E2E (Playwright) + Gemini real confirmado — sin migración
