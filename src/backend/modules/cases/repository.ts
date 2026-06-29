@@ -670,16 +670,22 @@ export async function findDocumentExtractionByCaseDocId(
 
 /**
  * Finds the most-recent completed ai_generation_run for (case, form_slug, party_id).
+ *
+ * Returns the run's outputs. NOTE: there is no `output` column — historically this
+ * selected a non-existent `output` and always returned null (the generation_output
+ * source was silently broken). It now returns the real columns: `output_structured`
+ * (navigable JSON, for generation_output dot-paths) + `output_text` (the raw
+ * markdown, used by ai_field synthesis) + `output_path`.
  */
 export async function findCompletedGenerationByFormSlug(
   caseId: string,
   formSlug: string,
   partyId: string | null,
-): Promise<{ output: unknown } | null> {
+): Promise<{ outputStructured: unknown; outputText: string | null; outputPath: string | null } | null> {
   const supabase = createServiceClient();
   let query = supabase
     .from("ai_generation_runs")
-    .select("output, form_definitions!inner(slug)")
+    .select("output_structured, output_text, output_path, form_definitions!inner(slug)")
     .eq("case_id", caseId)
     .eq("form_definitions.slug", formSlug)
     .eq("status", "completed")
@@ -694,7 +700,53 @@ export async function findCompletedGenerationByFormSlug(
 
   const { data } = await query;
   if (!data || data.length === 0) return null;
-  return { output: (data[0] as unknown as { output: unknown }).output };
+  const row = data[0] as unknown as {
+    output_structured: unknown;
+    output_text: string | null;
+    output_path: string | null;
+  };
+  return {
+    outputStructured: row.output_structured ?? null,
+    outputText: row.output_text ?? null,
+    outputPath: row.output_path ?? null,
+  };
+}
+
+/**
+ * Downloads the latest active (uploaded/approved) case document for a requirement
+ * slug, returning its raw bytes + mime type. Used by the `ai_field` (kind:document)
+ * source so the AI can INTERPRET the file directly (Gemini multimodal). Returns null
+ * if no such document exists or the download fails.
+ */
+export async function downloadDocumentBytesBySlug(
+  caseId: string,
+  requirementSlug: string,
+  partyId: string | null,
+): Promise<{ bytes: Uint8Array; mimeType: string } | null> {
+  const supabase = createServiceClient();
+  let query = supabase
+    .from("case_documents")
+    .select("storage_path, mime_type, required_document_types!inner(slug)")
+    .eq("case_id", caseId)
+    .eq("required_document_types.slug", requirementSlug)
+    .in("status", ["uploaded", "approved"])
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  if (partyId) {
+    query = query.eq("party_id", partyId);
+  } else {
+    query = query.is("party_id", null);
+  }
+
+  const { data } = await query;
+  if (!data || data.length === 0) return null;
+  const row = data[0] as unknown as { storage_path: string; mime_type: string };
+
+  const { data: file } = await supabase.storage.from("case-documents").download(row.storage_path);
+  if (!file) return null;
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  return { bytes, mimeType: row.mime_type };
 }
 
 /**

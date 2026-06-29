@@ -28,9 +28,9 @@ function i18n(v: unknown): I18nValue {
 export interface RawFormEditorData {
   form: { id: string; slug: string; kind: string; label_i18n: RawI18n; service_phase_id: string };
   service: { id: string; slug: string; label_i18n: RawI18n };
-  versions: Array<{ id: string; version: number; status: string; detected_fields: unknown[]; source_pdf_path: string; published_at: string | null }>;
+  versions: Array<{ id: string; version: number; status: string; detected_fields: unknown[]; source_pdf_path: string | null; published_at: string | null }>;
   openVersion: {
-    version: { id: string; version: number; status: string; detected_fields: unknown[]; source_pdf_path: string; published_at: string | null };
+    version: { id: string; version: number; status: string; detected_fields: unknown[]; source_pdf_path: string | null; published_at: string | null };
     groups: Array<{
       id: string;
       automation_version_id: string;
@@ -90,7 +90,7 @@ export function buildFormEditorVM(data: RawFormEditorData, datasets: RawDataset[
     form: {
       id: data.form.id,
       slug: data.form.slug,
-      kind: (data.form.kind as "pdf_automation" | "ai_letter") ?? "pdf_automation",
+      kind: (data.form.kind as "pdf_automation" | "ai_letter" | "questionnaire") ?? "pdf_automation",
       label: i18n(data.form.label_i18n),
       serviceLabel: i18n(data.service.label_i18n),
     },

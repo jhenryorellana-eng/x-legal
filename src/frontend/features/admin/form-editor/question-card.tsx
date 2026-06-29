@@ -5,6 +5,7 @@ import { Icon, Chip } from "@/frontend/components/brand";
 import { Switch } from "@/frontend/components/desktop";
 import { I18nField } from "../shared/i18n-field";
 import { FieldLabel, SelectInput, TextInput } from "../shared/chrome";
+import { GENERATION_MODELS } from "@/shared/constants/ai-models";
 import type {
   QuestionVM,
   FieldType,
@@ -28,6 +29,7 @@ const FIELD_TYPES: { id: FieldType; key: string }[] = [
 
 const ORIGINS: { id: QuestionSource; key: string; icon: Parameters<typeof Icon>[0]["name"] }[] = [
   { id: "client_answer", key: "originClient", icon: "user" },
+  { id: "ai_field", key: "originAiField", icon: "bolt" },
   { id: "document_extraction", key: "originDoc", icon: "doc" },
   { id: "generation_output", key: "originGen", icon: "sparkle" },
   { id: "profile", key: "originProfile", icon: "shield" },
@@ -210,7 +212,7 @@ export function QuestionCard({
           {/* Origin segmented selector */}
           <div>
             <FieldLabel>{strings.origin}</FieldLabel>
-            <div role="radiogroup" aria-label={strings.origin} style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
+            <div role="radiogroup" aria-label={strings.origin} style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6 }}>
               {ORIGINS.map((o) => {
                 const on = q.source === o.id;
                 return (
@@ -260,6 +262,9 @@ export function QuestionCard({
             )}
             {q.source === "profile" && (
               <ProfilePicker q={q} sources={sources} strings={strings} readOnly={readOnly} onChange={onChange} />
+            )}
+            {q.source === "ai_field" && (
+              <AiFieldPicker q={q} sources={sources} strings={strings} readOnly={readOnly} onChange={onChange} />
             )}
           </div>
 
@@ -313,6 +318,8 @@ function defaultRef(source: QuestionSource): Record<string, unknown> | null {
       return { form_slug: "", output_path: "" };
     case "profile":
       return { profile_field: "" };
+    case "ai_field":
+      return { connected: { kind: "document", slug: "" }, instruction: "" };
     default:
       return null;
   }
@@ -413,6 +420,68 @@ function ProfilePicker({ q, sources, strings, readOnly, onChange }: PickerProps)
           <Icon name="shield" size={13} /> {strings.piiLocked}
         </p>
       )}
+    </div>
+  );
+}
+
+/**
+ * AiFieldPicker — configure a field that AI fills at resolution time, connected to
+ * a client DOCUMENT (Gemini interprets it) or an ai_letter GENERATION (Anthropic
+ * synthesizes from it), guided by a per-field instruction + optional model override.
+ */
+function AiFieldPicker({ q, sources, strings, readOnly, onChange }: PickerProps) {
+  const ref = (q.source_ref ?? {}) as {
+    connected?: { kind?: string; slug?: string };
+    instruction?: string;
+    model?: string | null;
+  };
+  const kind: "document" | "ai_letter" = ref.connected?.kind === "ai_letter" ? "ai_letter" : "document";
+  const slug = ref.connected?.slug ?? "";
+  const options = kind === "document" ? sources.documents.map((d) => d.slug) : sources.forms;
+  const setKind = (k: "document" | "ai_letter") => onChange({ source_ref: { ...ref, connected: { kind: k, slug: "" } } });
+  const setSlug = (s: string) => onChange({ source_ref: { ...ref, connected: { kind, slug: s } } });
+  return (
+    <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+      <div role="radiogroup" aria-label={strings.aiFieldConnect} style={{ display: "inline-flex", gap: 4, padding: 4, borderRadius: 10, background: "var(--chip)", width: "fit-content" }}>
+        {([["document", strings.aiFieldKindDocument], ["ai_letter", strings.aiFieldKindLetter]] as const).map(([k, label]) => {
+          const on = kind === k;
+          return (
+            <button key={k} type="button" role="radio" aria-checked={on} disabled={readOnly} onClick={() => setKind(k)}
+              style={{ height: 30, padding: "0 14px", borderRadius: 8, border: "none", cursor: readOnly ? "default" : "pointer", background: on ? "var(--accent-soft)" : "transparent", color: on ? "var(--accent)" : "var(--ink-2)", fontWeight: 700, fontSize: 12 }}>
+              {label}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: kind === "ai_letter" ? "1fr 1fr" : "1fr", gap: 8 }}>
+        <div>
+          <FieldLabel>{kind === "document" ? strings.aiFieldPickDocument : strings.aiFieldPickLetter}</FieldLabel>
+          <SelectInput value={slug} disabled={readOnly} aria-label={strings.aiFieldPickConnected} onChange={(e) => setSlug(e.target.value)}>
+            <option value="">—</option>
+            {options.map((o) => <option key={o} value={o}>{o}</option>)}
+          </SelectInput>
+        </div>
+        {kind === "ai_letter" && (
+          <div>
+            <FieldLabel>{strings.aiFieldModel}</FieldLabel>
+            <SelectInput value={ref.model ?? ""} disabled={readOnly} aria-label={strings.aiFieldModel} onChange={(e) => onChange({ source_ref: { ...ref, model: e.target.value || null } })}>
+              <option value="">{strings.aiFieldModelAuto}</option>
+              {GENERATION_MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
+            </SelectInput>
+          </div>
+        )}
+      </div>
+      <div>
+        <FieldLabel>{strings.aiFieldInstruction}</FieldLabel>
+        <textarea
+          value={ref.instruction ?? ""}
+          disabled={readOnly}
+          aria-label={strings.aiFieldInstruction}
+          placeholder={strings.aiFieldInstructionHint}
+          onChange={(e) => onChange({ source_ref: { ...ref, instruction: e.target.value } })}
+          style={{ width: "100%", minHeight: 64, borderRadius: 10, border: "1.5px solid var(--line)", background: "var(--panel-2, var(--card-alt))", padding: 10, fontSize: 12.5, color: "var(--ink)", resize: "vertical", boxSizing: "border-box" }}
+        />
+      </div>
     </div>
   );
 }

@@ -261,6 +261,7 @@ export type Database = {
           is_test: boolean
           model: string | null
           output_path: string | null
+          output_structured: Json | null
           output_summary: string | null
           output_text: string | null
           output_tokens: number | null
@@ -286,6 +287,7 @@ export type Database = {
           is_test?: boolean
           model?: string | null
           output_path?: string | null
+          output_structured?: Json | null
           output_summary?: string | null
           output_text?: string | null
           output_tokens?: number | null
@@ -311,6 +313,7 @@ export type Database = {
           is_test?: boolean
           model?: string | null
           output_path?: string | null
+          output_structured?: Json | null
           output_summary?: string | null
           output_text?: string | null
           output_tokens?: number | null
@@ -2554,7 +2557,7 @@ export type Database = {
           id: string
           published_at: string | null
           source_language: string
-          source_pdf_path: string
+          source_pdf_path: string | null
           status: string
           updated_at: string
           version: number
@@ -2567,7 +2570,7 @@ export type Database = {
           id?: string
           published_at?: string | null
           source_language?: string
-          source_pdf_path: string
+          source_pdf_path?: string | null
           status?: string
           updated_at?: string
           version: number
@@ -2580,7 +2583,7 @@ export type Database = {
           id?: string
           published_at?: string | null
           source_language?: string
-          source_pdf_path?: string
+          source_pdf_path?: string | null
           status?: string
           updated_at?: string
           version?: number
@@ -2604,6 +2607,7 @@ export type Database = {
       }
       form_definitions: {
         Row: {
+          companion_questionnaire_id: string | null
           created_at: string
           description_i18n: Json | null
           filled_by: string
@@ -2619,6 +2623,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          companion_questionnaire_id?: string | null
           created_at?: string
           description_i18n?: Json | null
           filled_by?: string
@@ -2634,6 +2639,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          companion_questionnaire_id?: string | null
           created_at?: string
           description_i18n?: Json | null
           filled_by?: string
@@ -2649,6 +2655,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "form_definitions_companion_questionnaire_id_fkey"
+            columns: ["companion_questionnaire_id"]
+            isOneToOne: false
+            referencedRelation: "form_definitions"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "form_definitions_service_phase_id_fkey"
             columns: ["service_phase_id"]
@@ -4770,6 +4783,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      analytics_sales_waiting_review: {
+        Args: { p_org: string; p_user: string }
+        Returns: number
+      }
+      analytics_sales_closings: {
+        Args: { p_from: string; p_org: string; p_to: string; p_user: string }
+        Returns: number
+      }
       analytics_activity_by_day: {
         Args: { p_from: string; p_org: string; p_to: string; p_tz: string }
         Returns: {

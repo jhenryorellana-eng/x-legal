@@ -336,6 +336,7 @@ describe("validateVersionPublication", () => {
     documentSlugsWithSchema: {},
     aiLetterSlugs: [],
     profileFields: ["first_name", "last_name"],
+    allDocumentSlugs: [],
   };
 
   it("passes for a well-formed draft version", () => {
@@ -470,6 +471,7 @@ describe("validateSourceRef", () => {
     documentSlugsWithSchema: { "acta-nacimiento": { properties: { nombre: { type: "string" } } } },
     aiLetterSlugs: ["carta-motivos"],
     profileFields: ["first_name"],
+    allDocumentSlugs: ["acta-nacimiento", "declaracion-jurada"],
   };
 
   it("passes client_answer (no source_ref needed)", () => {
@@ -548,6 +550,77 @@ describe("validateSourceRef", () => {
       makeQuestion({
         source: "profile",
         source_ref: { profile_field: "secret_field" },
+      }),
+      ctx,
+    );
+    expect(issues.some((i) => i.code === "CATALOG_SOURCE_REF_INVALID")).toBe(true);
+  });
+
+  // --- ai_field (Etapa B) ---
+  it("passes ai_field connected to a known document", () => {
+    const issues = validateSourceRef(
+      makeQuestion({
+        source: "ai_field",
+        source_ref: {
+          connected: { kind: "document", slug: "declaracion-jurada" },
+          instruction: "Resume el relato de persecución del declarante.",
+        },
+      }),
+      ctx,
+    );
+    expect(issues).toHaveLength(0);
+  });
+
+  it("passes ai_field connected to a known ai_letter", () => {
+    const issues = validateSourceRef(
+      makeQuestion({
+        source: "ai_field",
+        source_ref: {
+          connected: { kind: "ai_letter", slug: "carta-motivos" },
+          instruction: "Redacta la narrativa de la Parte B a partir del memorándum.",
+        },
+      }),
+      ctx,
+    );
+    expect(issues).toHaveLength(0);
+  });
+
+  it("blocks ai_field connected to an unknown document", () => {
+    const issues = validateSourceRef(
+      makeQuestion({
+        source: "ai_field",
+        source_ref: {
+          connected: { kind: "document", slug: "no-existe" },
+          instruction: "x",
+        },
+      }),
+      ctx,
+    );
+    expect(issues.some((i) => i.code === "CATALOG_SOURCE_REF_INVALID")).toBe(true);
+  });
+
+  it("blocks ai_field connected to a non-ai_letter form", () => {
+    const issues = validateSourceRef(
+      makeQuestion({
+        source: "ai_field",
+        source_ref: {
+          connected: { kind: "ai_letter", slug: "acta-nacimiento" },
+          instruction: "x",
+        },
+      }),
+      ctx,
+    );
+    expect(issues.some((i) => i.code === "CATALOG_SOURCE_REF_INVALID")).toBe(true);
+  });
+
+  it("blocks ai_field with an empty instruction", () => {
+    const issues = validateSourceRef(
+      makeQuestion({
+        source: "ai_field",
+        source_ref: {
+          connected: { kind: "document", slug: "declaracion-jurada" },
+          instruction: "   ",
+        },
       }),
       ctx,
     );

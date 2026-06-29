@@ -35,6 +35,7 @@ const {
   mockFindLatestActiveDocumentBySlug,
   mockFindDocumentExtractionByCaseDocId,
   mockFindCompletedGenerationByFormSlug,
+  mockDownloadDocumentBytesBySlug,
   mockFindClientProfileForForm,
   mockFindUserContactFields,
   mockListDocumentExtractionsForCase,
@@ -47,6 +48,8 @@ const {
   // pdf + ai-engine mocks
   mockFillAcroForm,
   mockTranslateText,
+  mockInterpretDocumentFields,
+  mockSynthesizeLetterFields,
   // audit mocks
   mockWriteAudit,
   mockAppendCaseTimeline,
@@ -63,6 +66,7 @@ const {
   mockFindLatestActiveDocumentBySlug: vi.fn(),
   mockFindDocumentExtractionByCaseDocId: vi.fn(),
   mockFindCompletedGenerationByFormSlug: vi.fn(),
+  mockDownloadDocumentBytesBySlug: vi.fn(),
   mockFindClientProfileForForm: vi.fn(),
   mockFindUserContactFields: vi.fn(),
   mockListDocumentExtractionsForCase: vi.fn(),
@@ -73,6 +77,8 @@ const {
   mockListQuestions: vi.fn().mockResolvedValue([]),
   mockFillAcroForm: vi.fn().mockResolvedValue(new Uint8Array([37, 80, 68, 70])),
   mockTranslateText: vi.fn(),
+  mockInterpretDocumentFields: vi.fn().mockResolvedValue({}),
+  mockSynthesizeLetterFields: vi.fn().mockResolvedValue({}),
   mockWriteAudit: vi.fn().mockResolvedValue(undefined),
   mockAppendCaseTimeline: vi.fn().mockResolvedValue(undefined),
   mockEmit: vi.fn(),
@@ -145,6 +151,7 @@ vi.mock("../repository", () => ({
   findLatestActiveDocumentBySlug: mockFindLatestActiveDocumentBySlug,
   findDocumentExtractionByCaseDocId: mockFindDocumentExtractionByCaseDocId,
   findCompletedGenerationByFormSlug: mockFindCompletedGenerationByFormSlug,
+  downloadDocumentBytesBySlug: mockDownloadDocumentBytesBySlug,
   findClientProfileForForm: mockFindClientProfileForForm,
   findUserContactFields: mockFindUserContactFields,
   listDocumentExtractionsForCase: mockListDocumentExtractionsForCase,
@@ -174,6 +181,8 @@ vi.mock("@/backend/platform/pdf", () => ({
 
 vi.mock("@/backend/modules/ai-engine", () => ({
   translateAnswerText: mockTranslateText,
+  interpretDocumentFields: mockInterpretDocumentFields,
+  synthesizeLetterFields: mockSynthesizeLetterFields,
 }));
 
 vi.mock("@/backend/platform/crypto", () => ({
@@ -1172,7 +1181,9 @@ describe("resolveBySource", () => {
 
   it("resolves generation_output via completed run output path", async () => {
     mockFindCompletedGenerationByFormSlug.mockResolvedValue({
-      output: { letter_body: "Dear USCIS...", header: { date: "2026-06-14" } },
+      outputStructured: { letter_body: "Dear USCIS...", header: { date: "2026-06-14" } },
+      outputText: null,
+      outputPath: null,
     });
 
     const result = await resolveBySource(
@@ -1202,6 +1213,72 @@ describe("resolveBySource", () => {
       null,
     );
     expect(result).toBeNull();
+  });
+
+  // --- ai_field (Etapa B) ---
+  it("resolves ai_field (document) by INTERPRETING the uploaded file via Gemini", async () => {
+    mockDownloadDocumentBytesBySlug.mockResolvedValue({
+      bytes: new Uint8Array([1, 2, 3]),
+      mimeType: "application/pdf",
+    });
+    mockInterpretDocumentFields.mockResolvedValue({ q1: "Relato resumido de la persecución." });
+
+    const result = await resolveBySource(
+      {
+        id: "q1",
+        source: "ai_field",
+        source_ref: {
+          connected: { kind: "document", slug: "declaracion-jurada" },
+          instruction: "Resume el relato de persecución.",
+        },
+      },
+      {},
+      CASE_ID,
+      null,
+    );
+    expect(result).toBe("Relato resumido de la persecución.");
+    expect(mockInterpretDocumentFields).toHaveBeenCalledOnce();
+    expect(mockSynthesizeLetterFields).not.toHaveBeenCalled();
+  });
+
+  it("resolves ai_field (ai_letter) by SYNTHESIZING from the generated letter via Anthropic", async () => {
+    mockFindCompletedGenerationByFormSlug.mockResolvedValue({
+      outputStructured: null,
+      outputText: "## Memorándum de Miedo Creíble\n\nEl solicitante...",
+      outputPath: null,
+    });
+    mockSynthesizeLetterFields.mockResolvedValue({ q1: "Narrativa de la Parte B." });
+
+    const result = await resolveBySource(
+      {
+        id: "q1",
+        source: "ai_field",
+        source_ref: {
+          connected: { kind: "ai_letter", slug: "memorandum-de-miedo-creible" },
+          instruction: "Redacta la narrativa de la Parte B.",
+        },
+      },
+      {},
+      CASE_ID,
+      null,
+    );
+    expect(result).toBe("Narrativa de la Parte B.");
+    expect(mockSynthesizeLetterFields).toHaveBeenCalledOnce();
+  });
+
+  it("returns null for ai_field with an incomplete source_ref (no AI call)", async () => {
+    const result = await resolveBySource(
+      {
+        id: "q1",
+        source: "ai_field",
+        source_ref: { connected: { kind: "document", slug: "" }, instruction: "x" },
+      },
+      {},
+      CASE_ID,
+      null,
+    );
+    expect(result).toBeNull();
+    expect(mockInterpretDocumentFields).not.toHaveBeenCalled();
   });
 
   it("resolves profile.first_name from client profile (non-PII)", async () => {

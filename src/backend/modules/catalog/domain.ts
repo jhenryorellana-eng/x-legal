@@ -41,16 +41,26 @@ export type I18nStringListDraft = z.infer<typeof I18nStringListDraftSchema>;
 export const ServiceCategorySchema = z.enum(["migratorio", "empresarial", "familiar"]);
 export const PlanKindSchema = z.enum(["self", "with_lawyer"]);
 export const AppointmentKindSchema = z.enum(["video", "phone", "presencial"]);
-export const FormKindSchema = z.enum(["ai_letter", "pdf_automation"]);
+// 'questionnaire' = complementary, PDF-less form whose answers feed an ai_letter
+// generation. Reuses the whole question infra (groups/questions); its version has
+// no PDF (source_pdf_path nullable). See migration 0053.
+export const FormKindSchema = z.enum(["ai_letter", "pdf_automation", "questionnaire"]);
 export const FilledBySchema = z.enum(["client", "staff", "both"]);
 export const VersionStatusSchema = z.enum(["draft", "published", "archived"]);
 export const FieldTypeSchema = z.enum(["text", "number", "date", "checkbox", "select", "textarea"]);
+// 'ai_field' = a field whose value is produced by AI at resolution time from a
+// connected source (a client document the AI INTERPRETS, or an ai_letter
+// generation the AI SYNTHESIZES), guided by a per-field instruction. See
+// resolveAiFields (ai-engine) + resolveBySource (cases). Etapa B.
 export const QuestionSourceSchema = z.enum([
   "client_answer",
   "document_extraction",
   "generation_output",
   "profile",
+  "ai_field",
 ]);
+/** What an ai_field connects to: a client-uploaded document or an ai_letter output. */
+export const AiFieldConnectedKindSchema = z.enum(["document", "ai_letter"]);
 export const DatasetSourceKindSchema = z.enum(["eoir", "uscis", "court_public", "manual"]);
 
 // ---------------------------------------------------------------------------
@@ -377,7 +387,8 @@ export const AutomationVersionSchema = z.object({
   id: z.string().uuid(),
   form_definition_id: z.string().uuid(),
   version: z.number().int().min(1),
-  source_pdf_path: z.string(),
+  // NULL for a 'questionnaire' version (no PDF — it only holds groups/questions).
+  source_pdf_path: z.string().nullable(),
   /** Language of the official PDF/AcroForm. Drives client-answer translation. */
   source_language: FormLanguageSchema.default("en"),
   detected_fields: z.array(DetectedFieldSchema).default([]),
@@ -412,6 +423,16 @@ export const SourceRefSchema = z.discriminatedUnion("source", [
   z.object({
     source: z.literal("profile"),
     source_ref: z.object({ profile_field: z.string() }),
+  }),
+  z.object({
+    source: z.literal("ai_field"),
+    source_ref: z.object({
+      connected: z.object({ kind: AiFieldConnectedKindSchema, slug: z.string() }),
+      instruction: z.string(),
+      // Optional per-field model override; falls back to the per-flavor default
+      // (Gemini for documents, Anthropic for ai_letter synthesis).
+      model: z.string().nullable().optional(),
+    }),
   }),
 ]);
 
@@ -630,6 +651,12 @@ export interface VersionCtx {
   documentSlugsWithSchema: Record<string, object | null>;
   aiLetterSlugs: string[];
   profileFields: string[];
+  /**
+   * ALL document requirement slugs of the service (with or without ai_extract).
+   * `ai_field` (kind:document) interprets the raw file via Gemini multimodal, so it
+   * does NOT require a predefined extraction_schema — only that the document exists.
+   */
+  allDocumentSlugs: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -930,6 +957,39 @@ export function validateSourceRef(q: Question, ctx: VersionCtx): PublicationIssu
               `profile_field "${ref?.profile_field}" no está en la lista blanca.`,
             ),
           ];
+    }
+    case "ai_field": {
+      const ref = q.source_ref as
+        | { connected?: { kind?: string; slug?: string }; instruction?: string }
+        | null;
+      const slug = ref?.connected?.slug ?? "";
+      const kind = ref?.connected?.kind;
+      if (!slug || !ref?.instruction?.trim()) {
+        return [
+          blocking("CATALOG_SOURCE_REF_INVALID", "ai_field requiere connected.slug e instruction."),
+        ];
+      }
+      if (kind === "document") {
+        return ctx.allDocumentSlugs.includes(slug)
+          ? []
+          : [
+              blocking(
+                "CATALOG_SOURCE_REF_INVALID",
+                `documento "${slug}" no es un requirement del servicio.`,
+              ),
+            ];
+      }
+      if (kind === "ai_letter") {
+        return ctx.aiLetterSlugs.includes(slug)
+          ? []
+          : [
+              blocking(
+                "CATALOG_SOURCE_REF_INVALID",
+                `carta "${slug}" no es un ai_letter del servicio.`,
+              ),
+            ];
+      }
+      return [blocking("CATALOG_SOURCE_REF_INVALID", `ai_field.connected.kind "${kind}" inválido.`)];
     }
     default:
       return [];

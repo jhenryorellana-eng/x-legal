@@ -903,6 +903,7 @@ export async function redetectFields(
   const version = await repo.findVersionById(versionId);
   if (!version) throw catalogError("CATALOG_VERSION_NOT_FOUND");
   if (version.status !== "draft") throw catalogError("CATALOG_VERSION_PUBLISHED_IMMUTABLE");
+  if (!version.source_pdf_path) throw catalogError("CATALOG_PDF_UNREADABLE", "Esta versión no tiene PDF.");
 
   // Download PDF bytes from catalog-assets
   const supabase = createServiceClient();
@@ -1028,8 +1029,10 @@ export async function aiProposeStructure(
   // right question instead of guessing. Best-effort — a failure proceeds ungrounded.
   let pdfText = "";
   try {
-    const dl = await createServiceClient().storage.from("catalog-assets").download(version.source_pdf_path);
-    if (dl.data) pdfText = await extractPdfText(new Uint8Array(await dl.data.arrayBuffer()));
+    if (version.source_pdf_path) {
+      const dl = await createServiceClient().storage.from("catalog-assets").download(version.source_pdf_path);
+      if (dl.data) pdfText = await extractPdfText(new Uint8Array(await dl.data.arrayBuffer()));
+    }
   } catch (err) {
     logger.warn(
       { err: err instanceof Error ? err.message : String(err), versionId: input.version_id },
@@ -1352,6 +1355,7 @@ export async function upsertQuestion(
       documentSlugsWithSchema: slugIndex.documentsWithSchema,
       aiLetterSlugs: slugIndex.aiLetterSlugs,
       profileFields: Array.from(PROFILE_SOURCE_FIELDS),
+      allDocumentSlugs: slugIndex.documents,
     };
     const sourceIssues = validateSourceRef(dto as unknown as import("./domain").Question, ctx);
     assertNoIssues(sourceIssues);
@@ -1408,6 +1412,7 @@ export async function generateTestPdf(
 
   const tree = await repo.getVersionTree(input.version_id);
   if (!tree) throw catalogError("CATALOG_VERSION_NOT_FOUND");
+  if (!tree.version.source_pdf_path) throw catalogError("CATALOG_PDF_UNREADABLE", "Esta versión no tiene PDF.");
 
   // Download PDF from catalog-assets
   const supabase = createServiceClient();
@@ -1511,6 +1516,7 @@ export async function publishVersion(
     documentSlugsWithSchema: slugIndex.documentsWithSchema,
     aiLetterSlugs: slugIndex.aiLetterSlugs,
     profileFields: Array.from(PROFILE_SOURCE_FIELDS),
+    allDocumentSlugs: slugIndex.documents,
   };
 
   const check = validateVersionPublication({
@@ -2712,7 +2718,7 @@ export async function createFormPdfUploadUrl(
 export async function getVersionPdfUrl(actor: Actor, versionId: string): Promise<string | null> {
   can(actor, "catalog", "view");
   const version = await repo.findVersionById(versionId);
-  if (!version) return null;
+  if (!version || !version.source_pdf_path) return null;
   const { createSignedDownloadUrl } = await import("@/backend/platform/storage");
   return createSignedDownloadUrl("catalog-assets", version.source_pdf_path);
 }

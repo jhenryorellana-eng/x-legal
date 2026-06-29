@@ -1932,6 +1932,148 @@ export async function translateAnswerText(input: {
   return { text };
 }
 
+// ---------------------------------------------------------------------------
+// ai_field resolution (Etapa B) — a form field whose value is produced by AI at
+// resolution time. Two flavors, batched (one provider call per source):
+//   - interpretDocumentFields: Gemini multimodal INTERPRETS a client document.
+//   - synthesizeLetterFields:  Anthropic SYNTHESIZES from a generated ai_letter.
+// Both take many per-field instructions and return an { questionId -> value } map.
+// The cases module loads the source content (it owns case data) and calls these;
+// ai-engine owns the providers + PII masking (RNF-041 / DOC-74 §7.1).
+// ---------------------------------------------------------------------------
+
+/** One ai_field to resolve: a stable id (the question id) + its per-field instruction. */
+export interface AiFieldRequest {
+  id: string;
+  instruction: string;
+}
+
+const AI_FIELD_ANSWERS_SCHEMA = {
+  type: "object",
+  properties: {
+    answers: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { id: { type: "string" }, value: { type: "string" } },
+        required: ["id", "value"],
+      },
+    },
+  },
+  required: ["answers"],
+};
+
+/** Tolerant parse of {"answers":[{id,value}]} → map, keeping only requested ids with non-empty values. */
+function parseFieldAnswers(text: string, fields: AiFieldRequest[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  try {
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    const json = start >= 0 && end > start ? text.slice(start, end + 1) : text;
+    const parsed = JSON.parse(json) as { answers?: Array<{ id?: unknown; value?: unknown }> };
+    const byId = new Map((parsed.answers ?? []).map((a) => [String(a.id), a.value]));
+    for (const f of fields) {
+      const v = byId.get(f.id);
+      if (v != null && String(v).trim()) out[f.id] = String(v).trim();
+    }
+  } catch {
+    // Tolerant: a malformed response leaves all fields unresolved (caller treats as empty).
+  }
+  return out;
+}
+
+function buildAiFieldList(fields: AiFieldRequest[]): string {
+  return fields.map((f, i) => `${i + 1}. id="${f.id}": ${f.instruction}`).join("\n");
+}
+
+/**
+ * INTERPRETS a client-uploaded document (Gemini multimodal over the raw file) to
+ * answer many per-field instructions at once. Does NOT extract a fixed datum — it
+ * reads, comprehends, and drafts. Best-effort: any failure → empty map (the form
+ * field is simply left blank). Respects the AI stub (E2E/CI).
+ */
+export async function interpretDocumentFields(input: {
+  fileBase64: string;
+  mimeType: string;
+  fields: AiFieldRequest[];
+  model?: string | null;
+}): Promise<Record<string, string>> {
+  if (input.fields.length === 0) return {};
+  if (isAiStubEnabled()) {
+    return Object.fromEntries(input.fields.map((f) => [f.id, `[stub-doc: ${f.instruction.slice(0, 60)}]`]));
+  }
+  const model = input.model || process.env.AI_GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
+  const prompt =
+    "Eres un asistente legal que INTERPRETA un documento (no extraes un dato literal: " +
+    "lees, comprendes y redactas). Para cada campo, produce el texto solicitado basándote " +
+    "ÚNICAMENTE en el contenido real del documento. Si el documento no lo respalda, devuelve " +
+    "cadena vacía para ese id (NO inventes).\n\nCampos:\n" +
+    buildAiFieldList(input.fields) +
+    '\n\nResponde en JSON: {"answers":[{"id":"<id>","value":"<texto>"}]}.';
+  try {
+    const response = await getGeminiModels().generateContent({
+      model,
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { inlineData: { mimeType: input.mimeType, data: input.fileBase64 } },
+            { text: prompt },
+          ],
+        },
+      ],
+      config: {
+        temperature: 0.2,
+        maxOutputTokens: 4096,
+        responseMimeType: "application/json",
+        responseSchema: AI_FIELD_ANSWERS_SCHEMA,
+      },
+    });
+    const text = response.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    return parseFieldAnswers(text, input.fields);
+  } catch (err) {
+    logger.warn({ err, count: input.fields.length }, "ai-engine: interpretDocumentFields failed — leaving fields blank");
+    return {};
+  }
+}
+
+/**
+ * SYNTHESIZES form-field text from a generated ai_letter (e.g. the credible-fear
+ * memorandum) via Anthropic, answering many per-field instructions at once. The
+ * letter text is PII-masked before the provider (DOC-74 §7.1). Best-effort: any
+ * failure → empty map. Respects the AI stub (E2E/CI).
+ */
+export async function synthesizeLetterFields(input: {
+  letterText: string;
+  fields: AiFieldRequest[];
+  model?: string | null;
+}): Promise<Record<string, string>> {
+  if (input.fields.length === 0) return {};
+  if (isAiStubEnabled()) {
+    return Object.fromEntries(input.fields.map((f) => [f.id, `[stub-letter: ${f.instruction.slice(0, 60)}]`]));
+  }
+  const model = input.model || DEFAULT_GENERATION_MODEL;
+  const system =
+    "Eres un asistente legal experto en asilo en EE. UU. A partir del MEMORÁNDUM provisto, " +
+    "redacta el texto pedido para cada campo de un formulario oficial (p. ej. USCIS I-589). " +
+    "Usa SOLO hechos presentes en el memorándum; no inventes. Sé conciso, preciso y formal, " +
+    "en el idioma que pida cada campo. Devuelve cadena vacía para un id no sustentado.";
+  const user =
+    "MEMORÁNDUM:\n" +
+    maskPii(input.letterText) +
+    "\n\n---\nCampos a redactar:\n" +
+    buildAiFieldList(input.fields) +
+    '\n\nResponde ÚNICAMENTE en JSON: {"answers":[{"id":"<id>","value":"<texto>"}]}.';
+  try {
+    const client = getAnthropicClient();
+    const r = await callAnthropic(client, { model, system, user, maxTokens: 6000, timeoutMs: 180_000 });
+    return parseFieldAnswers(r.text, input.fields);
+  } catch (err) {
+    logger.warn({ err, count: input.fields.length }, "ai-engine: synthesizeLetterFields failed — leaving fields blank");
+    return {};
+  }
+}
+
 /**
  * OCR/transcribes a stored document to plain text (Gemini multimodal). Used to make
  * uploaded dataset items (e.g. public won-case PDFs) injectable as reference material

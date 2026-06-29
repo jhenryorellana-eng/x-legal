@@ -14,7 +14,8 @@ export type QuestionSource =
   | "client_answer"
   | "document_extraction"
   | "generation_output"
-  | "profile";
+  | "profile"
+  | "ai_field";
 
 export type FieldType = "text" | "number" | "date" | "checkbox" | "select" | "textarea";
 
@@ -64,7 +65,8 @@ export interface VersionVM {
   version: number;
   status: VersionStatus;
   detected_fields: DetectedFieldVM[];
-  source_pdf_path: string;
+  /** NULL for a questionnaire version (no PDF). */
+  source_pdf_path: string | null;
   published_at: string | null;
 }
 
@@ -74,7 +76,7 @@ export interface SourceDocumentVM {
 }
 
 export interface FormEditorVM {
-  form: { id: string; slug: string; kind: "pdf_automation" | "ai_letter"; label: I18nValue; serviceLabel: I18nValue };
+  form: { id: string; slug: string; kind: "pdf_automation" | "ai_letter" | "questionnaire"; label: I18nValue; serviceLabel: I18nValue };
   service: { id: string; slug: string };
   versions: VersionVM[];
   openVersion: { version: VersionVM; groups: QuestionGroupVM[] } | null;

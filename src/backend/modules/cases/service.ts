@@ -99,6 +99,7 @@ import {
   findLatestActiveDocumentBySlug,
   findDocumentExtractionByCaseDocId,
   findCompletedGenerationByFormSlug,
+  downloadDocumentBytesBySlug,
   findClientProfileForForm,
   findUserContactFields,
   listDocumentExtractionsForCase,
@@ -3430,15 +3431,30 @@ export async function resolveBySource(
     const run = await findCompletedGenerationByFormSlug(caseId, formSlug, partyId);
     if (!run) return null;
 
-    if (!outputPath) return run.output;
+    // Only the structured output is dot-path navigable; without a path, fall back to
+    // the raw text (a plain markdown letter has no navigable structure).
+    const root = run.outputStructured ?? null;
+    if (!outputPath) return root ?? run.outputText ?? null;
+    if (root == null) return null;
 
     const parts = outputPath.split(".");
-    let current: unknown = run.output;
+    let current: unknown = root;
     for (const part of parts) {
       if (current == null || typeof current !== "object") return null;
       current = (current as Record<string, unknown>)[part];
     }
     return current ?? null;
+  }
+
+  if (source === "ai_field") {
+    const connected = sourceRef["connected"] as { kind?: string; slug?: string } | undefined;
+    const instruction = sourceRef["instruction"] as string | undefined;
+    const model = (sourceRef["model"] as string | undefined) ?? null;
+    if (!connected?.kind || !connected?.slug || !instruction) return null;
+    const map = await resolveAiFields(caseId, partyId, [
+      { id: question.id, connected: { kind: connected.kind, slug: connected.slug }, instruction, model },
+    ]);
+    return map[question.id] ?? null;
   }
 
   if (source === "profile") {
@@ -3495,6 +3511,79 @@ export async function resolveBySource(
   }
 
   return null;
+}
+
+/** A single ai_field to resolve: question id + its connected source + per-field prompt. */
+export interface AiFieldResolveInput {
+  id: string;
+  connected: { kind: string; slug: string };
+  instruction: string;
+  model?: string | null;
+}
+
+/**
+ * Resolves a batch of `ai_field` questions, grouping by connected source so each
+ * document/letter is loaded once and the AI is called ONCE per (kind, slug, model)
+ * group (returning a per-question value map). This keeps the synchronous PDF fill
+ * fast even with many AI-written fields. Best-effort: a field whose source is
+ * missing or whose AI call fails is simply absent from the result (left blank).
+ *
+ * The cases module loads the source content (it owns case_documents / runs); the
+ * ai-engine module owns the providers + PII masking (Gemini for documents,
+ * Anthropic for letter synthesis).
+ */
+export async function resolveAiFields(
+  caseId: string,
+  partyId: string | null,
+  fields: AiFieldResolveInput[],
+): Promise<Record<string, string>> {
+  if (fields.length === 0) return {};
+
+  const groups = new Map<string, AiFieldResolveInput[]>();
+  for (const f of fields) {
+    if (!f.connected?.kind || !f.connected?.slug || !f.instruction) continue;
+    const key = `${f.connected.kind}::${f.connected.slug}::${f.model ?? ""}`;
+    const arr = groups.get(key) ?? [];
+    arr.push(f);
+    groups.set(key, arr);
+  }
+  if (groups.size === 0) return {};
+
+  const aiEngine = (await import("@/backend/modules/ai-engine")) as {
+    interpretDocumentFields: (i: {
+      fileBase64: string;
+      mimeType: string;
+      fields: Array<{ id: string; instruction: string }>;
+      model?: string | null;
+    }) => Promise<Record<string, string>>;
+    synthesizeLetterFields: (i: {
+      letterText: string;
+      fields: Array<{ id: string; instruction: string }>;
+      model?: string | null;
+    }) => Promise<Record<string, string>>;
+  };
+
+  const out: Record<string, string> = {};
+  for (const grp of groups.values()) {
+    const first = grp[0];
+    const reqs = grp.map((f) => ({ id: f.id, instruction: f.instruction }));
+    const model = first.model ?? null;
+    try {
+      if (first.connected.kind === "document") {
+        const doc = await downloadDocumentBytesBySlug(caseId, first.connected.slug, partyId);
+        if (!doc) continue;
+        const fileBase64 = Buffer.from(doc.bytes).toString("base64");
+        Object.assign(out, await aiEngine.interpretDocumentFields({ fileBase64, mimeType: doc.mimeType, fields: reqs, model }));
+      } else if (first.connected.kind === "ai_letter") {
+        const run = await findCompletedGenerationByFormSlug(caseId, first.connected.slug, partyId);
+        if (!run?.outputText) continue;
+        Object.assign(out, await aiEngine.synthesizeLetterFields({ letterText: run.outputText, fields: reqs, model }));
+      }
+    } catch (err) {
+      logger.warn({ err, kind: first.connected.kind, slug: first.connected.slug }, "resolveAiFields: group failed — leaving fields blank");
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -4268,6 +4357,33 @@ export async function generateFilledPdf(
     };
   }
 
+  // Batch-resolve ai_field questions (one provider call per connected source) BEFORE
+  // the fill loop, so the synchronous PDF fill stays fast even with many AI-written
+  // fields. Only VISIBLE fields WITHOUT an explicit client answer are sent to the AI:
+  // a hidden conditional field — e.g. a Part B/C textarea gated on a "No" checkbox —
+  // is never resolved (the "solo si marcan Sí" rule, for free).
+  const aiFieldReqs: AiFieldResolveInput[] = [];
+  for (const q of questions) {
+    if (q.source !== "ai_field") continue;
+    const cs = deriveFieldState(parseConditionOrNull(q.condition), q.is_required, answers);
+    if (!cs.visible) continue;
+    const own0 = answers[q.id];
+    if (own0 !== undefined && own0 !== null && own0 !== "") continue;
+    const ref = (q.source_ref ?? {}) as {
+      connected?: { kind?: string; slug?: string };
+      instruction?: string;
+      model?: string | null;
+    };
+    if (!ref.connected?.kind || !ref.connected?.slug || !ref.instruction) continue;
+    aiFieldReqs.push({
+      id: q.id,
+      connected: { kind: ref.connected.kind, slug: ref.connected.slug },
+      instruction: ref.instruction,
+      model: ref.model ?? null,
+    });
+  }
+  const aiFieldValues = await resolveAiFields(caseId, partyId, aiFieldReqs);
+
   // Resolve all field values
   const fieldValues: Record<string, string | boolean> = {};
   const missingRequired: string[] = [];
@@ -4292,15 +4408,20 @@ export async function generateFilledPdf(
     // the client had to fill because their profile was empty) is overridden by what
     // the client actually typed — resolveBySource(profile) would otherwise discard it.
     const own = answers[q.id];
-    const resolved =
-      own !== undefined && own !== null && own !== ""
-        ? own
-        : await resolveBySource(
-            { id: q.id, source: q.source, source_ref: q.source_ref },
-            answers,
-            caseId,
-            partyId,
-          );
+    let resolved: unknown;
+    if (own !== undefined && own !== null && own !== "") {
+      resolved = own;
+    } else if (q.source === "ai_field") {
+      // Pre-resolved in the batch above (one provider call per source).
+      resolved = aiFieldValues[q.id] ?? null;
+    } else {
+      resolved = await resolveBySource(
+        { id: q.id, source: q.source, source_ref: q.source_ref },
+        answers,
+        caseId,
+        partyId,
+      );
+    }
 
     const isEmpty = resolved === null || resolved === undefined || resolved === "";
     if (isEmpty && condState.required) {

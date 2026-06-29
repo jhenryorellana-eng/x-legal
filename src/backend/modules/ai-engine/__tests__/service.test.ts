@@ -257,6 +257,8 @@ import {
   proposeExpedienteAssembly,
   translateAnswerText,
   assessDocumentLegibility,
+  interpretDocumentFields,
+  synthesizeLetterFields,
   executeTranslationJob,
   getDocumentTranslation,
   getDocumentTranslationPdf,
@@ -1099,6 +1101,107 @@ describe("assessDocumentLegibility", () => {
     const v = await assessDocumentLegibility({ bytes: new Uint8Array([1]), mimeType: "image/png" });
     expect(v.legible).toBe(true);
     expect(v.blurLevel).toBe("none");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ai_field resolution (Etapa B): interpretDocumentFields / synthesizeLetterFields
+// ---------------------------------------------------------------------------
+
+describe("interpretDocumentFields (Gemini, ai_field ← document)", () => {
+  beforeEach(() => {
+    mocks.geminiModels.generateContent.mockReset();
+  });
+
+  it("maps each question id to its interpreted value", async () => {
+    mocks.geminiModels.generateContent.mockResolvedValue({
+      candidates: [
+        {
+          content: {
+            parts: [
+              {
+                text: JSON.stringify({
+                  answers: [
+                    { id: "q1", value: "Relato de persecución." },
+                    { id: "q2", value: "Fecha aproximada: marzo 2023." },
+                  ],
+                }),
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const out = await interpretDocumentFields({
+      fileBase64: "ZmFrZQ==",
+      mimeType: "application/pdf",
+      fields: [
+        { id: "q1", instruction: "Resume el relato." },
+        { id: "q2", instruction: "¿Cuándo ocurrió?" },
+      ],
+    });
+    expect(out).toEqual({ q1: "Relato de persecución.", q2: "Fecha aproximada: marzo 2023." });
+  });
+
+  it("omits ids the model left empty (no invention)", async () => {
+    mocks.geminiModels.generateContent.mockResolvedValue({
+      candidates: [{ content: { parts: [{ text: JSON.stringify({ answers: [{ id: "q1", value: "" }] }) }] } }],
+    });
+    const out = await interpretDocumentFields({
+      fileBase64: "ZmFrZQ==",
+      mimeType: "application/pdf",
+      fields: [{ id: "q1", instruction: "Algo no presente." }],
+    });
+    expect(out).toEqual({});
+  });
+
+  it("returns an empty map (best-effort) when Gemini throws", async () => {
+    mocks.geminiModels.generateContent.mockRejectedValue(new Error("RESOURCE_EXHAUSTED"));
+    const out = await interpretDocumentFields({
+      fileBase64: "ZmFrZQ==",
+      mimeType: "application/pdf",
+      fields: [{ id: "q1", instruction: "x" }],
+    });
+    expect(out).toEqual({});
+  });
+
+  it("short-circuits with no fields (no provider call)", async () => {
+    const out = await interpretDocumentFields({ fileBase64: "ZmFrZQ==", mimeType: "application/pdf", fields: [] });
+    expect(out).toEqual({});
+    expect(mocks.geminiModels.generateContent).not.toHaveBeenCalled();
+  });
+});
+
+describe("synthesizeLetterFields (Anthropic, ai_field ← ai_letter)", () => {
+  const genMsg = (text: string) => ({
+    content: [{ type: "text", text }],
+    stop_reason: "end_turn",
+    usage: { input_tokens: 100, output_tokens: 100 },
+    model: "claude-sonnet-4-6",
+  });
+
+  beforeEach(() => {
+    mocks.anthropic.finalMessage.mockReset();
+  });
+
+  it("maps each question id to its synthesized value from the letter", async () => {
+    mocks.anthropic.finalMessage.mockResolvedValue(
+      genMsg(JSON.stringify({ answers: [{ id: "qb", value: "Narrativa de la Parte B." }] })),
+    );
+    const out = await synthesizeLetterFields({
+      letterText: "## Memorándum...\nEl solicitante sufrió...",
+      fields: [{ id: "qb", instruction: "Redacta la Parte B." }],
+    });
+    expect(out).toEqual({ qb: "Narrativa de la Parte B." });
+  });
+
+  it("returns an empty map when the model produces no JSON", async () => {
+    mocks.anthropic.finalMessage.mockResolvedValue(genMsg("no hay json aquí"));
+    const out = await synthesizeLetterFields({
+      letterText: "memo",
+      fields: [{ id: "qb", instruction: "x" }],
+    });
+    expect(out).toEqual({});
   });
 });
 

@@ -23,6 +23,9 @@ export {
   getDocumentTranslationPdf,
   translateText,
   translateAnswerText,
+  // ai_field resolution (consumed by cases module — Etapa B)
+  interpretDocumentFields,
+  synthesizeLetterFields,
   assessDocumentLegibility,
   extractRawTextFromStorage,
   completeI18n,
@@ -58,6 +61,7 @@ export type {
   ProposedQuestion,
   ProposedGroup,
   SegmentationProposal,
+  AiFieldRequest,
   DocumentLegibilityVerdict,
   // Expediente assembly planner (consumed by expediente module)
   ExpedienteAssemblyInput,
