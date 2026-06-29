@@ -24,6 +24,7 @@ import {
   datasetItemsMock,
   datasetUsageMock,
   aiCostsMock,
+  aiCostsStringsMock,
 } from "../f4-mock";
 import {
   employeesMock,
@@ -223,7 +224,7 @@ export function PreviewClient({ view }: { view: string }) {
         />
       )}
 
-      {view === "ai-costs" && <AiCostsView vm={aiCostsMock} />}
+      {view === "ai-costs" && <AiCostsView vm={aiCostsMock} strings={aiCostsStringsMock} />}
     </div>
   );
 }

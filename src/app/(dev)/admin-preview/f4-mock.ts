@@ -6,7 +6,7 @@
 import type { FormEditorVM } from "@/frontend/features/admin/form-editor";
 import type { DatasetRowVM } from "@/frontend/features/admin/datasets";
 import type { DatasetItemVM, DatasetUsageVM, DatasetHeaderVM } from "@/frontend/features/admin/datasets/dataset-detail-view";
-import type { AiCostsVM } from "@/frontend/features/admin/ai-costs";
+import type { AiCostsVM, AiCostsStrings } from "@/frontend/features/admin/ai-costs";
 
 // I-360 sample (DOC-53 §5 §4 example data).
 const detectedFields = [
@@ -162,10 +162,73 @@ export const datasetUsageMock: DatasetUsageVM[] = [
 ];
 
 export const aiCostsMock: AiCostsVM = {
-  totalUsd: 412.5,
-  bySource: { generations: 318.2, extractions: 74.1, translations: 20.2 },
-  byMonth: { "2026-03": 120.4, "2026-04": 158.9, "2026-05": 133.2, "2026-06": 412.5 },
-  budgetUsd: 500,
-  from: "2026-06-01",
-  to: "2026-06-14",
+  kpis: [
+    {
+      icon: "dollar",
+      label: "Gasto del período",
+      value: "$412.50",
+      delta: { dir: "up", label: "+$53.20" },
+      goal: { pct: 83, caption: "$412.50 de $500" },
+    },
+    { icon: "sparkle", label: "Tokens consumidos", value: "4,182,900" },
+    { icon: "shield", label: "Tasa de fallos", value: "4%" },
+    { icon: "bolt", label: "Pruebas del editor", value: "$18.40" },
+  ],
+  testHint: "Las pruebas del editor no cuentan en las métricas del negocio.",
+  bySource: [
+    { name: "Generaciones · Claude", value: 318.2, color: "var(--accent)" },
+    { name: "Extracciones · Gemini", value: 74.1, color: "var(--brand-green)" },
+    { name: "Traducciones · Gemini", value: 20.2, color: "var(--gold)" },
+  ],
+  byModel: [
+    { name: "claude-opus-4-7", value: 210.4, color: "var(--accent)" },
+    { name: "claude-sonnet-4-6", value: 107.8, color: "var(--brand-green)" },
+    { name: "gemini-2.5-flash", value: 94.3, color: "var(--gold)" },
+  ],
+  byService: [
+    { name: "Asilo Político", value: 280.1, color: "var(--accent)" },
+    { name: "Visa Juvenil (SIJS)", value: 132.4, color: "var(--brand-green)" },
+  ],
+  byMonth: {
+    rows: [
+      { month: "2026-03", cost: 120.4 },
+      { month: "2026-04", cost: 158.9 },
+      { month: "2026-05", cost: 133.2 },
+      { month: "2026-06", cost: 412.5 },
+    ],
+    xKey: "month",
+    series: [{ key: "cost", label: "Gasto del período", color: "var(--accent)" }],
+  },
+  ranking: [
+    { name: "1. ULP-2026-0011 · opus", value: 42.8, color: "var(--accent)" },
+    { name: "2. ULP-2026-0009 · opus", value: 31.5, color: "var(--brand-green)" },
+    { name: "3. ASILO-OBJ-DEMO · sonnet", value: 24.1, color: "var(--gold)" },
+  ],
+  queries: [
+    { id: "q1", caseNumber: "ULP-2026-0011", source: "Generaciones", model: "claude-opus-4-7", tokens: "182,400", cost: "$42.80", status: "Completado", statusTone: "ok", date: "14/06/26 10:32" },
+    { id: "q2", caseNumber: "ULP-2026-0011", source: "Extracciones", model: "gemini-2.5-flash", tokens: "12,100", cost: "$0.74", status: "Completado", statusTone: "ok", date: "14/06/26 09:18" },
+    { id: "q3", caseNumber: "ASILO-OBJ-DEMO", source: "Generaciones", model: "claude-sonnet-4-6", tokens: "96,200", cost: "$24.10", status: "Fallido", statusTone: "bad", date: "13/06/26 16:44" },
+  ],
+  exportHref: "#",
+};
+
+export const aiCostsStringsMock: AiCostsStrings = {
+  title: "Costes IA",
+  sub: "Costo estimado de cada consulta a la API (Claude + Gemini) por período.",
+  filter: { today: "Hoy", week: "Semana", month: "Mes", custom: "Personalizado", from: "Desde", to: "Hasta", apply: "Aplicar" },
+  cardBySource: "Por fuente",
+  cardByModel: "Por modelo",
+  cardByService: "Por servicio",
+  cardByMonth: "Tendencia por mes",
+  cardRanking: "Consultas más caras",
+  cardTable: "Costo por consulta",
+  thCase: "Caso",
+  thSource: "Tipo",
+  thModel: "Modelo",
+  thTokens: "Tokens",
+  thCost: "Costo",
+  thStatus: "Estado",
+  thDate: "Fecha",
+  exportCsv: "Exportar CSV",
+  empty: "Sin gasto en este período.",
 };

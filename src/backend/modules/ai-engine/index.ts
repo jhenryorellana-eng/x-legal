@@ -31,6 +31,7 @@ export {
   completeI18n,
   reprocessExtraction,
   getCostsSummary,
+  getAiCostsReport,
   // Catalog editor assistance (consumed by catalog module)
   proposeFormSegmentation,
   proposeQuestionnaireQuestions,
@@ -71,6 +72,9 @@ export type {
   AssemblyPartyInput,
   AssemblyStrongDocInput,
   AssemblyDocInput,
+  // AI cost report (consumed by /admin/ai-costs page + export route)
+  AiCostsReport,
+  AiCostsReportQuery,
 } from "./service";
 
 // ---------------------------------------------------------------------------

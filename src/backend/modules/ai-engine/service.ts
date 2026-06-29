@@ -44,6 +44,7 @@ import { writeAudit } from "@/backend/modules/audit";
 import { renderMarkdownToPdf, renderMarkdownToDocx } from "@/backend/platform/pdf";
 import { checkUrlReachable, keepReachable } from "@/backend/platform/url-utils";
 import { DEFAULT_GENERATION_MODEL } from "@/shared/constants/ai-models";
+import { resolvePeriodRange, type Period } from "@/shared/period";
 
 import {
   canTransitionRun,
@@ -109,6 +110,9 @@ import {
   listRunsForCase,
   sumMonthlyCosts,
   sumCosts,
+  aiCostRows,
+  getOrgCostContext,
+  type AiCostReportRow,
   findExtraction,
   upsertExtraction,
   findTranslation,
@@ -2898,6 +2902,161 @@ export async function getCostsSummary(
 ) {
   can(actor, "dashboard", "view");
   return sumCosts(actor.orgId, filters);
+}
+
+// ---------------------------------------------------------------------------
+// API-AI-10b: getAiCostsReport — full RF-ADM-005 report (per-query cost)
+// ---------------------------------------------------------------------------
+
+/** One AI invocation row for the per-query cost table (RF-ADM-005). */
+export interface AiCostsReportQuery {
+  id: string;
+  source: "generations" | "extractions" | "translations";
+  caseNumber: string | null;
+  serviceLabel: string | null;
+  model: string | null;
+  costUsd: number;
+  tokens: number;
+  status: string;
+  isTest: boolean;
+  createdAt: string;
+}
+
+/** Full AI-cost report for the admin panel (RF-ADM-005 / RF-ADM-037). */
+export interface AiCostsReport {
+  /** Total spend in the period (excludes editor test runs). */
+  totalUsd: number;
+  /** Same total for the immediately-preceding window (period-over-period delta). */
+  prevTotalUsd: number;
+  /** Editor test-run spend, reported separately (RF-ADM-037 — not in metrics). */
+  testUsd: number;
+  /** Tokens consumed (input + output + cache) across non-test invocations. */
+  totalTokens: number;
+  /** Count of non-test invocations (all three engines). */
+  runs: number;
+  /** Count of non-test invocations that failed. */
+  failedRuns: number;
+  /** failedRuns / runs, rounded — null when there were no runs. */
+  failureRatePct: number | null;
+  /** Monthly AI budget (orgs.settings.ai_budget_usd, fallback 500). */
+  budgetUsd: number;
+  bySource: { generations: number; extractions: number; translations: number };
+  byModel: { model: string; usd: number }[];
+  byService: { serviceLabel: string; usd: number }[];
+  byMonth: { month: string; usd: number }[];
+  /** Per-query rows (non-test), newest first, capped for payload size. */
+  queries: AiCostsReportQuery[];
+  /** Top-5 costliest invocations (non-test) for the ranking. */
+  topRuns: AiCostsReportQuery[];
+}
+
+const QUERY_TABLE_CAP = 100;
+
+function round4(n: number): number {
+  return parseFloat(n.toFixed(4));
+}
+
+function rowTokens(r: AiCostReportRow): number {
+  return r.inputTokens + r.outputTokens + r.cacheTokens;
+}
+
+function toReportQuery(r: AiCostReportRow): AiCostsReportQuery {
+  return {
+    id: r.id,
+    source: r.source,
+    caseNumber: r.caseNumber,
+    serviceLabel: r.serviceLabel,
+    model: r.model,
+    costUsd: round4(r.costUsd),
+    tokens: rowTokens(r),
+    status: r.status,
+    isTest: r.isTest,
+    createdAt: r.createdAt,
+  };
+}
+
+/**
+ * Detailed AI-cost report for /admin/ai-costs (RF-ADM-005): totals, tokens,
+ * failure rate, budget, breakdowns by source/model/service/month, the per-query
+ * table and the top-5 ranking. Editor test runs (is_test) are excluded from the
+ * metrics and surfaced as `testUsd` only (RF-ADM-037). Aggregated in JS over the
+ * period-bounded `aiCostRows` read — no migration.
+ *
+ * @api-id API-AI-10
+ */
+export async function getAiCostsReport(
+  actor: Actor,
+  input: { period: Period; from?: string; to?: string },
+): Promise<AiCostsReport> {
+  can(actor, "dashboard", "view");
+
+  const { tz, budgetUsd } = await getOrgCostContext(actor.orgId);
+  const range = resolvePeriodRange(input.period, { from: input.from, to: input.to, tz });
+
+  const [rows, prevRows] = await Promise.all([
+    aiCostRows(actor.orgId, range.from.toISOString(), range.to.toISOString()),
+    aiCostRows(actor.orgId, range.prevFrom.toISOString(), range.prevTo.toISOString()),
+  ]);
+
+  const nonTest = rows.filter((r) => !r.isTest);
+
+  let totalUsd = 0;
+  let testUsd = 0;
+  let totalTokens = 0;
+  let failedRuns = 0;
+  const bySource = { generations: 0, extractions: 0, translations: 0 };
+  const byModel = new Map<string, number>();
+  const byService = new Map<string, number>();
+  const byMonth = new Map<string, number>();
+
+  for (const r of rows) {
+    if (r.isTest) {
+      testUsd += r.costUsd;
+      continue;
+    }
+    totalUsd += r.costUsd;
+    totalTokens += rowTokens(r);
+    bySource[r.source] += r.costUsd;
+    if (r.status === "failed") failedRuns += 1;
+    if (r.model) byModel.set(r.model, (byModel.get(r.model) ?? 0) + r.costUsd);
+    const svc = r.serviceLabel ?? "Sin servicio";
+    byService.set(svc, (byService.get(svc) ?? 0) + r.costUsd);
+    const month = r.createdAt.slice(0, 7); // "YYYY-MM"
+    byMonth.set(month, (byMonth.get(month) ?? 0) + r.costUsd);
+  }
+
+  const prevTotalUsd = prevRows.reduce((s, r) => (r.isTest ? s : s + r.costUsd), 0);
+  const runs = nonTest.length;
+
+  const byDateDesc = [...nonTest].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const byCostDesc = [...nonTest].sort((a, b) => b.costUsd - a.costUsd);
+
+  return {
+    totalUsd: round4(totalUsd),
+    prevTotalUsd: round4(prevTotalUsd),
+    testUsd: round4(testUsd),
+    totalTokens,
+    runs,
+    failedRuns,
+    failureRatePct: runs > 0 ? Math.round((failedRuns / runs) * 100) : null,
+    budgetUsd,
+    bySource: {
+      generations: round4(bySource.generations),
+      extractions: round4(bySource.extractions),
+      translations: round4(bySource.translations),
+    },
+    byModel: [...byModel.entries()]
+      .map(([model, usd]) => ({ model, usd: round4(usd) }))
+      .sort((a, b) => b.usd - a.usd),
+    byService: [...byService.entries()]
+      .map(([serviceLabel, usd]) => ({ serviceLabel, usd: round4(usd) }))
+      .sort((a, b) => b.usd - a.usd),
+    byMonth: [...byMonth.entries()]
+      .map(([month, usd]) => ({ month, usd: round4(usd) }))
+      .sort((a, b) => a.month.localeCompare(b.month)),
+    queries: byDateDesc.slice(0, QUERY_TABLE_CAP).map(toReportQuery),
+    topRuns: byCostDesc.slice(0, 5).map(toReportQuery),
+  };
 }
 
 // ---------------------------------------------------------------------------

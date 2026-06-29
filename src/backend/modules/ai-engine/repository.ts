@@ -22,6 +22,7 @@
 
 import { createServiceClient } from "@/backend/platform/supabase";
 import { logger } from "@/backend/platform/logger";
+import { DEFAULT_TZ } from "@/shared/period";
 import type { Tables, TablesInsert, TablesUpdate } from "@/shared/database.types";
 import type { ConfigSnapshot, ChunkProgress, SectionedProgress, DatasetItem } from "./domain";
 
@@ -495,6 +496,160 @@ export async function sumCosts(
     totalUsd: parseFloat(totalUsd.toFixed(4)),
     bySource,
     byMonth,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Detailed cost report (RF-ADM-005) — per-query rows for /admin/ai-costs.
+// ---------------------------------------------------------------------------
+
+/** One AI invocation (generation / extraction / translation) with its cost. */
+export interface AiCostReportRow {
+  id: string;
+  source: "generations" | "extractions" | "translations";
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheTokens: number;
+  model: string | null;
+  status: string;
+  isTest: boolean;
+  createdAt: string;
+  caseNumber: string | null;
+  serviceLabel: string | null;
+}
+
+/** PostgREST may return a to-one embed as an object or a single-element array. */
+function embeddedServiceLabel(services: unknown): string | null {
+  if (!services) return null;
+  const obj = Array.isArray(services) ? services[0] : services;
+  const label = (obj as { label_i18n?: Record<string, string> | null } | undefined)?.label_i18n;
+  return label?.es ?? label?.en ?? null;
+}
+
+interface GenEmbeddedRow {
+  id: string;
+  cost_usd: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_read_input_tokens: number | null;
+  cache_creation_input_tokens: number | null;
+  model: string | null;
+  status: string;
+  is_test: boolean | null;
+  created_at: string;
+  cases: { case_number: string | null; services: unknown } | null;
+}
+
+interface DocEmbeddedRow {
+  id: string;
+  cost_usd: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  model: string | null;
+  status: string;
+  created_at: string;
+  case_documents: { cases: { case_number: string | null; services: unknown } | null } | null;
+}
+
+/**
+ * Pulls every AI invocation in [from, to) across the three engines, org-scoped
+ * via the existing embeds (generations→cases, extractions/translations→
+ * case_documents→cases), enriched with the case number and service label for
+ * the per-query table and the by-service breakdown. Bounded by the period (AI
+ * run volume is small), so the service aggregates these rows in JS — no RPC.
+ */
+export async function aiCostRows(orgId: string, fromIso: string, toIso: string): Promise<AiCostReportRow[]> {
+  const client = createServiceClient();
+
+  const [gen, ext, trans] = await Promise.all([
+    client
+      .from("ai_generation_runs")
+      .select(
+        "id, cost_usd, input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens, model, status, is_test, created_at, cases!inner(case_number, org_id, services(label_i18n))",
+      )
+      .eq("cases.org_id", orgId)
+      .gte("created_at", fromIso)
+      .lt("created_at", toIso)
+      .not("cost_usd", "is", null),
+    client
+      .from("document_extractions")
+      .select(
+        "id, cost_usd, input_tokens, output_tokens, model, status, created_at, case_documents!inner(cases!inner(case_number, org_id, services(label_i18n)))",
+      )
+      .eq("case_documents.cases.org_id", orgId)
+      .gte("created_at", fromIso)
+      .lt("created_at", toIso)
+      .not("cost_usd", "is", null),
+    client
+      .from("document_translations")
+      .select(
+        "id, cost_usd, input_tokens, output_tokens, model, status, created_at, case_documents!inner(cases!inner(case_number, org_id, services(label_i18n)))",
+      )
+      .eq("case_documents.cases.org_id", orgId)
+      .gte("created_at", fromIso)
+      .lt("created_at", toIso)
+      .not("cost_usd", "is", null),
+  ]);
+
+  if (gen.error) throw gen.error;
+  if (ext.error) throw ext.error;
+  if (trans.error) throw trans.error;
+
+  const rows: AiCostReportRow[] = [];
+
+  for (const r of (gen.data ?? []) as unknown as GenEmbeddedRow[]) {
+    rows.push({
+      id: r.id,
+      source: "generations",
+      costUsd: Number(r.cost_usd ?? 0),
+      inputTokens: r.input_tokens ?? 0,
+      outputTokens: r.output_tokens ?? 0,
+      cacheTokens: (r.cache_read_input_tokens ?? 0) + (r.cache_creation_input_tokens ?? 0),
+      model: r.model,
+      status: r.status,
+      isTest: r.is_test ?? false,
+      createdAt: r.created_at,
+      caseNumber: r.cases?.case_number ?? null,
+      serviceLabel: embeddedServiceLabel(r.cases?.services),
+    });
+  }
+
+  for (const list of [
+    { data: ext.data, source: "extractions" as const },
+    { data: trans.data, source: "translations" as const },
+  ]) {
+    for (const r of (list.data ?? []) as unknown as DocEmbeddedRow[]) {
+      const c = r.case_documents?.cases;
+      rows.push({
+        id: r.id,
+        source: list.source,
+        costUsd: Number(r.cost_usd ?? 0),
+        inputTokens: r.input_tokens ?? 0,
+        outputTokens: r.output_tokens ?? 0,
+        cacheTokens: 0,
+        model: r.model,
+        status: r.status,
+        isTest: false, // extractions/translations have no is_test column (Gemini, never editor previews)
+        createdAt: r.created_at,
+        caseNumber: c?.case_number ?? null,
+        serviceLabel: embeddedServiceLabel(c?.services),
+      });
+    }
+  }
+
+  return rows;
+}
+
+/** Org timezone + AI monthly budget (USD) from settings; both fall back. */
+export async function getOrgCostContext(orgId: string): Promise<{ tz: string; budgetUsd: number }> {
+  const client = createServiceClient();
+  const { data } = await client.from("orgs").select("settings").eq("id", orgId).single();
+  const settings = (data?.settings ?? {}) as { default_timezone?: string; ai_budget_usd?: number };
+  const budget = settings.ai_budget_usd;
+  return {
+    tz: settings.default_timezone ?? DEFAULT_TZ,
+    budgetUsd: typeof budget === "number" && budget > 0 ? budget : 500,
   };
 }
 

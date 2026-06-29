@@ -1,1 +1,6 @@
-export { AiCostsView, type AiCostsVM } from "./ai-costs-view";
+export {
+  AiCostsView,
+  type AiCostsVM,
+  type AiCostsStrings,
+  type AiCostQueryRow,
+} from "./ai-costs-view";

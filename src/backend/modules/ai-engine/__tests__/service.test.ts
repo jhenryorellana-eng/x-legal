@@ -36,6 +36,8 @@ const mocks = vi.hoisted(() => {
     listRunsForCase: vi.fn(),
     sumMonthlyCosts: vi.fn(),
     sumCosts: vi.fn(),
+    aiCostRows: vi.fn(),
+    getOrgCostContext: vi.fn(),
     findExtraction: vi.fn(),
     upsertExtraction: vi.fn(),
     findTranslation: vi.fn(),
@@ -262,6 +264,7 @@ import {
   executeTranslationJob,
   getDocumentTranslation,
   getDocumentTranslationPdf,
+  getAiCostsReport,
   AiEngineError,
 } from "../service";
 
@@ -1449,5 +1452,88 @@ describe("executeGenerationJob (sectioned + research)", () => {
     // Transient → re-thrown for retry; the run is NOT permanently marked failed here.
     expect(mocks.repo.markRunFailed).not.toHaveBeenCalled();
     expect(mocks.repo.completeRun).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getAiCostsReport (API-AI-10 / RF-ADM-005 + RF-ADM-037)
+// ---------------------------------------------------------------------------
+
+describe("getAiCostsReport", () => {
+  type Row = {
+    id: string;
+    source: "generations" | "extractions" | "translations";
+    costUsd: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheTokens: number;
+    model: string | null;
+    status: string;
+    isTest: boolean;
+    createdAt: string;
+    caseNumber: string | null;
+    serviceLabel: string | null;
+  };
+
+  const row = (over: Partial<Row>): Row => ({
+    id: "r-1",
+    source: "generations",
+    costUsd: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheTokens: 0,
+    model: "claude-sonnet-4-6",
+    status: "completed",
+    isTest: false,
+    createdAt: "2026-06-15T10:00:00.000Z",
+    caseNumber: "ULP-1",
+    serviceLabel: "Asilo",
+    ...over,
+  });
+
+  const CURRENT: Row[] = [
+    row({ id: "g1", costUsd: 0.5, inputTokens: 100, outputTokens: 200, cacheTokens: 50, model: "claude-sonnet-4-6" }),
+    row({ id: "g2", costUsd: 0.1, inputTokens: 10, outputTokens: 20, status: "failed", model: "claude-opus-4-7", caseNumber: "ULP-2" }),
+    row({ id: "gt", costUsd: 0.99, inputTokens: 999, outputTokens: 999, isTest: true, model: "claude-sonnet-4-6" }),
+    row({ id: "e1", source: "extractions", costUsd: 0.05, inputTokens: 30, outputTokens: 10, model: "gemini-2.5-flash" }),
+    row({ id: "t1", source: "translations", costUsd: 0.03, inputTokens: 20, outputTokens: 5, model: "gemini-2.5-flash" }),
+  ];
+
+  beforeEach(() => {
+    mocks.authz.can.mockReset();
+    mocks.repo.getOrgCostContext.mockResolvedValue({ tz: "America/New_York", budgetUsd: 500 });
+    mocks.repo.aiCostRows.mockReset();
+    // Promise.all order: first call = current window, second = previous window.
+    mocks.repo.aiCostRows.mockResolvedValueOnce(CURRENT).mockResolvedValueOnce([]);
+  });
+
+  it("gates on dashboard:view before reading", async () => {
+    await getAiCostsReport(ADMIN_ACTOR, { period: "month" });
+    expect(mocks.authz.can).toHaveBeenCalledWith(ADMIN_ACTOR, "dashboard", "view");
+  });
+
+  it("excludes editor test runs from totals and reports them as testUsd (RF-ADM-037)", async () => {
+    const r = await getAiCostsReport(ADMIN_ACTOR, { period: "month" });
+    expect(r.totalUsd).toBeCloseTo(0.68, 4); // 0.5 + 0.1 + 0.05 + 0.03 (test 0.99 excluded)
+    expect(r.testUsd).toBeCloseTo(0.99, 4);
+    expect(r.runs).toBe(4);
+  });
+
+  it("computes tokens, failure rate, and the by-source / by-model breakdowns", async () => {
+    const r = await getAiCostsReport(ADMIN_ACTOR, { period: "month" });
+    expect(r.totalTokens).toBe(445); // 350 + 30 + 40 + 25 (test row excluded)
+    expect(r.failedRuns).toBe(1);
+    expect(r.failureRatePct).toBe(25); // 1 of 4
+    expect(r.bySource).toEqual({ generations: 0.6, extractions: 0.05, translations: 0.03 });
+    expect(r.byModel[0]).toEqual({ model: "claude-sonnet-4-6", usd: 0.5 }); // costliest first
+    expect(r.budgetUsd).toBe(500);
+  });
+
+  it("ranks the costliest non-test invocations (topRuns) and keeps the per-query table", async () => {
+    const r = await getAiCostsReport(ADMIN_ACTOR, { period: "month" });
+    expect(r.topRuns[0].id).toBe("g1"); // $0.50, the most expensive
+    expect(r.topRuns.every((q) => !q.isTest)).toBe(true);
+    expect(r.queries).toHaveLength(4); // non-test only
+    expect(r.prevTotalUsd).toBe(0); // previous window empty
   });
 });
