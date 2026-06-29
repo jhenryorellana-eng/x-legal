@@ -16,6 +16,9 @@ import { getLocale, getTranslations } from "next-intl/server";
 import { formatInTimeZone } from "date-fns-tz";
 import { getActor, getCurrentUserLocation } from "@/backend/modules/identity";
 import { listLeads, listMyTasks } from "@/backend/modules/kanban";
+import { getSalesToday } from "@/backend/modules/analytics";
+import { listContractableServices } from "@/backend/modules/catalog";
+import { resolveI18n } from "@/shared/i18n";
 import { MiDiaView } from "@/frontend/features/vanessa";
 import { fmtHeaderDate, fmtRelative, tzLabel, type Locale } from "@/frontend/lib/datetime";
 import { sourceMeta } from "@/frontend/features/vanessa/shared/source-meta";
@@ -38,6 +41,12 @@ export default async function MiDiaPage() {
   const leadsPage = await listLeads(actor, { uncontacted: true }).catch(() => null);
   const leads = leadsPage?.items ?? [];
   const tasks = await listMyTasks(actor).catch(() => []);
+  // Live KPIs (today's appointments / docs awaiting review / closings this week).
+  // Degrades to em-dash if the actor lacks metrics access — never a false zero.
+  const salesToday = await getSalesToday(actor, staffTz).catch(() => null);
+  // Service label map for the "Por atender" leads (replaces the hardcoded label).
+  const catalogServices = await listContractableServices(actor.orgId).catch(() => []);
+  const serviceLabels = new Map(catalogServices.map((s) => [s.id, resolveI18n(s.label_i18n, locale)]));
 
   const now = new Date();
   const minutesSince = (iso: string) => Math.floor((now.getTime() - new Date(iso).getTime()) / 60000);
@@ -49,7 +58,7 @@ export default async function MiDiaPage() {
       title: l.full_name ?? l.phone_e164,
       source: l.source ?? "web",
       sourceLabel: sm.labelKey,
-      serviceLabel: "Visa Juvenil",
+      serviceLabel: (l.interested_service_id && serviceLabels.get(l.interested_service_id)) || "—",
       minutes: l.created_at ? minutesSince(l.created_at) : 0,
       ageLabel: l.created_at ? fmtRelative(l.created_at, locale) : "",
       phone: l.phone_e164 ?? null,
@@ -99,9 +108,9 @@ export default async function MiDiaPage() {
       label: t("kpiNewLeads"),
       flag: uncontactedCount > 0 ? t("kpiFlag") : undefined,
     },
-    { icon: "event", value: "—", label: t("kpiToday"), tone: "#8B5CF6" },
-    { icon: "fact_check", value: "—", label: t("kpiReview"), tone: "#F59E0B" },
-    { icon: "verified", value: "—", label: t("kpiClosings"), tone: "#1BB673" },
+    { icon: "event", value: salesToday ? salesToday.todayAppointments : "—", label: t("kpiToday"), tone: "#8B5CF6" },
+    { icon: "fact_check", value: salesToday ? salesToday.waitingReview : "—", label: t("kpiReview"), tone: "#F59E0B" },
+    { icon: "verified", value: salesToday ? salesToday.closingsThisWeek : "—", label: t("kpiClosings"), tone: "#1BB673" },
   ];
 
   return (

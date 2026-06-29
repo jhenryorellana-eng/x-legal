@@ -48,6 +48,42 @@ export interface DashboardInput {
   to?: string;
 }
 
+/** Diana's legal performance dashboard (paralegal-scoped, period-over-period). */
+export interface LegalDashboard {
+  /** Cases handed off into legal stage to this paralegal. */
+  received: ScalarKpi;
+  /** Expedientes this paralegal sent to finance (throughput out). */
+  sentToFinance: ScalarKpi;
+  /** Case-timeline events this paralegal authored (own activity). */
+  activity: ScalarKpi;
+  /** Her cases by status — scoped to the LEGAL stage (her actual workload). */
+  casesByStatus: Breakdown[];
+}
+
+/** Andrium's finance/operations overview (org-wide, period-over-period). */
+export interface FinanceDashboard {
+  /** Income collected in the period (ledger income). */
+  income: ScalarKpi;
+  overdue: { cents: number; count: number; cases: number };
+  /** Ledger totals for the period (balance = income − expense). */
+  ledgerIncomeCents: number;
+  ledgerExpenseCents: number;
+  /** Income broken down by ledger category (Breakdown.count holds cents). */
+  incomeByCategory: Breakdown[];
+  /** Overdue amount (cents) bucketed by age — same definition as the KPI. */
+  overdueByAge: { recent: number; mid: number; old: number };
+}
+
+/** Vanessa's "Mi día" live counts (sales-scoped). */
+export interface SalesToday {
+  /** Org appointments scheduled for today (shared agenda). */
+  todayAppointments: number;
+  /** Uploaded docs awaiting review in this rep's cases. */
+  waitingReview: number;
+  /** Contracts signed this week for this rep's cases. */
+  closingsThisWeek: number;
+}
+
 /** Admin global overview (`/admin`). Org-wide, no role-scoping. */
 export interface AdminOverview {
   /** Current open cases (stock) — status not in completed/cancelled. */

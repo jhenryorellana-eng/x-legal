@@ -6,10 +6,13 @@
  * composes getAdminOverview with other module-pub reads (e.g. billing) in
  * parallel. Sales/Legal/Finance dashboards land in their respective etapas.
  */
-export { getAdminOverview } from "./service";
+export { getAdminOverview, getSalesToday, getLegalDashboard, getFinanceDashboard } from "./service";
 
 export type {
   AdminOverview,
+  SalesToday,
+  LegalDashboard,
+  FinanceDashboard,
   DashboardInput,
   ScalarKpi,
   Breakdown,

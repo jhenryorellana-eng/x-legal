@@ -82,6 +82,7 @@ export const STAFF_NAV: NavGroup[] = [
   {
     labelKey: "finance",
     items: [
+      { labelKey: "financeOverview", href: "/finanzas/resumen", icon: "bolt", module: "accounting" },
       { labelKey: "financeCases", href: "/finanzas/casos", icon: "briefcase", module: "cases" },
       { labelKey: "payments", href: "/finanzas/pagos", icon: "card", module: "billing", badge: "pagos" },
       { labelKey: "accounting", href: "/finanzas/contabilidad", icon: "wallet", module: "accounting" },
@@ -124,6 +125,7 @@ export const LEGAL_NAV: NavGroup[] = [
     labelKey: "production",
     items: [
       { labelKey: "miDia", href: "/legal/mi-dia", icon: "sun", module: "dashboard" },
+      { labelKey: "legalMetrics", href: "/legal/metricas", icon: "bolt", module: "cases" },
       { labelKey: "legalCases", href: "/legal", icon: "briefcase", module: "cases", badge: "cases" },
       { labelKey: "legalReview", href: "/legal/por-revisar", icon: "check", module: "cases" },
       { labelKey: "expedientes", href: "/legal/expediente", icon: "doc", module: "expedientes" },

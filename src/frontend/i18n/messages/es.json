@@ -710,6 +710,8 @@
         "leads": "Leads",
         "clients": "Clientes",
         "salesMetrics": "Métricas de ventas",
+        "legalMetrics": "Mis métricas",
+        "financeOverview": "Resumen",
         "payments": "Pagos y cobranza",
         "accounting": "Contabilidad",
         "aiCosts": "Costes IA",
@@ -764,26 +766,61 @@
       "pendingData": "Próximamente",
       "period": {
         "today": "Hoy",
+        "week": "Semana",
+        "month": "Mes",
         "d7": "7 días",
         "d30": "30 días",
         "custom": "Personalizado"
+      },
+      "filter": {
+        "from": "Desde",
+        "to": "Hasta",
+        "apply": "Aplicar"
       },
       "kpi": {
         "cases": "Casos activos",
         "services": "Servicios activos",
         "employees": "Empleados activos",
-        "revenue": "Ingresos del mes",
-        "conversion": "Conversión de leads"
+        "revenue": "Ingresos del período",
+        "conversion": "Conversión de leads",
+        "aiCost": "Coste IA del período",
+        "overdue": "Morosidad"
       },
       "card": {
         "casesByService": "Casos por servicio",
         "casesByPhase": "Casos por fase y estado",
+        "casesByStatus": "Casos por estado",
+        "casesByStage": "Casos por etapa",
+        "handoffs": "Traspasos entre roles",
         "revenue": "Ingresos del mes",
         "funnel": "Embudo de conversión",
         "validations": "Validaciones con abogado",
         "aiCost": "Costes IA vs presupuesto",
-        "activity": "Actividad reciente"
+        "activity": "Actividad reciente",
+        "activityPeriod": "Actividad del período"
       },
+      "stage": {
+        "sales": "Ventas",
+        "legal": "Legal",
+        "operations": "Operaciones",
+        "done": "Cerrado"
+      },
+      "status": {
+        "payment_pending": "Pago pendiente",
+        "active": "Activo",
+        "in_validation": "En validación",
+        "ready_for_delivery": "Listo para entrega",
+        "delivered": "Entregado",
+        "completed": "Completado",
+        "on_hold": "En pausa",
+        "cancelled": "Cancelado"
+      },
+      "funnelStage": {
+        "leads": "Leads",
+        "contacted": "Contactados",
+        "won": "Ganados"
+      },
+      "empty": "Sin datos en este período",
       "activityEmpty": {
         "title": "Aún no hay actividad en este período",
         "sub": "Cambia el rango o crea tu primer servicio para empezar a ver movimiento aquí."
@@ -1953,6 +1990,15 @@
         "pendExpediente": "Continuar ensamblado del expediente",
         "pendCorrections": "Atender correcciones del abogado"
       },
+      "metricas": {
+        "title": "Mis métricas",
+        "sub": "Tu desempeño legal en el período seleccionado.",
+        "kpiReceived": "Casos recibidos",
+        "kpiSentToFinance": "Enviados a finanzas",
+        "kpiActivity": "Tu actividad",
+        "cardCasesByStatus": "Mis casos por estado",
+        "empty": "Sin datos en este período"
+      },
       "porRevisar": {
         "title": "Por revisar",
         "sub": "{n, plural, one {# documento} other {# documentos}} en {m, plural, one {# caso} other {# casos}} esperan tu revisión",
@@ -1981,6 +2027,23 @@
       }
     },
     "finanzas": {
+      "resumen": {
+        "title": "Resumen de finanzas",
+        "sub": "Ingresos, morosidad y operaciones del período.",
+        "kpiIncome": "Recaudado del período",
+        "kpiOverdue": "Morosidad",
+        "kpiOverdueCases": "Casos en mora",
+        "kpiToPrint": "Por imprimir",
+        "cardBalance": "Balance (ingresos vs egresos)",
+        "cardByCategory": "Ingresos por categoría",
+        "cardAging": "Morosidad por antigüedad",
+        "agingRecent": "1–7 días",
+        "agingMid": "8–30 días",
+        "agingOld": "+30 días",
+        "balanceIncome": "Ingresos",
+        "balanceExpense": "Egresos",
+        "empty": "Sin datos en este período"
+      },
       "cobranza": {
         "title": "Cobranza",
         "manageColumns": "Gestionar columnas",

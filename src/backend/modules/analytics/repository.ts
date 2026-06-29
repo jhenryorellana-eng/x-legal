@@ -136,6 +136,195 @@ export async function aiCost(orgId: string, fromIso: string, toIso: string): Pro
   return { totalUsd: Number(row?.total_usd ?? 0), runs: Number(row?.runs ?? 0) };
 }
 
+/** Count org appointments in a time window (active statuses) — for "today". */
+export async function countAppointmentsInRange(
+  orgId: string,
+  fromIso: string,
+  toIso: string,
+): Promise<number> {
+  const client = createServiceClient();
+  const { count, error } = await client
+    .from("appointments")
+    .select("*", { count: "exact", head: true })
+    .eq("org_id", orgId)
+    .in("status", ["scheduled", "completed", "no_show"])
+    .gte("starts_at", fromIso)
+    .lt("starts_at", toIso);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+/** Uploaded docs awaiting review in the sales rep's cases. */
+export async function salesWaitingReview(orgId: string, userId: string): Promise<number> {
+  const client = createServiceClient();
+  const { data, error } = await client.rpc("analytics_sales_waiting_review", {
+    p_org: orgId,
+    p_user: userId,
+  });
+  if (error) throw error;
+  return Number(data ?? 0);
+}
+
+/** Contracts signed in [from, to) for the sales rep's cases. */
+export async function salesClosings(
+  orgId: string,
+  userId: string,
+  fromIso: string,
+  toIso: string,
+): Promise<number> {
+  const client = createServiceClient();
+  const { data, error } = await client.rpc("analytics_sales_closings", {
+    p_org: orgId,
+    p_user: userId,
+    p_from: fromIso,
+    p_to: toIso,
+  });
+  if (error) throw error;
+  return Number(data ?? 0);
+}
+
+/**
+ * Ledger income/expense totals + income-by-category for a period (org-scoped;
+ * ledger_entries has org_id directly). Bounded by the period's transactions, so
+ * the small status rows are summed here rather than via an RPC.
+ */
+export async function ledgerBreakdown(
+  orgId: string,
+  fromDate: string,
+  toDate: string,
+): Promise<{ incomeCents: number; expenseCents: number; byCategory: Breakdown[] }> {
+  const client = createServiceClient();
+  const { data, error } = await client
+    .from("ledger_entries")
+    .select("kind, category, amount_cents")
+    .eq("org_id", orgId)
+    .gte("entry_date", fromDate)
+    .lte("entry_date", toDate);
+  if (error) throw error;
+  let incomeCents = 0;
+  let expenseCents = 0;
+  const cat = new Map<string, number>();
+  for (const r of data ?? []) {
+    if (r.kind === "income") {
+      incomeCents += r.amount_cents;
+      cat.set(r.category, (cat.get(r.category) ?? 0) + r.amount_cents);
+    } else if (r.kind === "expense") {
+      expenseCents += r.amount_cents;
+    }
+  }
+  return {
+    incomeCents,
+    expenseCents,
+    byCategory: [...cat.entries()].map(([key, count]) => ({ key, count })),
+  };
+}
+
+/**
+ * Overdue installment amounts bucketed by age (1–7 / 8–30 / 30+ days late).
+ * Uses the SAME "overdue" definition as the finance KPI (status='overdue' OR
+ * pending-and-past-due), so the aging chart stays consistent with the morosidad
+ * KPI even before the daily cron flips pending→overdue. Bounded set; org-scoped
+ * via the nested embed (installments→payment_plans→contracts→cases).
+ */
+export async function overdueByAge(
+  orgId: string,
+  todayStr: string,
+): Promise<{ recent: number; mid: number; old: number }> {
+  const client = createServiceClient();
+  const { data, error } = await client
+    .from("installments")
+    .select("amount_cents, due_date, payment_plans!inner(contracts!inner(cases!inner(org_id)))")
+    .eq("payment_plans.contracts.cases.org_id", orgId)
+    .or(`status.eq.overdue,and(status.eq.pending,due_date.lt.${todayStr})`);
+  if (error) throw error;
+  const rows = (data ?? []) as unknown as Array<{ amount_cents: number; due_date: string }>;
+  const b = { recent: 0, mid: 0, old: 0 };
+  const todayMs = Date.parse(todayStr);
+  for (const r of rows) {
+    const days = Math.floor((todayMs - Date.parse(r.due_date)) / 86_400_000);
+    if (days <= 7) b.recent += r.amount_cents;
+    else if (days <= 30) b.mid += r.amount_cents;
+    else b.old += r.amount_cents;
+  }
+  return b;
+}
+
+/** Cases handed off INTO a stage to a given owner, in a window (handoffs in). */
+export async function countStageReceived(
+  userId: string,
+  toStage: string,
+  fromIso: string,
+  toIso: string,
+): Promise<number> {
+  const client = createServiceClient();
+  const { count, error } = await client
+    .from("case_stage_history")
+    .select("*", { count: "exact", head: true })
+    .eq("to_owner_id", userId)
+    .eq("to_stage", toStage)
+    .gte("created_at", fromIso)
+    .lt("created_at", toIso);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+/** Expedientes a paralegal sent to finance in a window (legal throughput out). */
+export async function countExpedientesSentToFinance(
+  userId: string,
+  fromIso: string,
+  toIso: string,
+): Promise<number> {
+  const client = createServiceClient();
+  const { count, error } = await client
+    .from("expedientes")
+    .select("*", { count: "exact", head: true })
+    .eq("sent_to_finance_by", userId)
+    .gte("sent_to_finance_at", fromIso)
+    .lt("sent_to_finance_at", toIso);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+/**
+ * A paralegal's own cases grouped by status, scoped to the LEGAL stage (her
+ * actual workload — excludes cases she nominally owns but are still pre-legal,
+ * e.g. sales-stage/payment_pending). Bounded by one owner's caseload, so the
+ * status-only rows are grouped here rather than via a dedicated RPC.
+ */
+export async function casesByStatusForLegalOwner(
+  orgId: string,
+  ownerId: string,
+): Promise<Breakdown[]> {
+  const client = createServiceClient();
+  const { data, error } = await client
+    .from("cases")
+    .select("status")
+    .eq("org_id", orgId)
+    .eq("current_owner_id", ownerId)
+    .eq("current_stage", "legal");
+  if (error) throw error;
+  const counts = new Map<string, number>();
+  for (const r of data ?? []) counts.set(r.status, (counts.get(r.status) ?? 0) + 1);
+  return [...counts.entries()].map(([key, count]) => ({ key, count }));
+}
+
+/** Case-timeline events a staff member authored in a window (own activity). */
+export async function countActorActivity(
+  userId: string,
+  fromIso: string,
+  toIso: string,
+): Promise<number> {
+  const client = createServiceClient();
+  const { count, error } = await client
+    .from("case_timeline")
+    .select("*", { count: "exact", head: true })
+    .eq("actor_user_id", userId)
+    .gte("occurred_at", fromIso)
+    .lt("occurred_at", toIso);
+  if (error) throw error;
+  return count ?? 0;
+}
+
 /** Count cases, optionally restricted to a creation window and/or open statuses. */
 export async function countCases(
   orgId: string,
