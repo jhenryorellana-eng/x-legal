@@ -132,6 +132,7 @@ export interface GenerationConfigVM {
   output_language: "es" | "en" | "both";
   // --- v1-grade engine (generic, configurable) ---
   web_search_enabled: boolean;
+  pre_mortem_enabled: boolean;
   web_search_max_uses: number;
   research_instructions: string | null;
   research_model: string | null;

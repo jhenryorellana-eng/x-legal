@@ -28,6 +28,7 @@ export type CaseTabId =
   | "expediente"
   | "validacion"
   | "fasesAnteriores"
+  | "preMortem"
   | "mensajes";
 
 export type StaffRoleVM = "sales" | "paralegal" | "finance" | "admin";
@@ -196,6 +197,30 @@ export interface PriorPhaseGroupVM {
   forms: PriorPhaseFormVM[];
 }
 
+/**
+ * Pre-Mortem (Etapa D) — AI risk analysis of a case: predicted asylum denial
+ * reasons + corrections. Codes resolved to a locale label by the RSC page.
+ */
+export interface PreMortemReasonVM {
+  /** Stable taxonomy code (DenialReasonCode). */
+  code: string;
+  /** Locale-resolved label for the code. */
+  label: string;
+  /** 0..1. */
+  probability: number;
+  rationale: string;
+  correction: string;
+}
+export interface PreMortemAssessmentVM {
+  id: string;
+  overallRisk: "low" | "medium" | "high" | null;
+  summary: string | null;
+  reasons: PreMortemReasonVM[];
+  model: string | null;
+  costUsd: number | null;
+  createdAt: string;
+}
+
 /** A single objective inside a cita of the appointment route (locale-resolved). */
 export interface RutaCitaObjectiveVM {
   id: string;
@@ -305,6 +330,8 @@ export interface CaseWorkspaceVM {
   expedientes: ExpedienteVM[];
   /** Read-only docs + forms from already-passed phases (Fases anteriores tab). */
   priorPhases?: PriorPhaseGroupVM[];
+  /** Pre-Mortem risk analyses (Etapa D). `enabled` gates the tab; assessments = history (newest first). */
+  preMortem?: { enabled: boolean; assessments: PreMortemAssessmentVM[] };
 }
 
 /** Client-facing view of a document translation (status + result). */
@@ -356,6 +383,14 @@ export interface CaseDetailActions {
   getFilledPdfUrl?: (input: {
     responseId: string;
   }) => Promise<{ ok: boolean; url?: string | null; error?: { code: string } }>;
+  /**
+   * Run a Pre-Mortem AI analysis on the case (Etapa D). Returns the new
+   * assessment on success. Optional — only case-detail surfaces inject it.
+   */
+  runPreMortem?: (input: {
+    caseId: string;
+    runId?: string;
+  }) => Promise<{ ok: boolean; assessment?: PreMortemAssessmentVM; error?: { code: string } }>;
   /**
    * Request a translation (ES→EN by default) of an uploaded document into a
    * court-ready English PDF. Enqueues a QStash job; poll with getTranslation.

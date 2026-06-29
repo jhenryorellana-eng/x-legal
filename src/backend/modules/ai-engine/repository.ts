@@ -22,6 +22,7 @@
 
 import { createServiceClient } from "@/backend/platform/supabase";
 import { logger } from "@/backend/platform/logger";
+import { toVectorLiteral } from "@/backend/platform/embeddings";
 import { DEFAULT_TZ } from "@/shared/period";
 import type { Tables, TablesInsert, TablesUpdate } from "@/shared/database.types";
 import type { ConfigSnapshot, ChunkProgress, SectionedProgress, DatasetItem } from "./domain";
@@ -989,4 +990,205 @@ export async function loadResolvedInputs(snapshot: ConfigSnapshot): Promise<{
   }
 
   return { documents, forms };
+}
+
+// ---------------------------------------------------------------------------
+// Semantic retrieval — match_dataset_items RPC (Etapa D / Pre-Mortem)
+// ---------------------------------------------------------------------------
+
+/**
+ * Calls the pgvector RPC `match_dataset_items` to retrieve the k most similar
+ * dataset items for the given embedding query vector.
+ *
+ * IMPORTANT: the client.rpc call MUST be inline (not destructured) — see project
+ * MEMORY: "NEVER desligar un método de su objeto".
+ *
+ * Degrades to [] on any error (caller falls back to lexical selectDatasetItems).
+ */
+export async function matchDatasetItems(
+  datasetId: string,
+  queryEmbedding: number[],
+  k: number,
+  filterTags: string[] | null,
+): Promise<Array<DatasetItem & { similarity: number }>> {
+  if (!datasetId || queryEmbedding.length === 0) return [];
+
+  const client = createServiceClient();
+  const { data, error } = await client.rpc("match_dataset_items", {
+    query_embedding: toVectorLiteral(queryEmbedding),
+    p_dataset_id: datasetId,
+    match_count: k,
+    filter_tags: filterTags ?? undefined,
+  });
+
+  if (error) {
+    logger.error({ err: error, datasetId, k }, "ai-engine: matchDatasetItems RPC failed");
+    return [];
+  }
+
+  return ((data as Array<Record<string, unknown>>) ?? []).map((row) => ({
+    id: row["id"] as string,
+    title: row["title"] as string,
+    content: (row["content"] as string | null) ?? null,
+    tags: (row["tags"] as string[]) ?? [],
+    outcome: (row["outcome"] as string | null) ?? null,
+    jurisdiction: (row["jurisdiction"] as string | null) ?? null,
+    token_count: (row["token_count"] as number | null) ?? 0,
+    meta: ((row["meta"] as import("./domain").DatasetItemMeta | undefined) ?? {}) as import("./domain").DatasetItemMeta,
+    created_at: new Date().toISOString(), // not returned by RPC; set to now as placeholder
+    similarity: row["similarity"] as number,
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Pre-Mortem assessments CRUD (Etapa D)
+// ---------------------------------------------------------------------------
+
+export type PreMortemAssessmentRow = Tables<"case_pre_mortem_assessments">;
+
+/**
+ * Inserts a new pre-mortem assessment row.
+ * Uses createServiceClient (service-role) — this call is server-side only.
+ */
+export async function insertPreMortemAssessment(
+  row: TablesInsert<"case_pre_mortem_assessments">,
+): Promise<{ id: string; created_at: string }> {
+  const client = createServiceClient();
+  const { data, error } = await client
+    .from("case_pre_mortem_assessments")
+    .insert(row)
+    .select("id, created_at")
+    .single();
+
+  if (error || !data) {
+    throw new Error(`ai-engine: insertPreMortemAssessment failed — ${error?.message}`);
+  }
+  return { id: data.id, created_at: data.created_at };
+}
+
+/**
+ * Lists all pre-mortem assessments for a case, newest first.
+ */
+export async function listPreMortemAssessmentsForCase(
+  caseId: string,
+): Promise<PreMortemAssessmentRow[]> {
+  const client = createServiceClient();
+  const { data, error } = await client
+    .from("case_pre_mortem_assessments")
+    .select("*")
+    .eq("case_id", caseId)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    logger.error({ err: error, caseId }, "ai-engine: listPreMortemAssessmentsForCase failed");
+    return [];
+  }
+  return data ?? [];
+}
+
+/**
+ * Returns true if any ai_generation_config with pre_mortem_enabled=true exists
+ * for a form_definition associated with the case (via the case's service).
+ *
+ * Join path: cases.service_id → service_phases.service_id → form_definitions.service_phase_id
+ *            → ai_generation_configs.form_definition_id (pre_mortem_enabled=true)
+ *
+ * Used by the UI gating tab (isPreMortemEnabledForCase in service layer).
+ */
+export async function findPreMortemEnabledConfigForCase(
+  caseId: string,
+): Promise<boolean> {
+  const client = createServiceClient();
+
+  // Step 1: get the service_id for the case
+  const { data: caseRow, error: caseErr } = await client
+    .from("cases")
+    .select("service_id")
+    .eq("id", caseId)
+    .maybeSingle();
+
+  if (caseErr || !caseRow) return false;
+
+  // Step 2: get service_phases for that service
+  const { data: phases, error: phaseErr } = await client
+    .from("service_phases")
+    .select("id")
+    .eq("service_id", caseRow.service_id);
+
+  if (phaseErr || !phases || phases.length === 0) return false;
+
+  const phaseIds = phases.map((p) => p.id);
+
+  // Step 3: get form_definitions for those phases
+  const { data: formDefs, error: fdErr } = await client
+    .from("form_definitions")
+    .select("id")
+    .in("service_phase_id", phaseIds);
+
+  if (fdErr || !formDefs || formDefs.length === 0) return false;
+
+  const formDefIds = formDefs.map((f) => f.id);
+
+  // Step 4: check if any of those form_definitions has pre_mortem_enabled=true
+  const { data: configs, error: cfgErr } = await client
+    .from("ai_generation_configs")
+    .select("form_definition_id")
+    .in("form_definition_id", formDefIds)
+    .eq("pre_mortem_enabled", true)
+    .limit(1);
+
+  if (cfgErr) return false;
+  return (configs ?? []).length > 0;
+}
+
+/**
+ * Finds the most recent completed run for a case whose form_definition has
+ * pre_mortem_enabled=true in ai_generation_configs.
+ *
+ * Returns null if no such run exists.
+ */
+export async function findLatestEligibleRunForPreMortem(
+  caseId: string,
+): Promise<{
+  runId: string;
+  outputText: string | null;
+  outputPath: string | null;
+  formDefinitionId: string;
+  model: string | null;
+} | null> {
+  const client = createServiceClient();
+
+  // Get all completed runs for this case (newest first)
+  const { data: runs, error: runErr } = await client
+    .from("ai_generation_runs")
+    .select("id, form_definition_id, output_text, output_path, model")
+    .eq("case_id", caseId)
+    .eq("status", "completed")
+    .order("created_at", { ascending: false });
+
+  if (runErr || !runs || runs.length === 0) return null;
+
+  // For each run check if its form_definition has pre_mortem_enabled=true. A run
+  // is eligible if it has the memo as text OR as a stored PDF (output_path) —
+  // the credible-fear engine stores the memo as a PDF, so text is extracted on
+  // demand (assessPreMortemRisk) when output_text is absent.
+  for (const run of runs) {
+    const { data: cfg } = await client
+      .from("ai_generation_configs")
+      .select("pre_mortem_enabled")
+      .eq("form_definition_id", run.form_definition_id)
+      .maybeSingle();
+
+    if (cfg?.pre_mortem_enabled && (run.output_text || run.output_path)) {
+      return {
+        runId: run.id,
+        outputText: run.output_text,
+        outputPath: run.output_path,
+        formDefinitionId: run.form_definition_id,
+        model: run.model,
+      };
+    }
+  }
+
+  return null;
 }

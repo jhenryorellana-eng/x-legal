@@ -46,6 +46,8 @@ export type Database = {
           content: string | null
           created_at: string
           dataset_id: string
+          /** pgvector(768) serialized as string, e.g. "[0.1,0.2,...]". Null until backfilled. */
+          embedding: string | null
           file_path: string | null
           id: string
           jurisdiction: string | null
@@ -61,6 +63,7 @@ export type Database = {
           content?: string | null
           created_at?: string
           dataset_id: string
+          embedding?: string | null
           file_path?: string | null
           id?: string
           jurisdiction?: string | null
@@ -76,6 +79,7 @@ export type Database = {
           content?: string | null
           created_at?: string
           dataset_id?: string
+          embedding?: string | null
           file_path?: string | null
           id?: string
           jurisdiction?: string | null
@@ -166,6 +170,8 @@ export type Database = {
           model: string
           output_format: string
           output_language: string
+          /** When true, the Pre-Mortem critic tab is enabled for runs of this form. */
+          pre_mortem_enabled: boolean
           research_instructions: string | null
           research_model: string | null
           rules_enabled: boolean
@@ -188,6 +194,7 @@ export type Database = {
           model?: string
           output_format?: string
           output_language?: string
+          pre_mortem_enabled?: boolean
           research_instructions?: string | null
           research_model?: string | null
           rules_enabled?: boolean
@@ -210,6 +217,7 @@ export type Database = {
           model?: string
           output_format?: string
           output_language?: string
+          pre_mortem_enabled?: boolean
           research_instructions?: string | null
           research_model?: string | null
           rules_enabled?: boolean
@@ -885,6 +893,83 @@ export type Database = {
             columns: ["service_phase_id"]
             isOneToOne: false
             referencedRelation: "service_phases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      case_pre_mortem_assessments: {
+        Row: {
+          case_id: string
+          cost_usd: number | null
+          created_at: string
+          created_by: string
+          form_definition_id: string | null
+          id: string
+          input_tokens: number | null
+          model: string | null
+          output_tokens: number | null
+          overall_risk: string
+          reasons: Json
+          run_id: string | null
+          summary: string
+        }
+        Insert: {
+          case_id: string
+          cost_usd?: number | null
+          created_at?: string
+          created_by: string
+          form_definition_id?: string | null
+          id?: string
+          input_tokens?: number | null
+          model?: string | null
+          output_tokens?: number | null
+          overall_risk: string
+          reasons?: Json
+          run_id?: string | null
+          summary: string
+        }
+        Update: {
+          case_id?: string
+          cost_usd?: number | null
+          created_at?: string
+          created_by?: string
+          form_definition_id?: string | null
+          id?: string
+          input_tokens?: number | null
+          model?: string | null
+          output_tokens?: number | null
+          overall_risk?: string
+          reasons?: Json
+          run_id?: string | null
+          summary?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_pre_mortem_assessments_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_pre_mortem_assessments_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_pre_mortem_assessments_form_definition_id_fkey"
+            columns: ["form_definition_id"]
+            isOneToOne: false
+            referencedRelation: "form_definitions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_pre_mortem_assessments_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "ai_generation_runs"
             referencedColumns: ["id"]
           },
         ]
@@ -4860,6 +4945,25 @@ export type Database = {
       is_client: { Args: never; Returns: boolean }
       is_conversation_participant: { Args: { conv: string }; Returns: boolean }
       is_staff: { Args: never; Returns: boolean }
+      match_dataset_items: {
+        Args: {
+          query_embedding: string
+          p_dataset_id: string
+          match_count?: number
+          filter_tags?: string[]
+        }
+        Returns: {
+          id: string
+          title: string
+          content: string | null
+          tags: string[]
+          outcome: string | null
+          jurisdiction: string | null
+          token_count: number | null
+          meta: Json
+          similarity: number
+        }[]
+      }
       merge_form_answers: {
         Args: { p_patch: Json; p_response_id: string }
         Returns: undefined

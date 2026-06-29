@@ -1748,6 +1748,7 @@ export async function updateGenerationConfig(
     output_format?: string;
     output_language?: string;
     web_search_enabled?: boolean;
+    pre_mortem_enabled?: boolean;
     web_search_max_uses?: number;
     research_instructions?: string | null;
     research_model?: string | null;
@@ -1806,6 +1807,7 @@ export async function updateGenerationConfig(
     output_format: input.output_format ?? "pdf",
     output_language: input.output_language ?? "en",
     web_search_enabled: input.web_search_enabled ?? false,
+    pre_mortem_enabled: input.pre_mortem_enabled ?? false,
     web_search_max_uses: input.web_search_max_uses ?? 5,
     research_instructions: input.research_instructions ?? null,
     research_model: input.research_model ?? null,

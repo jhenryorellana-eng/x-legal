@@ -27,6 +27,7 @@ import { GeneracionesTab } from "./tabs/generaciones-tab";
 import { ValidacionTab } from "./tabs/validacion-tab";
 import { ExpedienteTab } from "./tabs/expediente-tab";
 import { FasesAnterioresTab } from "./tabs/fases-anteriores-tab";
+import { PreMortemTab } from "./tabs/pre-mortem-tab";
 import { MensajesTab } from "./tabs/mensajes-tab";
 import { buildChatActions, type RawChatActions } from "@/frontend/features/messaging/build-chat-actions";
 import { stageLabel } from "./stage-label";
@@ -73,6 +74,7 @@ export function SharedCaseView({
     hasChat: !!chat,
     requiresLawyerValidation: vm.requiresLawyerValidation,
     hasPriorPhases: (vm.priorPhases?.length ?? 0) > 0,
+    hasPreMortem: vm.preMortem?.enabled ?? false,
   });
   const [active, setActive] = React.useState<CaseTabId>("resumen");
 
@@ -240,6 +242,7 @@ export function SharedCaseView({
         {active === "expediente" && <ExpedienteTab vm={vm} strings={strings} title={tb.expediente} />}
         {active === "validacion" && <ValidacionTab vm={vm} strings={strings} title={tb.validacion} />}
         {active === "fasesAnteriores" && <FasesAnterioresTab vm={vm} actions={actions} strings={strings} />}
+        {active === "preMortem" && <PreMortemTab vm={vm} actions={actions} strings={strings} />}
         {active === "historial" && <HistorialTab vm={vm} strings={strings} locale={locale} />}
         {active === "mensajes" && chat && (
           <MensajesTab loadThread={chat.loadThread} actions={chat.actions} locale={locale} />

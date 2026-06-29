@@ -43,7 +43,13 @@ import { logger } from "@/backend/platform/logger";
 import { writeAudit } from "@/backend/modules/audit";
 import { renderMarkdownToPdf, renderMarkdownToDocx } from "@/backend/platform/pdf";
 import { checkUrlReachable, keepReachable } from "@/backend/platform/url-utils";
+import { embedText } from "@/backend/platform/embeddings";
 import { DEFAULT_GENERATION_MODEL } from "@/shared/constants/ai-models";
+import {
+  isDenialReasonCode,
+  DENIAL_REASONS,
+  type DenialReasonCode,
+} from "@/shared/constants/denial-reasons";
 import { resolvePeriodRange, type Period } from "@/shared/period";
 
 import {
@@ -125,9 +131,15 @@ import {
   loadDatasetItems,
   loadResolvedInputs,
   findGenerationConfig,
+  matchDatasetItems,
+  insertPreMortemAssessment,
+  listPreMortemAssessmentsForCase,
+  findPreMortemEnabledConfigForCase,
+  findLatestEligibleRunForPreMortem,
   type GenerationRunRow,
   type DocumentExtractionRow as _DocumentExtractionRow,
   type DocumentTranslationRow,
+  type PreMortemAssessmentRow as _PreMortemAssessmentRow,
 } from "./repository";
 
 import {
@@ -150,7 +162,8 @@ export class AiEngineError extends Error {
       | "AI_RUN_INVALID_STATE"
       | "AI_PROVIDER_UNAVAILABLE"
       | "AI_OUTPUT_INVALID"
-      | "AI_DOCUMENT_TOO_LARGE",
+      | "AI_DOCUMENT_TOO_LARGE"
+      | "PREMORTEM_NO_ELIGIBLE_RUN",
     public readonly details?: unknown,
   ) {
     super(code);
@@ -3057,6 +3070,411 @@ export async function getAiCostsReport(
     queries: byDateDesc.slice(0, QUERY_TABLE_CAP).map(toReportQuery),
     topRuns: byCostDesc.slice(0, 5).map(toReportQuery),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Etapa D — Pre-Mortem: types + service layer
+// ---------------------------------------------------------------------------
+
+/**
+ * One predicted denial reason from the Pre-Mortem critic.
+ * `code` is a stable `DenialReasonCode` — the UI resolves labels via DENIAL_REASONS.
+ */
+export interface PreMortemReason {
+  code: DenialReasonCode;
+  probability: number; // 0..1
+  rationale: string;
+  correction: string;
+}
+
+/**
+ * A persisted Pre-Mortem assessment (returned from assessPreMortemRisk and listed
+ * by getPreMortemAssessmentsForCase).
+ */
+export interface PreMortemAssessment {
+  id: string;
+  caseId: string;
+  runId: string | null;
+  formDefinitionId: string | null;
+  overallRisk: "low" | "medium" | "high";
+  summary: string;
+  reasons: PreMortemReason[];
+  model: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: number | null;
+  createdBy: string;
+  createdAt: string;
+}
+
+/** Token budget for embedding query: truncate the memo to avoid Gemini limits. */
+const PREMORTEM_EMBED_MAX_CHARS = 8_000;
+/** Default model for the Pre-Mortem critic (high-quality analytical task). */
+const PREMORTEM_DEFAULT_MODEL = "claude-opus-4-7";
+/** Fallback if the default is not available. */
+const PREMORTEM_FALLBACK_MODEL = DEFAULT_GENERATION_MODEL; // claude-sonnet-4-6
+/** Top-k neighbours to retrieve from pgvector. */
+const PREMORTEM_RETRIEVAL_K = 8;
+/** Token budget for dataset injection into the critic prompt. */
+const PREMORTEM_DATASET_BUDGET = 30_000;
+
+/**
+ * Retrieves similar dataset items using semantic search (embedText + matchDatasetItems).
+ * Falls back to lexical `selectDatasetItems` when:
+ *   - the embedding call fails
+ *   - matchDatasetItems returns empty (no embeddings backfilled yet)
+ *   - datasetId is null
+ *
+ * @internal — exposed here for testability; used by assessPreMortemRisk.
+ */
+export async function retrieveDatasetItemsWithFallback(
+  datasetId: string | null,
+  queryText: string,
+): Promise<DatasetItem[]> {
+  if (!datasetId) return [];
+
+  // Attempt semantic retrieval
+  try {
+    const embedding = await embedText(queryText.slice(0, PREMORTEM_EMBED_MAX_CHARS));
+    const hits = await matchDatasetItems(datasetId, embedding, PREMORTEM_RETRIEVAL_K, null);
+    if (hits.length > 0) {
+      return hits.map((h) => ({
+        id: h.id,
+        title: h.title,
+        content: h.content,
+        tags: h.tags,
+        outcome: h.outcome,
+        jurisdiction: h.jurisdiction,
+        token_count: h.token_count ?? 0,
+        created_at: h.created_at,
+        meta: h.meta,
+      }));
+    }
+  } catch (err) {
+    logger.warn({ err, datasetId }, "ai-engine: semantic retrieval failed — falling back to lexical");
+  }
+
+  // Fallback: lexical selection
+  const allItems = await loadDatasetItems(datasetId);
+  const { selectedItems } = selectDatasetItems(allItems, {}, PREMORTEM_DATASET_BUDGET);
+  return selectedItems;
+}
+
+/**
+ * Resolves the memo text for a run: prefers `output_text`; falls back to
+ * transcribing the stored PDF (`output_path`, bucket "generated") via Gemini —
+ * the credible-fear engine stores the memo as a PDF, not plain text.
+ * @throws AiEngineError("PREMORTEM_NO_ELIGIBLE_RUN") if neither yields text.
+ */
+async function resolveMemoText(outputText: string | null, outputPath: string | null): Promise<string> {
+  if (outputText && outputText.trim().length > 0) return outputText;
+  if (outputPath) {
+    const extracted = await extractRawTextFromStorage({
+      bucket: "generated",
+      path: outputPath,
+      mimeType: "application/pdf",
+    });
+    if (extracted && extracted.trim().length > 0) return extracted;
+  }
+  throw new AiEngineError("PREMORTEM_NO_ELIGIBLE_RUN", {
+    reason: "Run has no usable memo text (output_text empty and output_path missing/unreadable)",
+  });
+}
+
+/**
+ * Runs the Pre-Mortem critic for a case and persists the assessment.
+ *
+ * Flow:
+ *  a. Resolve run (explicit runId or the latest eligible completed run).
+ *  b. Load output_text (the legal memo).
+ *  c. Retrieve similar precedents (semantic → lexical fallback).
+ *  d. Call Anthropic critic (masked PII, structured JSON output).
+ *  e. Persist to case_pre_mortem_assessments.
+ *  f. Return the typed PreMortemAssessment.
+ *
+ * @throws AiEngineError("PREMORTEM_NO_ELIGIBLE_RUN") if no completed eligible run found.
+ * @throws AiEngineError("AI_PROVIDER_UNAVAILABLE") on Anthropic failure.
+ */
+export async function assessPreMortemRisk(
+  actor: Actor,
+  input: { caseId: string; runId?: string },
+): Promise<PreMortemAssessment> {
+  await requireCaseAccess(actor, input.caseId);
+
+  // --- Step a/b: Resolve run + output_text ---
+  let outputText: string;
+  let resolvedRunId: string;
+  let formDefinitionId: string | null = null;
+  let configModel: string | null = null;
+  let datasetId: string | null = null;
+
+  if (input.runId) {
+    // Explicit run provided — look it up
+    const run = await findRunById(input.runId);
+    if (!run) {
+      throw new AiEngineError("PREMORTEM_NO_ELIGIBLE_RUN", {
+        reason: "Provided run not found",
+        runId: input.runId,
+      });
+    }
+    outputText = await resolveMemoText(run.output_text, run.output_path);
+    resolvedRunId = run.id;
+    formDefinitionId = run.form_definition_id ?? null;
+    // Load config for model + dataset_id
+    if (formDefinitionId) {
+      const cfg = await findGenerationConfig(formDefinitionId);
+      configModel = cfg?.model ?? null;
+      datasetId = cfg?.dataset_id ?? null;
+    }
+  } else {
+    // Auto-select: find the latest completed run whose form_definition has pre_mortem_enabled=true
+    const eligible = await findLatestEligibleRunForPreMortem(input.caseId);
+    if (!eligible) {
+      throw new AiEngineError("PREMORTEM_NO_ELIGIBLE_RUN", {
+        reason: "No completed run with pre_mortem_enabled=true found for this case",
+        caseId: input.caseId,
+      });
+    }
+    outputText = await resolveMemoText(eligible.outputText, eligible.outputPath);
+    resolvedRunId = eligible.runId;
+    formDefinitionId = eligible.formDefinitionId;
+    configModel = eligible.model;
+    // Load dataset_id from config
+    const cfg = await findGenerationConfig(formDefinitionId);
+    datasetId = cfg?.dataset_id ?? null;
+  }
+
+  // --- Step c: Retrieve similar precedents ---
+  const precedentItems = await retrieveDatasetItemsWithFallback(
+    datasetId,
+    outputText.slice(0, PREMORTEM_EMBED_MAX_CHARS),
+  );
+
+  // Build precedent context block for the prompt
+  const precedentBlock = precedentItems.length > 0
+    ? precedentItems
+        .map((item) => {
+          const outcome = item.outcome ? ` [${item.outcome}]` : "";
+          const jurisdiction = item.jurisdiction ? ` (${item.jurisdiction})` : "";
+          return `<precedent title="${item.title}"${outcome}${jurisdiction}>\n${item.content ?? "(sin contenido)"}\n</precedent>`;
+        })
+        .join("\n\n")
+    : "(No se encontraron precedentes similares en el dataset.)";
+
+  // Build the denial reason taxonomy block
+  const taxonomyBlock = Object.values(DENIAL_REASONS)
+    .map((r) => `- ${r.code}: ${r.label.en} — ${r.help.en}`)
+    .join("\n");
+
+  // --- Step d: Call Anthropic critic ---
+  const maskedMemo = maskPii(outputText);
+  const model = configModel ?? PREMORTEM_DEFAULT_MODEL;
+
+  const systemPrompt =
+    "You are a senior U.S. immigration attorney playing the role of a skeptical asylum adjudicator. " +
+    "Your task is to read a legal memorandum prepared for an asylum case and predict the most likely " +
+    "grounds on which an immigration judge or asylum officer would DENY the claim. " +
+    "You also have access to similar precedent cases (won and lost) for reference. " +
+    "Be critical and precise. Your goal is to surface real weaknesses so the legal team can fix them " +
+    "before filing — not to validate the memo. " +
+    "You MUST respond with valid JSON only, no prose before or after.";
+
+  const userMessage =
+    "## LEGAL MEMORANDUM (PII masked)\n\n" +
+    maskedMemo +
+    "\n\n---\n## SIMILAR PRECEDENTS\n\n" +
+    precedentBlock +
+    "\n\n---\n## DENIAL REASON TAXONOMY (use ONLY these codes)\n\n" +
+    taxonomyBlock +
+    '\n\n---\n## TASK\n\n' +
+    'Analyze the memorandum and predict the most likely denial grounds. ' +
+    'For each ground, assign a probability (0.0–1.0) and provide:\n' +
+    '  - rationale: why this ground is a risk based on the memo\n' +
+    '  - correction: what the legal team should add/fix to address it\n\n' +
+    'Respond ONLY with this JSON (no prose, no markdown fences):\n' +
+    '{\n' +
+    '  "overallRisk": "low" | "medium" | "high",\n' +
+    '  "summary": "<2-3 sentence overall assessment>",\n' +
+    '  "reasons": [\n' +
+    '    {\n' +
+    '      "code": "<DenialReasonCode from the taxonomy above>",\n' +
+    '      "probability": 0.0,\n' +
+    '      "rationale": "<why this is a risk>",\n' +
+    '      "correction": "<what to fix>"\n' +
+    '    }\n' +
+    '  ]\n' +
+    '}\n\n' +
+    'Include only reasons with probability > 0.10. Sort reasons by probability descending.';
+
+  const client = getAnthropicClient();
+  let criticText: string;
+  let usage: AnthropicUsage;
+  let modelUsed: string;
+
+  try {
+    const result = await callAnthropic(client, {
+      model,
+      system: systemPrompt,
+      user: userMessage,
+      maxTokens: 4096,
+      timeoutMs: 180_000,
+    });
+    criticText = result.text;
+    usage = result.usage;
+    modelUsed = result.model;
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    logger.error({ err, caseId: input.caseId, model }, "ai-engine: pre-mortem critic call failed");
+    // Retry once with fallback model if the primary model was rejected
+    if (model !== PREMORTEM_FALLBACK_MODEL && (errMsg.includes("400") || errMsg.includes("model"))) {
+      try {
+        const fallback = await callAnthropic(client, {
+          model: PREMORTEM_FALLBACK_MODEL,
+          system: systemPrompt,
+          user: userMessage,
+          maxTokens: 4096,
+          timeoutMs: 180_000,
+        });
+        criticText = fallback.text;
+        usage = fallback.usage;
+        modelUsed = fallback.model;
+      } catch (fallbackErr) {
+        throw new AiEngineError("AI_PROVIDER_UNAVAILABLE", fallbackErr);
+      }
+    } else {
+      throw new AiEngineError("AI_PROVIDER_UNAVAILABLE", err);
+    }
+  }
+
+  const costUsd = computeAnthropicCost(usage, modelUsed);
+
+  // --- Parse critic JSON (tolerant) ---
+  type CriticOutput = {
+    overallRisk?: string;
+    summary?: string;
+    reasons?: Array<{
+      code?: unknown;
+      probability?: unknown;
+      rationale?: unknown;
+      correction?: unknown;
+    }>;
+  };
+
+  let parsed: CriticOutput | null = null;
+  try {
+    parsed = stripFencesAndParse<CriticOutput>(criticText);
+  } catch {
+    // strip failed — leave as null, we'll use an empty result
+  }
+
+  // Validate overallRisk
+  const rawRisk = parsed?.overallRisk ?? "medium";
+  const overallRisk: "low" | "medium" | "high" =
+    rawRisk === "low" || rawRisk === "high" ? rawRisk : "medium";
+
+  const summary = typeof parsed?.summary === "string" && parsed.summary.trim()
+    ? parsed.summary.trim()
+    : "Pre-mortem analysis completed.";
+
+  // Filter + validate reasons
+  const reasons: PreMortemReason[] = (parsed?.reasons ?? [])
+    .filter((r): r is NonNullable<typeof r> => r != null && isDenialReasonCode(r.code))
+    .map((r) => ({
+      code: r.code as DenialReasonCode,
+      probability: typeof r.probability === "number"
+        ? Math.min(1, Math.max(0, r.probability))
+        : 0,
+      rationale: typeof r.rationale === "string" ? r.rationale : "",
+      correction: typeof r.correction === "string" ? r.correction : "",
+    }))
+    .sort((a, b) => b.probability - a.probability);
+
+  // --- Step e: Persist ---
+  const { id: assessmentId, created_at } = await insertPreMortemAssessment({
+    case_id: input.caseId,
+    run_id: resolvedRunId,
+    form_definition_id: formDefinitionId,
+    overall_risk: overallRisk,
+    summary,
+    reasons: reasons as unknown as import("@/shared/database.types").Json,
+    model: modelUsed,
+    input_tokens: usage.inputTokens,
+    output_tokens: usage.outputTokens,
+    cost_usd: costUsd,
+    created_by: actor.userId,
+  });
+
+  logger.info(
+    {
+      job: "assessPreMortemRisk",
+      caseId: input.caseId,
+      runId: resolvedRunId,
+      overallRisk,
+      reasonCount: reasons.length,
+      model: modelUsed,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      costUsd,
+    },
+    "ai-engine: pre-mortem assessment completed",
+  );
+
+  return {
+    id: assessmentId,
+    caseId: input.caseId,
+    runId: resolvedRunId,
+    formDefinitionId,
+    overallRisk,
+    summary,
+    reasons,
+    model: modelUsed,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    costUsd,
+    createdBy: actor.userId,
+    createdAt: created_at,
+  };
+}
+
+/**
+ * Lists the Pre-Mortem assessment history for a case (newest first).
+ * Requires case access.
+ */
+export async function getPreMortemAssessmentsForCase(
+  actor: Actor,
+  caseId: string,
+): Promise<PreMortemAssessment[]> {
+  await requireCaseAccess(actor, caseId);
+
+  const rows = await listPreMortemAssessmentsForCase(caseId);
+
+  return rows.map((row) => ({
+    id: row.id,
+    caseId: row.case_id,
+    runId: row.run_id,
+    formDefinitionId: row.form_definition_id,
+    overallRisk: (row.overall_risk as "low" | "medium" | "high") ?? "medium",
+    summary: row.summary,
+    reasons: (Array.isArray(row.reasons) ? row.reasons : []) as unknown as PreMortemReason[],
+    model: row.model,
+    inputTokens: row.input_tokens,
+    outputTokens: row.output_tokens,
+    costUsd: row.cost_usd,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+  }));
+}
+
+/**
+ * Returns true if the Pre-Mortem tab should be enabled for the given case —
+ * i.e. if any form_definition for the case's service has pre_mortem_enabled=true.
+ */
+export async function isPreMortemEnabledForCase(
+  actor: Actor,
+  caseId: string,
+): Promise<boolean> {
+  await requireCaseAccess(actor, caseId);
+  return findPreMortemEnabledConfigForCase(caseId);
 }
 
 // ---------------------------------------------------------------------------

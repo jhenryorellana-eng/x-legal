@@ -37,6 +37,7 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
     output_format: "pdf",
     output_language: "en",
     web_search_enabled: false,
+    pre_mortem_enabled: false,
     web_search_max_uses: 5,
     research_instructions: null,
     research_model: null,
@@ -149,6 +150,7 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
       output_format: cfg.output_format,
       output_language: cfg.output_language,
       web_search_enabled: cfg.web_search_enabled,
+      pre_mortem_enabled: cfg.pre_mortem_enabled,
       web_search_max_uses: cfg.web_search_max_uses,
       research_instructions: cfg.research_instructions,
       research_model: cfg.research_model,
@@ -325,6 +327,15 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
                 </div>
               </div>
             )}
+          </div>
+
+          {/* Pre-Mortem (risk analysis) */}
+          <div>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+              <Switch checked={cfg.pre_mortem_enabled} onCheckedChange={(c) => setCfg({ ...cfg, pre_mortem_enabled: c })} aria-label="Pre-Mortem (análisis de riesgo)" />
+              <span style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>Pre-Mortem (análisis de riesgo)</span>
+            </label>
+            <p style={{ margin: "4px 0 0 34px", fontSize: 12, color: "var(--ink-3)" }}>Habilita el análisis de IA de motivos de denegación para este documento.</p>
           </div>
 
           {/* Anti-invention rules */}

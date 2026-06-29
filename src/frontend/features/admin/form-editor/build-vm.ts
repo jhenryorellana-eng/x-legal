@@ -116,6 +116,7 @@ export function buildFormEditorVM(data: RawFormEditorData, datasets: RawDataset[
           output_format: (cfg.output_format as "pdf" | "docx" | "md") ?? "pdf",
           output_language: (cfg.output_language as "es" | "en" | "both") ?? "en",
           web_search_enabled: (cfg.web_search_enabled as boolean) ?? false,
+          pre_mortem_enabled: (cfg.pre_mortem_enabled as boolean) ?? false,
           web_search_max_uses: (cfg.web_search_max_uses as number) ?? 5,
           research_instructions: (cfg.research_instructions as string | null) ?? null,
           research_model: (cfg.research_model as string | null) ?? null,

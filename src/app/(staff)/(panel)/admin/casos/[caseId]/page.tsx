@@ -23,7 +23,7 @@ import {
 } from "@/backend/modules/cases";
 import { getPaymentPlanForCase } from "@/backend/modules/billing";
 import { getContractForCase } from "@/backend/modules/contracts";
-import { getRunsForCase } from "@/backend/modules/ai-engine";
+import { getRunsForCase, getPreMortemAssessmentsForCase, isPreMortemEnabledForCase } from "@/backend/modules/ai-engine";
 import { getValidationsForCase } from "@/backend/modules/integrations";
 import { getCaseExpedientes } from "@/backend/modules/expediente";
 import { getCaseRuta } from "@/backend/modules/scheduling";
@@ -42,7 +42,7 @@ import {
 } from "@/backend/modules/messaging/actions";
 import type { CaseWorkspaceVM } from "@/frontend/features/shared-case";
 import { buildCasosStrings } from "@/frontend/features/shared-case";
-import { mapStatusToPill, buildRutaVM } from "../view-helpers";
+import { mapStatusToPill, buildRutaVM, buildPreMortemVM } from "../view-helpers";
 import {
   reviewDocumentAction,
   setRequirementVisibilityAction,
@@ -64,6 +64,7 @@ import {
   transferCaseAction,
   assignCaseOwnerAction,
   setDocumentTranslationNotRequiredAction,
+  runPreMortemAction,
 } from "../actions";
 import { getFormResponsePdfUrlAction } from "./formularios/actions";
 
@@ -91,7 +92,7 @@ export default async function AdminCasoDetailPage({
   }
 
   // Parallel reads: documents, payment plan, contract, recent timeline.
-  const [documents, plan, contract, timeline, forms, runs, validationRows, expedienteRows, matrix, rutaRaw, priorPhasesRaw] = await Promise.all([
+  const [documents, plan, contract, timeline, forms, runs, validationRows, expedienteRows, matrix, rutaRaw, priorPhasesRaw, preMortemEnabled, preMortemRows] = await Promise.all([
     getCaseDocuments(actor, caseId).catch(() => []),
     getPaymentPlanForCase(actor, caseId).catch(() => null),
     getContractForCase(actor, caseId).catch(() => null),
@@ -107,6 +108,8 @@ export default async function AdminCasoDetailPage({
     getDocumentsMatrix(actor, caseId, { includeHidden: true }).catch(() => null),
     getCaseRuta(actor, caseId).catch(() => null),
     getPriorPhaseMaterials(actor, caseId).catch(() => ({ phases: [] })),
+    isPreMortemEnabledForCase(actor, caseId).catch(() => false),
+    getPreMortemAssessmentsForCase(actor, caseId).catch(() => []),
   ]);
 
   // Responsable / etapa (eje propio) — staff-only; degrade to null on failure.
@@ -222,6 +225,8 @@ export default async function AdminCasoDetailPage({
     forms: g.forms.map((f) => ({ ...f, label: resolveI18n(f.label, locale) })),
   }));
 
+  const preMortem = { enabled: preMortemEnabled, assessments: buildPreMortemVM(preMortemRows, locale) };
+
   const vm: CaseWorkspaceVM = {
     header: {
       caseId,
@@ -284,6 +289,7 @@ export default async function AdminCasoDetailPage({
     validations,
     expedientes,
     priorPhases,
+    preMortem,
   };
 
   return (
@@ -292,6 +298,7 @@ export default async function AdminCasoDetailPage({
       actions={{
         reviewDocument: reviewDocumentAction,
         getFilledPdfUrl: getFormResponsePdfUrlAction,
+        runPreMortem: runPreMortemAction,
         setRequirementVisibility: canManageDocs ? setRequirementVisibilityAction : undefined,
         advanceCasePhase: canAdvancePhase ? advanceCasePhaseAction : undefined,
         advanceCaseMilestone: canAdvancePhase ? advanceCaseMilestoneAction : undefined,

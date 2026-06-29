@@ -54,11 +54,15 @@ import {
   translateAnswerText,
   translateDocument,
   getDocumentTranslation,
+  assessPreMortemRisk,
   AiEngineError,
   type DocumentTranslationRow,
 } from "@/backend/modules/ai-engine";
 import { addCaseAppointment, SchedulingError } from "@/backend/modules/scheduling";
 import { classifySaveError } from "@/frontend/features/form-wizard/classify-save-error";
+import { getLocale } from "next-intl/server";
+import { type Locale } from "@/shared/i18n";
+import { buildPreMortemVM } from "./view-helpers";
 
 type Ok<T> = { ok: true } & T;
 type Err = { ok: false; error: { code: string; message?: string } };
@@ -79,6 +83,22 @@ function mapErr(err: unknown): Err {
   // H-5: log only the message, never the raw Error object (may carry PII in stack/metadata)
   console.error("[casos action] unexpected:", (err as Error)?.message ?? String(err));
   return { ok: false, error: { code: "internal" } };
+}
+
+// ---------------------------------------------------------------------------
+// runPreMortemAction — Etapa D: run an AI Pre-Mortem risk analysis on the case
+// ---------------------------------------------------------------------------
+
+export async function runPreMortemAction(input: { caseId: string; runId?: string }) {
+  try {
+    const actor = await requireActor();
+    const assessment = await assessPreMortemRisk(actor, { caseId: input.caseId, runId: input.runId });
+    const locale = (await getLocale()) as Locale;
+    const [vm] = buildPreMortemVM([assessment], locale === "en" ? "en" : "es");
+    return { ok: true as const, assessment: vm };
+  } catch (err) {
+    return mapErr(err);
+  }
 }
 
 // ---------------------------------------------------------------------------

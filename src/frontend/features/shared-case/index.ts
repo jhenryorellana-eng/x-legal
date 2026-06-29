@@ -27,4 +27,6 @@ export type {
   ExpedienteVM,
   StaffRoleVM,
   CaseTabId,
+  PreMortemAssessmentVM,
+  PreMortemReasonVM,
 } from "./types";

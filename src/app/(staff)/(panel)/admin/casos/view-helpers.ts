@@ -6,7 +6,9 @@
 import type { StatusKind } from "@/frontend/components/brand/status-pill";
 import { resolveI18n, type Locale } from "@/shared/i18n";
 import type { CaseRutaResult } from "@/backend/modules/scheduling";
-import type { CaseRutaVM } from "@/frontend/features/shared-case";
+import type { CaseRutaVM, PreMortemAssessmentVM } from "@/frontend/features/shared-case";
+import type { PreMortemAssessment } from "@/backend/modules/ai-engine";
+import { DENIAL_REASONS, isDenialReasonCode } from "@/shared/constants/denial-reasons";
 
 /** Maps a cases.status to its StatusPill kind (DOC-53 §2.2). "amber" → Chip. */
 export function mapStatusToPill(status: string): { kind: StatusKind | "amber" } {
@@ -59,6 +61,32 @@ export function buildRutaVM(ruta: CaseRutaResult | null, locale: Locale): CaseRu
       appointment: c.appointment,
     })),
   };
+}
+
+/**
+ * Maps ai-engine Pre-Mortem assessments into the locale-resolved VM the
+ * "Pre-Mortem" tab renders. Resolves each denial-reason code to its label via
+ * the taxonomy (DENIAL_REASONS) for the active locale.
+ */
+export function buildPreMortemVM(
+  assessments: PreMortemAssessment[],
+  locale: Locale,
+): PreMortemAssessmentVM[] {
+  return assessments.map((a) => ({
+    id: a.id,
+    overallRisk: a.overallRisk,
+    summary: a.summary,
+    reasons: a.reasons.map((r) => ({
+      code: r.code,
+      label: isDenialReasonCode(r.code) ? DENIAL_REASONS[r.code].label[locale] : r.code,
+      probability: r.probability,
+      rationale: r.rationale,
+      correction: r.correction,
+    })),
+    model: a.model,
+    costUsd: a.costUsd,
+    createdAt: a.createdAt,
+  }));
 }
 
 /** Coarse relative time ("hace 4 meses" / "4 months ago"). */

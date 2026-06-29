@@ -27,6 +27,8 @@ export interface BuildTabsInput {
   requiresLawyerValidation: boolean;
   /** The case has materials in already-passed phases → show the read-only tab. */
   hasPriorPhases: boolean;
+  /** The case's service has an ai_letter with Pre-Mortem enabled → show the tab. */
+  hasPreMortem: boolean;
 }
 
 export function buildTabs(input: BuildTabsInput): TabConfig[] {
@@ -45,6 +47,7 @@ export function buildTabs(input: BuildTabsInput): TabConfig[] {
     );
     if (input.requiresLawyerValidation) tabs.push({ id: "validacion", label: tb.validacion });
     if (input.hasPriorPhases) tabs.push({ id: "fasesAnteriores", label: tb.fasesAnteriores });
+    if (input.hasPreMortem) tabs.push({ id: "preMortem", label: tb.preMortem });
     tabs.push(
       { id: "citas", label: tb.citasRoute },
       { id: "traspaso", label: tb.traspaso },
@@ -67,6 +70,7 @@ export function buildTabs(input: BuildTabsInput): TabConfig[] {
     );
     if (input.requiresLawyerValidation) tabs.push({ id: "validacion", label: tb.validacion });
     if (input.hasPriorPhases) tabs.push({ id: "fasesAnteriores", label: tb.fasesAnteriores });
+    if (input.hasPreMortem) tabs.push({ id: "preMortem", label: tb.preMortem });
     tabs.push(
       { id: "traspaso", label: tb.traspaso },
       { id: "pagos", label: tb.pagos },

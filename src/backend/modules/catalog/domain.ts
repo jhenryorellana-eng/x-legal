@@ -531,6 +531,7 @@ export const GenerationConfigSchema = z.object({
   output_language: z.enum(["es", "en", "both"]).default("en"),
   // --- v1-grade engine (generic, configurable) ---
   web_search_enabled: z.boolean().default(false),
+  pre_mortem_enabled: z.boolean().default(false),
   web_search_max_uses: z.number().int().min(1).max(10).default(5),
   research_instructions: z.string().nullable().optional(),
   research_model: z.enum(GENERATION_MODELS).nullable().optional(),

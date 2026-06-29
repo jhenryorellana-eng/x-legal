@@ -1410,12 +1410,32 @@
           "expediente": "Expediente",
           "validacion": "Validación",
           "fasesAnteriores": "Fases anteriores",
+          "preMortem": "Pre-Mortem",
           "mensajes": "Mensajes"
         },
         "fasesAnteriores": {
           "sub": "Documentos y formularios de fases que el caso ya completó (solo lectura).",
           "empty": "Este caso aún no tiene fases anteriores con materiales.",
           "noPdf": "PDF no generado"
+        },
+        "preMortem": {
+          "title": "Pre-Mortem",
+          "sub": "Análisis de IA: motivos probables de denegación + correcciones, sobre el memo generado y precedentes similares.",
+          "analyze": "Analizar caso",
+          "analyzing": "Analizando…",
+          "empty": "Aún no hay análisis. Genera el memo y ejecuta el Pre-Mortem para anticipar debilidades antes de presentar.",
+          "overallRisk": "Riesgo general",
+          "riskLow": "Bajo",
+          "riskMedium": "Medio",
+          "riskHigh": "Alto",
+          "reasonsTitle": "Motivos de denegación previstos",
+          "probability": "Probabilidad",
+          "rationale": "Por qué",
+          "correction": "Corrección",
+          "noReasons": "El crítico no identificó motivos de denegación significativos.",
+          "historyTitle": "Análisis anteriores",
+          "error": "No se pudo ejecutar el Pre-Mortem.",
+          "done": "Análisis completado."
         },
         "progressTitle": "Progreso del expediente",
         "progressDocs": "Documentos",

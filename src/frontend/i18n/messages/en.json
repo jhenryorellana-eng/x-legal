@@ -1410,12 +1410,32 @@
           "expediente": "File",
           "validacion": "Validation",
           "fasesAnteriores": "Previous phases",
+          "preMortem": "Pre-Mortem",
           "mensajes": "Messages"
         },
         "fasesAnteriores": {
           "sub": "Documents and forms from phases the case has already completed (read-only).",
           "empty": "This case has no previous phases with materials yet.",
           "noPdf": "PDF not generated"
+        },
+        "preMortem": {
+          "title": "Pre-Mortem",
+          "sub": "AI analysis: likely denial reasons + corrections, over the generated memo and similar precedents.",
+          "analyze": "Analyze case",
+          "analyzing": "Analyzing…",
+          "empty": "No analysis yet. Generate the memo and run the Pre-Mortem to anticipate weaknesses before filing.",
+          "overallRisk": "Overall risk",
+          "riskLow": "Low",
+          "riskMedium": "Medium",
+          "riskHigh": "High",
+          "reasonsTitle": "Predicted denial reasons",
+          "probability": "Probability",
+          "rationale": "Why",
+          "correction": "Correction",
+          "noReasons": "The critic found no significant denial reasons.",
+          "historyTitle": "Previous analyses",
+          "error": "Could not run the Pre-Mortem.",
+          "done": "Analysis complete."
         },
         "progressTitle": "File progress",
         "progressDocs": "Documents",
