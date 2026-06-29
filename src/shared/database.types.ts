@@ -4514,6 +4514,8 @@ export type Database = {
           org_id: string
           position: number
           slug: string
+          translation_signature_path: string | null
+          translation_signer_name: string | null
           updated_at: string
         }
         Insert: {
@@ -4537,6 +4539,8 @@ export type Database = {
           org_id: string
           position?: number
           slug: string
+          translation_signature_path?: string | null
+          translation_signer_name?: string | null
           updated_at?: string
         }
         Update: {
@@ -4560,6 +4564,8 @@ export type Database = {
           org_id?: string
           position?: number
           slug?: string
+          translation_signature_path?: string | null
+          translation_signer_name?: string | null
           updated_at?: string
         }
         Relationships: [

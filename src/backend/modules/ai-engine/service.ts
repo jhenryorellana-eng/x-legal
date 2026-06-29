@@ -1605,7 +1605,7 @@ export async function executeTranslationJob(
   // hierarchy and spacing (headings, paragraphs, line breaks, tables) — the
   // document body is composed from this text (renderCertifiedTranslationPdf).
   const formatGuidance =
-    " Format the result as clean Markdown that mirrors the source layout so it reads clearly: use headings (#, ##) for the document title and section headers, separate paragraphs with a blank line, keep line breaks and lists, and use a Markdown table where the source is tabular. Do not add notes or commentary, and do not wrap the answer in a code fence.";
+    " Format the result as clean Markdown that mirrors the source so it reads clearly: use a level-1 heading (#) for the document's own title and level-2 headings (##) for sections; write a 2-column Markdown table (| Field | Detail |) for blocks of label-value data (registry fields such as 'Given names', 'Date of birth', 'Father', 'Registration number'), and prose paragraphs for narrative text; keep line breaks and lists. Preserve names, numbers and dates exactly. Do not add notes or commentary, and do not wrap the answer in a code fence.";
   const promptText =
     (direction === "es-en"
       ? "Translate the following document from Spanish to English. Be faithful and do not summarize. Preserve names, numbers and dates exactly. Mark illegible text as [illegible]."
@@ -1713,7 +1713,34 @@ export async function executeTranslationJob(
   try {
     const docMeta = await getCaseDocumentForAi(translation.case_document_id);
     const caseId = docMeta?.caseId ?? "unknown";
-    const pdfBytes = await renderCertifiedTranslationPdf(translatedText, direction);
+    // Per-service translator signature + name, stamped on the certification block.
+    // Best-effort: if the config/image read fails the translation still renders with
+    // an impersonal, unsigned certification (no row left in 'processing').
+    let signerName: string | null = null;
+    let signatureImageBytes: Uint8Array | null = null;
+    if (docMeta?.serviceId) {
+      try {
+        const { getServiceTranslationConfig } = await import("@/backend/modules/catalog");
+        const cfg = await getServiceTranslationConfig(docMeta.serviceId);
+        signerName = cfg.signerName;
+        signatureImageBytes = cfg.signatureImageBytes;
+      } catch (err) {
+        logger.warn(
+          { err, translationId: translation.id },
+          "translate-document: per-service signature config read failed",
+        );
+      }
+    }
+    const signedDate = new Date().toLocaleDateString(direction === "es-en" ? "en-GB" : "es-ES", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    });
+    const pdfBytes = await renderCertifiedTranslationPdf(translatedText, direction, {
+      signerName,
+      signatureImageBytes,
+      signedDate,
+    });
     const pdfPath = `case/${caseId}/translations/${translation.id}.pdf`;
     await uploadBytesToStorage("generated", pdfPath, pdfBytes, "application/pdf");
     translatedPdfPath = pdfPath;

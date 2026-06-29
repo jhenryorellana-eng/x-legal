@@ -2820,6 +2820,65 @@ export async function createFormPdfUploadUrl(
 }
 
 /**
+ * Builds a signed upload URL for a service's certified-translation signature image
+ * (catalog-assets, PNG/JPG). Path is server-generated; clients never control it.
+ *
+ * @api-id API-CAT-07 (assets upload-url, kind: translation_signature)
+ */
+export async function createTranslationSignatureUploadUrl(
+  actor: Actor,
+  input: { service_id: string; filename: string },
+): Promise<{ signedUrl: string; path: string }> {
+  can(actor, "catalog", "edit");
+  await assertServiceInOrg(actor, input.service_id);
+  const { createSignedUploadUrl } = await import("@/backend/platform/storage");
+  const ext = (input.filename.match(/\.(png|jpe?g)$/i)?.[1] ?? "png").toLowerCase();
+  const path = `services/${input.service_id}/translation-signature-${Date.now()}.${ext}`;
+  return createSignedUploadUrl("catalog-assets", path);
+}
+
+/** Short-lived signed download URL for a service's translation-signature image so
+ *  the wizard can preview it. Null when none is configured (or cross-org). */
+export async function getTranslationSignatureUrl(
+  actor: Actor,
+  serviceId: string,
+): Promise<string | null> {
+  can(actor, "catalog", "view");
+  const service = await repo.findServiceById(serviceId);
+  if (!service || service.org_id !== actor.orgId || !service.translation_signature_path) return null;
+  const { createSignedDownloadUrl } = await import("@/backend/platform/storage");
+  return createSignedDownloadUrl("catalog-assets", service.translation_signature_path);
+}
+
+/**
+ * Per-service certified-translation signing config (module-pub), read by the
+ * ai-engine translation job to stamp the generated PDF. Returns the signer name +
+ * the signature image bytes (downloaded from catalog-assets). Both null when
+ * unconfigured → the translation renders an impersonal certification (prior
+ * behavior). System read (no actor): the job runs server-side via the trusted
+ * service-role client; catalog reads are service-role.
+ */
+export async function getServiceTranslationConfig(
+  serviceId: string,
+): Promise<{ signerName: string | null; signatureImageBytes: Uint8Array | null }> {
+  const service = await repo.findServiceById(serviceId);
+  if (!service) return { signerName: null, signatureImageBytes: null };
+  let signatureImageBytes: Uint8Array | null = null;
+  if (service.translation_signature_path) {
+    try {
+      const { downloadBytesFromStorage } = await import("@/backend/platform/storage");
+      signatureImageBytes = await downloadBytesFromStorage(
+        "catalog-assets",
+        service.translation_signature_path,
+      );
+    } catch {
+      signatureImageBytes = null; // missing/unreadable image → render without stamp
+    }
+  }
+  return { signerName: service.translation_signer_name ?? null, signatureImageBytes };
+}
+
+/**
  * Returns a short-lived signed download URL for a version's source PDF, so the
  * editor's PDF viewer (pdfjs in the browser) can render it. The bucket is
  * private; this is the boundary-clean way to expose it to the client.

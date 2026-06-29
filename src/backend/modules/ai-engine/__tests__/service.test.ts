@@ -117,6 +117,10 @@ const mocks = vi.hoisted(() => {
     emitExtractionCompleted: vi.fn(),
   };
 
+  const catalog = {
+    getServiceTranslationConfig: vi.fn(),
+  };
+
   return {
     repo,
     authz,
@@ -131,8 +135,13 @@ const mocks = vi.hoisted(() => {
     audit,
     pdf,
     events,
+    catalog,
   };
 });
+
+vi.mock("@/backend/modules/catalog", () => ({
+  getServiceTranslationConfig: mocks.catalog.getServiceTranslationConfig,
+}));
 
 // ---------------------------------------------------------------------------
 // vi.mock() — module-level intercepts
@@ -651,6 +660,8 @@ describe("executeTranslationJob", () => {
     mocks.repo.getCaseDocumentForAi.mockReset();
     mocks.repo.completeTranslation.mockReset();
     mocks.pdf.renderCertifiedTranslationPdf.mockReset();
+    mocks.catalog.getServiceTranslationConfig.mockReset();
+    mocks.catalog.getServiceTranslationConfig.mockResolvedValue({ signerName: null, signatureImageBytes: null });
     mocks.storage.uploadBytesToStorage.mockReset();
   });
 
@@ -675,6 +686,7 @@ describe("executeTranslationJob", () => {
     expect(mocks.pdf.renderCertifiedTranslationPdf).toHaveBeenCalledWith(
       "Birth certificate of Juan Pérez.",
       "es-en",
+      expect.objectContaining({ signerName: null, signatureImageBytes: null }),
     );
     expect(mocks.storage.uploadBytesToStorage).toHaveBeenCalledWith(
       "generated",
@@ -709,10 +721,35 @@ describe("executeTranslationJob", () => {
     expect(mocks.pdf.renderCertifiedTranslationPdf).toHaveBeenCalledWith(
       "# Birth Certificate\n\nJuan Pérez.",
       "es-en",
+      expect.objectContaining({ signerName: null }),
     );
     expect(mocks.repo.completeTranslation).toHaveBeenCalledWith(
       TRANSLATION_ID,
       expect.objectContaining({ translatedText: "# Birth Certificate\n\nJuan Pérez." }),
+    );
+  });
+
+  it("stamps the per-service signer name + signature image when the service is configured", async () => {
+    mocks.repo.findTranslationById.mockResolvedValue(PROCESSING_ROW);
+    mocks.repo.getTranslationSource.mockResolvedValue({ rawText: "Acta.", storagePath: null, mimeType: null });
+    mocks.geminiModels.generateContent.mockResolvedValue({
+      candidates: [{ content: { parts: [{ text: "Birth certificate." }] } }],
+      usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 },
+    });
+    // The case's service carries a configured signature.
+    mocks.repo.getCaseDocumentForAi.mockResolvedValue({ id: CASE_DOC_ID, caseId: CASE_ID, serviceId: "svc-1" });
+    const sigBytes = new Uint8Array([137, 80, 78, 71]);
+    mocks.catalog.getServiceTranslationConfig.mockResolvedValue({ signerName: "Andrew Navarro", signatureImageBytes: sigBytes });
+    mocks.pdf.renderCertifiedTranslationPdf.mockResolvedValue(new Uint8Array([1]));
+    mocks.storage.uploadBytesToStorage.mockResolvedValue("ok");
+
+    await executeTranslationJob(JOB);
+
+    expect(mocks.catalog.getServiceTranslationConfig).toHaveBeenCalledWith("svc-1");
+    expect(mocks.pdf.renderCertifiedTranslationPdf).toHaveBeenCalledWith(
+      "Birth certificate.",
+      "es-en",
+      expect.objectContaining({ signerName: "Andrew Navarro", signatureImageBytes: sigBytes }),
     );
   });
 

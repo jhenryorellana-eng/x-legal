@@ -54,6 +54,8 @@ function makeService(overrides: Partial<Service> = {}): Service {
     contract_object_i18n: null,
     contract_scope_i18n: null,
     contract_special_clause_i18n: null,
+    translation_signer_name: null,
+    translation_signature_path: null,
     position: 0,
     ...overrides,
   };

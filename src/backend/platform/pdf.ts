@@ -508,103 +508,243 @@ export async function renderCoverPdf(data: CoverData): Promise<Uint8Array> {
 
 // ---------------------------------------------------------------------------
 // F. renderCertifiedTranslationPdf — certified translation document
-//    Title ("CERTIFIED ENGLISH TRANSLATION") + structured body (md→HTML) +
-//    translator's certification block. 100% local, no AI (DOC-42 §3.7 / §3.5).
+//    Global title (with the language direction) + the document's own title +
+//    structured body (md→HTML, label-value tables) + a translator's certification
+//    block carrying the configured signer name and a STAMPED signature image.
+//    100% local, no AI (DOC-42 §3.7 / §3.5). Modeled on the reference
+//    "Modelo de traduccion.pdf".
 // ---------------------------------------------------------------------------
 
 export type TranslationDirection = "es-en" | "en-es";
 
-/** Court-ready stylesheet for the translated document: generous line spacing, a
- *  centered title, justified body, and bordered tables for any tabular source. */
+/** Optional per-service translation signing config + auto date, threaded from the
+ *  job. `signatureImageBytes` (PNG/JPG) is STAMPED onto the PDF (mupdf cannot embed
+ *  inline `<img>`), located via the invisible `SIGNATURE_ANCHOR` sentinel. */
+export interface CertifiedTranslationOptions {
+  signerName?: string | null;
+  /** Pre-formatted date string for the "Date:" line (e.g. "29 June 2026"). */
+  signedDate?: string | null;
+  /** Encoded signature image to stamp on the signature line (PNG/JPG). */
+  signatureImageBytes?: Uint8Array | null;
+}
+
+/** Invisible sentinel placed at the signature spot; `stampSignatureOnPdf` finds it
+ *  via structured-text search and stamps the image there. Must not occur in any
+ *  translated text (so it's an opaque ASCII token, rendered white at 1pt). */
+export const SIGNATURE_ANCHOR = "XULPSIGNATUREANCHORX";
+
+/** Court-ready stylesheet for the translated document. The GLOBAL certified title
+ *  is the largest element; the document's own title (the body `h1` from the model)
+ *  is a step smaller, giving clear hierarchy. Tables render label-value blocks with
+ *  a distinct (bold) label column. The signature anchor is invisible (white, 1pt). */
 const TRANSLATION_STYLE = `<style>
-  body{font-family:'Times New Roman',serif;font-size:12pt;line-height:1.5;margin:72pt;color:#111}
-  h1{font-size:16pt;text-align:center;font-weight:bold;letter-spacing:0.5pt;margin:0 0 20pt;line-height:1.3}
-  h2{font-size:13.5pt;font-weight:bold;margin:16pt 0 7pt}
-  h3{font-size:12.5pt;font-weight:bold;margin:13pt 0 5pt}
-  h4{font-size:12pt;font-weight:bold;margin:11pt 0 5pt}
-  p{margin:0 0 10pt;text-align:justify}
-  ul,ol{margin:0 0 10pt 0;padding-left:22pt}
-  li{margin:0 0 5pt 0}
-  table{border-collapse:collapse;width:100%;margin:8pt 0 14pt}
-  th,td{border:0.75pt solid #555;padding:5pt 8pt;text-align:left;vertical-align:top}
-  th{background:#ececec;font-weight:bold}
+  body{font-family:'Times New Roman',serif;font-size:12pt;line-height:1.5;margin:64pt 72pt;color:#111}
+  .xt-global-title{font-size:18pt;text-align:center;font-weight:bold;letter-spacing:1pt;text-transform:uppercase;margin:0 0 6pt;line-height:1.25}
+  .xt-global-rule{width:44%;margin:0 auto 18pt;border:none;border-top:1.4pt solid #111}
+  h1{font-size:14pt;text-align:center;font-weight:bold;margin:0 0 14pt;line-height:1.3}
+  h2{font-size:12.5pt;font-weight:bold;letter-spacing:.3pt;margin:15pt 0 6pt}
+  h3{font-size:12pt;font-weight:bold;margin:12pt 0 5pt}
+  h4{font-size:11.5pt;font-weight:bold;margin:10pt 0 4pt}
+  p{margin:0 0 9pt;text-align:justify}
+  ul,ol{margin:0 0 9pt 0;padding-left:22pt}
+  li{margin:0 0 4pt 0}
+  /* mupdf honors ABSOLUTE column widths (pt) but ignores % / table-layout:fixed
+     when a value is long → it collapses the label column and text overlaps. A
+     fixed-pt first column keeps label-value tables (the reference's layout) clean. */
+  table{border-collapse:collapse;width:100%;margin:7pt 0 13pt;table-layout:fixed}
+  th,td{border:0.5pt solid #bbb;padding:4pt 8pt;text-align:left;vertical-align:top;word-break:break-word}
+  th{background:#eee;font-weight:bold}
+  th:first-child,td:first-child{font-weight:bold;width:170pt}
   a{color:#111;text-decoration:none}
+  .xt-cert-heading{font-size:12.5pt;font-weight:bold;letter-spacing:.3pt;margin:26pt 0 0;border-top:1pt solid #999;padding-top:12pt}
+  .xt-cert-stmt{text-align:justify;margin:8pt 0 16pt}
+  .xt-sig-label{font-weight:bold}
+  .xt-sig-anchor{color:#fff;font-size:1pt}
+  .xt-sig-line{margin:16pt 0 0}
+  .xt-sig-space{height:52pt}
+  .xt-sig-date{margin:0;font-size:11pt}
 </style>`;
 
 /**
- * Composes the full HTML of a certified translation: a centered title, the
- * already-rendered translated `bodyHtml`, and the translator's certification
- * block (statement + signature / date / printed-name lines for a human to sign).
- * Pure + synchronous so it can be unit-tested without the WASM renderer. All
- * fixed strings are in the TARGET language (English for es-en, Spanish for en-es).
+ * Composes the full HTML of a certified translation: the GLOBAL title (stating the
+ * language direction), the already-rendered translated `bodyHtml` (which begins with
+ * the document's own title as an `h1`), and the translator's certification block
+ * ("I, {name}, hereby certify …" + a "Signature:" line with the invisible stamp
+ * anchor + "Date:"). Pure + synchronous so it can be unit-tested without the WASM
+ * renderer. All fixed strings are in the TARGET language.
  *
  * @param bodyHtml HTML already rendered by markdown-it with `html:false` (so any
- *   HTML in the source is escaped). It is injected VERBATIM into the document —
- *   pass only markdown-it (or equivalently sanitized) output, never arbitrary
- *   user/model HTML. The output is rendered to PDF by mupdf (not a browser), so
- *   XSS does not apply, but this invariant keeps the function misuse-resistant.
+ *   HTML in the source is escaped). Injected VERBATIM — pass only markdown-it (or
+ *   equivalently sanitized) output, never arbitrary user/model HTML. The output is
+ *   rendered to PDF by mupdf (not a browser), so XSS does not apply, but this
+ *   invariant keeps the function misuse-resistant.
  */
-export function buildCertifiedTranslationHtml(bodyHtml: string, direction: TranslationDirection): string {
+export function buildCertifiedTranslationHtml(
+  bodyHtml: string,
+  direction: TranslationDirection,
+  opts: CertifiedTranslationOptions = {},
+): string {
   const toEnglish = direction === "es-en"; // the translated output is English
   const esc = (s: string) =>
     String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string));
 
+  const name = opts.signerName?.trim() || "";
+  const date = opts.signedDate?.trim() || "";
+
   const t = toEnglish
     ? {
-        title: "CERTIFIED ENGLISH TRANSLATION",
-        certHeading: "TRANSLATOR'S CERTIFICATION",
-        certStmt:
-          "I certify that I am competent to translate from Spanish to English and that the above is a true and accurate translation of the attached document to the best of my knowledge and ability.",
-        signature: "Signature",
-        date: "Date",
-        name: "Printed name",
+        globalTitle: "CERTIFIED TRANSLATION FROM SPANISH TO ENGLISH",
+        certHeading: "TRANSLATION CERTIFICATION",
+        certStmt: name
+          ? `I, ${esc(name)}, hereby certify that I translated the attached document from Spanish into English and that, to the best of my ability, it is a true and correct translation. I further certify that I am competent in both Spanish and English to render and certify such translation.`
+          : "I hereby certify that the attached document was translated from Spanish into English and that, to the best of my ability, it is a true and correct translation, rendered by a person competent in both Spanish and English.",
+        signature: "Signature:",
+        date: "Date:",
       }
     : {
-        title: "TRADUCCIÓN CERTIFICADA AL ESPAÑOL",
-        certHeading: "CERTIFICACIÓN DEL TRADUCTOR",
-        certStmt:
-          "Certifico que soy competente para traducir del inglés al español y que la anterior es una traducción verídica y exacta del documento adjunto según mi leal saber y entender.",
-        signature: "Firma",
-        date: "Fecha",
-        name: "Nombre en letra de imprenta",
+        globalTitle: "TRADUCCIÓN CERTIFICADA DEL INGLÉS AL ESPAÑOL",
+        certHeading: "CERTIFICACIÓN DE LA TRADUCCIÓN",
+        certStmt: name
+          ? `Yo, ${esc(name)}, certifico que traduje el documento adjunto del inglés al español y que, según mi leal saber y entender, es una traducción fiel y correcta. Certifico además que soy competente en ambos idiomas (inglés y español) para realizar y certificar dicha traducción.`
+          : "Certifico que el documento adjunto fue traducido del inglés al español y que, según mi leal saber y entender, es una traducción fiel y correcta, realizada por una persona competente en ambos idiomas (inglés y español).",
+        signature: "Firma:",
+        date: "Fecha:",
       };
-
-  const sigLine = (label: string, width: string) =>
-    `<div style="border-bottom:1pt solid #111;width:${width};height:24pt;margin-top:18pt"></div>` +
-    `<div style="font-size:9.5pt;color:#333;margin-top:2pt">${esc(label)}</div>`;
 
   return (
     `<!DOCTYPE html><html><head>${TRANSLATION_STYLE}</head><body>` +
-    `<h1>${esc(t.title)}</h1>` +
+    `<div class="xt-global-title">${esc(t.globalTitle)}</div>` +
+    `<hr class="xt-global-rule"/>` +
     bodyHtml +
-    `<div style="border-top:1pt solid #999;margin-top:26pt"></div>` +
-    `<div style="font-size:12.5pt;font-weight:bold;margin-top:18pt">${esc(t.certHeading)}</div>` +
-    `<p style="text-align:justify;margin:8pt 0 14pt">${esc(t.certStmt)}</p>` +
-    sigLine(t.signature, "62%") +
-    sigLine(t.date, "40%") +
-    sigLine(t.name, "62%") +
+    `<div class="xt-cert-heading">${esc(t.certHeading)}</div>` +
+    `<p class="xt-cert-stmt">${t.certStmt}</p>` +
+    `<p class="xt-sig-line"><span class="xt-sig-label">${esc(t.signature)}</span> <span class="xt-sig-anchor">${SIGNATURE_ANCHOR}</span></p>` +
+    `<div class="xt-sig-space"></div>` +
+    `<p class="xt-sig-date">${esc(t.date)} ${esc(date)}</p>` +
     `</body></html>`
   );
 }
 
+/** [x0,y0,x1,y1] top-left-origin rect from a mupdf search quad (8-number array or
+ *  `{ul,lr}` object across mupdf versions). Returns null if unrecognized. */
+function quadToRect(
+  quad: unknown,
+): { x0: number; y0: number; x1: number; y1: number } | null {
+  if (Array.isArray(quad) && typeof quad[0] === "number") {
+    const q = quad as number[];
+    if (q.length >= 8) {
+      return {
+        x0: Math.min(q[0], q[4]),
+        y0: Math.min(q[1], q[3]),
+        x1: Math.max(q[2], q[6]),
+        y1: Math.max(q[5], q[7]),
+      };
+    }
+    if (q.length === 4) return { x0: q[0], y0: q[1], x1: q[2], y1: q[3] };
+  }
+  const o = quad as { ul?: { x: number; y: number }; lr?: { x: number; y: number } };
+  if (o?.ul && o?.lr) return { x0: o.ul.x, y0: o.ul.y, x1: o.lr.x, y1: o.lr.y };
+  return null;
+}
+
 /**
- * Renders the translated text (Markdown) to a certified-translation PDF. The
- * Markdown body is converted to HTML (preserving headings, paragraphs, line
- * breaks, lists and tables → readable hierarchy), then wrapped with the title +
- * certification block. mupdf's html→pdf layout paginates long bodies on its own.
+ * Stamps a signature image onto a generated certified-translation PDF. mupdf's
+ * HTML engine cannot embed inline `<img>` (confirmed), so the document carries an
+ * invisible `SIGNATURE_ANCHOR` sentinel at the signature spot; we locate it via
+ * structured-text search and draw the image just to the right of it, extending down
+ * into the reserved space, with `device.fillImage` while re-writing each page.
+ *
+ * Robust: a missing/invalid image or a missing anchor returns the PDF unchanged.
+ * Geometry (page-space = top-left origin; positive `d` = upright) verified empirically.
+ */
+export async function stampSignatureOnPdf(
+  pdfBytes: Uint8Array,
+  imageBytes: Uint8Array,
+  opts: { anchor?: string; maxWidthPt?: number; maxHeightPt?: number; gapPt?: number } = {},
+): Promise<Uint8Array> {
+  const anchor = opts.anchor ?? SIGNATURE_ANCHOR;
+  const mupdf = await import("mupdf");
+
+  const M = mupdf as any;
+  const src = M.Document.openDocument(pdfBytes, "application/pdf");
+  try {
+    let image: { getWidth(): number; getHeight(): number };
+    try {
+      image = new M.Image(imageBytes);
+    } catch {
+      return pdfBytes; // undecodable image → leave the PDF as-is
+    }
+    const iw = image.getWidth();
+    const ih = image.getHeight();
+    if (!iw || !ih) return pdfBytes;
+    const maxW = opts.maxWidthPt ?? 165;
+    const maxH = opts.maxHeightPt ?? 48;
+    let drawW = maxW;
+    let drawH = (maxW * ih) / iw;
+    if (drawH > maxH) {
+      drawH = maxH;
+      drawW = (maxH * iw) / ih;
+    }
+
+    // Locate the anchor (page index + position) via structured-text search.
+    const n: number = src.countPages();
+    let target: { page: number; x: number; y: number } | null = null;
+    for (let i = 0; i < n && !target; i++) {
+      const stext = src.loadPage(i).toStructuredText("preserve-whitespace");
+      let hits: unknown;
+      try {
+        hits = stext.search(anchor);
+      } catch {
+        hits = null;
+      }
+      if (Array.isArray(hits) && hits.length > 0) {
+        let q: unknown = hits[0];
+        while (Array.isArray(q) && Array.isArray((q as unknown[])[0])) q = (q as unknown[])[0];
+        const rect = quadToRect(q);
+        if (rect) target = { page: i, x: rect.x1 + (opts.gapPt ?? 4), y: rect.y0 - 2 };
+      }
+    }
+    if (!target) return pdfBytes; // anchor not found → no stamp
+
+    const buf = new M.Buffer();
+    const writer = new M.DocumentWriter(buf, "pdf", "");
+    for (let i = 0; i < n; i++) {
+      const page = src.loadPage(i);
+      const dev = writer.beginPage(page.getBounds());
+      page.run(dev, M.Matrix.identity);
+      if (i === target.page) {
+        // ctm maps the image's unit square to [x, y, drawW, drawH] in page space.
+        dev.fillImage(image, [drawW, 0, 0, drawH, target.x, target.y], 1);
+      }
+      writer.endPage();
+    }
+    writer.close();
+    return buf.asUint8Array() as Uint8Array;
+  } finally {
+    try { src.destroy?.(); } catch { /* freed */ }
+  }
+}
+
+/**
+ * Renders the translated text (Markdown) to a certified-translation PDF: md→HTML
+ * (markdown-it, `breaks:true` to keep line structure, `html:false` for safety),
+ * wrapped with the global title + the document body + the certification block,
+ * then — if a signature image is provided — STAMPED with it. mupdf paginates long
+ * bodies on its own.
  */
 export async function renderCertifiedTranslationPdf(
   bodyMarkdown: string,
   direction: TranslationDirection,
+  opts: CertifiedTranslationOptions = {},
 ): Promise<Uint8Array> {
   const MarkdownIt = (await import("markdown-it")).default;
-  // `breaks: true` keeps the document's line structure: a single newline becomes
-  // a <br> instead of collapsing to a space, so field lists ("Full name: …\nDate
-  // of birth: …") render one per line as in the source — the line breaks the
-  // translated document must preserve. `html: false` keeps the body injection safe.
   const mdi = new MarkdownIt({ html: false, linkify: false, breaks: true });
   const bodyHtml = mdi.render(bodyMarkdown);
-  return htmlToPdf(buildCertifiedTranslationHtml(bodyHtml, direction));
+  const pdfBytes = await htmlToPdf(buildCertifiedTranslationHtml(bodyHtml, direction, opts));
+  if (opts.signatureImageBytes && opts.signatureImageBytes.length > 0) {
+    return stampSignatureOnPdf(pdfBytes, opts.signatureImageBytes);
+  }
+  return pdfBytes;
 }
 
 // ---------------------------------------------------------------------------

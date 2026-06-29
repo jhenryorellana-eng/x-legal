@@ -20,6 +20,8 @@ export {
   getCatalogFirstPhase,
   getCatalogFirstMilestone,
   isServiceContractable,
+  // Per-service certified-translation signing config (consumed by ai-engine job)
+  getServiceTranslationConfig,
   // Form runtime reads (consumed by cases/form-runtime — API-CASE-16 through API-CASE-19)
   listQuestionGroups,
   listQuestions,

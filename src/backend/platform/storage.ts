@@ -49,7 +49,7 @@ const ALLOWED_EXTENSIONS: Record<BucketContext, string[]> = {
   contracts: ["pdf", "jpg", "jpeg", "png"],
   "payment-proofs": ["pdf", "jpg", "jpeg", "png", "webp"],
   avatars: ["jpg", "jpeg", "png", "webp"],
-  "catalog-assets": ["pdf"],
+  "catalog-assets": ["pdf", "png", "jpg", "jpeg"],
   "chat-attachments": ["pdf", "jpg", "jpeg", "png", "heic", "webp"],
 };
 

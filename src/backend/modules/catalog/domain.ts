@@ -87,6 +87,10 @@ export const ServiceSchema = z.object({
   contract_object_i18n: I18nTextDraftSchema.nullable(),
   contract_scope_i18n: I18nStringListDraftSchema.nullable(),
   contract_special_clause_i18n: I18nTextDraftSchema.nullable(),
+  // Per-service certified-translation signing (migration 0057): the signer name +
+  // a signature image (catalog-assets path) stamped on the generated translation PDF.
+  translation_signer_name: z.string().nullable(),
+  translation_signature_path: z.string().nullable(),
   position: z.number().int().default(0),
 });
 export type Service = z.infer<typeof ServiceSchema>;
@@ -119,6 +123,8 @@ export const UpdateServiceDtoSchema = z.object({
   contract_object_i18n: I18nTextDraftSchema.nullable().optional(),
   contract_scope_i18n: I18nStringListDraftSchema.nullable().optional(),
   contract_special_clause_i18n: I18nTextDraftSchema.nullable().optional(),
+  translation_signer_name: z.string().max(160).nullable().optional(),
+  translation_signature_path: z.string().nullable().optional(),
   position: z.number().int().optional(),
 });
 export type UpdateServiceDto = z.infer<typeof UpdateServiceDtoSchema>;

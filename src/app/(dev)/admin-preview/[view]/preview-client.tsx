@@ -118,6 +118,8 @@ export function PreviewClient({ view }: { view: string }) {
           actions={{
             createService: async () => ({ success: true, data: { id: "new" } }),
             updateService: noopRes,
+            uploadSignatureUrl: async () => ({ success: true, data: { signedUrl: "#", path: "mock/sig.png" } }),
+            getSignaturePreviewUrl: async () => ({ success: true, data: null }),
             upsertPlan: noopRes,
             createPhase: async () => ({ success: true, data: { id: "p1" } }),
             updatePhase: noopRes,

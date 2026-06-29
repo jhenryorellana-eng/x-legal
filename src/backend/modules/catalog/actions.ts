@@ -458,6 +458,33 @@ export async function createFormPdfUploadUrlAction(
   }
 }
 
+/**
+ * Upload-url for a service's certified-translation signature image (PNG/JPG → catalog-assets).
+ * @api-id API-CAT-07 (translation_signature)
+ */
+export async function createTranslationSignatureUploadUrlAction(
+  input: Parameters<typeof svc.createTranslationSignatureUploadUrl>[1],
+): Promise<ActionResult<Awaited<ReturnType<typeof svc.createTranslationSignatureUploadUrl>>>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.createTranslationSignatureUploadUrl(actor, input));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Signed download URL for a service's translation-signature image (wizard preview). */
+export async function getTranslationSignatureUrlAction(
+  serviceId: string,
+): Promise<ActionResult<string | null>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.getTranslationSignatureUrl(actor, serviceId));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 /** @api-id API-CAT-04 — signed download URL for the version PDF (editor viewer) */
 export async function getVersionPdfUrlAction(
   versionId: string,

@@ -62,6 +62,8 @@ export default async function ServiceDetailPage({
     contract_object: i18n(tree.service.contract_object_i18n),
     contract_scope: i18nList(tree.service.contract_scope_i18n),
     contract_special: i18n(tree.service.contract_special_clause_i18n),
+    translation_signer_name: tree.service.translation_signer_name ?? null,
+    translation_signature_path: tree.service.translation_signature_path ?? null,
   };
 
   const plans: WizardPlan[] = (["self", "with_lawyer"] as const).map((kind) => {

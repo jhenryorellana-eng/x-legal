@@ -31,6 +31,8 @@ import {
   updateFormDefinitionAction,
   proposeExtractionSchemaAction,
   validateExtractionSchemaAction,
+  createTranslationSignatureUploadUrlAction,
+  getTranslationSignatureUrlAction,
 } from "@/backend/modules/catalog/actions";
 
 type Res<T> = { success: boolean; data?: T; error?: { code: string; message: string } };
@@ -43,6 +45,23 @@ export async function createServiceUi(input: Record<string, unknown>): Promise<R
 export async function updateServiceUi(id: string, patch: Record<string, unknown>): Promise<Res<unknown>> {
   const r = await updateServiceAction(id, patch as Parameters<typeof updateServiceAction>[1]);
   return r.success ? { success: true, data: r.data } : { success: false, error: r.error };
+}
+
+/** Signed upload URL for a service's translation-signature image (PNG/JPG). */
+export async function uploadTranslationSignatureUrlUi(
+  serviceId: string,
+  filename: string,
+): Promise<Res<{ signedUrl: string; path: string }>> {
+  const r = await createTranslationSignatureUploadUrlAction({ service_id: serviceId, filename });
+  return r.success
+    ? { success: true, data: r.data as { signedUrl: string; path: string } }
+    : { success: false, error: r.error };
+}
+
+/** Signed download URL to preview a service's stored translation signature (or null). */
+export async function signaturePreviewUrlUi(serviceId: string): Promise<Res<string | null>> {
+  const r = await getTranslationSignatureUrlAction(serviceId);
+  return r.success ? { success: true, data: r.data ?? null } : { success: false, error: r.error };
 }
 
 export async function setServiceActiveUi(id: string, active: boolean): Promise<Res<unknown>> {

@@ -136,6 +136,9 @@ export interface WizardService {
   contract_object: I18nValue;
   contract_scope: I18nValue;
   contract_special: I18nValue;
+  /** Per-service certified-translation signing (migration 0057). */
+  translation_signer_name: string | null;
+  translation_signature_path: string | null;
 }
 
 export interface PublicationIssueVM {
@@ -156,6 +159,11 @@ export interface CatalogWizardProps {
   actions: {
     createService: (input: Record<string, unknown>) => Promise<ActionRes<{ id: string }>>;
     updateService: (id: string, patch: Record<string, unknown>) => Promise<ActionRes<unknown>>;
+    uploadSignatureUrl: (
+      serviceId: string,
+      filename: string,
+    ) => Promise<ActionRes<{ signedUrl: string; path: string }>>;
+    getSignaturePreviewUrl: (serviceId: string) => Promise<ActionRes<string | null>>;
     upsertPlan: (input: Record<string, unknown>) => Promise<ActionRes<unknown>>;
     createPhase: (input: Record<string, unknown>) => Promise<ActionRes<{ id: string }>>;
     updatePhase: (id: string, patch: Record<string, unknown>) => Promise<ActionRes<unknown>>;
@@ -194,7 +202,7 @@ function milestoneSlug(m: WizardMilestone, i: number): string {
   return slugify(m.label.es || m.label.en || "") || `hito-${i + 1}`;
 }
 
-const STEP_IDS = ["basics", "plans", "parties", "phases", "docs", "forms", "contract", "publish"] as const;
+const STEP_IDS = ["basics", "plans", "parties", "phases", "docs", "forms", "translation", "contract", "publish"] as const;
 type StepId = (typeof STEP_IDS)[number];
 
 const COLOR_SWATCHES: { id: string; value: string }[] = [
@@ -264,6 +272,10 @@ export function CatalogWizard({
     service?.contract_special ?? { es: "", en: "" },
   );
 
+  // Step "translation" — per-service translator signature config
+  const [signerName, setSignerName] = React.useState<string>(service?.translation_signer_name ?? "");
+  const [sigPath, setSigPath] = React.useState<string | null>(service?.translation_signature_path ?? null);
+
   // Step 6 publish
   const [pubIssues, setPubIssues] = React.useState<PublicationIssueVM[] | null>(null);
   const [published, setPublished] = React.useState(false);
@@ -324,6 +336,11 @@ export function CatalogWizard({
       setStep("parties");
       return;
     }
+    if (step === "translation") {
+      const ok = await saveTranslation();
+      if (ok) setStep("contract");
+      return;
+    }
     if (step === "contract") {
       const ok = await saveContract();
       if (ok) setStep("publish");
@@ -371,6 +388,23 @@ export function CatalogWizard({
       contract_object_i18n: { es: contractObject.es ?? "", en: contractObject.en ?? "" },
       contract_scope_i18n: { es: toList(contractScope.es), en: toList(contractScope.en) },
       contract_special_clause_i18n: { es: contractSpecial.es ?? "", en: contractSpecial.en ?? "" },
+    });
+    setSaving(false);
+    if (!r.success) {
+      toast.error(r.error?.message ?? "Error");
+      return false;
+    }
+    toast.success(t.saved);
+    return true;
+  }
+
+  /** Persists the per-service translator signature config (name + image path). */
+  async function saveTranslation(): Promise<boolean> {
+    if (!serviceId) return true; // create-mode shell: nothing to persist yet
+    setSaving(true);
+    const r = await actions.updateService(serviceId, {
+      translation_signer_name: signerName.trim() || null,
+      translation_signature_path: sigPath,
     });
     setSaving(false);
     if (!r.success) {
@@ -456,6 +490,17 @@ export function CatalogWizard({
           <DocsStep phases={phases} setPhases={setPhases} partyRoles={partyRoles} actions={actions} t={t} />
         )}
         {step === "forms" && <FormsStep t={t} serviceId={serviceId} phases={phases} setPhases={setPhases} actions={actions} />}
+        {step === "translation" && (
+          <TranslationStep
+            serviceId={serviceId}
+            signerName={signerName}
+            setSignerName={setSignerName}
+            sigPath={sigPath}
+            setSigPath={setSigPath}
+            actions={actions}
+            t={t}
+          />
+        )}
         {step === "contract" && (
           <ContractStep
             object={contractObject}
@@ -484,6 +529,143 @@ export function CatalogWizard({
             {t.next}
           </GradientBtn>
         )}
+      </div>
+    </div>
+  );
+}
+
+/* ───────────────────────── Step: Translation signature ───────────────────────── */
+
+function TranslationStep({
+  serviceId,
+  signerName,
+  setSignerName,
+  sigPath,
+  setSigPath,
+  actions,
+  t,
+}: {
+  serviceId: string | null;
+  signerName: string;
+  setSignerName: (v: string) => void;
+  sigPath: string | null;
+  setSigPath: (v: string | null) => void;
+  actions: CatalogWizardProps["actions"];
+  t: Record<string, string>;
+}) {
+  const [preview, setPreview] = React.useState<string | null>(null);
+  const [uploading, setUploading] = React.useState(false);
+  const fileRef = React.useRef<HTMLInputElement>(null);
+
+  // Load the STORED signature image preview once (edit mode).
+  React.useEffect(() => {
+    let alive = true;
+    if (serviceId && sigPath) {
+      void actions.getSignaturePreviewUrl(serviceId).then((r) => {
+        if (alive && r.success && r.data) setPreview(r.data);
+      });
+    }
+    return () => {
+      alive = false;
+    };
+    // mount-once: shows the already-saved signature when editing
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function onPick(file: File) {
+    if (!serviceId) {
+      toast.error(t.translationSaveServiceFirst);
+      return;
+    }
+    if (!/\.(png|jpe?g)$/i.test(file.name)) {
+      toast.error(t.translationImageType);
+      return;
+    }
+    setUploading(true);
+    try {
+      const urlRes = await actions.uploadSignatureUrl(serviceId, file.name);
+      if (!urlRes.success || !urlRes.data) throw new Error(urlRes.error?.message ?? "upload");
+      const put = await fetch(urlRes.data.signedUrl, {
+        method: "PUT",
+        body: file,
+        headers: { "content-type": file.type },
+      });
+      if (!put.ok) throw new Error("upload_failed");
+      setSigPath(urlRes.data.path);
+      setPreview(URL.createObjectURL(file)); // immediate local preview of the new image
+      toast.success(t.translationImageUploaded);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Error");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  return (
+    <div>
+      <ViewHead title={t.translationStepTitle} sub={t.translationStepSub} />
+      <div style={bannerStyle}>
+        <Icon name="info" size={16} color="var(--gold-deep)" />
+        {t.translationStepNote}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 18, marginTop: 12, maxWidth: 720 }}>
+        <div>
+          <label style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-2)" }}>
+            {t.translationSignerName}
+          </label>
+          <input
+            value={signerName}
+            onChange={(e) => setSignerName(e.target.value)}
+            placeholder={t.translationSignerNamePh}
+            maxLength={160}
+            style={{
+              width: "100%",
+              marginTop: 6,
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid var(--line)",
+              fontSize: 14,
+            }}
+          />
+        </div>
+        <div>
+          <label style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-2)" }}>
+            {t.translationSignatureImage}
+          </label>
+          <div
+            onClick={() => fileRef.current?.click()}
+            style={{
+              marginTop: 6,
+              border: "1.5px dashed var(--line)",
+              borderRadius: 12,
+              padding: 18,
+              textAlign: "center",
+              cursor: "pointer",
+              background: "var(--card)",
+            }}
+          >
+            {preview ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={preview} alt={t.translationSignatureImage} style={{ maxHeight: 90, maxWidth: "100%" }} />
+            ) : (
+              <span style={{ color: "var(--ink-3)", fontSize: 13.5 }}>
+                {uploading ? t.translationUploading : t.translationDrop}
+              </span>
+            )}
+          </div>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/png,image/jpeg"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void onPick(f);
+              e.target.value = "";
+            }}
+          />
+          <p style={{ color: "var(--ink-3)", fontSize: 12.5, marginTop: 6 }}>{t.translationImageHint}</p>
+        </div>
       </div>
     </div>
   );

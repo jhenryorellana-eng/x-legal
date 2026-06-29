@@ -8,6 +8,8 @@
 import {
   createServiceUi,
   updateServiceUi,
+  uploadTranslationSignatureUrlUi,
+  signaturePreviewUrlUi,
   upsertPlanUi,
   createPhaseUi,
   updatePhaseUi,
@@ -30,6 +32,8 @@ import {
 export const catalogWizardActions = {
   createService: createServiceUi,
   updateService: updateServiceUi,
+  uploadSignatureUrl: uploadTranslationSignatureUrlUi,
+  getSignaturePreviewUrl: signaturePreviewUrlUi,
   upsertPlan: upsertPlanUi,
   createPhase: createPhaseUi,
   updatePhase: updatePhaseUi,

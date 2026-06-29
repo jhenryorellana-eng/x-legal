@@ -826,6 +826,8 @@ export async function completeTranslation(
 export interface CaseDocumentForAi {
   id: string;
   caseId: string;
+  /** The case's service_id — used to load the per-service translation signing config. */
+  serviceId: string | null;
   storagePath: string;
   mimeType: string;
   sizeBytes: number;
@@ -847,7 +849,7 @@ export async function getCaseDocumentForAi(
   const { data, error } = await client
     .from("case_documents")
     .select(
-      "id, case_id, storage_path, mime_type, size_bytes, required_document_types(ai_extract, extraction_schema, slug)",
+      "id, case_id, storage_path, mime_type, size_bytes, required_document_types(ai_extract, extraction_schema, slug), cases(service_id)",
     )
     .eq("id", caseDocumentId)
     .maybeSingle();
@@ -857,10 +859,12 @@ export async function getCaseDocumentForAi(
   const rdt = Array.isArray(data.required_document_types)
     ? data.required_document_types[0]
     : data.required_document_types;
+  const caseRow = Array.isArray(data.cases) ? data.cases[0] : data.cases;
 
   return {
     id: data.id,
     caseId: data.case_id,
+    serviceId: caseRow?.service_id ?? null,
     storagePath: data.storage_path,
     mimeType: data.mime_type ?? "application/pdf",
     sizeBytes: data.size_bytes ?? 0,
