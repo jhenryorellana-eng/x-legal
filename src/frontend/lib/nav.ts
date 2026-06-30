@@ -128,6 +128,7 @@ export const LEGAL_NAV: NavGroup[] = [
       { labelKey: "legalMetrics", href: "/legal/metricas", icon: "bolt", module: "cases" },
       { labelKey: "legalCases", href: "/legal", icon: "briefcase", module: "cases", badge: "cases" },
       { labelKey: "legalReview", href: "/legal/por-revisar", icon: "check", module: "cases" },
+      { labelKey: "clients", href: "/ventas/clientes", icon: "family", module: "clients" },
       { labelKey: "expedientes", href: "/legal/expediente", icon: "doc", module: "expedientes" },
       { labelKey: "validations", href: "/legal/validaciones", icon: "shield", module: "validations" },
     ],
@@ -145,13 +146,36 @@ export const LEGAL_NAV: NavGroup[] = [
 ];
 
 /**
+ * Vanessa / sales sidebar. The org-wide STAFF_NAV mixes /admin, Operación and
+ * Finanzas groups that don't belong in a salesperson's panel (sales has `cases`
+ * + `metrics` permissions, so module-filtering alone leaves stray items in those
+ * groups). This curated tree is just the Ventas department surfaces.
+ */
+export const SALES_NAV: NavGroup[] = [
+  {
+    labelKey: "sales",
+    items: [
+      { labelKey: "miDia", href: "/ventas/mi-dia", icon: "sun", module: "dashboard" },
+      { labelKey: "salesCases", href: "/ventas/casos", icon: "briefcase", module: "cases" },
+      { labelKey: "leads", href: "/ventas/leads", icon: "route", module: "leads", badge: "leads" },
+      { labelKey: "appointments", href: "/ventas/citas", icon: "calendar", module: "calendar" },
+      { labelKey: "availability", href: "/ventas/disponibilidad", icon: "clock", module: "calendar" },
+      { labelKey: "clients", href: "/ventas/clientes", icon: "family", module: "clients", badge: "cases" },
+      { labelKey: "salesMetrics", href: "/ventas/metricas", icon: "bolt", module: "metrics" },
+      { labelKey: "salesConfig", href: "/ventas/configuracion", icon: "gear", module: "leads", hiddenForAdmin: true },
+    ],
+  },
+];
+
+/**
  * The navigation tree for a staff role. Admin (and unknown roles) get the full
- * org-wide STAFF_NAV; the paralegal gets the curated legal sidebar (DOC-54 §0.2).
- * Sales/finance keep STAFF_NAV (their department groups already cover them); the
- * layout filters every tree by module permission regardless.
+ * org-wide STAFF_NAV; the paralegal gets the curated legal sidebar and sales gets
+ * the curated Ventas sidebar (DOC-54 §0.2). The layout still filters every tree
+ * by module permission as defense-in-depth.
  */
 export function navForRole(role: string | null | undefined): NavGroup[] {
   if (role === "paralegal") return LEGAL_NAV;
+  if (role === "sales") return SALES_NAV;
   return STAFF_NAV;
 }
 

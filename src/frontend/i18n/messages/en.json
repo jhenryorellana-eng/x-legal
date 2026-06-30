@@ -1892,9 +1892,11 @@
         "sendContract": "Send contract",
         "docs": "Docs {x}/{y}",
         "forms": "{f}% forms",
-        "empty": "You don't have any assigned clients yet.",
+        "empty": "No clients in the system yet.",
         "caseCount": "{n} cases",
         "caseCountOne": "{n} case",
+        "searchPlaceholder": "Search by name, case number or phone…",
+        "searchEmpty": "No clients match your search.",
         "soon": "Soon",
         "soonTab": "This section will be available soon."
       },
@@ -2036,7 +2038,8 @@
         "colMenuMoveLeft": "Move left",
         "colMenuMoveRight": "Move right",
         "colMenuAria": "Column options {title}",
-        "openCaseAria": "Open case {caseNumber}"
+        "openCaseAria": "Open case {caseNumber}",
+        "openCase": "Open case"
       },
       "miDia": {
         "greetingMorning": "Good morning, {name} ☀️",

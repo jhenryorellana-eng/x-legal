@@ -925,6 +925,26 @@ async function markLeadWonInternal(actor: Actor, lead: LeadRow): Promise<LeadRow
   return updated;
 }
 
+/**
+ * Links an already-created case back to the lead it came from: sets
+ * leads.won_case_id (so the lead leaves the leads board and the case appears in
+ * /ventas/casos) and marks it won. Best-effort + idempotent — the "Crear caso"
+ * flow creates the case first and then attributes the lead, so a missing or
+ * already-linked lead is a no-op and never blocks case creation.
+ *
+ * @API-LEAD-07
+ */
+export async function linkLeadToCase(
+  actor: Actor,
+  input: { leadId: string; caseId: string },
+): Promise<void> {
+  can(actor, "leads", "edit");
+  const lead = await repo.findLead(input.leadId);
+  if (!lead || lead.org_id !== actor.orgId) return;
+  if (lead.won_case_id) return; // idempotent
+  await repo.updateLead(input.leadId, { won_case_id: input.caseId, status: "won" });
+}
+
 // ---------------------------------------------------------------------------
 // API-LEAD-05: markLeadLost
 // ---------------------------------------------------------------------------

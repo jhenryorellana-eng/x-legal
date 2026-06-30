@@ -80,6 +80,8 @@ export interface NewCaseInput {
     installmentCount: number;
     note?: string;
   };
+  /** Originating lead id when launched from a lead card — links leads.won_case_id. */
+  leadId?: string;
 }
 
 export interface NewCaseActions {
@@ -95,6 +97,7 @@ export function NewCaseModal({
   strings,
   actions,
   signingBaseUrl,
+  leadId,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
@@ -102,6 +105,8 @@ export function NewCaseModal({
   strings: CasosStrings;
   actions: NewCaseActions;
   signingBaseUrl: string;
+  /** When the modal is opened from a lead card, links the case back to the lead. */
+  leadId?: string;
 }) {
   const [step, setStep] = React.useState<1 | 2 | 3 | 4>(1);
   const [name, setName] = React.useState("");
@@ -245,6 +250,7 @@ export function NewCaseModal({
         installmentCount: instCount,
         note: discountNote.trim() || undefined,
       },
+      ...(leadId ? { leadId } : {}),
     });
     setSubmitting(false);
     if (res.ok && res.signingToken) {

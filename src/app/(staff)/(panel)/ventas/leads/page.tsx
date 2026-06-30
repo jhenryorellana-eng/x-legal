@@ -52,6 +52,12 @@ export default async function VentasLeadsPage() {
   const leadsPage = await listLeads(actor, {}).catch(() => null);
   const leadsById = new Map((leadsPage?.items ?? []).map((l) => [l.id, l]));
 
+  // Catalog services for the modals (Nuevo lead + Nuevo caso) AND for resolving
+  // each lead card's service label — one read, shared with /ventas/clientes via
+  // the _lib helper so the two pages never drift.
+  const { services, newCaseServices, casosStrings } = await buildNewCaseModalData(actor.orgId, locale);
+  const servicesById = new Map(services.map((s) => [s.id, s.label]));
+
   // Real lead categories (their UUIDs are what `createLead` stores — the modal
   // must NOT use hardcoded slug ids, or `leads.category_id` fails the uuid cast).
   const categoryRows = await listLeadCategories(actor).catch(() => []);
@@ -69,28 +75,37 @@ export default async function VentasLeadsPage() {
       isTerminalLost: c.is_terminal_lost,
     }));
 
-  const cards: LeadCardVM[] = (board?.cards ?? []).map((card) => {
-    const lead = leadsById.get(card.ref_id);
-    const sm = sourceMeta(lead?.source ?? "web");
-    const uncontacted = lead ? lead.contacted_at == null : false;
-    const cat = lead?.category_id ? categoriesById.get(lead.category_id) : null;
-    return {
-      id: card.id,
-      leadId: card.ref_id,
-      columnId: card.column_id,
-      name: lead?.full_name ?? null,
-      phone: lead?.phone_e164 ?? "",
-      source: lead?.source ?? "web",
-      sourceLabel: sm.labelKey,
-      serviceLabel: "Visa Juvenil",
-      categoryId: lead?.category_id ?? null,
-      categoryLabel: cat?.label ?? null,
-      categoryColor: cat ? categoryColorHex(cat.color) : null,
-      uncontacted,
-      ageLabel: lead?.created_at ? fmtRelative(lead.created_at, locale) : "",
-      lostReason: lead?.lost_reason ?? null,
-    };
-  });
+  const cards: LeadCardVM[] = (board?.cards ?? [])
+    // A lead converted to a case (won_case_id set) leaves the leads board — it
+    // now lives in /ventas/casos. Also drop cards whose lead row is missing.
+    .filter((card) => {
+      const lead = leadsById.get(card.ref_id);
+      return lead != null && lead.won_case_id == null;
+    })
+    .map((card) => {
+      const lead = leadsById.get(card.ref_id)!;
+      const sm = sourceMeta(lead.source ?? "web");
+      const uncontacted = lead.contacted_at == null;
+      const cat = lead.category_id ? categoriesById.get(lead.category_id) : null;
+      return {
+        id: card.id,
+        leadId: card.ref_id,
+        columnId: card.column_id,
+        name: lead.full_name ?? null,
+        phone: lead.phone_e164 ?? "",
+        source: lead.source ?? "web",
+        sourceLabel: sm.labelKey,
+        serviceLabel: lead.interested_service_id
+          ? (servicesById.get(lead.interested_service_id) ?? "—")
+          : "—",
+        categoryId: lead.category_id ?? null,
+        categoryLabel: cat?.label ?? null,
+        categoryColor: cat ? categoryColorHex(cat.color) : null,
+        uncontacted,
+        ageLabel: lead.created_at ? fmtRelative(lead.created_at, locale) : "",
+        lostReason: lead.lost_reason ?? null,
+      };
+    });
 
   const strings = {
     title: t("title"),
@@ -169,10 +184,6 @@ export default async function VentasLeadsPage() {
   // Strings for the "Nueva cita" modal launched from a lead card "Agendar cita".
   const staffTz = (await getCurrentUserLocation(actor)).timezone;
   const nuevaCitaStrings = await buildNuevaCitaStrings(staffTz, locale);
-
-  // Catalog services for the modals (Nuevo lead + Nuevo caso) — one read, shared
-  // with /ventas/clientes via the _lib helper so the two pages never drift.
-  const { services, newCaseServices, casosStrings } = await buildNewCaseModalData(actor.orgId, locale);
 
   const sources: SourceOption[] = [
     { value: "tiktok", label: "TikTok" },

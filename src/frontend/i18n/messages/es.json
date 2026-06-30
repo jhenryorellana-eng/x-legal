@@ -1892,9 +1892,11 @@
         "sendContract": "Enviar contrato",
         "docs": "Docs {x}/{y}",
         "forms": "{f}% forms",
-        "empty": "Aún no tienes clientes asignados.",
+        "empty": "Aún no hay clientes en el sistema.",
         "caseCount": "{n} casos",
         "caseCountOne": "{n} caso",
+        "searchPlaceholder": "Buscar por nombre, número de caso o teléfono…",
+        "searchEmpty": "Ningún cliente coincide con tu búsqueda.",
         "soon": "Pronto",
         "soonTab": "Esta sección estará disponible pronto."
       },
@@ -2036,7 +2038,8 @@
         "colMenuMoveLeft": "Mover a la izquierda",
         "colMenuMoveRight": "Mover a la derecha",
         "colMenuAria": "Opciones columna {title}",
-        "openCaseAria": "Abrir caso {caseNumber}"
+        "openCaseAria": "Abrir caso {caseNumber}",
+        "openCase": "Abrir caso"
       },
       "miDia": {
         "greetingMorning": "Buenos días, {name} ☀️",

@@ -4,17 +4,35 @@
  * never surfaced /legal (her kanban) and pointed "Expedientes" at a 404.
  */
 import { describe, it, expect } from "vitest";
-import { navForRole, LEGAL_NAV, STAFF_NAV } from "../nav";
+import { navForRole, LEGAL_NAV, SALES_NAV, STAFF_NAV } from "../nav";
 
 describe("navForRole", () => {
   it("gives the paralegal the curated legal sidebar", () => {
     expect(navForRole("paralegal")).toBe(LEGAL_NAV);
   });
 
-  it("keeps admin/sales/finance on the full org tree", () => {
-    for (const role of ["admin", "sales", "finance", null, undefined] as const) {
+  it("gives sales the curated Ventas sidebar", () => {
+    expect(navForRole("sales")).toBe(SALES_NAV);
+  });
+
+  it("keeps admin/finance on the full org tree", () => {
+    for (const role of ["admin", "finance", null, undefined] as const) {
       expect(navForRole(role)).toBe(STAFF_NAV);
     }
+  });
+
+  it("sales sidebar drops the Operación and Finanzas groups but keeps Clientes", () => {
+    expect(SALES_NAV.map((g) => g.labelKey)).toEqual(["sales"]);
+    const hrefs = SALES_NAV.flatMap((g) => g.items.map((i) => i.href));
+    expect(hrefs).toContain("/ventas/clientes");
+    expect(hrefs).toContain("/ventas/casos");
+    expect(hrefs).not.toContain("/finanzas/casos");
+    expect(hrefs).not.toContain("/admin/casos");
+  });
+
+  it("legal sidebar surfaces the global Clientes tab", () => {
+    const hrefs = LEGAL_NAV.flatMap((g) => g.items.map((i) => i.href));
+    expect(hrefs).toContain("/ventas/clientes");
   });
 
   it("legal sidebar surfaces the paralegal's own kanban (/legal)", () => {

@@ -39,6 +39,7 @@ export {
   markLeadWon,
   markLeadLost,
   createCaseFromLead,
+  linkLeadToCase,
   createLeadCategory,
   listLeadCategories,
   updateLeadCategory,

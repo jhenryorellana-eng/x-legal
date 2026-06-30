@@ -11,6 +11,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
+import { normalizeForSearch } from "@/shared/strings";
 import { MSym } from "../shared/msym";
 import { Chip, Initials } from "../shared/ui";
 import { LexBubble } from "../shared/lex";
@@ -18,7 +19,10 @@ import { useLexPrefs } from "../shared/lex-prefs";
 
 export interface CaseRowVM {
   id: string;
+  caseNumber: string;
   clientName: string;
+  /** Primary client phone (E.164) — matched by the search box. */
+  phone: string | null;
   serviceLabel: string;
   members: string[];
   jurisdiction: string;
@@ -50,6 +54,8 @@ export interface ClientesStrings {
   empty: string;
   caseCount: string;
   caseCountOne: string;
+  searchPlaceholder: string;
+  searchEmpty: string;
   lexEnabled: boolean;
 }
 
@@ -73,18 +79,28 @@ export function ClientesListView({
   const router = useRouter();
   const { bubbles } = useLexPrefs();
   const [group, setGroup] = React.useState<"caso" | "cliente">("caso");
+  const [query, setQuery] = React.useState("");
 
   const open = (id: string) => router.push(`${basePath}/${id}`);
 
+  // Case/accent/symbol-insensitive search over name, case number, phone, service.
+  const filtered = React.useMemo(() => {
+    const q = normalizeForSearch(query);
+    if (!q) return cases;
+    return cases.filter((c) =>
+      normalizeForSearch(`${c.clientName} ${c.caseNumber} ${c.phone ?? ""} ${c.serviceLabel}`).includes(q),
+    );
+  }, [cases, query]);
+
   const byClient = React.useMemo(() => {
     const map = new Map<string, CaseRowVM[]>();
-    for (const c of cases) {
+    for (const c of filtered) {
       const arr = map.get(c.clientName) ?? [];
       arr.push(c);
       map.set(c.clientName, arr);
     }
     return Array.from(map.entries());
-  }, [cases]);
+  }, [filtered]);
 
   const Row = ({ c }: { c: CaseRowVM }) => {
     const pending = c.contractState !== "firmado";
@@ -150,6 +166,30 @@ export function ClientesListView({
         </div>
       </div>
 
+      <div style={{ position: "relative", margin: "4px 0 16px" }}>
+        <MSym name="search" size={18} color="var(--ink-3)"
+          style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={strings.searchPlaceholder}
+          aria-label={strings.searchPlaceholder}
+          style={{
+            width: "100%",
+            boxSizing: "border-box",
+            padding: "11px 14px 11px 38px",
+            borderRadius: 12,
+            border: "1.5px solid var(--line)",
+            background: "var(--card)",
+            color: "var(--ink)",
+            fontSize: 14,
+            fontWeight: 600,
+            outline: "none",
+          }}
+        />
+      </div>
+
       {readyClientName && (
         <LexBubble
           dismissKey="cli-tip"
@@ -162,8 +202,10 @@ export function ClientesListView({
 
       {cases.length === 0 ? (
         <div className="kcol-empty" style={{ padding: "40px" }}>{strings.empty}</div>
+      ) : filtered.length === 0 ? (
+        <div className="kcol-empty" style={{ padding: "40px" }}>{strings.searchEmpty}</div>
       ) : group === "caso" ? (
-        cases.map((c) => <Row key={c.id} c={c} />)
+        filtered.map((c) => <Row key={c.id} c={c} />)
       ) : (
         byClient.map(([name, group]) => (
           <div key={name} style={{ marginBottom: 14 }}>

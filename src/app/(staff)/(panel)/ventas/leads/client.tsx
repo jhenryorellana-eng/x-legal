@@ -87,9 +87,20 @@ export function LeadsClient({
 }: LeadsClientProps) {
   const router = useRouter();
   const [leadModal, setLeadModal] = React.useState<{ open: boolean; columnId?: string }>({ open: false });
-  const [caseModal, setCaseModal] = React.useState(false);
+  const [caseModal, setCaseModal] = React.useState<{ open: boolean; leadId?: string }>({ open: false });
   const [catsOpen, setCatsOpen] = React.useState(false);
   const [scheduleProspect, setScheduleProspect] = React.useState<ProspectSearchResult | null>(null);
+
+  // The board is server-rendered; a freshly created lead only shows after the
+  // route re-hydrates. Refresh on success so the new card appears immediately.
+  const createLeadWithRefresh: CreateLead = React.useCallback(
+    async (input) => {
+      const res = await createLeadAction(input);
+      if (res.ok) router.refresh();
+      return res;
+    },
+    [createLeadAction, router],
+  );
 
   return (
     <LexPrefsProvider>
@@ -99,7 +110,7 @@ export function LeadsClient({
         strings={strings}
         actions={{ moveCard: moveAction }}
         onNewLead={(columnId) => setLeadModal({ open: true, columnId })}
-        onNewCase={() => setCaseModal(true)}
+        onNewCase={(preset) => setCaseModal({ open: true, leadId: preset.leadId })}
         onScheduleLead={(lead) => setScheduleProspect({ ...lead })}
         onOpenColumnMenu={() => {}}
         onOpenFilters={() => {}}
@@ -113,7 +124,7 @@ export function LeadsClient({
         services={services}
         categories={categories}
         strings={newLeadStrings}
-        actions={{ createLead: createLeadAction, createCategory: createCategoryAction }}
+        actions={{ createLead: createLeadWithRefresh, createCategory: createCategoryAction }}
       />
 
       <CategoryManager
@@ -135,8 +146,13 @@ export function LeadsClient({
       />
 
       <NewCaseModal
-        open={caseModal}
-        onOpenChange={setCaseModal}
+        open={caseModal.open}
+        onOpenChange={(o) => {
+          setCaseModal({ open: o, leadId: o ? caseModal.leadId : undefined });
+          // On close, re-hydrate the board so a just-converted lead disappears.
+          if (!o) router.refresh();
+        }}
+        leadId={caseModal.leadId}
         services={newCaseServices}
         strings={casosStrings}
         actions={{ createCase: createCaseAction }}

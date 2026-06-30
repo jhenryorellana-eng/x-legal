@@ -22,6 +22,23 @@ export function slugify(input: string): string {
 }
 
 /**
+ * Normalizes a string for fuzzy, case/accent/symbol-insensitive search matching:
+ * lowercases, strips diacritics, and removes every non-alphanumeric character.
+ *   "José Pérez"        → "joseperez"
+ *   "(305) 555-0142"    → "3055550142"
+ *   "ULP-2026-0015"     → "ulp20260015"
+ * So `normalizeForSearch(haystack).includes(normalizeForSearch(needle))` ignores
+ * case, accents, spaces and punctuation.
+ */
+export function normalizeForSearch(input: string): string {
+  return input
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "") // strip combining diacritical marks
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+/**
  * Builds a safe, semantic download filename from a human display name + extension.
  *   ("Pasaporte de Juan", "pdf") → "pasaporte-de-juan.pdf"
  * Falls back to "documento" when the name slugifies to empty, and omits the dot

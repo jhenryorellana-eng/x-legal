@@ -149,6 +149,8 @@ export interface DianaKanbanStrings {
   colMenuDelete: string;
   colMenuMoveLeft: string;
   colMenuMoveRight: string;
+  /** Label of the per-card "open case" button. */
+  openCase: string;
   // accessibility (templates with {title}/{caseNumber})
   colMenuAria: string;
   openCaseAria: string;
@@ -209,6 +211,9 @@ export interface DianaKanbanViewProps {
    * renders without a CTA instead of a dead button.
    */
   reviewQueueHref?: string;
+  /** Builds the "open case" link per board (legal → /legal/caso, sales →
+   *  /ventas/clientes). Defaults to the legal workspace. */
+  caseHref?: (caseId: string) => string;
   strings: DianaKanbanStrings;
   actions: DianaKanbanActions;
 }
@@ -270,10 +275,12 @@ export function DianaKanbanView({
   cards: initialCards,
   totalDocsToReview,
   reviewQueueHref,
+  caseHref,
   strings,
   actions,
 }: DianaKanbanViewProps) {
   const toast = useToast();
+  const buildCaseHref = caseHref ?? ((id: string) => `/legal/caso/${id}`);
 
   // Board state
   const [columns, setColumns] = React.useState<CaseColumnVM[]>(initialColumns);
@@ -659,6 +666,7 @@ export function DianaKanbanView({
                   <CaseCard
                     key={card.id}
                     card={card}
+                    caseHref={buildCaseHref(card.caseId)}
                     isDragging={dragId === card.id}
                     editingNoteId={editingNoteId}
                     noteValue={noteValue}
@@ -809,6 +817,7 @@ export function DianaKanbanView({
 
 function CaseCard({
   card,
+  caseHref,
   isDragging,
   editingNoteId,
   noteValue,
@@ -820,6 +829,7 @@ function CaseCard({
   onNoteBlur,
 }: {
   card: CaseCardVM;
+  caseHref: string;
   isDragging: boolean;
   editingNoteId: string | null;
   noteValue: string;
@@ -874,7 +884,7 @@ function CaseCard({
 
       {/* Row 2: client name */}
       <Link
-        href={`/legal/caso/${card.caseId}`}
+        href={caseHref}
         className="kcard-name"
         style={{ display: "block", marginBottom: 6, textDecoration: "none" }}
         aria-label={strings.openCaseAria.replace("{caseNumber}", card.caseNumber)}
@@ -891,6 +901,18 @@ function CaseCard({
           <span style={{ color: "var(--ink-3)", fontWeight: 600 }}>· {card.phaseLabel}</span>
         )}
       </div>
+
+      {/* Open-case button (explicit affordance, every card) */}
+      <Link
+        href={caseHref}
+        className="vbtn vbtn-ghost vbtn-sm"
+        style={{ marginTop: 8, width: "100%", justifyContent: "center", textDecoration: "none" }}
+        aria-label={strings.openCaseAria.replace("{caseNumber}", card.caseNumber)}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {strings.openCase}
+        <MSym name="arrow_forward" size={15} />
+      </Link>
 
       {/* Row 4: alert chips */}
       <AlertChips card={card} strings={strings} />

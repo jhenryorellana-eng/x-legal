@@ -448,9 +448,11 @@ function ConfiguracionPreview() {
 }
 
 function ClientesPreview() {
-  const rows: CaseRowVM[] = MOCK_CASES.map((c) => ({
+  const rows: CaseRowVM[] = MOCK_CASES.map((c, i) => ({
     id: c.id,
+    caseNumber: `ULP-2026-${String(1000 + i)}`,
     clientName: c.name,
+    phone: "+1 (305) 555-01" + String(10 + i),
     serviceLabel: c.service,
     members: c.members,
     jurisdiction: c.jur,
@@ -486,9 +488,11 @@ function ClientesPreview() {
         sendContract: "Enviar contrato",
         docs: "Docs {x}/{y}",
         forms: "{f}% forms",
-        empty: "Aún no tienes clientes asignados.",
+        empty: "Aún no hay clientes en el sistema.",
         caseCount: "{n} casos",
         caseCountOne: "{n} caso",
+        searchPlaceholder: "Buscar por nombre, número de caso o teléfono…",
+        searchEmpty: "Ningún cliente coincide con tu búsqueda.",
         lexEnabled: true,
       }}
     />

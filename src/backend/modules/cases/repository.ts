@@ -1332,6 +1332,28 @@ export async function findClientDisplayName(
 }
 
 /**
+ * Phones (users.phone_e164) for a batch of client user ids → map by id. One
+ * query (not N+1). Uses the service client: the ids come from an already
+ * org-scoped case listing, so reading their phone for the staff clients list is
+ * safe. Used by listCasesAdmin to make the clients search match by phone.
+ */
+export async function findClientPhonesByIds(
+  userIds: string[],
+): Promise<Record<string, string | null>> {
+  if (userIds.length === 0) return {};
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("users")
+    .select("id, phone_e164")
+    .in("id", userIds);
+  const map: Record<string, string | null> = {};
+  for (const row of (data ?? []) as Array<{ id: string; phone_e164: string | null }>) {
+    map[row.id] = row.phone_e164 ?? null;
+  }
+  return map;
+}
+
+/**
  * Client profile FULL legal name (first_name + last_name) — RLS-scoped.
  * Used to freeze the principal applicant into the contract parties snapshot
  * (the public signing page renders the full name, not the display name).

@@ -110,7 +110,9 @@ export default async function LegalPage() {
   // ── Cards VM ─────────────────────────────────────────────────────────────
   const now = new Date();
   const cardVMs: CaseCardVM[] = (board?.cards ?? [])
-    .filter((card) => card.ref_type === "case")
+    // Only render cards for cases this person currently owns — a case sent on to
+    // another stage/owner leaves the board (orphan cards would show "—").
+    .filter((card) => card.ref_type === "case" && caseMap.has(card.ref_id))
     .map((card) => {
       const caseItem = caseMap.get(card.ref_id);
       const serviceLabel = resolveI18n(caseItem?.serviceLabelI18n, locale as "es" | "en");
@@ -223,6 +225,7 @@ export default async function LegalPage() {
     // Raw templates: client interpolates {title}/{caseNumber} per render.
     colMenuAria: t.raw("colMenuAria"),
     openCaseAria: t.raw("openCaseAria"),
+    openCase: t("openCase"),
   };
 
   // ── Error state (non-500) ────────────────────────────────────────────────

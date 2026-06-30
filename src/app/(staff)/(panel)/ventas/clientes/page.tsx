@@ -27,13 +27,17 @@ export default async function VentasClientesPage() {
   const locale = (await getLocale()) as Locale;
   const t = await getTranslations("staff.ventas.clientes");
 
-  const page = await listCasesAdmin(actor, { limit: 30 }).catch(() => ({ items: [], nextCursor: null }));
+  // Global clients list: every case of the org (no owner filter). A generous
+  // page covers the current business; a server-side search is the scale path.
+  const page = await listCasesAdmin(actor, { limit: 200 }).catch(() => ({ items: [], nextCursor: null }));
 
   const rows: CaseRowVM[] = page.items.map((c) => {
     const signed = c.status !== "payment_pending" && c.status !== "draft";
     return {
       id: c.id,
+      caseNumber: c.caseNumber,
       clientName: c.clientName ?? "—",
+      phone: c.clientPhone,
       serviceLabel: c.serviceLabelI18n ? resolveI18n(c.serviceLabelI18n, locale) : "—",
       members: [],
       jurisdiction: "—",
@@ -72,6 +76,8 @@ export default async function VentasClientesPage() {
     empty: t("empty"),
     caseCount: t("caseCount", { n: "{n}" }),
     caseCountOne: t("caseCountOne", { n: "{n}" }),
+    searchPlaceholder: t("searchPlaceholder"),
+    searchEmpty: t("searchEmpty"),
     lexEnabled: true,
   };
 

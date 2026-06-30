@@ -100,7 +100,10 @@ export default async function VentasCasosPage() {
   // ── Cards VM ─────────────────────────────────────────────────────────────
   const now = new Date();
   const cardVMs: CaseCardVM[] = (board?.cards ?? [])
-    .filter((card) => card.ref_type === "case")
+    // Only render cards for cases this person currently owns. A case handed off
+    // to another stage/owner (e.g. Vanessa → Diana) leaves the board — its card
+    // would otherwise linger here as an orphan showing "—".
+    .filter((card) => card.ref_type === "case" && caseMap.has(card.ref_id))
     .map((card) => {
       const caseItem = caseMap.get(card.ref_id);
       const serviceLabel = resolveI18n(caseItem?.serviceLabelI18n, locale as "es" | "en");
@@ -208,6 +211,7 @@ export default async function VentasCasosPage() {
     colMenuMoveRight: t("colMenuMoveRight"),
     colMenuAria: t.raw("colMenuAria"),
     openCaseAria: t.raw("openCaseAria"),
+    openCase: t("openCase"),
   };
 
   // ── Error state (non-500) ────────────────────────────────────────────────
@@ -227,6 +231,7 @@ export default async function VentasCasosPage() {
       columns={columnVMs}
       cards={cardVMs}
       totalDocsToReview={totalDocsToReview}
+      caseHref={(id) => `/ventas/clientes/${id}`}
       strings={strings}
       actions={{
         moveCard: moveKanbanCardAction,

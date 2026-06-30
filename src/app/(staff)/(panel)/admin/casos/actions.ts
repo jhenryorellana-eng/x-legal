@@ -59,6 +59,7 @@ import {
   type DocumentTranslationRow,
 } from "@/backend/modules/ai-engine";
 import { addCaseAppointment, SchedulingError } from "@/backend/modules/scheduling";
+import { linkLeadToCase } from "@/backend/modules/kanban";
 import { classifySaveError } from "@/frontend/features/form-wizard/classify-save-error";
 import { getLocale } from "next-intl/server";
 import { type Locale } from "@/shared/i18n";
@@ -133,6 +134,9 @@ export interface CreateCaseUiInput {
     installmentCount: number;
     note?: string;
   };
+  /** Set when the case is created from a lead card — links leads.won_case_id so
+   *  the lead leaves the leads board and the case appears in /ventas/casos. */
+  leadId?: string;
 }
 
 /**
@@ -237,6 +241,16 @@ export async function createCaseAction(
     const signingToken = await getSigningTokenForContract(actor, contractId);
     if (!signingToken) {
       return { ok: false, error: { code: "CONTRACT_TOKEN_INVALID" } };
+    }
+
+    // Attribute the originating lead (best-effort): set won_case_id so the lead
+    // leaves the leads board and shows up as a case. Never fails case creation.
+    if (input.leadId) {
+      try {
+        await linkLeadToCase(actor, { leadId: input.leadId, caseId });
+      } catch {
+        // non-fatal — the case already exists; the lead just stays on the board.
+      }
     }
 
     return { ok: true, signingToken, caseId };

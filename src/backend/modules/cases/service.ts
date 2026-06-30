@@ -88,6 +88,7 @@ import {
   listServiceMilestones,
   findPersonRecord,
   findClientDisplayName,
+  findClientPhonesByIds,
   findClientFullName,
   findPlanKind,
   findFormResponse,
@@ -2325,6 +2326,8 @@ export interface AdminCaseListItem {
   caseNumber: string;
   status: string;
   clientName: string | null;
+  /** Primary client phone (E.164) — powers the clients search. */
+  clientPhone: string | null;
   serviceLabelI18n: I18nValue | null;
   /** Brand/Material icon name for the service (catalog `services.icon`). */
   serviceIcon: string | null;
@@ -2364,6 +2367,12 @@ export async function listCasesAdmin(
     limit: filters.limit,
   });
 
+  // Batch the client phones in one query (not N+1) for the clients search.
+  const clientIds = page.items
+    .map((c) => c.primary_client_id)
+    .filter((x): x is string => !!x);
+  const phonesById = await findClientPhonesByIds(clientIds);
+
   const items = await Promise.all(
     page.items.map(async (c): Promise<AdminCaseListItem> => {
       const [service, phases, clientName, planKind] = await Promise.all([
@@ -2381,6 +2390,7 @@ export async function listCasesAdmin(
         caseNumber: c.case_number,
         status: c.status,
         clientName,
+        clientPhone: c.primary_client_id ? (phonesById[c.primary_client_id] ?? null) : null,
         serviceLabelI18n: asI18n(service?.label_i18n),
         serviceIcon: service?.icon ?? null,
         serviceColor: service?.color ?? null,
@@ -4793,6 +4803,7 @@ export async function listCasesByOwner(
         caseNumber: c.case_number,
         status: c.status,
         clientName,
+        clientPhone: null, // kanban boards don't search by phone
         serviceLabelI18n: asI18n(service?.label_i18n),
         serviceIcon: service?.icon ?? null,
         serviceColor: service?.color ?? null,

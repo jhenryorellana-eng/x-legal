@@ -90,7 +90,7 @@ export interface LeadsViewProps {
   strings: LeadsStrings;
   actions: LeadsActions;
   onNewLead: (columnId?: string) => void;
-  onNewCase: (preset: { name: string | null; phone: string }) => void;
+  onNewCase: (preset: { name: string | null; phone: string; leadId?: string }) => void;
   onScheduleLead: (lead: { leadId: string; name: string | null; phone: string; source: string }) => void;
   onOpenColumnMenu: () => void;
   onOpenFilters: () => void;
@@ -222,7 +222,7 @@ export function LeadsView({
               label: strings.createCase,
               icon: "create_new_folder",
               onClick: () => {
-                onNewCase({ name: offer.name, phone: offer.phone });
+                onNewCase({ name: offer.name, phone: offer.phone, leadId: offer.leadId });
                 setOffer(null);
               },
             },
@@ -313,7 +313,7 @@ export function LeadsView({
                           <MSym name="event" size={15} />
                         </button>
                         <button type="button" className="kmini" title={strings.createCaseTooltip} aria-label={strings.createCaseTooltip}
-                          onClick={(e) => { e.stopPropagation(); onNewCase({ name: c.name, phone: c.phone }); }}>
+                          onClick={(e) => { e.stopPropagation(); onNewCase({ name: c.name, phone: c.phone, leadId: c.leadId }); }}>
                           <MSym name="create_new_folder" size={15} />
                         </button>
                         <span className="kcard-age">{c.ageLabel}</span>
