@@ -15,6 +15,7 @@ import {
 
 // Fully-satisfied sales signals (everything done / nothing required).
 const READY: StageChecklistSignals = {
+  initialPaymentConfirmed: true,
   citasTotal: 3,
   citasCompleted: 3,
   docsTotal: 4,
@@ -43,13 +44,32 @@ describe("cases/domain: stage order", () => {
 });
 
 describe("cases/domain: computeStageChecklist (sales)", () => {
-  it("is all-done when every gating signal is satisfied (no payment/contract — those are access gates)", () => {
+  it("is all-done when payment is confirmed and every gating signal is satisfied", () => {
     const c = computeStageChecklist("sales", READY);
     expect(c.allDone).toBe(true);
-    expect(c.items.map((i) => i.key)).toEqual(["citas", "docs", "forms", "translation"]);
+    expect(c.items.map((i) => i.key)).toEqual(["payment", "citas", "docs", "forms", "translation"]);
   });
 
-  it("treats a zero-total category as satisfied (not blocking)", () => {
+  it("blocks the handoff until the initial payment is confirmed (case still payment_pending)", () => {
+    const c = computeStageChecklist("sales", { ...READY, initialPaymentConfirmed: false });
+    expect(c.allDone).toBe(false);
+    expect(c.items.find((i) => i.key === "payment")?.done).toBe(false);
+  });
+
+  it("blocks an empty case: nothing instantiated is NOT 'ready' even when paid", () => {
+    const c = computeStageChecklist("sales", {
+      ...READY,
+      citasTotal: 0, citasCompleted: 0,
+      docsTotal: 0, docsApproved: 0,
+      formsTotal: 0, formsDone: 0,
+      docsToTranslate: 0, translationsCompleted: 0,
+    });
+    // payment is confirmed, but there is no applicable substantive work to verify.
+    expect(c.allDone).toBe(false);
+  });
+
+  it("a zero-total category is satisfied as long as some other task applies", () => {
+    // citas/forms/translation n/a, but docs (4/4) is real work and done → ready.
     const c = computeStageChecklist("sales", {
       ...READY,
       citasTotal: 0, citasCompleted: 0,

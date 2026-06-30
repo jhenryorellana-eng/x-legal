@@ -311,6 +311,12 @@ export interface StageChecklistItem {
   /** Clave estable para i18n y tests (la etiqueta la resuelve el frontend). */
   key: string;
   done: boolean;
+  /**
+   * ¿La categoría tiene trabajo que verificar? `false` = total 0 ("no aplica").
+   * Distingue "no hay nada que hacer" de "cumplido": un checklist 100% no-aplicable
+   * NO habilita el traspaso (ver `allDone`). Undefined = siempre aplicable.
+   */
+  applicable?: boolean;
   /** true = tarea aún no definida en el producto (gate placeholder, forzable por admin). */
   placeholder?: boolean;
 }
@@ -330,6 +336,8 @@ export interface StageChecklist {
  * (puntos aparte), NO tareas del traspaso — por eso no están aquí.
  */
 export interface StageChecklistSignals {
+  /** Etapa `sales`: el pago inicial está confirmado (caso ya no en payment_pending). */
+  initialPaymentConfirmed: boolean;
   citasTotal: number;
   citasCompleted: number;
   docsTotal: number;
@@ -353,12 +361,15 @@ const EXP_SENT_PLUS = ["sent_to_finance", "printed"];
  * Definition of Done por etapa. Devuelve los ítems con su estado `done`.
  *
  * Etapa `sales` (Vanessa) — gating del traspaso a Legal (decisión de Henry):
+ *   - payment: la cuota inicial está confirmada (el caso ya no está en
+ *     `payment_pending`). Sin pago, Vanessa no puede traspasar a Legal.
  *   - citas: toda la ruta de citas completada.
  *   - docs: documentos del cliente al 100% APROBADOS (status='approved').
  *   - forms: formularios al 100% enviados.
  *   - translation: todo documento en español traducido (los marcados "ya en
  *     inglés" se excluyen del denominador).
- *   (pago + contrato + disclaimer son prerequisitos de acceso, puntos aparte.)
+ *   Además, un caso "vacío" (sin ninguna tarea sustantiva aún instanciada) NO
+ *   cuenta como listo: el checklist 100% no-aplicable no habilita el traspaso.
  *
  * Etapa `legal` (Diana): el expediente debe estar al menos compilado y enviado a
  *   Andrium (`sent_to_finance`). Normalmente el traspaso legal→operations lo
@@ -378,10 +389,11 @@ export function computeStageChecklist(
   let items: StageChecklistItem[];
   if (stage === "sales") {
     items = [
-      { key: "citas", done: done(s.citasTotal, s.citasCompleted) },
-      { key: "docs", done: done(s.docsTotal, s.docsApproved) },
-      { key: "forms", done: done(s.formsTotal, s.formsDone) },
-      { key: "translation", done: done(s.docsToTranslate, s.translationsCompleted) },
+      { key: "payment", done: s.initialPaymentConfirmed },
+      { key: "citas", done: done(s.citasTotal, s.citasCompleted), applicable: s.citasTotal > 0 },
+      { key: "docs", done: done(s.docsTotal, s.docsApproved), applicable: s.docsTotal > 0 },
+      { key: "forms", done: done(s.formsTotal, s.formsDone), applicable: s.formsTotal > 0 },
+      { key: "translation", done: done(s.docsToTranslate, s.translationsCompleted), applicable: s.docsToTranslate > 0 },
     ];
   } else if (stage === "legal") {
     items = [
@@ -395,7 +407,13 @@ export function computeStageChecklist(
   }
 
   const gating = items.filter((i) => !i.placeholder);
-  const allDone = gating.length > 0 && gating.every((i) => i.done);
+  // "Caso vacío" guard (decisión de Henry): una etapa solo está lista cuando hay
+  // al menos una tarea SUSTANTIVA aplicable. El pago es una precondición, no
+  // "trabajo" — por eso se excluye de este conteo. Un checklist 100% no-aplicable
+  // (nada instanciado todavía) NO habilita el traspaso.
+  const substantive = gating.filter((i) => i.key !== "payment");
+  const hasApplicableWork = substantive.some((i) => i.applicable !== false);
+  const allDone = gating.length > 0 && hasApplicableWork && gating.every((i) => i.done);
   return { stage, items, allDone };
 }
 

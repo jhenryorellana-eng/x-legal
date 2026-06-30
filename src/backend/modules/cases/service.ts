@@ -4904,6 +4904,10 @@ async function buildStageChecklist(actor: Actor, caseRow: CaseRow): Promise<Stag
   }
 
   return computeStageChecklist(stage, {
+    // Initial payment confirmed ⇔ the case has left payment_pending (Andrium
+    // approved the first installment, which activates the case). Sales→Legal
+    // handoff is gated on this (decisión de Henry).
+    initialPaymentConfirmed: caseRow.status !== "payment_pending",
     citasTotal,
     citasCompleted,
     docsTotal: docCounts.total,
