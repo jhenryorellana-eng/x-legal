@@ -88,6 +88,17 @@ function jobCallbackBaseUrl(): string {
   return configured;
 }
 
+/**
+ * QStash rejects a `deduplicationId` containing `:` (HTTP 400
+ * "DeduplicationId cannot contain ':'") — but our dedupeId convention uses `:`
+ * as a separator (e.g. `translate-document:<docId>:<direction>`). Map every
+ * character outside QStash's safe set to `_`. The transform is deterministic,
+ * so retries of the same logical job still collapse to one message.
+ */
+export function toQStashDeduplicationId(dedupeId: string): string {
+  return dedupeId.replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
 export async function enqueueJob(
   payload: JobEnvelope,
   options: EnqueueOptions = {},
@@ -99,7 +110,7 @@ export async function enqueueJob(
     url,
     body: payload,
     retries: options.retries ?? 3,
-    deduplicationId: payload.dedupeId,
+    deduplicationId: toQStashDeduplicationId(payload.dedupeId),
     ...(options.delay !== undefined && { delay: options.delay }),
   });
 
