@@ -132,10 +132,14 @@ function buildCsp(nonce: string): string {
   return [
     `default-src 'self'`,
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
-    `style-src 'self' 'unsafe-inline'`,
+    // Google Fonts: the staff panel loads Material Symbols Rounded (DOC-52 §0.1)
+    // — its stylesheet from fonts.googleapis.com and the woff2 from fonts.gstatic.com.
+    // Self-hosting is blocked by RNF-035 (the variable icon font is >1MB); allowing
+    // these two font origins keeps the policy clean for the eventual enforce-flip.
+    `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com`,
     `img-src 'self' blob: data: ${supabase}`,
     `media-src 'self' blob: ${supabase}`,
-    `font-src 'self'`,
+    `font-src 'self' https://fonts.gstatic.com`,
     `connect-src 'self' ${supabase} ${supabaseWss} https://*.livekit.cloud wss://*.livekit.cloud`,
     `worker-src 'self' blob:`,
     // `blob:` allows the in-app document preview to frame a same-origin blob URL

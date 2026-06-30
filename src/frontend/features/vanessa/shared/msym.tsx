@@ -64,10 +64,16 @@ export function MSym({
  */
 export function MaterialSymbolsFont() {
   return (
-    // eslint-disable-next-line @next/next/no-page-custom-font -- single staff-panel font, scoped load
-    <link
-      rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap"
-    />
+    <>
+      {/* Resource hints: warm the Google Fonts connections before the stylesheet
+          request so the icon woff2 lands sooner (CSP allows both origins). */}
+      <link rel="preconnect" href="https://fonts.googleapis.com" />
+      <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+      {/* eslint-disable-next-line @next/next/no-page-custom-font -- single staff-panel font, scoped load */}
+      <link
+        rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap"
+      />
+    </>
   );
 }
