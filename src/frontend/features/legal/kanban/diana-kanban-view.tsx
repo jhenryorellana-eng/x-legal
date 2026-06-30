@@ -32,6 +32,16 @@ import { MSym } from "@/frontend/features/vanessa/shared/msym";
 import { Chip } from "@/frontend/features/vanessa/shared/ui";
 import { useToast } from "@/frontend/features/vanessa/shared/toast-bridge";
 import { Modal } from "@/frontend/components/desktop";
+import { Icon, ICON_NAMES, type IconName } from "@/frontend/components/brand";
+
+// Service icons are configured by the admin from the brand `Icon` set
+// (catalog wizard ICON_CHOICES), NOT Material Symbols — render them with the
+// same component so the card matches the admin's service editor. Unknown names
+// fall back to a neutral document glyph.
+const BRAND_ICON_SET = new Set<string>(ICON_NAMES);
+function serviceIconName(raw: string | undefined | null): IconName {
+  return raw && BRAND_ICON_SET.has(raw) ? (raw as IconName) : "doc";
+}
 
 // ---------------------------------------------------------------------------
 // VM types (built by the RSC page; no backend imports here)
@@ -869,7 +879,7 @@ function CaseCard({
           title={card.serviceLabel}
           aria-hidden="true"
         >
-          <MSym name={card.serviceIcon || "folder"} size={14} color={card.serviceColor || "var(--ink-2)"} />
+          <Icon name={serviceIconName(card.serviceIcon)} size={15} color={card.serviceColor || "var(--ink-2)"} />
         </div>
         <span style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-2)", flex: "none" }}>
           {card.caseNumber}
@@ -901,7 +911,7 @@ function CaseCard({
 
       {/* Row 3: service · phase */}
       <div className="kcard-svc">
-        <MSym name={card.serviceIcon || "folder"} size={14} />
+        <Icon name={serviceIconName(card.serviceIcon)} size={14} color="var(--brand-gold)" />
         {card.serviceLabel}
         {card.phaseLabel && (
           <span style={{ color: "var(--ink-3)", fontWeight: 600 }}>· {card.phaseLabel}</span>
