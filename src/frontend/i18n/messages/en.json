@@ -1553,6 +1553,7 @@
         "checkPrintSend": "Printed and sent",
         "traspasoTasksTitle": "Tasks for this stage",
         "taskPlaceholder": "Task to be defined (coming soon).",
+        "taskNotApplicable": "Not applicable",
         "responsableLabel": "Owner",
         "etapaLabel": "Stage",
         "unassigned": "Unassigned",

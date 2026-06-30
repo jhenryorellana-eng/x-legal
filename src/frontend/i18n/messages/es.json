@@ -1553,6 +1553,7 @@
         "checkPrintSend": "Impreso y enviado",
         "traspasoTasksTitle": "Tareas de esta etapa",
         "taskPlaceholder": "Tarea por definir (próximamente).",
+        "taskNotApplicable": "No aplica",
         "responsableLabel": "Responsable",
         "etapaLabel": "Etapa",
         "unassigned": "Sin asignar",

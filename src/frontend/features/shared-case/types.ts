@@ -274,6 +274,8 @@ export interface StageChecklistItemVM {
   /** Stable key → i18n label (citas, docs, forms, translation, payment, contract, …). */
   key: string;
   done: boolean;
+  /** false = category has nothing to do yet (n/a) — shown greyed, not a green check. */
+  applicable: boolean;
   /** true = task not yet defined in product (placeholder gate, admin can force). */
   placeholder: boolean;
 }

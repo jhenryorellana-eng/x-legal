@@ -4827,6 +4827,8 @@ export async function listCasesByOwner(
 export interface StageChecklistItemDto {
   key: string;
   done: boolean;
+  /** false = la categoría no tiene trabajo aún (total 0) → se muestra "no aplica". */
+  applicable: boolean;
   placeholder: boolean;
 }
 
@@ -4965,6 +4967,7 @@ export async function getCaseStageInfo(actor: Actor, caseId: string): Promise<Ca
     checklist: checklist.items.map((i) => ({
       key: i.key,
       done: i.done,
+      applicable: i.applicable !== false,
       placeholder: i.placeholder ?? false,
     })),
     allDone: checklist.allDone,

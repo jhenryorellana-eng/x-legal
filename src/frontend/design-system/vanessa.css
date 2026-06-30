@@ -1536,6 +1536,14 @@
 [data-theme="dark"] .surface-staff .tras-check.no {
   color: #fbbf24;
 }
+.surface-staff .tras-check.na {
+  background: color-mix(in srgb, var(--ink-3) 14%, transparent);
+  color: var(--ink-3);
+  border: 2px solid var(--line);
+}
+.surface-staff .tras-item.na {
+  opacity: 0.6;
+}
 
 /* historial */
 .surface-staff .casetl {

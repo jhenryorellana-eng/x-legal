@@ -110,13 +110,22 @@ export function TraspasoTab({
           {stage.checklist.map((it) => {
             const labelKey = CHECK_LABEL[it.key];
             const label = labelKey ? t[labelKey] : it.key;
+            // n/a = the category has nothing to do yet (total 0). Render it muted
+            // ("no aplica") instead of a green check, so an empty case doesn't look
+            // "all done" while the handoff stays blocked.
+            const na = it.applicable === false;
             return (
-              <div key={it.key} className="tras-item">
-                <span className={`tras-check ${it.done ? "ok" : "no"}`}>
-                  <Icon name={it.done ? "check" : "info"} size={16} color={it.done ? "#fff" : "#b5740b"} />
+              <div key={it.key} className={`tras-item${na ? " na" : ""}`}>
+                <span className={`tras-check ${na ? "na" : it.done ? "ok" : "no"}`}>
+                  <Icon name={na ? "x" : it.done ? "check" : "info"} size={16} color={na ? "var(--ink-3)" : it.done ? "#fff" : "#b5740b"} />
                 </span>
-                <span style={{ fontSize: 14, fontWeight: 700, color: "var(--ink)" }}>
+                <span style={{ fontSize: 14, fontWeight: 700, color: na ? "var(--ink-3)" : "var(--ink)" }}>
                   {String(label)}
+                  {na && (
+                    <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 600, color: "var(--ink-3)" }}>
+                      · {t.taskNotApplicable}
+                    </span>
+                  )}
                   {it.placeholder && (
                     <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 600, color: "var(--ink-2)" }}>
                       · {t.taskPlaceholder}
