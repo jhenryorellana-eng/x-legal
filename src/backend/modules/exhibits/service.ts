@@ -22,7 +22,7 @@ import {
   createSignedUploadUrl,
   validateUploadedObject,
 } from "@/backend/platform/storage";
-import { countPdfPages, extractPdfText } from "@/backend/platform/pdf";
+import { countPdfPages, extractPdfText, htmlToPdf } from "@/backend/platform/pdf";
 import { getRenderer } from "@/backend/platform/renderer";
 import { safeFetch, NonRetryableFetchError, RetryableFetchError } from "@/backend/platform/safe-fetch";
 import { SsrfError } from "@/backend/platform/ssrf";
@@ -30,6 +30,7 @@ import {
   normalizeAndDedup,
   selectExhibitsToAttach,
   isErrorPageText,
+  buildExhibitIndexHtml,
   type RawSource,
   type ExhibitSourceKind,
   type FetchMethod,
@@ -389,6 +390,26 @@ export async function executeFetchExhibitJob(input: { exhibitId: string }): Prom
 export async function getExhibitsForCase(actor: Actor, caseId: string): Promise<repo.CaseExhibitRow[]> {
   can(actor, "expedientes", "view");
   return repo.listAllByCase(caseId);
+}
+
+/**
+ * Renders the formal "Index of Exhibits" divider page (Tab · Source · Date · Supports)
+ * for the given exhibit ids, in cite order. Consumed by the expediente compile, which
+ * splices it as a synthetic item right before the exhibits (so it always reflects the
+ * exhibits actually filed). No actor gate — called by the compile (service-role).
+ */
+export async function renderExhibitIndexForExhibits(exhibitIds: string[]): Promise<Uint8Array> {
+  const rows = await repo.listByIds(exhibitIds);
+  return htmlToPdf(
+    buildExhibitIndexHtml(
+      rows.map((e) => ({
+        label: e.exhibit_label,
+        source: e.publisher ?? e.title ?? "Source",
+        date: e.published_date,
+        supports: e.supports,
+      })),
+    ),
+  );
 }
 
 /** Re-queues a failed exhibit (Diana "Reintentar"). */

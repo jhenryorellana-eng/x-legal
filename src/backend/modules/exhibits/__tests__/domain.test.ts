@@ -4,6 +4,7 @@ import {
   normalizeAndDedup,
   selectExhibitsToAttach,
   isErrorPageText,
+  buildExhibitIndexHtml,
   type RawSource,
   type NormalizedExhibit,
 } from "../domain";
@@ -127,5 +128,26 @@ describe("isErrorPageText", () => {
     const report =
       "Human Rights Watch World Report 2024: Venezuela. The government continued to detain and prosecute opponents. ".repeat(30);
     expect(isErrorPageText(report, 11)).toBe(false);
+  });
+});
+
+describe("buildExhibitIndexHtml", () => {
+  it("renders the formal Index of Exhibits with a row per exhibit (Tab · Source · Date · Supports)", () => {
+    const html = buildExhibitIndexHtml([
+      { label: "A-1", source: "U.S. Supreme Court", date: "1987", supports: "Well-founded fear standard" },
+      { label: "B-1", source: "Human Rights Watch", date: "2024-01-11", supports: "State persecution pattern" },
+    ]);
+    expect(html).toContain("Index of Exhibits");
+    expect(html).toMatch(/Exhibit<\/th>.*Source<\/th>.*Date<\/th>.*Supports<\/th>/);
+    expect(html).toContain("A-1");
+    expect(html).toContain("Human Rights Watch");
+    expect(html).toContain("2024-01-11");
+    expect(html).toContain("Well-founded fear standard");
+  });
+
+  it("escapes HTML in source/supports and tolerates missing fields", () => {
+    const html = buildExhibitIndexHtml([{ label: null, source: "A & B <Co>", date: null, supports: null }]);
+    expect(html).toContain("A &amp; B &lt;Co&gt;");
+    expect(html).not.toContain("<Co>");
   });
 });

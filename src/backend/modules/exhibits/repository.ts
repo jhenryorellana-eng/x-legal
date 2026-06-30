@@ -241,6 +241,19 @@ export async function listReadyByCase(caseId: string): Promise<CaseExhibitRow[]>
   return data ?? [];
 }
 
+/** Exhibits by ids (for the Index of Exhibits page) — ordered by cite_order. */
+export async function listByIds(ids: string[]): Promise<CaseExhibitRow[]> {
+  if (ids.length === 0) return [];
+  const db = createServiceClient();
+  const { data, error } = await db
+    .from("case_exhibits")
+    .select("*")
+    .in("id", ids)
+    .order("cite_order", { ascending: true });
+  if (error) throw new Error(`listByIds: ${error.message}`);
+  return data ?? [];
+}
+
 /** All exhibits for a case (any status) — for Diana's panel. */
 export async function listAllByCase(caseId: string): Promise<CaseExhibitRow[]> {
   const db = createServiceClient();

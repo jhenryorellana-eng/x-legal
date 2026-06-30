@@ -1453,11 +1453,16 @@ function analysisSummaryText(a: ResearchAnalysis): string {
  */
 export function buildResearchContextBlock(bundle: ResearchBundle): string {
   const parts: string[] = [];
+  // Each source is labeled by the EXHIBIT TAB it will be filed under (jurisprudence
+  // → Exhibit A-n, country conditions → Exhibit B-n) — the SAME order the exhibits
+  // module uses when it downloads and indexes them (exhibits/domain collectSources).
+  // The body cites these tabs inline ("see Exhibit A-1") instead of reproducing a
+  // full exhibit table, which the expediente's Index of Exhibits provides.
   if (bundle.jurisprudence.length > 0) {
     parts.push("<verified_jurisprudence>");
     bundle.jurisprudence.forEach((c, i) => {
       parts.push(
-        `${i + 1}. ${c.name} — ${c.citation}${c.court ? ` (${c.court}${c.year ? `, ${c.year}` : ""})` : ""}`,
+        `Exhibit A-${i + 1}: ${c.name} — ${c.citation}${c.court ? ` (${c.court}${c.year ? `, ${c.year}` : ""})` : ""}`,
         `   Holding: ${c.holding}`,
         `   Factual analogy: ${c.factual_analogy}`,
         ...(c.url ? [`   Source: ${c.url}`] : []),
@@ -1470,7 +1475,7 @@ export function buildResearchContextBlock(bundle: ResearchBundle): string {
     parts.push("<country_conditions>");
     bundle.country_conditions.forEach((s, i) => {
       parts.push(
-        `${i + 1}. ${s.source_name}${s.published_date ? ` (${s.published_date})` : ""}: ${s.summary}`,
+        `Exhibit B-${i + 1}: ${s.source_name}${s.published_date ? ` (${s.published_date})` : ""}: ${s.summary}`,
         `   Why it helps: ${s.why_it_helps}`,
         ...(s.url ? [`   Source: ${s.url}`] : []),
       );
@@ -1478,7 +1483,12 @@ export function buildResearchContextBlock(bundle: ResearchBundle): string {
     parts.push("</country_conditions>");
   }
   if (parts.length === 0) return "";
-  return ["## VERIFIED RESEARCH (cite ONLY from here — never fabricate)", ...parts].join("\n");
+  return [
+    "## VERIFIED RESEARCH (cite ONLY from here — never fabricate)",
+    "Each source below is an EXHIBIT filed with the record. When you rely on a source, cite it inline by its exhibit tab (e.g., \"see Exhibit A-1\", \"as Exhibit B-2 documents\"). Do NOT reproduce an exhibit table or index in the memorandum — the exhibits are filed and indexed separately.",
+    "",
+    ...parts,
+  ].join("\n");
 }
 
 /** Analysis-phase prompt: folds the admin `system_prompt` over a generic JSON contract. */

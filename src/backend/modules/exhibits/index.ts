@@ -22,6 +22,8 @@ export {
   // reads (assembler material / panel)
   listReadyByCase,
   listByRun,
+  // Index of Exhibits divider (consumed by expediente compile)
+  renderExhibitIndexForExhibits,
   ExhibitsError,
 } from "./service";
 

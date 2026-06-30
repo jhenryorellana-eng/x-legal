@@ -381,7 +381,7 @@ export async function regenerateCover(
 
   const selectedPartyId = parsed.partyId !== undefined ? parsed.partyId : (prevData.partyId ?? null);
   const partyName = selectedPartyId ? ctx.parties.find((p) => p.id === selectedPartyId)?.name ?? null : null;
-  const title = parsed.title ?? prevData.title ?? "Carátula";
+  const title = parsed.title ?? prevData.title ?? "Cover";
   const subtitle = parsed.subtitle ?? (selectedPartyId ? (partyName ?? undefined) : prevData.subtitle);
 
   const newCover = await renderInsertCover(
@@ -540,7 +540,7 @@ export async function autoAssembleWithAi(
         external_file_path: null,
         title: exhibitItemTitle({ exhibitLabel: ex.exhibit_label, publisher: ex.publisher, title: ex.title }),
         position,
-        include_in_toc: true,
+        include_in_toc: false, // exhibits are listed on the Index of Exhibits page, not the master TOC
       });
       itemsCreated += 1;
     }
@@ -664,7 +664,7 @@ export async function attachReadyExhibits(input: {
       external_file_path: null,
       title: exhibitItemTitle({ exhibitLabel: ex.exhibit_label, publisher: ex.publisher, title: ex.title }),
       position: pos,
-      include_in_toc: true,
+      include_in_toc: false, // exhibits are listed on the Index of Exhibits page, not the master TOC
     });
     newIds.push(row.id);
   }
@@ -1210,14 +1210,37 @@ export async function compileExpediente(
       });
     }
 
-    const result = await compileExpedientePdf(
-      resolvedItems.map((i) => ({
-        bytes: i.bytes,
-        mimeType: i.mimeType,
-        title: i.title,
-        includeInToc: i.includeInToc,
-      })),
-    );
+    // Formal court structure: a single "Index of Exhibits" divider page is inserted
+    // right before the first exhibit (rendered fresh from the exhibits actually filed,
+    // so it never goes stale); the exhibits themselves are kept OUT of the master TOC
+    // (they are listed on that page, not duplicated as top-level entries).
+    const exhibitRefIds = items
+      .filter((it) => it.item_type === "exhibit" && it.ref_id)
+      .map((it) => it.ref_id as string);
+    const compileInput: ExpedienteItemInput[] = [];
+    let exhibitIndexInserted = false;
+    for (let k = 0; k < items.length; k++) {
+      const isExhibit = items[k].item_type === "exhibit";
+      if (isExhibit && !exhibitIndexInserted && exhibitRefIds.length > 0) {
+        const { renderExhibitIndexForExhibits } = await import("@/backend/modules/exhibits");
+        const indexBytes = await renderExhibitIndexForExhibits(exhibitRefIds);
+        compileInput.push({
+          bytes: indexBytes,
+          mimeType: "application/pdf",
+          title: "Index of Exhibits",
+          includeInToc: true,
+        });
+        exhibitIndexInserted = true;
+      }
+      compileInput.push({
+        bytes: resolvedItems[k].bytes,
+        mimeType: resolvedItems[k].mimeType,
+        title: resolvedItems[k].title,
+        includeInToc: isExhibit ? false : resolvedItems[k].includeInToc,
+      });
+    }
+
+    const result = await compileExpedientePdf(compileInput);
 
     const compiledPdfPath = `case/${expediente.case_id}/${expedienteId}-a${expediente.attempt_no}.pdf`;
     await uploadBytesToStorage(

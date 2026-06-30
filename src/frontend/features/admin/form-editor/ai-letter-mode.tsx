@@ -73,11 +73,11 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
   // ── Assembly: ordered blocks (document structure) ──────────────────────────
   const BLOCK_META: { type: AssemblyBlockType; label: string }[] = [
     { type: "cover", label: "Carátula (portada)" },
-    { type: "toc", label: "Índice (tabla de contenidos)" },
+    { type: "toc", label: "Índice del memo (tabla de contenidos de sus secciones)" },
     { type: "body", label: "Cuerpo (secciones)" },
     { type: "chronology", label: "Tabla cronológica" },
     { type: "conclusions", label: "Conclusiones (última sección, aparte)" },
-    { type: "annexes", label: "Anexos (exhibits)" },
+    { type: "annexes", label: "Tabla de anexos dentro del memo (apágala si usas el Index of Exhibits del expediente)" },
     { type: "closing", label: "Declaración bajo perjurio" },
   ];
   // Effective ordered blocks: explicit list if set, else derived from legacy flags.

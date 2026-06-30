@@ -168,3 +168,44 @@ export function isErrorPageText(text: string, pageCount: number): boolean {
   if (SOFT_ERROR.test(head) && t.length < 2000) return true;
   return false;
 }
+
+// ---------------------------------------------------------------------------
+// Index of Exhibits — the formal court divider page (Tab · Source · Date · Supports)
+// ---------------------------------------------------------------------------
+
+const IDX_NAVY = "#0b1f3a";
+const IDX_GOLD = "#c8a24a";
+
+export interface ExhibitIndexRow {
+  label: string | null; // exhibit tab (A-1, B-1…)
+  source: string; // publisher / title
+  date: string | null; // published date
+  supports: string | null; // brief relevance ("why it helps")
+}
+
+/** Builds the "Index of Exhibits" HTML table (navy/gold, matching the master TOC),
+ *  one row per exhibit. Pure — `htmlToPdf` turns it into the divider page that sits
+ *  before the exhibits in the compiled expediente. */
+export function buildExhibitIndexHtml(rows: ExhibitIndexRow[]): string {
+  const esc = (s: string) =>
+    String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string));
+  const th = `text-align:left;font-size:10pt;font-weight:bold;text-transform:uppercase;color:${IDX_GOLD};padding:0 8pt 6pt 0;border-bottom:1pt solid ${IDX_GOLD}`;
+  const td = "font-size:11pt;padding:6pt 8pt 6pt 0;vertical-align:top;border-bottom:0.5pt solid #d9dee7";
+  const body = rows
+    .map(
+      (r) =>
+        `<tr><td style="${td};font-weight:bold;white-space:nowrap">${esc(r.label ?? "—")}</td>` +
+        `<td style="${td}">${esc(r.source)}</td>` +
+        `<td style="${td};white-space:nowrap">${esc(r.date ?? "—")}</td>` +
+        `<td style="${td}">${esc(r.supports ?? "")}</td></tr>`,
+    )
+    .join("");
+  return (
+    `<!DOCTYPE html><html><body style="font-family:Helvetica,Arial,sans-serif;margin:54pt 60pt;color:${IDX_NAVY}">` +
+    `<div style="font-size:22pt;font-weight:bold;margin:0 0 4pt">Index of Exhibits</div>` +
+    `<div style="border-top:2pt solid ${IDX_GOLD};margin-bottom:14pt"></div>` +
+    `<table style="width:100%;border-collapse:collapse">` +
+    `<thead><tr><th style="${th}">Exhibit</th><th style="${th}">Source</th><th style="${th}">Date</th><th style="${th}">Supports</th></tr></thead>` +
+    `<tbody>${body}</tbody></table></body></html>`
+  );
+}

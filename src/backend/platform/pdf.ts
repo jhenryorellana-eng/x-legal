@@ -776,10 +776,17 @@ export interface CompiledExpediente {
  *
  * Robust to mixed inputs (PDF + scanned images). DOC-45 §3.4.
  */
-export async function compileExpedientePdf(items: ExpedienteItemInput[]): Promise<CompiledExpediente> {
+export async function compileExpedientePdf(
+  items: ExpedienteItemInput[],
+  opts?: { tocTitle?: string },
+): Promise<CompiledExpediente> {
   const mupdf = await import("mupdf");
-   
+
   const M = mupdf as any;
+  // Master index header — English by default (the case file is filed with the US
+  // immigration court in English; item titles are already English). Parametrized
+  // so a caller can localize without touching the engine.
+  const tocTitle = opts?.tocTitle ?? "Table of Contents";
 
   // Open each item as a PDFDocument (graftPage needs PDF source + copies objects
   // verbatim — no font re-processing, unlike DocumentWriter which fails on USCIS
@@ -811,7 +818,7 @@ export async function compileExpedientePdf(items: ExpedienteItemInput[]): Promis
     String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string));
   const buildTocHtml = (rows: Array<{ title: string; startPage: number }>) =>
     `<!DOCTYPE html><html><body style="font-family:Helvetica,Arial,sans-serif;margin:54pt 60pt;color:${NAVY}">
-      <div style="font-size:22pt;font-weight:bold;margin:0 0 4pt">Índice del expediente</div>
+      <div style="font-size:22pt;font-weight:bold;margin:0 0 4pt">${esc(tocTitle)}</div>
       <div style="border-top:2pt solid ${GOLD};margin-bottom:14pt"></div>
       <table style="width:100%;font-size:12pt;border-collapse:collapse">
         ${rows

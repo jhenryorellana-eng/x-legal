@@ -169,6 +169,15 @@ describe("buildResearchContextBlock", () => {
     expect(block).toContain("WHY");
   });
 
+  it("labels each source by its exhibit tab (A-n jurisprudence, B-n country) so the body cites inline", () => {
+    const block = buildResearchContextBlock(bundle);
+    expect(block).toContain("Exhibit A-1: Doe v. INS");
+    expect(block).toContain("Exhibit B-1: HRW");
+    // instructs the model to reference exhibits inline and NOT reproduce a table
+    expect(block).toMatch(/cite .*inline.*exhibit/i);
+    expect(block).toMatch(/do not .*(table|index)/i);
+  });
+
   it("returns an empty string when there is nothing verified", () => {
     expect(buildResearchContextBlock({ analysis: null, jurisprudence: [], country_conditions: [] })).toBe("");
   });
