@@ -901,7 +901,7 @@ function CaseCard({
 
       {/* Row 3: service · phase */}
       <div className="kcard-svc">
-        <MSym name="folder" size={14} />
+        <MSym name={card.serviceIcon || "folder"} size={14} />
         {card.serviceLabel}
         {card.phaseLabel && (
           <span style={{ color: "var(--ink-3)", fontWeight: 600 }}>· {card.phaseLabel}</span>

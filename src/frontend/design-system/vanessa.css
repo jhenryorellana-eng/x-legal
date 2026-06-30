@@ -741,6 +741,9 @@
   height: 26px;
   border-radius: 8px;
   font-size: 13px;
+  display: grid;
+  place-items: center;
+  flex: none;
 }
 .surface-staff .kcard-svc {
   font-size: 12px;
