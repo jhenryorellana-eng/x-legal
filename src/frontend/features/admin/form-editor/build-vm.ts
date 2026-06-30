@@ -124,6 +124,10 @@ export function buildFormEditorVM(data: RawFormEditorData, datasets: RawDataset[
           rules_enabled: (cfg.rules_enabled as boolean) ?? true,
           rules_text: (cfg.rules_text as string | null) ?? null,
           assembly: (cfg.assembly as import("./types").GenerationAssemblyVM | null) ?? null,
+          attach_sources_enabled: (cfg.attach_sources_enabled as boolean) ?? false,
+          attach_sources_kinds: (cfg.attach_sources_kinds as string[]) ?? ["country_condition", "jurisprudence"],
+          curated_sources:
+            (cfg.curated_sources as { url: string; title: string; category: string }[]) ?? [],
         }
       : null,
     datasets: datasets.map((d) => ({ id: d.id, name: d.name, tokens: d.total_tokens, active: d.is_active })),

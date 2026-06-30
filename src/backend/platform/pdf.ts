@@ -849,9 +849,10 @@ export async function compileExpedientePdf(items: ExpedienteItemInput[]): Promis
   const totalPages = tocPages + opened.reduce((s, o) => s + o.pages, 0);
 
   // --- merge: graftPage TOC + every item into a fresh PDFDocument (verbatim) ---
-  // NOTE: the TOC carries each item's START page (the navigation aid that matters).
-  // A continuous footer page-number stamp is deferred — the mupdf WASM build can't
-  // create substitute fonts for on-device text, so it needs an embedded font asset.
+  // The TOC carries each item's START page (logical navigation); a continuous Bates
+  // foliation (USALP-0001…) is stamped on every page by stampBates below — a
+  // separate pdf-lib pass, since the mupdf WASM build can't substitute fonts for
+  // on-device text.
   const dst = new M.PDFDocument();
   const graft = (src: any) => {
     const n = src.countPages();
@@ -860,11 +861,72 @@ export async function compileExpedientePdf(items: ExpedienteItemInput[]): Promis
   graft(tocPdf);
   for (const o of opened) graft(o.doc);
 
-  const pdf = dst.saveToBuffer("").asUint8Array() as Uint8Array;
+  const merged = dst.saveToBuffer("").asUint8Array() as Uint8Array;
   try { tocPdf?.destroy?.(); } catch { /* freed */ }
   for (const o of opened) { try { o.doc.destroy?.(); } catch { /* freed */ } }
   try { dst.destroy?.(); } catch { /* freed */ }
-   
+
+  const pdf = await stampBates(merged);
 
   return { pdf, pageCount: totalPages, toc };
+}
+
+// ---------------------------------------------------------------------------
+// G. countPdfPages — page count of an arbitrary PDF (exhibit page_count)
+// ---------------------------------------------------------------------------
+
+/** Returns the page count of a PDF (≥ 1). Used to record an exhibit's length. */
+export async function countPdfPages(bytes: Uint8Array): Promise<number> {
+  const mupdf = await import("mupdf");
+
+  const M = mupdf as any;
+  const doc = M.Document.openDocument(bytes, "application/pdf");
+  try {
+    return Math.max(1, doc.countPages());
+  } finally {
+    try { doc.destroy?.(); } catch { /* freed */ }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// H. stampBates — continuous legal foliation on every page (USALP-0001…)
+// ---------------------------------------------------------------------------
+
+/**
+ * Stamps a continuous Bates number (e.g. "USALP-0001") on the bottom-right of every
+ * page — the legal foliation of a filed packet (essential at 200+ pages). Uses
+ * pdf-lib's built-in Helvetica (no embedded font asset needed; mupdf WASM can't
+ * substitute fonts on-device, which is why this is a separate post-merge pass).
+ *
+ * Best-effort: if the merged PDF can't be re-processed, returns the original bytes
+ * unstamped rather than failing the whole compilation.
+ */
+export async function stampBates(
+  pdfBytes: Uint8Array,
+  prefix = "USALP-",
+  startNumber = 1,
+): Promise<Uint8Array> {
+  try {
+    const { PDFDocument, StandardFonts, rgb } = await import("pdf-lib");
+    const doc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+    const pages = doc.getPages();
+    const size = 8;
+    pages.forEach((page, i) => {
+      const label = `${prefix}${String(startNumber + i).padStart(4, "0")}`;
+      const w = font.widthOfTextAtSize(label, size);
+      page.drawText(label, {
+        x: page.getWidth() - w - 36, // 0.5in from the right edge
+        y: 18, // ~0.25in from the bottom
+        size,
+        font,
+        color: rgb(0.42, 0.42, 0.42),
+      });
+    });
+    return await doc.save();
+  } catch (err) {
+    const { logger } = await import("./logger");
+    logger.warn({ err: err instanceof Error ? err.message : String(err) }, "stampBates: degraded (returning unstamped)");
+    return pdfBytes;
+  }
 }

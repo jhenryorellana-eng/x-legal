@@ -79,6 +79,10 @@ const providerSchemas = {
   gemini: z.object({
     GEMINI_API_KEY: z.string().min(1),
   }),
+  urlbox: z.object({
+    /** Urlbox Render API secret key (Bearer). Renders exhibit source URLs → PDF. */
+    URLBOX_SECRET: z.string().min(1),
+  }),
   abogados: z.object({
     ABOGADOS_API_URL: z.string().url(),
     ABOGADOS_API_KEY: z.string().min(1),

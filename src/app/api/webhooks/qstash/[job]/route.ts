@@ -45,6 +45,7 @@ import { handleInstallmentReminders } from "@/backend/jobs/installment-reminders
 import { handleExpireStaleCheckouts } from "@/backend/jobs/expire-stale-checkouts";
 import { handleReconcileStripePayments } from "@/backend/jobs/reconcile-stripe-payments";
 import { handleSendCampaign } from "@/backend/jobs/send-campaign";
+import { handleFetchExhibit } from "@/backend/jobs/fetch-exhibit";
 
 // ---------------------------------------------------------------------------
 // Job registry — jobKey → handler
@@ -77,6 +78,8 @@ const JOB_REGISTRY: Record<string, JobHandler> = {
   "reconcile-stripe-payments": handleReconcileStripePayments,
   // F6-Ola3 campaigns (DOC-26 §2.5)
   "send-campaign": handleSendCampaign,
+  // Exhibits — download/render ONE cited source to a PDF annex (fan-out per exhibit)
+  "fetch-exhibit": handleFetchExhibit,
 };
 
 // On-demand AI jobs (run-generation/extract/translate) can run past the default

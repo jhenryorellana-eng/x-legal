@@ -5,6 +5,8 @@
  * sources whose URL resolves are kept as verified exhibits.
  */
 
+import { createHash } from "node:crypto";
+
 export function isLikelyUrl(value: string): boolean {
   if (!value) return false;
   try {
@@ -13,6 +15,47 @@ export function isLikelyUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Canonicalization + content-addressed hashing (exhibit dedup + cache)
+// ---------------------------------------------------------------------------
+
+/**
+ * Marketing/tracking query params that never change the document a URL points at.
+ * Stripped during canonicalization so the SAME source cited twice (the AI tends to
+ * cite the same article in several paragraphs, each with a different utm_*) dedups
+ * to a single exhibit. `ref`/`ref_src` are social-referrer markers, safe to drop.
+ */
+const TRACKING_PARAM = /^(utm_|fbclid$|gclid$|gclsrc$|dclid$|msclkid$|yclid$|mc_eid$|mc_cid$|igshid$|_hsenc$|_hsmi$|ref$|ref_src$)/i;
+
+/**
+ * Normalizes a URL so logically-identical links collapse to one string:
+ * drop the fragment, lowercase the host, strip a leading `www.`, remove tracking
+ * params, sort the remaining params, and drop a trailing slash (except the bare
+ * root). Deterministic — the basis for `urlHash` dedup and the content cache.
+ *
+ * Throws on an invalid or non-http(s) URL; callers guard with `isLikelyUrl`.
+ */
+export function canonicalizeUrl(raw: string): string {
+  const u = new URL(raw);
+  if (u.protocol !== "http:" && u.protocol !== "https:") {
+    throw new Error(`canonicalizeUrl: unsupported scheme ${u.protocol}`);
+  }
+  u.hash = "";
+  u.hostname = u.hostname.toLowerCase().replace(/^www\./, "");
+  const kept = [...u.searchParams.entries()]
+    .filter(([k]) => !TRACKING_PARAM.test(k))
+    .sort(([a], [b]) => a.localeCompare(b));
+  u.search = "";
+  for (const [k, v] of kept) u.searchParams.append(k, v);
+  if (u.pathname.length > 1) u.pathname = u.pathname.replace(/\/+$/, "");
+  return u.toString();
+}
+
+/** sha256 hex of a canonical URL — the dedup key (`unique (run_id, url_hash)`) and cache key. */
+export function urlHash(canonicalUrl: string): string {
+  return createHash("sha256").update(canonicalUrl).digest("hex");
 }
 
 export interface UrlCheckResult {

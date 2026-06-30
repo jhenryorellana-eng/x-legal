@@ -29,6 +29,12 @@ import {
   type AutoAssembleResult,
 } from "@/backend/modules/expediente";
 import { AiEngineError } from "@/backend/modules/ai-engine";
+import {
+  retryExhibit,
+  createExhibitUploadUrl,
+  confirmManualExhibit,
+  ExhibitsError,
+} from "@/backend/modules/exhibits";
 
 // ---------------------------------------------------------------------------
 // Shared result shapes
@@ -38,6 +44,48 @@ export interface ExpedienteResult<T = undefined> {
   ok: boolean;
   data?: T;
   error?: { code: string };
+}
+
+// ---------------------------------------------------------------------------
+// Exhibits panel (Diana) — retry a failed exhibit / upload a manual copy
+// ---------------------------------------------------------------------------
+
+export async function retryExhibitAction(input: { exhibitId: string }): Promise<ExpedienteResult> {
+  try {
+    const actor = await requireActor();
+    await retryExhibit(actor, input.exhibitId);
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof ExhibitsError) return { ok: false, error: { code: err.code } };
+    return { ok: false, error: { code: "UNEXPECTED" } };
+  }
+}
+
+export async function createExhibitUploadUrlAction(input: {
+  exhibitId: string;
+}): Promise<ExpedienteResult<{ signedUrl: string; path: string }>> {
+  try {
+    const actor = await requireActor();
+    const data = await createExhibitUploadUrl(actor, input.exhibitId);
+    return { ok: true, data };
+  } catch (err) {
+    if (err instanceof ExhibitsError) return { ok: false, error: { code: err.code } };
+    return { ok: false, error: { code: "UNEXPECTED" } };
+  }
+}
+
+export async function confirmManualExhibitAction(input: {
+  exhibitId: string;
+  path: string;
+}): Promise<ExpedienteResult> {
+  try {
+    const actor = await requireActor();
+    await confirmManualExhibit(actor, input);
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof ExhibitsError) return { ok: false, error: { code: err.code } };
+    return { ok: false, error: { code: "UNEXPECTED" } };
+  }
 }
 
 // ---------------------------------------------------------------------------

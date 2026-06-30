@@ -138,6 +138,9 @@ export const formEditorAiMock: FormEditorVM = {
     rules_enabled: true,
     rules_text: null,
     assembly: null,
+    attach_sources_enabled: false,
+    attach_sources_kinds: ["country_condition", "jurisprudence"],
+    curated_sources: [],
   },
 };
 

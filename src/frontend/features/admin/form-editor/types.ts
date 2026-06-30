@@ -140,6 +140,10 @@ export interface GenerationConfigVM {
   rules_enabled: boolean;
   rules_text: string | null;
   assembly: GenerationAssemblyVM | null;
+  // --- automatic exhibits (anexos) ---
+  attach_sources_enabled: boolean;
+  attach_sources_kinds: string[];
+  curated_sources: { url: string; title: string; category: string }[];
 }
 
 /* Injected action shapes (structurally identical to the app server actions). */

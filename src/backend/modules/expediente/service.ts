@@ -33,6 +33,8 @@ import {
   isEditableStatus,
   canonicalClientLabel,
   validateItemRef,
+  exhibitItemTitle,
+  placeExhibitsAfterMemo,
   type ExpedienteItemType,
 } from "./domain";
 import {
@@ -42,6 +44,7 @@ import {
   findCoverRenderById,
   listCompletedTranslationsForCase,
   findTranslationById,
+  findExhibitById,
   countCoverItemRefs,
   deleteCoverRender,
   findExpedienteById,
@@ -464,6 +467,17 @@ export async function autoAssembleWithAi(
   const dividerTpl =
     templates.find((t) => (t.template as { style?: string }).style === "ulp-divider") ?? templates[0];
 
+  // Ready exhibits (auto-downloaded annexes) grouped by their memo run — inserted
+  // right after each ai_generation item so the cited sources are filed behind the memo.
+  const { listReadyByCase: listReadyExhibits } = await import("@/backend/modules/exhibits");
+  const readyExhibits = await listReadyExhibits(caseId); // already ordered by cite_order
+  const exhibitsByRun = new Map<string, typeof readyExhibits>();
+  for (const ex of readyExhibits) {
+    const arr = exhibitsByRun.get(ex.run_id) ?? [];
+    arr.push(ex);
+    exhibitsByRun.set(ex.run_id, arr);
+  }
+
   const partyName = new Map(ctx.parties.map((p) => [p.id, p.name ?? "—"]));
   const validPartyIds = new Set(ctx.parties.map((p) => p.id));
   const translationByDoc = new Map(translations.map((t) => [t.caseDocumentId, t.translationId]));
@@ -515,6 +529,23 @@ export async function autoAssembleWithAi(
     itemsCreated += 1;
   };
 
+  // Inserts the ready exhibits of an AI memo run immediately after it (cite order).
+  const addExhibitsForRun = async (runId: string): Promise<void> => {
+    for (const ex of exhibitsByRun.get(runId) ?? []) {
+      position += 1;
+      await insertItem({
+        expediente_id: draft!.id,
+        item_type: "exhibit",
+        ref_id: ex.id,
+        external_file_path: null,
+        title: exhibitItemTitle({ exhibitLabel: ex.exhibit_label, publisher: ex.publisher, title: ex.title }),
+        position,
+        include_in_toc: true,
+      });
+      itemsCreated += 1;
+    }
+  };
+
   const addDocWithTranslation = async (docId: string): Promise<void> => {
     const doc = docById.get(docId);
     if (!doc || usedDocs.has(docId)) {
@@ -540,6 +571,7 @@ export async function autoAssembleWithAi(
       await addItemDirect("cover", cover.id, section.title);
       coversCreated += 1;
       await addItemDirect(section.refType, section.refId, section.title);
+      if (section.refType === "ai_generation") await addExhibitsForRun(section.refId);
     } else {
       // Only trust a partyId the AI returned if it belongs to this case; otherwise
       // treat the section as a generic group (null party, no subtitle) so we never
@@ -575,6 +607,7 @@ export async function autoAssembleWithAi(
     await addItemDirect("cover", cover.id, s.title);
     coversCreated += 1;
     await addItemDirect(s.kind, s.ref, s.title);
+    if (s.kind === "ai_generation") await addExhibitsForRun(s.ref);
   }
 
   const leftoverDocs = docs.filter((d) => !usedDocs.has(d.refId));
@@ -590,6 +623,63 @@ export async function autoAssembleWithAi(
   });
 
   return { expedienteId: draft.id, coversCreated, itemsCreated, unresolved };
+}
+
+/**
+ * Syncs a memo run's ready exhibits into an EXISTING draft expediente, placing them
+ * right after the memo's ai_generation item (cite order). Runs as system (consumed
+ * from the `exhibits.run_settled` event) — handles the case where Diana already
+ * assembled the draft before the exhibits finished downloading. Idempotent: skips
+ * exhibits already present. No-op if there is no draft or the memo isn't in it yet
+ * (then autoAssembleWithAi includes them at assembly time).
+ */
+export async function attachReadyExhibits(input: {
+  caseId: string;
+  runId: string;
+}): Promise<{ inserted: number }> {
+  const draft = await findDraftExpedienteForCase(input.caseId);
+  if (!draft) return { inserted: 0 };
+
+  const items = await listItemsForExpediente(draft.id); // ordered by position
+  const memo = items.find((i) => i.item_type === "ai_generation" && i.ref_id === input.runId);
+  if (!memo) return { inserted: 0 };
+
+  const { listReadyByCase } = await import("@/backend/modules/exhibits");
+  const ready = (await listReadyByCase(input.caseId)).filter((e) => e.run_id === input.runId);
+  const existingRefs = new Set(
+    items.filter((i) => i.item_type === "exhibit").map((i) => i.ref_id),
+  );
+  const toAdd = ready.filter((e) => !existingRefs.has(e.id)); // already cite-order sorted
+  if (toAdd.length === 0) return { inserted: 0 };
+
+  // 1. Append the new exhibit items (positions fixed in step 2).
+  let pos = await maxItemPositionForExpediente(draft.id);
+  const newIds: string[] = [];
+  for (const ex of toAdd) {
+    pos += 1;
+    const row = await insertItem({
+      expediente_id: draft.id,
+      item_type: "exhibit",
+      ref_id: ex.id,
+      external_file_path: null,
+      title: exhibitItemTitle({ exhibitLabel: ex.exhibit_label, publisher: ex.publisher, title: ex.title }),
+      position: pos,
+      include_in_toc: true,
+    });
+    newIds.push(row.id);
+  }
+
+  // 2. Reorder so the new exhibits sit right after the memo (negative-position trick,
+  //    mirrors reorderItems — the deferrable unique(position) isn't batched by the client).
+  const orderedIds = placeExhibitsAfterMemo(
+    items.map((i) => ({ id: i.id, itemType: i.item_type })),
+    memo.id,
+    newIds,
+  );
+  for (let i = 0; i < orderedIds.length; i++) await updateItemPosition(orderedIds[i], -(i + 1) * 1000);
+  for (let i = 0; i < orderedIds.length; i++) await updateItemPosition(orderedIds[i], i + 1);
+
+  return { inserted: newIds.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -721,7 +811,7 @@ export async function getExpedienteMaterial(
 
 const AddItemSchema = z.object({
   expedienteId: zUuid,
-  itemType: z.enum(["cover", "ai_generation", "automated_form", "client_document", "translation", "external_file"]),
+  itemType: z.enum(["cover", "ai_generation", "automated_form", "client_document", "translation", "external_file", "exhibit"]),
   refId: zUuid.nullable().optional(),
   externalFilePath: z.string().min(1).nullable().optional(),
   title: z.string().min(1),
@@ -826,6 +916,14 @@ async function validateLogicalFk(
     case "translation": {
       const tr = await findTranslationById(refId);
       if (!tr) throw new ExpedienteError("EXPEDIENTE_ITEM_REF_INVALID", { itemType, refId });
+      break;
+    }
+    case "exhibit": {
+      const ex = await findExhibitById(refId);
+      // Only a downloaded ('ready') or hand-uploaded ('manual') exhibit can be filed.
+      if (!ex || (ex.status !== "ready" && ex.status !== "manual")) {
+        throw new ExpedienteError("EXPEDIENTE_ITEM_REF_INVALID", { itemType, refId });
+      }
       break;
     }
   }
@@ -1245,6 +1343,15 @@ async function resolveItemBytes(
         throw new Error(`translation not found or has no PDF: ${item.ref_id}`);
       bucket = "generated";
       path = tr.translated_pdf_path;
+      break;
+    }
+    case "exhibit": {
+      // case_exhibits → 'expedientes' bucket, pdf_path (downloaded/rendered source)
+      const ex = await findExhibitById(item.ref_id!);
+      if (!ex || !ex.pdf_path)
+        throw new Error(`exhibit not found or not fetched: ${item.ref_id}`);
+      bucket = "expedientes";
+      path = ex.pdf_path;
       break;
     }
     default:

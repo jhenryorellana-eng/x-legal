@@ -55,6 +55,20 @@ export interface EnsambladorVM {
   coverTemplates: { id: string; name: string }[];
   /** Case parties — for per-party covers (subtitle = party name, e.g. each minor). */
   parties: { id: string; name: string; role: string }[];
+  /** Auto-downloaded exhibits (anexos) for this case — Diana's status panel. */
+  exhibits: ExhibitVM[];
+}
+
+export interface ExhibitVM {
+  id: string;
+  exhibitLabel: string | null;
+  sourceKind: string;
+  title: string | null;
+  publisher: string | null;
+  sourceUrl: string;
+  status: string; // pending | fetching | ready | failed | manual
+  pageCount: number | null;
+  lastError: string | null;
 }
 
 export interface ItemVM {
@@ -84,6 +98,9 @@ export interface EnsambladorActions {
   deleteCoverItem: (input: { itemId: string }) => Promise<{ ok: boolean; error?: { code: string } }>;
   regenerateCover: (input: { itemId: string; title?: string; subtitle?: string; partyId?: string | null }) => Promise<{ ok: boolean; error?: { code: string } }>;
   sendToFinance: (input: { caseId: string; expedienteId: string }) => Promise<{ ok: boolean; error?: { code: string } }>;
+  retryExhibit: (input: { exhibitId: string }) => Promise<{ ok: boolean; error?: { code: string } }>;
+  createExhibitUploadUrl: (input: { exhibitId: string }) => Promise<{ ok: boolean; data?: { signedUrl: string; path: string }; error?: { code: string } }>;
+  confirmManualExhibit: (input: { exhibitId: string; path: string }) => Promise<{ ok: boolean; error?: { code: string } }>;
 }
 
 export interface EnsambladorViewProps {
@@ -302,6 +319,91 @@ function InlineEditTitle({ value, onSave, disabled, t }: InlineEditTitleProps) {
     >
       {value}
     </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sub-component: ExhibitsPanel (auto-downloaded anexos — Diana's status + recovery)
+// ---------------------------------------------------------------------------
+
+const EXHIBIT_STATUS: Record<string, { label: string; color: string; bg: string }> = {
+  pending:  { label: "En cola",     color: "var(--ink-2)",     bg: "var(--chip)" },
+  fetching: { label: "Descargando", color: "var(--accent)",    bg: "var(--blue-soft)" },
+  ready:    { label: "Listo",       color: "#1d7a4d",          bg: "#e6f5ec" },
+  manual:   { label: "Manual",      color: "#7a5c1d",          bg: "#f5efe0" },
+  failed:   { label: "Falló",       color: "var(--red, #c0341d)", bg: "#fdecea" },
+};
+
+function ExhibitsPanel({ exhibits, actions }: { exhibits: ExhibitVM[]; actions: EnsambladorActions }) {
+  const [busy, setBusy] = React.useState<string | null>(null);
+  const ready = exhibits.filter((e) => e.status === "ready" || e.status === "manual").length;
+
+  async function retry(id: string) {
+    setBusy(id);
+    const r = await actions.retryExhibit({ exhibitId: id });
+    setBusy(null);
+    if (r.ok) { toast.success("Reintentando descarga…"); window.location.reload(); }
+    else toast.error(r.error?.code ?? "Error");
+  }
+
+  async function upload(id: string, file: File) {
+    setBusy(id);
+    const u = await actions.createExhibitUploadUrl({ exhibitId: id });
+    if (!u.ok || !u.data) { setBusy(null); return toast.error("No se pudo iniciar la subida"); }
+    const put = await fetch(u.data.signedUrl, { method: "PUT", body: file, headers: { "content-type": "application/pdf" } });
+    if (!put.ok) { setBusy(null); return toast.error("Falló la subida del archivo"); }
+    const c = await actions.confirmManualExhibit({ exhibitId: id, path: u.data.path });
+    setBusy(null);
+    if (c.ok) { toast.success("Anexo subido a mano"); window.location.reload(); }
+    else toast.error(c.error?.code ?? "Archivo inválido");
+  }
+
+  return (
+    <Card>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 10 }}>
+        <h3 style={{ fontSize: 15, fontWeight: 800, color: "var(--ink)", margin: 0 }}>Anexos automáticos</h3>
+        <span style={{ fontSize: 12.5, color: "var(--ink-3)", fontWeight: 700 }}>{ready}/{exhibits.length} listos</span>
+      </div>
+      <p style={{ fontSize: 12, color: "var(--ink-3)", margin: "0 0 12px" }}>
+        Fuentes citadas por la IA, descargadas y anexadas solas. Solo los que fallaron necesitan tu acción.
+      </p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {exhibits.map((ex) => {
+          const st = EXHIBIT_STATUS[ex.status] ?? EXHIBIT_STATUS.pending;
+          const isFailed = ex.status === "failed";
+          return (
+            <div key={ex.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 8, background: "var(--card)", border: `1px solid ${isFailed ? "#f3c6bf" : "var(--line)"}` }}>
+              <span style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 800, padding: "3px 8px", borderRadius: 999, color: st.color, background: st.bg }}>{st.label}</span>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <p style={{ fontSize: 12.5, fontWeight: 700, color: "var(--ink)", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {ex.exhibitLabel ? `${ex.exhibitLabel} · ` : ""}{ex.publisher ?? ex.title ?? "Fuente"}
+                </p>
+                <a href={ex.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "var(--accent)", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>
+                  {ex.sourceUrl}
+                </a>
+                {isFailed && ex.lastError && (
+                  <p style={{ fontSize: 11, color: "var(--red, #c0341d)", margin: "2px 0 0" }}>{ex.lastError.slice(0, 120)}</p>
+                )}
+              </div>
+              {ex.pageCount != null && !isFailed && (
+                <span style={{ flexShrink: 0, fontSize: 11, color: "var(--ink-3)" }}>{ex.pageCount} pág</span>
+              )}
+              {isFailed && (
+                <div style={{ flexShrink: 0, display: "flex", gap: 6 }}>
+                  <button type="button" disabled={busy === ex.id} onClick={() => retry(ex.id)} style={{ height: 28, padding: "0 10px", borderRadius: 7, border: "1px solid var(--accent)", background: "var(--accent-soft)", color: "var(--accent)", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>
+                    {busy === ex.id ? "…" : "Reintentar"}
+                  </button>
+                  <label style={{ height: 28, padding: "0 10px", borderRadius: 7, border: "1px solid var(--line)", background: "var(--card)", color: "var(--ink-2)", fontSize: 11.5, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center" }}>
+                    Subir PDF
+                    <input type="file" accept="application/pdf" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(ex.id, f); }} />
+                  </label>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </Card>
   );
 }
 
@@ -592,6 +694,11 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
 
   return (
     <div>
+      {vm.exhibits.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <ExhibitsPanel exhibits={vm.exhibits} actions={actions} />
+        </div>
+      )}
       {/* ------------------------------------------------------------------ */}
       {/* Header row                                                           */}
       {/* ------------------------------------------------------------------ */}

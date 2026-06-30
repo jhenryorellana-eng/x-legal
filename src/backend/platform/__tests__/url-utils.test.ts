@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { checkUrlReachable, isLikelyUrl } from "../url-utils";
+import { canonicalizeUrl, checkUrlReachable, isLikelyUrl, urlHash } from "../url-utils";
 
 describe("isLikelyUrl", () => {
   it("accepts http/https URLs and rejects everything else", () => {
@@ -48,5 +48,48 @@ describe("checkUrlReachable", () => {
     const r = await checkUrlReachable("https://x", { fetchFn: fetchFn as unknown as typeof fetch });
     expect(r.reachable).toBe(false);
     expect(r.error).toContain("ENOTFOUND");
+  });
+});
+
+describe("canonicalizeUrl", () => {
+  it("drops the fragment, lowercases the host, strips a leading www, and removes a trailing slash", () => {
+    expect(canonicalizeUrl("https://WWW.Reuters.com/world/article/#section")).toBe(
+      "https://reuters.com/world/article",
+    );
+  });
+
+  it("strips tracking params (utm_*, fbclid, gclid, mc_eid, ref_src) but keeps meaningful ones, sorted", () => {
+    expect(
+      canonicalizeUrl("https://reuters.com/x?utm_source=tw&fbclid=123&article=9&gclid=z&category=a"),
+    ).toBe("https://reuters.com/x?article=9&category=a");
+  });
+
+  it("is stable: tracking noise, param order, www and case collapse to the same canonical form", () => {
+    const a = canonicalizeUrl("https://www.HRW.org/report?b=2&a=1&utm_medium=email#top");
+    const b = canonicalizeUrl("https://hrw.org/report?a=1&b=2&fbclid=xyz");
+    expect(a).toBe(b);
+  });
+
+  it("preserves the path (no trailing-slash strip on the bare root)", () => {
+    expect(canonicalizeUrl("https://example.com/")).toBe("https://example.com/");
+  });
+
+  it("throws on a non-http(s) or invalid URL (callers guard with isLikelyUrl)", () => {
+    expect(() => canonicalizeUrl("not a url")).toThrow();
+    expect(() => canonicalizeUrl("ftp://example.com")).toThrow();
+  });
+});
+
+describe("urlHash", () => {
+  it("is a deterministic 64-char hex digest of the canonical URL", () => {
+    const h = urlHash(canonicalizeUrl("https://reuters.com/x?utm_source=tw"));
+    expect(h).toMatch(/^[0-9a-f]{64}$/);
+    expect(h).toBe(urlHash(canonicalizeUrl("https://reuters.com/x")));
+  });
+
+  it("differs for different canonical URLs", () => {
+    expect(urlHash(canonicalizeUrl("https://reuters.com/a"))).not.toBe(
+      urlHash(canonicalizeUrl("https://reuters.com/b")),
+    );
   });
 });

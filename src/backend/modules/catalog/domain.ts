@@ -525,6 +525,21 @@ export const GenerationAssemblySchema = z.object({
 });
 export type GenerationAssembly = z.infer<typeof GenerationAssemblySchema>;
 
+/** A curated baseline source the admin pins on a letter — always downloaded and
+ *  filed as an exhibit alongside whatever the AI cites. */
+export const CuratedSourceSchema = z.object({
+  url: z.string().url(),
+  title: z.string().default(""),
+  category: z.string().default(""),
+});
+/** Cited-source kinds that may be auto-downloaded as physical exhibits. */
+export const EXHIBIT_SOURCE_KIND_VALUES = [
+  "country_condition",
+  "jurisprudence",
+  "admin_curated",
+  "dataset",
+] as const;
+
 export const GenerationConfigSchema = z.object({
   form_definition_id: z.string().uuid(),
   system_prompt: z.string().min(1),
@@ -545,6 +560,10 @@ export const GenerationConfigSchema = z.object({
   rules_enabled: z.boolean().default(true),
   rules_text: z.string().nullable().optional(),
   assembly: GenerationAssemblySchema.nullable().optional(),
+  // --- automatic exhibits (anexos): download + file the cited sources ---
+  attach_sources_enabled: z.boolean().default(false),
+  attach_sources_kinds: z.array(z.enum(EXHIBIT_SOURCE_KIND_VALUES)).default(["country_condition", "jurisprudence"]),
+  curated_sources: z.array(CuratedSourceSchema).default([]),
 });
 export type GenerationConfig = z.infer<typeof GenerationConfigSchema>;
 

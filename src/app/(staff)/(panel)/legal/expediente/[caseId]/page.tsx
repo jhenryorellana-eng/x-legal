@@ -24,6 +24,7 @@ import {
   type ExpedienteMaterial,
 } from "@/backend/modules/expediente";
 import { CaseError, getCaseWorkspace } from "@/backend/modules/cases";
+import { getExhibitsForCase } from "@/backend/modules/exhibits";
 import { EnsambladorView, type EnsambladorVM } from "@/frontend/features/legal/ensamblador/ensamblador-view";
 import {
   createExpedienteAction,
@@ -39,6 +40,9 @@ import {
   deleteCoverItemAction,
   regenerateCoverAction,
   sendToFinanceAction,
+  retryExhibitAction,
+  createExhibitUploadUrlAction,
+  confirmManualExhibitAction,
 } from "./actions";
 
 // ---------------------------------------------------------------------------
@@ -88,6 +92,7 @@ export default async function EnsambladorPage({
     material: { covers: [], generations: [], forms: [], documents: [] },
     coverTemplates: [],
     parties: [],
+    exhibits: [],
   };
 
   // Case parties feed the per-party cover generator (subtitle = party name).
@@ -95,6 +100,23 @@ export default async function EnsambladorPage({
   const parties = await getCaseWorkspace(actor, caseId)
     .then((ws) => ws.parties.map((p) => ({ id: p.id, name: p.name ?? "—", role: p.role })))
     .catch(() => [] as { id: string; name: string; role: string }[]);
+
+  // Auto-downloaded exhibits (anexos) — Diana's status panel; degrade to [] on failure.
+  const exhibits = await getExhibitsForCase(actor, caseId)
+    .then((rows) =>
+      rows.map((e) => ({
+        id: e.id,
+        exhibitLabel: e.exhibit_label,
+        sourceKind: e.source_kind,
+        title: e.title,
+        publisher: e.publisher,
+        sourceUrl: e.source_url,
+        status: e.status,
+        pageCount: e.page_count,
+        lastError: e.last_error,
+      })),
+    )
+    .catch(() => [] as EnsambladorVM["exhibits"]);
 
   try {
     const allExpedientes = await getCaseExpedientes(actor, caseId);
@@ -137,14 +159,16 @@ export default async function EnsambladorPage({
       },
       coverTemplates: coverTemplates.map((t) => ({ id: t.id, name: t.name })),
       parties,
+      exhibits,
     };
   } catch (err) {
     // Membership / access denied / not-found → render empty rather than crash.
     if (!(err instanceof ExpedienteError) && !(err instanceof CaseError)) throw err;
   }
 
-  // Ensure parties are present even when the expediente load short-circuited.
+  // Ensure parties + exhibits are present even when the expediente load short-circuited.
   vm.parties = parties;
+  vm.exhibits = exhibits;
 
   return (
     <div>
@@ -193,6 +217,9 @@ export default async function EnsambladorPage({
           deleteCoverItem: deleteCoverItemAction,
           regenerateCover: regenerateCoverAction,
           sendToFinance: sendToFinanceAction,
+          retryExhibit: retryExhibitAction,
+          createExhibitUploadUrl: createExhibitUploadUrlAction,
+          confirmManualExhibit: confirmManualExhibitAction,
         }}
       />
     </div>

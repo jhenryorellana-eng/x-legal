@@ -22,6 +22,8 @@ export {
 // AI auto-assembly (one-click semantic covers + ordered draft)
 export {
   autoAssembleWithAi,
+  // Auto-attach ready exhibits into an existing draft (exhibits.run_settled consumer)
+  attachReadyExhibits,
 } from "./service";
 
 export type {

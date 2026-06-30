@@ -35,6 +35,7 @@ export const EXPEDIENTE_ITEM_TYPES = [
   "client_document",
   "translation",
   "external_file",
+  "exhibit",
 ] as const;
 
 export type ExpedienteItemType = (typeof EXPEDIENTE_ITEM_TYPES)[number];
@@ -169,4 +170,43 @@ export function validateItemRef(
 export function canonicalClientLabel(firstName: string, lastName: string): string {
   const initial = (firstName ?? "").trim().charAt(0).toUpperCase();
   return `${initial}. ${(lastName ?? "").trim()}`;
+}
+
+// ---------------------------------------------------------------------------
+// Exhibit item placement (automatic annexes after the AI memo)
+// ---------------------------------------------------------------------------
+
+/** Index/TOC title for an exhibit item, e.g. "Exhibit B-1 — HRW: Venezuela 2024". */
+export function exhibitItemTitle(ex: {
+  exhibitLabel: string | null;
+  publisher: string | null;
+  title: string | null;
+}): string {
+  const label = ex.exhibitLabel ? `Exhibit ${ex.exhibitLabel}` : "Exhibit";
+  const who = ex.publisher ?? ex.title ?? "Source";
+  const what = ex.title && ex.title !== who ? ` — ${ex.title}` : "";
+  return `${label} — ${who}${what}`.slice(0, 200);
+}
+
+export interface OrderedItemLite {
+  id: string;
+  itemType: string;
+}
+
+/**
+ * Returns the full item-id order with `newIds` placed right after `anchorId` (the
+ * memo item) and after any exhibit items already trailing it — so on a re-run new
+ * exhibits stay grouped under their memo. If the anchor is gone, appends at the end.
+ */
+export function placeExhibitsAfterMemo(
+  items: OrderedItemLite[],
+  anchorId: string,
+  newIds: string[],
+): string[] {
+  const ids = items.map((i) => i.id);
+  const idx = ids.indexOf(anchorId);
+  if (idx === -1) return [...ids, ...newIds];
+  let insertAt = idx + 1;
+  while (insertAt < items.length && items[insertAt].itemType === "exhibit") insertAt++;
+  return [...ids.slice(0, insertAt), ...newIds, ...ids.slice(insertAt)];
 }

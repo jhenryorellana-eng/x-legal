@@ -45,6 +45,9 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
     rules_enabled: true,
     rules_text: null,
     assembly: null,
+    attach_sources_enabled: false,
+    attach_sources_kinds: ["country_condition", "jurisprudence"],
+    curated_sources: [],
   };
   const [cfg, setCfg] = React.useState<GenerationConfigVM>(initial);
   const asm = cfg.assembly ?? { cover: false, toc: false, chronology: false, closing: null };
@@ -158,6 +161,9 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
       rules_enabled: cfg.rules_enabled,
       rules_text: cfg.rules_text,
       assembly: cfg.assembly,
+      attach_sources_enabled: cfg.attach_sources_enabled,
+      attach_sources_kinds: cfg.attach_sources_kinds,
+      curated_sources: cfg.curated_sources,
     });
     setSaving(false);
     if (!r.success) return toast.error(r.error?.code ?? "Error");
@@ -186,6 +192,27 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
   function removeSection(idx: number) {
     setCfg({ ...cfg, sections: cfg.sections.filter((_, i) => i !== idx) });
   }
+
+  // ── Automatic exhibits (anexos): which cited sources to download + file ──────
+  const SOURCE_KINDS: { value: string; label: string }[] = [
+    { value: "country_condition", label: "Condiciones de país (noticias/reportes)" },
+    { value: "jurisprudence", label: "Jurisprudencia (fallos completos)" },
+    { value: "admin_curated", label: "Links base (lista de abajo)" },
+    { value: "dataset", label: "Fuentes del dataset" },
+  ];
+  const toggleKind = (k: string) =>
+    setCfg({
+      ...cfg,
+      attach_sources_kinds: cfg.attach_sources_kinds.includes(k)
+        ? cfg.attach_sources_kinds.filter((x) => x !== k)
+        : [...cfg.attach_sources_kinds, k],
+    });
+  const updateCurated = (i: number, patch: Partial<{ url: string; title: string; category: string }>) =>
+    setCfg({ ...cfg, curated_sources: cfg.curated_sources.map((s, k) => (k === i ? { ...s, ...patch } : s)) });
+  const addCurated = () =>
+    setCfg({ ...cfg, curated_sources: [...cfg.curated_sources, { url: "", title: "", category: "" }] });
+  const removeCurated = (i: number) =>
+    setCfg({ ...cfg, curated_sources: cfg.curated_sources.filter((_, k) => k !== i) });
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.05fr) minmax(0, 1fr)", gap: 20, alignItems: "start" }}>
@@ -324,6 +351,59 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
                 <div>
                   <FieldLabel>Instrucciones de investigación</FieldLabel>
                   <textarea value={cfg.research_instructions ?? ""} aria-label="Instrucciones de investigación" placeholder="Ej. Busca precedentes federales favorables por nacionalidad y tipo de persecución (CourtListener, Justia)." onChange={(e) => setCfg({ ...cfg, research_instructions: e.target.value || null })} style={{ width: "100%", minHeight: 70, borderRadius: 12, border: "1.5px solid var(--line)", background: "var(--panel-2, var(--card-alt))", padding: 10, fontSize: 13, color: "var(--ink)", resize: "vertical", boxSizing: "border-box" }} />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Automatic exhibits (anexos) — download + file the cited sources */}
+          <div style={{ border: "1px solid var(--line)", borderRadius: 12, padding: "12px 14px", background: "var(--panel-2, var(--card-alt))" }}>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+              <Switch checked={cfg.attach_sources_enabled} onCheckedChange={(c) => setCfg({ ...cfg, attach_sources_enabled: c })} aria-label="Anexar fuentes automáticamente" />
+              <span style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>Anexar fuentes automáticamente</span>
+            </label>
+            <p style={{ margin: "4px 0 0 34px", fontSize: 12, color: "var(--ink-3)", lineHeight: 1.45 }}>
+              Cada fuente citada se descarga, se convierte a PDF y se anexa al expediente detrás del memo, con
+              numeración Bates. Diana solo resuelve los links irrecuperables.
+            </p>
+            {cfg.attach_sources_enabled && (
+              <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
+                {/* Which kinds to attach */}
+                <div>
+                  <FieldLabel>Qué fuentes anexar</FieldLabel>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {SOURCE_KINDS.map((k) => {
+                      const on = cfg.attach_sources_kinds.includes(k.value);
+                      return (
+                        <button
+                          key={k.value}
+                          type="button"
+                          aria-pressed={on}
+                          onClick={() => toggleKind(k.value)}
+                          style={{ height: 30, padding: "0 12px", borderRadius: 999, border: `1.5px solid ${on ? "var(--accent)" : "var(--line)"}`, background: on ? "var(--accent-soft)" : "var(--card,#fff)", color: on ? "var(--accent)" : "var(--ink-2)", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                        >
+                          {k.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                {/* Curated baseline links */}
+                <div>
+                  <FieldLabel>Links base (siempre se anexan)</FieldLabel>
+                  <p style={{ fontSize: 11, color: "var(--ink-3)", margin: "0 0 8px" }}>
+                    URLs que se descargan en cada caso, además de lo que la IA cite (ej. el reporte de país del
+                    State Dept). Requiere activar “Links base” arriba.
+                  </p>
+                  {cfg.curated_sources.map((s, i) => (
+                    <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+                      <TextInput value={s.url} placeholder="https://…" aria-label={`URL link base ${i + 1}`} onChange={(e) => updateCurated(i, { url: e.target.value })} />
+                      <TextInput value={s.title} placeholder="Título (opcional)" aria-label={`Título link base ${i + 1}`} onChange={(e) => updateCurated(i, { title: e.target.value })} />
+                      <TextInput value={s.category} placeholder="Categoría" aria-label={`Categoría link base ${i + 1}`} onChange={(e) => updateCurated(i, { category: e.target.value })} />
+                      <button type="button" onClick={() => removeCurated(i)} aria-label={`Eliminar link base ${i + 1}`} style={{ border: "none", background: "none", color: "var(--red)", cursor: "pointer", display: "inline-flex" }}><Icon name="x" size={16} /></button>
+                    </div>
+                  ))}
+                  <button type="button" onClick={addCurated} style={{ border: "none", background: "none", color: "var(--accent)", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>+ Agregar link</button>
                 </div>
               </div>
             )}

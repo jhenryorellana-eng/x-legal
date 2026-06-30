@@ -223,6 +223,12 @@ vi.mock("@/backend/modules/ai-engine", () => ({
   proposeExpedienteAssembly: mockProposeExpedienteAssembly,
 }));
 
+// autoAssembleWithAi pulls ready exhibits to file behind each memo — default to none
+// so the existing assembly tests are unaffected; a dedicated test exercises insertion.
+vi.mock("@/backend/modules/exhibits", () => ({
+  listReadyByCase: vi.fn().mockResolvedValue([]),
+}));
+
 vi.mock("@/backend/modules/cases", () => ({
   getCaseWorkspace: vi.fn().mockResolvedValue({
     caseNumber: "ULP-2026-0001",

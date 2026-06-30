@@ -24,6 +24,8 @@ import {
 import { onContractSigned as onContractSignedBilling } from "@/backend/modules/billing";
 import { ensureCaseConversation, postSystemMessage } from "@/backend/modules/messaging";
 import { registerAiEngineConsumers } from "@/backend/modules/ai-engine";
+import { captureFromRun } from "@/backend/modules/exhibits";
+import { attachReadyExhibits } from "@/backend/modules/expediente";
 import { registerIntegrationsConsumers } from "@/backend/modules/integrations";
 import { requestReviewSystem } from "@/backend/modules/retention";
 // scheduling: no in-process event consumers in V2.0 (DOC-43 §5 — scheduling does
@@ -312,6 +314,33 @@ export function registerConsumers(): void {
   // ai-engine consumers (F4 — no-op in V2.0, hook for future wiring)
   // -------------------------------------------------------------------------
   registerAiEngineConsumers();
+
+  // -------------------------------------------------------------------------
+  // exhibits: generation.completed → capture cited sources (Index of Exhibits)
+  // and fan out one fetch-exhibit job per source. Gated by the letter config
+  // (attach_sources_enabled). Test runs are skipped (no paid renders).
+  // -------------------------------------------------------------------------
+  appEvents.on("generation.completed", async (event) => {
+    const p = event.payload as { caseId: string; runId: string; isTest?: boolean };
+    if (p.isTest || !p.runId) return;
+    try {
+      await captureFromRun({ runId: p.runId });
+    } catch (err) {
+      logger.error({ err, runId: p.runId }, "exhibits: captureFromRun failed");
+    }
+  });
+
+  // exhibits.run_settled → expediente: auto-attach the ready exhibits into the draft,
+  // right after the memo (handles exhibits finishing after Diana already assembled).
+  appEvents.on("exhibits.run_settled", async (event) => {
+    const p = event.payload as { caseId: string; runId: string };
+    if (!p.caseId || !p.runId) return;
+    try {
+      await attachReadyExhibits({ caseId: p.caseId, runId: p.runId });
+    } catch (err) {
+      logger.error({ err, runId: p.runId }, "exhibits: attachReadyExhibits failed");
+    }
+  });
 
   // -------------------------------------------------------------------------
   // integrations consumers (F5 — validation.sent / validation.verdict_received;

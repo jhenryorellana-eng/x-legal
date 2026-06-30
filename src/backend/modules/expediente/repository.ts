@@ -455,6 +455,19 @@ export async function findTranslationById(
   return data ?? null;
 }
 
+/** Finds an exhibit by id (for ref validation + resolveItemBytes of 'exhibit' items). */
+export async function findExhibitById(
+  id: string,
+): Promise<{ id: string; pdf_path: string | null; status: string } | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("case_exhibits")
+    .select("id, pdf_path, status")
+    .eq("id", id)
+    .maybeSingle();
+  return data ?? null;
+}
+
 /** Counts how many expediente_items reference a given cover render. */
 export async function countCoverItemRefs(coverRenderId: string): Promise<number> {
   const supabase = createServiceClient();

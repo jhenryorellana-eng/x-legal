@@ -1756,6 +1756,9 @@ export async function updateGenerationConfig(
     rules_enabled?: boolean;
     rules_text?: string | null;
     assembly?: GenerationAssembly | null;
+    attach_sources_enabled?: boolean;
+    attach_sources_kinds?: string[];
+    curated_sources?: Array<{ url: string; title?: string; category?: string }>;
   },
 ): Promise<GenerationConfig> {
   can(actor, "catalog", "edit");
@@ -1815,6 +1818,9 @@ export async function updateGenerationConfig(
     rules_enabled: input.rules_enabled ?? true,
     rules_text: input.rules_text ?? null,
     assembly: (assembly ?? null) as unknown as import("@/shared/database.types").Json,
+    attach_sources_enabled: input.attach_sources_enabled ?? false,
+    attach_sources_kinds: input.attach_sources_kinds ?? ["country_condition", "jurisprudence"],
+    curated_sources: (input.curated_sources ?? []) as unknown as import("@/shared/database.types").Json,
     updated_by: actor.userId,
   });
 

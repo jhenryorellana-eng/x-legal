@@ -182,6 +182,9 @@ export type Database = {
           updated_by: string | null
           web_search_enabled: boolean
           web_search_max_uses: number
+          attach_sources_enabled: boolean
+          attach_sources_kinds: string[]
+          curated_sources: Json
         }
         Insert: {
           assembly?: Json | null
@@ -205,6 +208,9 @@ export type Database = {
           updated_by?: string | null
           web_search_enabled?: boolean
           web_search_max_uses?: number
+          attach_sources_enabled?: boolean
+          attach_sources_kinds?: string[]
+          curated_sources?: Json
         }
         Update: {
           assembly?: Json | null
@@ -228,6 +234,9 @@ export type Database = {
           updated_by?: string | null
           web_search_enabled?: boolean
           web_search_max_uses?: number
+          attach_sources_enabled?: boolean
+          attach_sources_kinds?: string[]
+          curated_sources?: Json
         }
         Relationships: [
           {
@@ -252,6 +261,126 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      case_exhibits: {
+        Row: {
+          accessed_at: string | null
+          attempts: number
+          canonical_url: string
+          case_id: string
+          cite_order: number
+          content_sha256: string | null
+          created_at: string
+          exhibit_label: string | null
+          fetch_method: string | null
+          final_url: string | null
+          id: string
+          last_error: string | null
+          page_count: number | null
+          pdf_path: string | null
+          published_date: string | null
+          publisher: string | null
+          run_id: string
+          source_kind: string
+          source_url: string
+          status: string
+          supports: string | null
+          title: string | null
+          updated_at: string
+          url_hash: string
+        }
+        Insert: {
+          accessed_at?: string | null
+          attempts?: number
+          canonical_url: string
+          case_id: string
+          cite_order: number
+          content_sha256?: string | null
+          created_at?: string
+          exhibit_label?: string | null
+          fetch_method?: string | null
+          final_url?: string | null
+          id?: string
+          last_error?: string | null
+          page_count?: number | null
+          pdf_path?: string | null
+          published_date?: string | null
+          publisher?: string | null
+          run_id: string
+          source_kind: string
+          source_url: string
+          status?: string
+          supports?: string | null
+          title?: string | null
+          updated_at?: string
+          url_hash: string
+        }
+        Update: {
+          accessed_at?: string | null
+          attempts?: number
+          canonical_url?: string
+          case_id?: string
+          cite_order?: number
+          content_sha256?: string | null
+          created_at?: string
+          exhibit_label?: string | null
+          fetch_method?: string | null
+          final_url?: string | null
+          id?: string
+          last_error?: string | null
+          page_count?: number | null
+          pdf_path?: string | null
+          published_date?: string | null
+          publisher?: string | null
+          run_id?: string
+          source_kind?: string
+          source_url?: string
+          status?: string
+          supports?: string | null
+          title?: string | null
+          updated_at?: string
+          url_hash?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_exhibits_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_exhibits_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "ai_generation_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      exhibit_domain_health: {
+        Row: {
+          consecutive_failures: number
+          domain: string
+          last_request_at: string | null
+          open_until: string | null
+          updated_at: string
+        }
+        Insert: {
+          consecutive_failures?: number
+          domain: string
+          last_request_at?: string | null
+          open_until?: string | null
+          updated_at?: string
+        }
+        Update: {
+          consecutive_failures?: number
+          domain?: string
+          last_request_at?: string | null
+          open_until?: string | null
+          updated_at?: string
+        }
+        Relationships: []
       }
       ai_generation_runs: {
         Row: {
