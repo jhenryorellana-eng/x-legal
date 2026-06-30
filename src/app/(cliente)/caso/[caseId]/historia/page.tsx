@@ -46,7 +46,9 @@ export default async function HistoriaPage({
       ? forms.find((f) => f.kind === "ai_letter" && f.partyId === party)
       : forms.find((f) => f.kind === "ai_letter");
     if (story) {
-      storyFormId = story.formDefinitionId;
+      // The client answers the companion questionnaire (the questions that feed
+      // the AI); the ai_letter itself carries no fillable questions.
+      storyFormId = story.fillFormDefinitionId;
       partyId = story.partyId;
       partyName = story.partyName ?? partyName;
     }

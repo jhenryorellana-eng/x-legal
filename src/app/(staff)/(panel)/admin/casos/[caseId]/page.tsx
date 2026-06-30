@@ -176,6 +176,8 @@ export default async function AdminCasoDetailPage({
 
   const formsVm = forms.map((f) => ({
     id: f.formDefinitionId,
+    fillFormDefinitionId: f.fillFormDefinitionId,
+    kind: f.kind,
     label: resolveI18n(f.labelI18n, locale),
     status: f.status,
     partyId: f.partyId,

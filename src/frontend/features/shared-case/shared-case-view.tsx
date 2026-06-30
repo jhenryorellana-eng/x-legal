@@ -234,7 +234,13 @@ export function SharedCaseView({
         {active === "contrato" && <ContratoTab vm={vm} actions={actions} strings={strings} locale={locale} />}
         {active === "citas" && <CitasTab vm={vm} actions={actions} strings={strings} />}
         {active === "documentos" && <DocumentosTab vm={vm} actions={actions} strings={strings} />}
-        {active === "formularios" && <InformacionTab vm={vm} strings={strings} />}
+        {active === "formularios" && (
+          <InformacionTab
+            vm={vm}
+            strings={strings}
+            onNavigateToGeneration={() => setActive(vm.isAdmin ? "generaciones" : "cartas")}
+          />
+        )}
         {active === "cartas" && <GeneracionesTab vm={vm} strings={strings} locale={locale} title={tb.cartas} />}
         {active === "generaciones" && <GeneracionesTab vm={vm} strings={strings} locale={locale} title={tb.generaciones} />}
         {active === "traspaso" && <TraspasoTab vm={vm} actions={actions} strings={strings} />}

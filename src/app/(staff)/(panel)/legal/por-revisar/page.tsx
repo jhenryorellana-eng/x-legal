@@ -37,9 +37,11 @@ export default async function LegalPorRevisarPage() {
     loadError = true;
   }
 
+  // "Mis casos": every case Diana currently owns (handed off by Sales, not yet
+  // filed to Andrium). Cases with documents pending review float to the top; the
+  // needsReview count is shown as a badge, not used as a filter.
   const queue = cases
     .map((c) => ({ c, count: alertsMap[c.id]?.needsReview ?? 0 }))
-    .filter((x) => x.count > 0)
     .sort((a, b) => b.count - a.count);
 
   const totalDocs = queue.reduce((s, x) => s + x.count, 0);
@@ -89,12 +91,14 @@ export default async function LegalPorRevisarPage() {
                     {serviceLabel && <><span aria-hidden>·</span><span>{serviceLabel}</span></>}
                   </div>
                 </div>
-                <span
-                  className="kchip"
-                  style={{ background: "var(--blue-soft)", color: "var(--accent)", height: 24 }}
-                >
-                  {t("docsCount", { n: count })}
-                </span>
+                {count > 0 && (
+                  <span
+                    className="kchip"
+                    style={{ background: "var(--blue-soft)", color: "var(--accent)", height: 24 }}
+                  >
+                    {t("docsCount", { n: count })}
+                  </span>
+                )}
                 <span className="vbtn vbtn-ghost vbtn-sm" style={{ pointerEvents: "none" }}>
                   {t("openCase")}
                   <MSym name="arrow_forward" size={16} />

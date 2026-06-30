@@ -496,6 +496,9 @@
       "retry": "Try again",
       "uploadSuccess": "Receipt sent! We'll review it in under 24 hours.",
       "uploadError": "Could not upload the receipt. Please try again.",
+      "zelleSuccessTitle": "Receipt sent!",
+      "zelleSuccessBody": "We're reviewing it. You'll get a response in under 24 hours.",
+      "zelleSuccessBtn": "Got it",
       "stripeRedirecting": "Opening secure payment…",
       "stripeError": "We could not process the payment. Please try again.",
       "confirmingTitle": "Confirming your payment…",
@@ -731,8 +734,8 @@
         "legalConfig": "Settings",
         "salesCases": "My cases",
         "financeCases": "My cases",
-        "legalCases": "My cases",
-        "legalReview": "To review"
+        "legalCases": "Board",
+        "legalReview": "My cases"
       }
     },
     "config": {
@@ -1525,6 +1528,7 @@
         "formsSub": "Client forms for this phase.",
         "formsEmpty": "No forms for this phase yet.",
         "reviewForm": "Review",
+        "generateLetter": "Generate",
         "formStatusDraft": "In progress",
         "formStatusSubmitted": "Submitted",
         "formStatusApproved": "Approved",
@@ -2075,12 +2079,12 @@
         "empty": "No data in this period"
       },
       "porRevisar": {
-        "title": "To review",
-        "sub": "{n, plural, one {# document} other {# documents}} across {m, plural, one {# case} other {# cases}} await your review",
-        "empty": "No documents to review. All caught up.",
+        "title": "My cases",
+        "sub": "{m, plural, one {# case assigned to you} other {# cases assigned to you}} · {n, plural, one {# document to review} other {# documents to review}}",
+        "empty": "You have no assigned cases yet. When Sales hands off a case, it shows up here.",
         "docsCount": "{n} to review",
         "openCase": "Open case",
-        "loadError": "Couldn't load the queue."
+        "loadError": "Couldn't load the list."
       },
       "expedienteIndex": {
         "title": "Expedientes",

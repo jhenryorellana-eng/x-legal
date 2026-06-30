@@ -496,6 +496,9 @@
       "retry": "Reintentar",
       "uploadSuccess": "¡Comprobante enviado! Lo revisamos en menos de 24 h.",
       "uploadError": "No pudimos subir el comprobante. Inténtalo de nuevo.",
+      "zelleSuccessTitle": "¡Comprobante enviado!",
+      "zelleSuccessBody": "Lo estamos revisando. Te daremos una respuesta en menos de 24 horas.",
+      "zelleSuccessBtn": "Entendido",
       "stripeRedirecting": "Abriendo pago seguro…",
       "stripeError": "No pudimos procesar el pago. Inténtalo de nuevo.",
       "confirmingTitle": "Confirmando tu pago…",
@@ -731,8 +734,8 @@
         "legalConfig": "Configuración",
         "salesCases": "Mis casos",
         "financeCases": "Mis casos",
-        "legalCases": "Mis casos",
-        "legalReview": "Por revisar"
+        "legalCases": "Tablero",
+        "legalReview": "Mis casos"
       }
     },
     "config": {
@@ -1525,6 +1528,7 @@
         "formsSub": "Formularios del cliente para esta fase.",
         "formsEmpty": "Aún no hay formularios para esta fase.",
         "reviewForm": "Revisar",
+        "generateLetter": "Generar",
         "formStatusDraft": "En progreso",
         "formStatusSubmitted": "Enviado",
         "formStatusApproved": "Aprobado",
@@ -2075,12 +2079,12 @@
         "empty": "Sin datos en este período"
       },
       "porRevisar": {
-        "title": "Por revisar",
-        "sub": "{n, plural, one {# documento} other {# documentos}} en {m, plural, one {# caso} other {# casos}} esperan tu revisión",
-        "empty": "No hay documentos por revisar. Todo al día.",
+        "title": "Mis casos",
+        "sub": "{m, plural, one {# caso a tu cargo} other {# casos a tu cargo}} · {n, plural, one {# documento por revisar} other {# documentos por revisar}}",
+        "empty": "Aún no tienes casos asignados. Cuando Ventas te traspase un caso, aparecerá aquí.",
         "docsCount": "{n} por revisar",
         "openCase": "Abrir caso",
-        "loadError": "No se pudo cargar la cola."
+        "loadError": "No se pudo cargar la lista."
       },
       "expedienteIndex": {
         "title": "Expedientes",

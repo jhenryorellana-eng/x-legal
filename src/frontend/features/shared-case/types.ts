@@ -124,7 +124,13 @@ export interface TimelineEventVM {
 }
 
 export interface FormVM {
+  /** Anchor form definition id (ai_letter id for a Memorándum card). */
   id: string;
+  /** The form the "Revisar"/"Llenar" action opens. For a Memorándum (ai_letter
+   *  with a companion questionnaire) this is the questionnaire id. */
+  fillFormDefinitionId: string;
+  /** 'ai_letter' | 'pdf_automation' | 'questionnaire'. */
+  kind: string;
   label: string;
   /** null = not started yet. */
   status: string | null;

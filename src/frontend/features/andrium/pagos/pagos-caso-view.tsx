@@ -981,6 +981,19 @@ function ActionMenu({
             padding: "6px 0",
           }}
         >
+          {/* A Zelle proof under review puts the installment in `processing`
+              (not payable) — surface the verify action regardless of isPayable
+              so finance can always reach it (Bug B). */}
+          {pendingZelle && (
+            <MenuItem
+              label="Verificar comprobante Zelle"
+              icon="check"
+              onClick={() => {
+                setOpen(false);
+                onOpenOverlay({ kind: "zelle-verify", paymentId: pendingZelle.id });
+              }}
+            />
+          )}
           {isPayable && (
             <>
               <MenuItem
@@ -991,16 +1004,6 @@ function ActionMenu({
                   onAction("stripe");
                 }}
               />
-              {pendingZelle && (
-                <MenuItem
-                  label="Verificar comprobante Zelle"
-                  icon="check"
-                  onClick={() => {
-                    setOpen(false);
-                    onOpenOverlay({ kind: "zelle-verify", paymentId: pendingZelle.id });
-                  }}
-                />
-              )}
               <MenuItem
                 label="Registrar Zelle"
                 icon="wallet"
@@ -1040,7 +1043,7 @@ function ActionMenu({
               }}
             />
           )}
-          {!isPayable && !isProcessing && (
+          {!isPayable && !isProcessing && !pendingZelle && (
             <div style={{ padding: "8px 14px", fontSize: 13, color: "var(--ink-3)" }}>
               Sin acciones disponibles
             </div>
@@ -1166,6 +1169,11 @@ function InstallmentRow({
   const statusEntry = INSTALL_STATUS[installment.status];
   const days = daysUntil(installment.dueDate);
   const hasPayments = installment.payments.length > 0;
+  // A Zelle proof awaiting finance review (Bug B): surface it prominently in the
+  // row instead of hiding it behind the ⋯ menu.
+  const pendingZelle = installment.payments.find(
+    (p) => p.method === "zelle" && p.status === "pending",
+  );
 
   void totalCents; // available for future use
 
@@ -1245,6 +1253,32 @@ function InstallmentRow({
         <div style={{ flexShrink: 0 }}>
           {installment.status === "waived" ? (
             <Chip tone="blue">Condonada</Chip>
+          ) : pendingZelle ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenOverlay({ kind: "zelle-verify", paymentId: pendingZelle.id });
+              }}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                background: "var(--gold-soft)",
+                color: "var(--gold-deep)",
+                border: "1px solid var(--gold)",
+                borderRadius: 999,
+                padding: "5px 12px",
+                fontSize: 12.5,
+                fontWeight: 700,
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+              }}
+              title="Ver comprobante y aprobar / rechazar"
+            >
+              <Icon name="check" size={14} color="var(--gold-deep)" />
+              Comprobante por revisar
+            </button>
           ) : (
             <StatusPill kind={statusEntry.kind}>{statusEntry.label}</StatusPill>
           )}

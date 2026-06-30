@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import { Card } from "@/frontend/components/brand/card";
 import { Chip } from "@/frontend/components/brand/chip";
 import { GhostBtn } from "@/frontend/components/brand/ghost-btn";
+import { GradientBtn } from "@/frontend/components/brand/gradient-btn";
 import { ProgressRing } from "@/frontend/components/brand/progress-ring";
 import { EmptyState } from "@/frontend/components/desktop/empty-state";
 import type { CaseWorkspaceVM, FormVM } from "../types";
@@ -32,21 +33,31 @@ function formMeta(status: string | null, t: CasosStrings["detail"]): { pct: numb
 export function InformacionTab({
   vm,
   strings,
+  onNavigateToGeneration,
 }: {
   vm: CaseWorkspaceVM;
   strings: CasosStrings;
+  /** Switches the workspace to the Cartas/Generaciones tab (staff "Generar"). */
+  onNavigateToGeneration?: () => void;
 }) {
   const t = strings.detail;
   const router = useRouter();
-  const base = vm.isAdmin
-    ? `/admin/casos/${vm.header.caseId}`
-    : `/ventas/clientes/${vm.header.caseId}`;
+  // The Información tab is shared across the admin / legal / ventas workspaces;
+  // route forms to the matching case-detail base so the wizard stays in-workspace.
+  const base =
+    vm.role === "paralegal"
+      ? `/legal/caso/${vm.header.caseId}`
+      : vm.isAdmin
+        ? `/admin/casos/${vm.header.caseId}`
+        : `/ventas/clientes/${vm.header.caseId}`;
   function formHref(f: FormVM): string {
     const q = new URLSearchParams();
     if (f.partyId) q.set("party", f.partyId);
     if (f.partyName) q.set("name", f.partyName);
     const qs = q.toString();
-    return `${base}/formulario/${f.id}${qs ? `?${qs}` : ""}`;
+    // For an ai_letter with a companion questionnaire, fillFormDefinitionId is the
+    // questionnaire (the questions the client answers to give the AI context).
+    return `${base}/formulario/${f.fillFormDefinitionId}${qs ? `?${qs}` : ""}`;
   }
   return (
     <Card>
@@ -76,6 +87,14 @@ export function InformacionTab({
                 <GhostBtn size="md" full={false} icon="chevR" onClick={() => router.push(formHref(f))}>
                   {t.reviewForm}
                 </GhostBtn>
+                {/* The Memorándum (ai_letter) card adds a "Generar" action that
+                    jumps to the Cartas/Generaciones tab (the AI letter is a
+                    generation, not a fill-in form). */}
+                {f.kind === "ai_letter" && onNavigateToGeneration && (
+                  <GradientBtn size="md" full={false} icon="sparkle" onClick={onNavigateToGeneration}>
+                    {t.generateLetter}
+                  </GradientBtn>
+                )}
               </div>
             );
           })}

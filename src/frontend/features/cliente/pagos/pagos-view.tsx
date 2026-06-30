@@ -72,6 +72,9 @@ export interface PagosLabels {
   emptyBody: string;
   uploadSuccess: string;
   uploadError: string;
+  zelleSuccessTitle: string;
+  zelleSuccessBody: string;
+  zelleSuccessBtn: string;
   stripeRedirecting: string;
   stripeError: string;
   offlineBanner: string;
@@ -240,6 +243,81 @@ function Toast({
   );
 }
 
+/** Persistent full-screen success overlay shown after a Zelle proof is submitted.
+ *  Stays until the client dismisses it; on dismiss we reload so the installment
+ *  reflects its new "En revisión" (processing) status. */
+function ZelleSuccessOverlay({
+  title,
+  body,
+  btn,
+  onDismiss,
+}: {
+  title: string;
+  body: string;
+  btn: string;
+  onDismiss: () => void;
+}) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 10000,
+        background: "rgba(11,27,51,0.55)",
+        backdropFilter: "blur(4px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 24,
+      }}
+    >
+      <div
+        className="fade-up"
+        style={{
+          background: "var(--card, #fff)",
+          borderRadius: 24,
+          padding: "32px 26px 26px",
+          maxWidth: 360,
+          width: "100%",
+          textAlign: "center",
+          boxShadow: "0 20px 60px rgba(11,27,51,0.30)",
+        }}
+      >
+        <div
+          aria-hidden="true"
+          style={{
+            width: 72,
+            height: 72,
+            borderRadius: 999,
+            margin: "0 auto 18px",
+            background: "var(--green-soft)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <Icon name="check" size={38} color="var(--green)" />
+        </div>
+        <h2
+          className="t-title"
+          style={{ margin: "0 0 10px", fontSize: 21, color: "var(--navy)", fontWeight: 800 }}
+        >
+          {title}
+        </h2>
+        <p style={{ margin: "0 0 22px", fontSize: 15, color: "var(--ink-2)", lineHeight: 1.5, fontWeight: 600 }}>
+          {body}
+        </p>
+        <GradientBtn icon="check" onClick={onDismiss}>
+          {btn}
+        </GradientBtn>
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
@@ -264,6 +342,7 @@ export function PagosView({
   const [selectedMethod, setSelectedMethod] = React.useState<"zelle" | "card">("zelle");
   const [busyCheckout, setBusyCheckout] = React.useState(false);
   const [busyUpload, setBusyUpload] = React.useState(false);
+  const [zelleSubmitted, setZelleSubmitted] = React.useState(false);
   const [toast, setToast] = React.useState<{ message: string; tone: "success" | "error" } | null>(null);
   const [isOffline, setIsOffline] = React.useState(initialOffline);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -335,9 +414,10 @@ export function PagosView({
         // Confirm with server
         const confirmResult = await onConfirmZelleProof(nextDueId, path);
         if (confirmResult.ok) {
-          showToast(labels.uploadSuccess, "success");
-          // Reload to reflect new "processing" status
-          setTimeout(() => window.location.reload(), 1500);
+          // Persistent success state — the client must clearly see the proof
+          // was received and is under review (no transient toast that a reload
+          // would wipe out). The statement refreshes when they dismiss it.
+          setZelleSubmitted(true);
         } else {
           showToast(labels.uploadError, "error");
         }
@@ -354,7 +434,6 @@ export function PagosView({
       onGetZelleUploadUrl,
       onConfirmZelleProof,
       labels.uploadError,
-      labels.uploadSuccess,
       showToast,
     ],
   );
@@ -694,6 +773,16 @@ export function PagosView({
           message={toast.message}
           tone={toast.tone}
           onClose={() => setToast(null)}
+        />
+      )}
+
+      {/* Persistent Zelle success overlay (Bug A) */}
+      {zelleSubmitted && (
+        <ZelleSuccessOverlay
+          title={labels.zelleSuccessTitle}
+          body={labels.zelleSuccessBody}
+          btn={labels.zelleSuccessBtn}
+          onDismiss={() => window.location.reload()}
         />
       )}
     </div>
