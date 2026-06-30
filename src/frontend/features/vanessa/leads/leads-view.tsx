@@ -111,6 +111,10 @@ export function LeadsView({
 }: LeadsViewProps) {
   const toast = useToast();
   const [cards, setCards] = React.useState(initialCards);
+  // Re-sync local board state when the server re-renders (e.g. router.refresh()
+  // after creating a lead or converting one to a case) so the board updates
+  // without a full page reload.
+  React.useEffect(() => { setCards(initialCards); }, [initialCards]);
   const [dragId, setDragId] = React.useState<string | null>(null);
   const [overCol, setOverCol] = React.useState<string | null>(null);
   const [offer, setOffer] = React.useState<LeadCardVM | null>(null);

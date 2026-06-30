@@ -22,6 +22,7 @@ const {
   mockInsertClientRows,
   mockCreateUser,
   mockListUsers,
+  mockUpdateUserById,
   mockWriteAudit,
   mockDbQueryChain,
 } = vi.hoisted(() => {
@@ -42,6 +43,7 @@ const {
     mockInsertClientRows: vi.fn().mockResolvedValue(undefined),
     mockCreateUser: vi.fn(),
     mockListUsers: vi.fn().mockResolvedValue({ data: { users: [] } }),
+    mockUpdateUserById: vi.fn().mockResolvedValue({ data: {}, error: null }),
     mockWriteAudit: vi.fn().mockResolvedValue(undefined),
     mockDbQueryChain: chain,
   };
@@ -58,6 +60,7 @@ vi.mock("@/backend/platform/supabase", () => ({
       admin: {
         createUser: mockCreateUser,
         listUsers: mockListUsers,
+        updateUserById: mockUpdateUserById,
       },
     },
     // serviceClient.from(…) chain for the public.users race-recovery lookup
@@ -347,5 +350,37 @@ describe("provisionClientUser", () => {
     );
     // listUsers must NOT have been called
     expect(mockListUsers).not.toHaveBeenCalled();
+  });
+
+  // Orphan recovery: a leftover auth shell with NO public.users row (email null)
+  // collides by PHONE — reuse it via the admin list instead of hard-failing the
+  // whole case creation (regression: this used to throw "internal").
+  it("recovers a leftover auth shell that collides by phone", async () => {
+    mockFindClientByEmail.mockResolvedValue(null);
+    mockCreateUser.mockResolvedValue({
+      data: null,
+      error: { message: "Phone number already registered" },
+    });
+    // public.users has no row for this email (true orphan: no public rows)
+    mockDbQueryChain.maybeSingle.mockResolvedValue({ data: null, error: null });
+    // the admin list surfaces the leftover auth user by phone (no +)
+    mockListUsers.mockResolvedValue({
+      data: { users: [{ id: "orphan-auth-id", email: null, phone: "13055550199" }] },
+    });
+
+    const result = await provisionClientUser(ACTOR, {
+      fullName: "Pedro Orphan",
+      email: "pedro.orphan@example.com",
+      phoneE164: "+13055550199",
+    });
+
+    expect(result).toEqual({ userId: "orphan-auth-id", created: false });
+    expect(mockUpdateUserById).toHaveBeenCalledWith(
+      "orphan-auth-id",
+      expect.objectContaining({ phone: "+13055550199" }),
+    );
+    expect(mockInsertClientRows).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "orphan-auth-id" }),
+    );
   });
 });

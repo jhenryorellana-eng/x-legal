@@ -211,9 +211,11 @@ export interface DianaKanbanViewProps {
    * renders without a CTA instead of a dead button.
    */
   reviewQueueHref?: string;
-  /** Builds the "open case" link per board (legal → /legal/caso, sales →
-   *  /ventas/clientes). Defaults to the legal workspace. */
-  caseHref?: (caseId: string) => string;
+  /** Base path for the per-board "open case" link (legal → "/legal/caso", sales
+   *  → "/ventas/clientes"). Href = `${caseBasePath}/${caseId}`. A plain string
+   *  (not a function) so it stays serializable across the server→client boundary.
+   *  Defaults to the legal workspace. */
+  caseBasePath?: string;
   strings: DianaKanbanStrings;
   actions: DianaKanbanActions;
 }
@@ -275,16 +277,20 @@ export function DianaKanbanView({
   cards: initialCards,
   totalDocsToReview,
   reviewQueueHref,
-  caseHref,
+  caseBasePath = "/legal/caso",
   strings,
   actions,
 }: DianaKanbanViewProps) {
   const toast = useToast();
-  const buildCaseHref = caseHref ?? ((id: string) => `/legal/caso/${id}`);
+  const buildCaseHref = (id: string) => `${caseBasePath}/${id}`;
 
   // Board state
   const [columns, setColumns] = React.useState<CaseColumnVM[]>(initialColumns);
   const [cards, setCards] = React.useState<CaseCardVM[]>(initialCards);
+  // Re-sync when the server re-renders (router.refresh after a handoff / case
+  // create) so cards appear/disappear without a manual page reload.
+  React.useEffect(() => { setCards(initialCards); }, [initialCards]);
+  React.useEffect(() => { setColumns(initialColumns); }, [initialColumns]);
 
   // Card drag & drop
   const [dragId, setDragId] = React.useState<string | null>(null);

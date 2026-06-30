@@ -1044,18 +1044,30 @@ export async function provisionClientUser(
   });
 
   if (authError || !authData?.user) {
-    // Race: auth user exists but our public.users row doesn't — look up by email.
-    if (authError?.message?.toLowerCase().includes("already registered") ||
-        authError?.message?.toLowerCase().includes("already been registered")) {
-      const { data: userRow } = await serviceClient
+    // An auth user may already exist for this email OR phone while our public
+    // rows don't — a prior partial provision, or a client whose public.users row
+    // was removed but the auth shell remained (e.g. after a data wipe). The old
+    // recovery only matched by email, so a leftover auth user with a colliding
+    // PHONE (email null) hard-failed the whole case creation. Recover by reusing
+    // that auth user: find it via the admin list, make it a valid client login,
+    // and insert the public rows.
+    const dup = (authError?.message ?? "").toLowerCase();
+    const isDuplicate =
+      dup.includes("already registered") ||
+      dup.includes("already been registered") ||
+      dup.includes("already exists") ||
+      dup.includes("duplicate");
+    if (isDuplicate) {
+      // First: the email race — public.users already has the row. Kept off
+      // listUsers (which silently misses users in orgs with >1000 accounts).
+      const { data: publicByEmail } = await serviceClient
         .from("users")
         .select("id")
         .eq("email", email)
         .maybeSingle();
-      const authUser: { id: string } | null = userRow ?? null;
-      if (authUser) {
+      if (publicByEmail?.id) {
         await insertClientRows({
-          userId: authUser.id,
+          userId: publicByEmail.id,
           orgId: actor.orgId,
           email,
           phoneE164,
@@ -1066,12 +1078,59 @@ export async function provisionClientUser(
           timezone,
         });
         const audit = await getAudit();
-        await audit.writeAudit(actor, "client.provisioned", "users", authUser.id, {
+        await audit.writeAudit(actor, "client.provisioned", "users", publicByEmail.id, {
           email,
           created_auth: false,
           created_rows: true,
         });
-        return { userId: authUser.id, created: false };
+        return { userId: publicByEmail.id, created: false };
+      }
+
+      // Fallback: a leftover auth shell with NO public.users row collides on
+      // email or PHONE (e.g. a wiped client whose auth user remained). Find it
+      // via the admin list and reuse it so case creation doesn't hard-fail.
+      const phoneDigits = phoneE164 ? phoneE164.replace(/^\+/, "") : null;
+      let existingAuthId: string | null = null;
+      for (let page = 1; page <= 50 && !existingAuthId; page++) {
+        const { data: list } = await serviceClient.auth.admin.listUsers({ page, perPage: 200 });
+        const users = list?.users ?? [];
+        const found = users.find(
+          (u) => u.email === email || (phoneDigits != null && u.phone === phoneDigits),
+        );
+        if (found) existingAuthId = found.id;
+        if (users.length < 200) break; // reached the last page
+      }
+      if (existingAuthId) {
+        // Make the reused auth shell a valid client login (email + phone password).
+        await serviceClient.auth.admin.updateUserById(existingAuthId, {
+          email,
+          email_confirm: true,
+          ...(phoneE164
+            ? {
+                phone: phoneE164,
+                phone_confirm: true,
+                password: derivePhonePassword(phoneE164, env.SUPABASE_SERVICE_ROLE_KEY),
+              }
+            : {}),
+        });
+        await insertClientRows({
+          userId: existingAuthId,
+          orgId: actor.orgId,
+          email,
+          phoneE164,
+          firstName,
+          lastName,
+          address,
+          locale,
+          timezone,
+        });
+        const audit = await getAudit();
+        await audit.writeAudit(actor, "client.provisioned", "users", existingAuthId, {
+          email,
+          created_auth: false,
+          created_rows: true,
+        });
+        return { userId: existingAuthId, created: false };
       }
     }
     throw new Error(`provisionClientUser.createUser: ${authError?.message ?? "unknown error"}`);

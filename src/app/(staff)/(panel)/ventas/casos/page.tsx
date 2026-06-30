@@ -231,7 +231,7 @@ export default async function VentasCasosPage() {
       columns={columnVMs}
       cards={cardVMs}
       totalDocsToReview={totalDocsToReview}
-      caseHref={(id) => `/ventas/clientes/${id}`}
+      caseBasePath="/ventas/clientes"
       strings={strings}
       actions={{
         moveCard: moveKanbanCardAction,
