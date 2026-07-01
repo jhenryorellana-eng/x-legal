@@ -44,7 +44,14 @@ export function DemoExperience({ scenario, service }: DemoExperienceProps) {
   const flow = useDemoFlow(scenario);
   const [tab, setTab] = React.useState<Tab>("client");
   const [captions, setCaptions] = React.useState(true);
+  // Bumped on reset so the staff view remounts and clears its local flow/timers.
+  const [runId, setRunId] = React.useState(0);
   const color = serviceColorToken(service.colorKey);
+
+  const handleReset = React.useCallback(() => {
+    flow.actions.reset();
+    setRunId((n) => n + 1);
+  }, [flow.actions]);
 
   return (
     <div style={{ padding: "22px clamp(16px,3vw,32px) 56px", maxWidth: 760, margin: "0 auto" }}>
@@ -81,7 +88,7 @@ export function DemoExperience({ scenario, service }: DemoExperienceProps) {
         {/* Reset */}
         <button
           type="button"
-          onClick={flow.actions.reset}
+          onClick={handleReset}
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -182,7 +189,7 @@ export function DemoExperience({ scenario, service }: DemoExperienceProps) {
           {captions && <Caption text={captionFor(scenario, flow.state)} />}
         </div>
       ) : (
-        <StaffView />
+        <StaffView key={runId} scenario={scenario} service={service} />
       )}
     </div>
   );

@@ -48,6 +48,17 @@ export interface DemoDocItem {
   hint?: string;
   /** Accordion group, e.g. "Identidad". */
   category: string;
+  /**
+   * Key data the staff "Traducir" flow reveals as the AI extracts the document
+   * (Gemini extraction preview). Content only — never fetched.
+   */
+  extract?: DemoDocExtract[];
+}
+
+/** A single extracted key/value pair surfaced while "translating" a document. */
+export interface DemoDocExtract {
+  field: string;
+  value: string;
 }
 
 export interface DemoFormQA {
@@ -99,4 +110,87 @@ export interface DemoScenario {
   documents: DemoDocItem[];
   forms: DemoForm[];
   captions: DemoCaptions;
+  /** Content that drives the "Vista staff" walkthrough (staff panel of the case). */
+  staff: DemoStaffFixture;
+}
+
+/** One narration step shown in a staff sequence loader (AI processing). */
+export interface DemoLoaderStep {
+  icon: IconName;
+  text: string;
+}
+
+/**
+ * One field-mapping row for the I-589 assembly animation: a value flies from the
+ * plain-language form the client filled into the official USCIS AcroForm field.
+ */
+export interface DemoStaffI589Field {
+  /** Plain-language label as the client saw it. */
+  plain: string;
+  /** Human-readable official USCIS field label. */
+  official: string;
+  /** Real AcroForm field name (e.g. "PtAILine4_LastName") — shown as a mono tag. */
+  fieldName: string;
+  /** Value that flies into the official form; `null` → auto-filled with "N/A". */
+  value: string | null;
+}
+
+/** Table-of-contents entry for the compiled expediente. */
+export interface DemoTocEntry {
+  title: string;
+  page: number;
+}
+
+/** A grouped list of annex files (mirrors the real Karelis document set). */
+export interface DemoAnexoGroup {
+  group: string;
+  items: string[];
+}
+
+/**
+ * Everything the "Vista staff" needs — case metadata, key facts, timeline, and
+ * the fixtures behind the four AI micro-experiences (translate, I-589 assembly,
+ * credible-fear memo, expediente). Pure content: no PII, no backend.
+ */
+export interface DemoStaffFixture {
+  caseNumber: string;
+  clientLegalName: string;
+  clientPhone: string;
+  planLabel: string;
+  statusLabel: string;
+  owner: { name: string; role: string };
+  /** Key facts grid in the Resumen tab. */
+  keyFacts: { label: string; value: string }[];
+  /** Recent case history (timeline) in the Resumen tab. */
+  timeline: { icon: IconName; title: string; when: string }[];
+  docsApproved: number;
+  docsTotal: number;
+  formsDone: number;
+  formsTotal: number;
+  /** Translate-flow narration, shared by every document row. */
+  translateSteps: DemoLoaderStep[];
+  i589: {
+    officialTitle: string;
+    fields: DemoStaffI589Field[];
+    naCount: number;
+    pageCount: number;
+    steps: DemoLoaderStep[];
+  };
+  memo: {
+    steps: DemoLoaderStep[];
+    wordCount: number;
+    pageCount: number;
+    exhibits: number;
+    sources: number;
+    /** Section index shown in the success preview. */
+    sections: string[];
+  };
+  expediente: {
+    steps: DemoLoaderStep[];
+    coverTitle: string;
+    coverSubtitle: string;
+    toc: DemoTocEntry[];
+    anexos: DemoAnexoGroup[];
+    totalPages: number;
+  };
 }
