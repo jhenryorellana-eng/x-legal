@@ -2649,6 +2649,8 @@ export interface CaseWorkspaceDto {
   /** 0–100 progress of the current phase (computePhaseProgress — single source). */
   phaseProgress: number;
   parties: CaseWorkspaceParty[];
+  /** Primary client's account phone (users.phone_e164) — for the header subtitle. */
+  clientPhone: string | null;
   /** Required documents still pending the client's action. */
   pendingDocuments: number;
   totalDocuments: number;
@@ -3038,6 +3040,11 @@ export async function getCaseWorkspace(
     });
   }
 
+  // Primary client's account phone for the header subtitle (staff surfaces).
+  const clientPhone = caseRow.primary_client_id
+    ? ((await findUserContactFields(caseRow.primary_client_id))?.phone_e164 ?? null)
+    : null;
+
   const { counts } = await buildDocumentsMatrix(caseRow);
   // Phase progress: documents-only weighting in F2 (forms/appointments arrive
   // in F4/F3). computePhaseProgress returns 100 when nothing is required.
@@ -3076,6 +3083,7 @@ export async function getCaseWorkspace(
     phaseCount: phases.length,
     phaseProgress,
     parties,
+    clientPhone,
     pendingDocuments: counts.pending,
     totalDocuments: counts.total,
     doneDocuments: counts.done,

@@ -1290,6 +1290,22 @@
         "retry": "Retry"
       }
     },
+    "caseTabs": {
+      "title": "Case tabs by role",
+      "sub": "Choose which case-file tabs each role can see. Tab order and the case-state locking stay fixed.",
+      "colTab": "Tab",
+      "save": "Save changes",
+      "saved": "Tab access updated.",
+      "saveError": "We couldn't save the changes.",
+      "reset": "Reset",
+      "lockedNote": "Marked tabs lock automatically until the case is active (signature + down payment).",
+      "conditionalNote": "Some tabs only appear when the case requires them (validation, prior phases, pre-mortem).",
+      "lockedBadge": "Locks",
+      "role_admin": "Admin",
+      "role_sales": "Sales",
+      "role_paralegal": "Legal",
+      "role_finance": "Finance"
+    },
     "casos": {
       "title": "Cases",
       "sub": "All the organization's cases",
@@ -1378,6 +1394,7 @@
         "tabParties": "Parties",
         "bannerPaymentPending": "Awaiting the down payment — the case will activate once the payment is confirmed.",
         "bannerNoPhase": "This case hasn't started its first phase yet.",
+        "lockedTabHint": "Available once the case is active — the contract signature or the down payment confirmation is still pending.",
         "summaryProgress": "Phase progress",
         "summaryPayment": "Payment status",
         "summaryTimeline": "Latest events",

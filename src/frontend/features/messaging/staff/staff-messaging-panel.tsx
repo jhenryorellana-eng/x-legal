@@ -12,6 +12,7 @@
 import * as React from "react";
 import { ChatThread } from "../chat-thread";
 import { buildChatActions, type RawChatActions } from "../build-chat-actions";
+import { useMessagingController } from "../messaging-controller";
 import type { ChatActions, ChatThreadVM } from "../types";
 
 // --- VM shapes (mirror the messaging module DTOs; no @/backend import) --------
@@ -239,6 +240,40 @@ export function StaffMessagingPanel({ locale, initialUnread = 0, raw }: StaffMes
   const [call, setCall] = React.useState<Call | null>(null);
   const [unread, setUnread] = React.useState(initialUnread);
   const [query, setQuery] = React.useState("");
+  // Case whose conversation should auto-open once the inbox loads (set by the
+  // case workspace "Mensajes" button via MessagingController).
+  const [pendingCaseId, setPendingCaseId] = React.useState<string | null>(null);
+
+  // React to "open this case's chat" requests: open the panel + queue selection.
+  const controller = useMessagingController();
+  const request = controller?.request ?? null;
+  const lastNonce = React.useRef(0);
+  React.useEffect(() => {
+    if (!request || request.nonce === lastNonce.current) return;
+    lastNonce.current = request.nonce;
+    setSelected(null);
+    setPendingCaseId(request.caseId);
+    setOpen(true);
+  }, [request]);
+
+  // Once the inbox is loaded, select the pending case's conversation (if any).
+  // Clear the pending flag either way — no conversation yet → stay on the list.
+  React.useEffect(() => {
+    if (!pendingCaseId || !list) return;
+    const conv = list.clients.find((c) => c.caseId === pendingCaseId);
+    if (conv) {
+      setSelected({
+        conversationId: conv.conversationId,
+        name: conv.name,
+        initials: conv.initials,
+        color: conv.color,
+        sub:
+          [conv.serviceChip, conv.caseNumber].filter(Boolean).join(" · ") ||
+          tt(locale, "Grupo · cliente + equipo", "Group · client + team"),
+      });
+    }
+    setPendingCaseId(null);
+  }, [pendingCaseId, list, locale]);
 
   // Load the inbox + directory + badge whenever the panel opens.
   React.useEffect(() => {

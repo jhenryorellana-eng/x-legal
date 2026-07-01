@@ -9,34 +9,20 @@
 import type { StatusKind } from "@/frontend/components/brand/status-pill";
 
 /**
- * Canonical tab ids. The role decides WHICH subset renders and with what label
- * (Vanessa vs Henry differ in label/order, not in the underlying id) — see
- * build-tabs.ts. `cartas`/`generaciones` are the two ai-letter surfaces
- * (asesora vs admin) and stay distinct ids.
+ * Canonical tab ids + staff roles live in shared/ (single source of truth used
+ * by both the frontend renderer and the backend override validator). The role
+ * decides WHICH subset renders and with what label; messaging is a header button,
+ * not a tab. See src/shared/constants/case-tabs.ts and build-tabs.ts.
  */
-export type CaseTabId =
-  | "resumen"
-  | "contrato"
-  | "citas"
-  | "documentos"
-  | "formularios"
-  | "cartas"
-  | "generaciones"
-  | "traspaso"
-  | "historial"
-  | "pagos"
-  | "expediente"
-  | "validacion"
-  | "fasesAnteriores"
-  | "preMortem"
-  | "mensajes";
-
-export type StaffRoleVM = "sales" | "paralegal" | "finance" | "admin";
+import type { CaseTabId, StaffRole as StaffRoleVM } from "@/shared/constants/case-tabs";
+export type { CaseTabId, StaffRoleVM };
 
 export interface CaseHeaderVM {
   caseId: string;
   caseNumber: string;
   clientName: string;
+  /** Primary client's account phone (users.phone_e164) — shown in the subtitle. */
+  clientPhone: string | null;
   serviceLabel: string;
   planKind: "self" | "with_lawyer";
   status: string;

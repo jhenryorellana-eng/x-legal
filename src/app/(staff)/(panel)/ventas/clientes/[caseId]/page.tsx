@@ -23,6 +23,7 @@ import {
   CaseError,
 } from "@/backend/modules/cases";
 import { getPaymentPlanForCase } from "@/backend/modules/billing";
+import { getCaseTabAccess } from "@/backend/modules/case-tabs";
 import { getContractForCase } from "@/backend/modules/contracts";
 import { getRunsForCase } from "@/backend/modules/ai-engine";
 import { getCaseRuta } from "@/backend/modules/scheduling";
@@ -98,6 +99,8 @@ export default async function VentasCasoDetailPage({
 
   // Responsable / etapa (eje propio) — staff-only; degrade to null on failure.
   const stageInfo = await getCaseStageInfo(actor, caseId).catch(() => null);
+  // Admin-configured per-role tab visibility (empty → code defaults).
+  const tabAccess = await getCaseTabAccess(actor).catch(() => ({ allowedByRole: {} }));
 
   const requirements = (matrix?.items ?? []).map((d) => ({
     key: d.key,
@@ -191,6 +194,7 @@ export default async function VentasCasoDetailPage({
       caseId,
       caseNumber: workspace.caseNumber,
       clientName: parties[0]?.name ?? "—",
+      clientPhone: workspace.clientPhone,
       serviceLabel: workspace.service ? resolveI18n(workspace.service.labelI18n, locale) : "—",
       planKind: contractPlanKind,
       status: workspace.status,
@@ -273,6 +277,7 @@ export default async function VentasCasoDetailPage({
       locale={lc}
       backHref="/ventas/clientes"
       isAdmin={false}
+      tabAccessByRole={tabAccess.allowedByRole}
       chatRaw={{
         getCaseThread: getCaseThreadAction,
         send: sendMessageAction,

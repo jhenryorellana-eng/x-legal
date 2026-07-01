@@ -40,7 +40,12 @@ export async function findPlanByContractId(
 export async function findPlanByCaseId(
   caseId: string,
 ): Promise<(PaymentPlanRow & { installments: InstallmentRow[] }) | null> {
-  const supabase = await createServerClient();
+  // Read with the service client (RLS bypass): the ONLY caller,
+  // getPaymentPlanForCase, already authorizes via requireCaseAccess. Reading as
+  // the user hid the plan from staff who can see the case but lack the billing
+  // module and aren't case_members (e.g. Vanessa/sales) — matching the sibling
+  // findPlanByContractId, which also uses the service client.
+  const supabase = createServiceClient();
   const { data } = await supabase
     .from("payment_plans")
     .select("*, contracts!inner(case_id), installments(*)")

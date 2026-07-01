@@ -8,6 +8,7 @@
  * tables exist in the schema (P-1 of DOC-14 is resolved).
  */
 
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
@@ -45,6 +46,7 @@ export default async function ConfigPage() {
   const locale = (await getLocale()) as Locale;
   const t = await getTranslations("staff.admin");
   const tCfg = await getTranslations("staff.config");
+  const tTabs = await getTranslations("staff.caseTabs");
   const tt = t as unknown as (key: string) => string;
   const tRaw = t.raw as unknown as (key: string) => string;
 
@@ -74,6 +76,26 @@ export default async function ConfigPage() {
         actions={{ saveOrg: saveOrgSettings, setCoverActive, createTerms, publishTerms }}
       />
       <div style={{ marginTop: 20, display: "grid", gap: 16, maxWidth: 760 }}>
+        <Link
+          href="/admin/configuracion/tabs-caso"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            padding: "16px 18px",
+            border: "1px solid var(--line)",
+            borderRadius: 14,
+            background: "var(--card, #fff)",
+            textDecoration: "none",
+          }}
+        >
+          <span style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            <span style={{ fontSize: 15, fontWeight: 700, color: "var(--ink)" }}>{tTabs("title")}</span>
+            <span style={{ fontSize: 13, color: "var(--ink-2)" }}>{tTabs("sub")}</span>
+          </span>
+          <span style={{ fontSize: 20, color: "var(--ink-3)" }}>›</span>
+        </Link>
         <StaffAppearanceCard
           strings={{ title: tCfg("appearance"), subtitle: tCfg("appearanceSub") }}
         />

@@ -22,6 +22,7 @@ import {
   CaseError,
 } from "@/backend/modules/cases";
 import { getPaymentPlanForCase } from "@/backend/modules/billing";
+import { getCaseTabAccess } from "@/backend/modules/case-tabs";
 import { getContractForCase } from "@/backend/modules/contracts";
 import { getRunsForCase, getPreMortemAssessmentsForCase, isPreMortemEnabledForCase } from "@/backend/modules/ai-engine";
 import { getValidationsForCase } from "@/backend/modules/integrations";
@@ -114,6 +115,7 @@ export default async function AdminCasoDetailPage({
 
   // Responsable / etapa (eje propio) — staff-only; degrade to null on failure.
   const stageInfo = await getCaseStageInfo(actor, caseId).catch(() => null);
+  const tabAccess = await getCaseTabAccess(actor).catch(() => ({ allowedByRole: {} }));
 
   const requirements = (matrix?.items ?? []).map((d) => ({
     key: d.key,
@@ -234,6 +236,7 @@ export default async function AdminCasoDetailPage({
       caseId,
       caseNumber: workspace.caseNumber,
       clientName: parties[0]?.name ?? "—",
+      clientPhone: workspace.clientPhone,
       serviceLabel: workspace.service
         ? resolveI18n(workspace.service.labelI18n, locale)
         : "—",
@@ -325,6 +328,7 @@ export default async function AdminCasoDetailPage({
       locale={lc}
       backHref="/admin/casos"
       isAdmin={actor.role === "admin"}
+      tabAccessByRole={tabAccess.allowedByRole}
       chatRaw={{
         getCaseThread: getCaseThreadAction,
         send: sendMessageAction,

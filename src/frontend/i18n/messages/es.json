@@ -1290,6 +1290,22 @@
         "retry": "Reintentar"
       }
     },
+    "caseTabs": {
+      "title": "Pestañas del caso por rol",
+      "sub": "Elige qué pestañas del expediente ve cada rol. El orden y el bloqueo por estado del caso se mantienen fijos.",
+      "colTab": "Pestaña",
+      "save": "Guardar cambios",
+      "saved": "Acceso a pestañas actualizado.",
+      "saveError": "No pudimos guardar los cambios.",
+      "reset": "Restablecer",
+      "lockedNote": "Las pestañas marcadas se bloquean automáticamente hasta que el caso esté activo (firma + cuota inicial).",
+      "conditionalNote": "Algunas pestañas solo aparecen cuando el caso las requiere (validación, fases anteriores, pre-mortem).",
+      "lockedBadge": "Se bloquea",
+      "role_admin": "Admin",
+      "role_sales": "Ventas",
+      "role_paralegal": "Legal",
+      "role_finance": "Finanzas"
+    },
     "casos": {
       "title": "Casos",
       "sub": "Todos los casos de la organización",
@@ -1378,6 +1394,7 @@
         "tabParties": "Partes",
         "bannerPaymentPending": "Esperando la cuota inicial — el caso se activará al confirmarse el pago.",
         "bannerNoPhase": "Este caso aún no arranca su primera fase.",
+        "lockedTabHint": "Disponible cuando el caso esté activo — falta la firma del contrato o la confirmación de la cuota inicial.",
         "summaryProgress": "Progreso de la fase",
         "summaryPayment": "Estado de pago",
         "summaryTimeline": "Últimos eventos",

@@ -120,6 +120,7 @@ export const caseWorkspaceVmMock: CaseWorkspaceVM = {
     caseId: "c1",
     caseNumber: "ULP-2026-0042",
     clientName: "María González",
+    clientPhone: "+1 305 555 0142",
     serviceLabel: "Asilo Político",
     planKind: "with_lawyer",
     status: "payment_pending",

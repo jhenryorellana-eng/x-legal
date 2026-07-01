@@ -19,6 +19,7 @@ import {
   StaffMessagingPanel,
   type RawStaffMessagingActions,
 } from "@/frontend/features/messaging/staff/staff-messaging-panel";
+import { MessagingControllerProvider } from "@/frontend/features/messaging/messaging-controller";
 
 /**
  * StaffShell — the desktop panel chrome (DOC-50 §1.3, DOC-53 §0).
@@ -90,6 +91,7 @@ export function StaffShell({
   }
 
   return (
+    <MessagingControllerProvider>
     <div style={{ display: "flex", minHeight: "calc(100dvh / var(--text-scale, 1))" }}>
       {navOpen ? (
         <div
@@ -178,5 +180,6 @@ export function StaffShell({
 
       <BrandToaster />
     </div>
+    </MessagingControllerProvider>
   );
 }
