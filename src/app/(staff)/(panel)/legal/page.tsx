@@ -99,6 +99,7 @@ export default async function LegalPage() {
       title: c.label,
       color: c.color,
       isTerminalWon: c.is_terminal_won,
+      isTerminalLost: c.is_terminal_lost,
       position: c.position,
     }));
 

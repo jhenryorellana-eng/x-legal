@@ -50,29 +50,53 @@ export interface NuevoLeadStrings {
   created: string; // "✓ Lead creado en \"{col}\""
   entryColumn: string;
   invalidPhone: string;
+  // Edit mode (reuses this modal to edit an existing lead)
+  editTitle: string;
+  editSub: string;
+  save: string;
+  saved: string;
 }
 
+interface LeadMutationInput {
+  phone: string;
+  name: string | null;
+  source: string;
+  serviceId: string | null;
+  categoryId: string | null;
+  note: string | null;
+  confirmDuplicate?: boolean;
+}
+
+type LeadMutationResult = Promise<{
+  ok: boolean;
+  duplicate?: { name: string; leadId: string } | null;
+  error?: { code: string };
+}>;
+
 export interface NuevoLeadActions {
-  createLead: (input: {
-    phone: string;
-    name: string | null;
-    source: string;
-    serviceId: string | null;
-    categoryId: string | null;
-    note: string | null;
-    confirmDuplicate?: boolean;
-  }) => Promise<{
-    ok: boolean;
-    duplicate?: { name: string; leadId: string } | null;
-    error?: { code: string };
-  }>;
+  createLead: (input: LeadMutationInput) => LeadMutationResult;
+  /** Present only when the modal is used to edit an existing lead. */
+  updateLead?: (input: LeadMutationInput & { leadId: string }) => LeadMutationResult;
   createCategory: (input: { label: string; color: string }) => Promise<{ ok: boolean; id?: string }>;
+}
+
+/** The existing lead being edited (absent → the modal is in "create" mode). */
+export interface EditLeadPreset {
+  id: string;
+  phone: string;
+  name: string | null;
+  source: string;
+  serviceId: string | null;
+  categoryId: string | null;
+  note: string | null;
 }
 
 export interface NuevoLeadModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   presetPhone?: string;
+  /** When set, the modal edits this lead instead of creating a new one. */
+  editLead?: EditLeadPreset | null;
   sources: SourceOption[];
   services: ServiceOption[];
   categories: CategoryOption[];
@@ -84,6 +108,7 @@ export function NuevoLeadModal({
   open,
   onOpenChange,
   presetPhone = "",
+  editLead = null,
   sources,
   services,
   categories,
@@ -91,6 +116,7 @@ export function NuevoLeadModal({
   actions,
 }: NuevoLeadModalProps) {
   const toast = useToast();
+  const isEdit = editLead != null;
   const [phone, setPhone] = React.useState(presetPhone);
   const [name, setName] = React.useState("");
   const [source, setSource] = React.useState(sources[0]?.value ?? "");
@@ -113,9 +139,24 @@ export function NuevoLeadModal({
     setCats(categories);
   }, [categories]);
 
+  // Seed the form each time the modal opens: from the edited lead (edit mode)
+  // or just the preset phone (create mode). Only on the open transition so it
+  // never clobbers in-progress typing.
   React.useEffect(() => {
-    if (open) setPhone(presetPhone);
-  }, [open, presetPhone]);
+    if (!open) return;
+    setDup(null);
+    setPhoneError(false);
+    if (editLead) {
+      setPhone(editLead.phone);
+      setName(editLead.name ?? "");
+      setSource(editLead.source);
+      setServiceId(editLead.serviceId ?? services[0]?.id ?? "");
+      setCategoryId(editLead.categoryId);
+      setNote(editLead.note ?? "");
+    } else {
+      setPhone(presetPhone);
+    }
+  }, [open, editLead, presetPhone, services]);
 
   const submitNewCategory = async () => {
     const label = newCatLabel.trim();
@@ -139,7 +180,7 @@ export function NuevoLeadModal({
     if (!phone.trim() || submitting) return;
     setSubmitting(true);
     setPhoneError(false);
-    const res = await actions.createLead({
+    const payload = {
       phone,
       name: name.trim() || null,
       source,
@@ -147,11 +188,15 @@ export function NuevoLeadModal({
       categoryId,
       note: note.trim() || null,
       confirmDuplicate: dup !== null,
-    });
+    };
+    const res =
+      isEdit && editLead && actions.updateLead
+        ? await actions.updateLead({ ...payload, leadId: editLead.id })
+        : await actions.createLead(payload);
     setSubmitting(false);
     if (res.ok) {
       onOpenChange(false);
-      toast.success(strings.created.replace("{col}", strings.entryColumn));
+      toast.success(isEdit ? strings.saved : strings.created.replace("{col}", strings.entryColumn));
     } else if (res.duplicate) {
       setDup(res.duplicate);
     } else if (res.error?.code === "LEAD_PHONE_INVALID") {
@@ -163,15 +208,15 @@ export function NuevoLeadModal({
     <Modal
       open={open}
       onOpenChange={onOpenChange}
-      title={strings.title}
-      description={strings.sub}
+      title={isEdit ? strings.editTitle : strings.title}
+      description={isEdit ? strings.editSub : strings.sub}
       width={520}
       footer={
         <>
           <button type="button" className="vbtn vbtn-ghost vbtn-sm" onClick={() => onOpenChange(false)}>{strings.cancel}</button>
           <button type="button" className="vbtn vbtn-primary vbtn-sm" disabled={!phone.trim() || submitting} onClick={submit}>
             <MSym name="check" size={18} />
-            {strings.create}
+            {isEdit ? strings.save : strings.create}
           </button>
         </>
       }

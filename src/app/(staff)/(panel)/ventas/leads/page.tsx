@@ -21,7 +21,12 @@ import type { LeadColumnVM, LeadCardVM, SourceOption } from "@/frontend/features
 import { buildNuevaCitaStrings } from "../_lib/nueva-cita-strings";
 import {
   moveKanbanCardAction,
+  createKanbanColumnAction,
+  updateKanbanColumnAction,
+  reorderKanbanColumnsAction,
+  deleteKanbanColumnAction,
   createLeadAction,
+  updateLeadAction,
   createLeadCategoryAction,
   updateLeadCategoryAction,
   deleteLeadCategoryAction,
@@ -64,15 +69,19 @@ export default async function VentasLeadsPage() {
   const categoriesById = new Map(categoryRows.map((c) => [c.id, c]));
   const categories = categoryRows.map((c) => ({ id: c.id, label: c.label, color: c.color }));
 
+  const boardId = board?.board.id ?? "";
+
   const columns: LeadColumnVM[] = (board?.columns ?? [])
     .slice()
     .sort((a, b) => a.position - b.position)
     .map((c) => ({
       id: c.id,
+      boardId,
       title: c.label,
       color: c.color,
       isTerminalWon: c.is_terminal_won,
       isTerminalLost: c.is_terminal_lost,
+      position: c.position,
     }));
 
   const cards: LeadCardVM[] = (board?.cards ?? [])
@@ -95,12 +104,14 @@ export default async function VentasLeadsPage() {
         phone: lead.phone_e164 ?? "",
         source: lead.source ?? "web",
         sourceLabel: sm.labelKey,
+        serviceId: lead.interested_service_id ?? null,
         serviceLabel: lead.interested_service_id
           ? (servicesById.get(lead.interested_service_id) ?? "—")
           : "—",
         categoryId: lead.category_id ?? null,
         categoryLabel: cat?.label ?? null,
         categoryColor: cat ? categoryColorHex(cat.color) : null,
+        note: lead.note ?? null,
         uncontacted,
         ageLabel: lead.created_at ? fmtRelative(lead.created_at, locale) : "",
         lostReason: lead.lost_reason ?? null,
@@ -113,16 +124,13 @@ export default async function VentasLeadsPage() {
     board: t("board"),
     list: t("list"),
     filters: t("filters"),
-    column: t("column"),
     manageCategories: t("manageCategories"),
     newLead: t("newLead"),
     addLead: t("addLead"),
+    editLead: t("editLead"),
     emptyCol: t("emptyCol"),
     lexTipHtml: t.markup("lexTipHtml", { b: (c) => `<b>${c}</b>`, n: String(cards.filter((c) => c.uncontacted).length) }),
     lexOk: t("lexOk"),
-    wonOfferHtml: t.markup("wonOfferHtml", { b: (c) => `<b>${c}</b>`, name: "{name}" }),
-    createCase: t("createCase"),
-    notNow: t("notNow"),
     call: t("call"),
     whatsapp: t("whatsapp"),
     agendar: t("agendar"),
@@ -135,6 +143,36 @@ export default async function VentasLeadsPage() {
     cancel: t("cancel"),
     lexEnabled: true,
     badgeRedmove: t("moveError"),
+  };
+
+  // Column-management strings (shared-kanban). Raw templates ({n}/{title}) are
+  // interpolated client-side via String.replace, so read them with t.raw.
+  const columnStrings = {
+    newColumn: t("newColumn"),
+    orderError: t("orderError"),
+    createError: t("createError"),
+    editError: t("editError"),
+    deleteError: t("deleteError"),
+    colModalCreateTitle: t("colModalCreateTitle"),
+    colModalEditTitle: t("colModalEditTitle"),
+    colNameLabel: t("colNameLabel"),
+    colNamePh: t("colNamePh"),
+    colNameRequired: t("colNameRequired"),
+    colColorLabel: t("colColorLabel"),
+    colSave: t("colSave"),
+    colCancel: t("colCancel"),
+    delModalTitle: t("delModalTitle"),
+    delModalBodyEmpty: t("delModalBodyEmpty"),
+    delModalBodyCards: t.raw("delModalBodyCards"),
+    delMigrateLabel: t("delMigrateLabel"),
+    delConfirm: t("delConfirm"),
+    delCancel: t("delCancel"),
+    delLastColumn: t("delLastColumn"),
+    colMenuEdit: t("colMenuEdit"),
+    colMenuDelete: t("colMenuDelete"),
+    colMenuMoveLeft: t("colMenuMoveLeft"),
+    colMenuMoveRight: t("colMenuMoveRight"),
+    colMenuAria: t.raw("colMenuAria"),
   };
 
   const newLeadStrings = {
@@ -159,6 +197,10 @@ export default async function VentasLeadsPage() {
     created: tnl("created", { col: "{col}" }),
     entryColumn: columns[0]?.title ?? tnl("entryColumn"),
     invalidPhone: tnl("invalidPhone"),
+    editTitle: tnl("editTitle"),
+    editSub: tnl("editSub"),
+    save: tnl("save"),
+    saved: tnl("saved"),
   };
 
   const manageCatsStrings = {
@@ -209,8 +251,17 @@ export default async function VentasLeadsPage() {
       newCaseServices={newCaseServices}
       casosStrings={casosStrings}
       signingBaseUrl={process.env.NEXT_PUBLIC_APP_URL ?? ""}
+      boardId={boardId}
       moveAction={moveKanbanCardAction}
+      columnActions={{
+        createColumn: createKanbanColumnAction,
+        updateColumn: updateKanbanColumnAction,
+        reorderColumns: reorderKanbanColumnsAction,
+        deleteColumn: deleteKanbanColumnAction,
+      }}
+      columnStrings={columnStrings}
       createLeadAction={createLeadAction}
+      updateLeadAction={updateLeadAction}
       createCategoryAction={createLeadCategoryAction}
       categoryActions={{
         list: listLeadCategoriesAction,

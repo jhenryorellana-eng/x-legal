@@ -406,8 +406,8 @@ values
   ('00000000-0000-0000-0000-000000000811', '00000000-0000-0000-0000-000000000801', 'Nuevos',          'intake',     'accent', 1, false, false),
   ('00000000-0000-0000-0000-000000000812', '00000000-0000-0000-0000-000000000801', 'Contactados',     null,         'gold',   2, false, false),
   ('00000000-0000-0000-0000-000000000813', '00000000-0000-0000-0000-000000000801', 'Cita agendada',   null,         'green',  3, false, false),
-  ('00000000-0000-0000-0000-000000000814', '00000000-0000-0000-0000-000000000801', 'Ganado',          null,         'green',  4, true,  false),
-  ('00000000-0000-0000-0000-000000000815', '00000000-0000-0000-0000-000000000801', 'Perdido',         null,         'red',    5, false, true)
+  ('00000000-0000-0000-0000-000000000814', '00000000-0000-0000-0000-000000000801', 'Listo para contrato', null,     'green',  4, true,  false),
+  ('00000000-0000-0000-0000-000000000815', '00000000-0000-0000-0000-000000000801', 'Rechazado',       null,         'red',    5, false, true)
 -- explicit arbiter (id): bare ON CONFLICT fails on tables with deferrable unique constraints (55000)
 on conflict (id) do nothing;
 

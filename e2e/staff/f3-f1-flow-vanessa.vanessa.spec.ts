@@ -88,10 +88,10 @@ test.describe("F3-F1 Staff: S1 — leads board", () => {
     ).toBeVisible({ timeout: 20_000 });
   });
 
-  test("renders kanban columns from seed (Nuevos, Contactados, Cita agendada, Ganado, Perdido)", async ({ page }) => {
+  test("renders kanban columns from seed (Nuevos, Contactados, Cita agendada, Listo para contrato, Rechazado)", async ({ page }) => {
     await expect(page.getByText("Nuevos").first()).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("Contactados").first()).toBeVisible();
-    await expect(page.getByText("Ganado").first()).toBeVisible();
+    await expect(page.getByText("Listo para contrato").first()).toBeVisible();
     await expect(page.locator("body")).not.toContainText("Internal Server Error");
   });
 
@@ -150,10 +150,10 @@ test.describe("F3-F1 Staff: S2 — create new lead", () => {
 });
 
 /* ─────────────────────────────────────────────────────────────────
-   S3 — Move lead card to "Ganado" column
+   S3 — Move lead card to the terminal-won column ("Listo para contrato")
    ───────────────────────────────────────────────────────────────── */
 
-test.describe("F3-F1 Staff: S3 — move lead to Ganado", () => {
+test.describe("F3-F1 Staff: S3 — move lead to Listo para contrato", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/ventas/leads");
     await expect(page.getByText("Nuevos").first()).toBeVisible({ timeout: 20_000 });
@@ -161,19 +161,19 @@ test.describe("F3-F1 Staff: S3 — move lead to Ganado", () => {
   });
 
   test(
-    "drag lead card from Nuevos to Ganado column — 'won offer' appears",
+    "drag lead card from Nuevos to Listo para contrato column — 'won offer' appears",
     async ({ page }) => {
       const leadCard = page.locator("[data-card-id], .kanban-card, [role='article']")
         .filter({ hasText: LEAD_NAME })
         .first();
 
       const ganadoColumn = page.locator("[data-column-id], .kanban-column, [data-column]")
-        .filter({ hasText: "Ganado" })
+        .filter({ hasText: "Listo para contrato" })
         .first();
 
       if (!(await leadCard.isVisible()) || !(await ganadoColumn.isVisible())) {
         const cardBB = await page.getByText(LEAD_NAME).first().boundingBox();
-        const colBB  = await page.getByText("Ganado").first().boundingBox();
+        const colBB  = await page.getByText("Listo para contrato").first().boundingBox();
 
         if (cardBB && colBB) {
           await page.mouse.move(cardBB.x + cardBB.width / 2, cardBB.y + cardBB.height / 2);
@@ -186,14 +186,14 @@ test.describe("F3-F1 Staff: S3 — move lead to Ganado", () => {
       }
 
       const wonOffer = page.getByRole("button", { name: /crear caso|create case/i })
-        .or(page.getByText(/crear caso|ganado/i))
+        .or(page.getByText(/crear caso|listo para contrato/i))
         .first();
 
       await expect(
-        wonOffer.or(page.getByText("Ganado").first())
+        wonOffer.or(page.getByText("Listo para contrato").first())
       ).toBeVisible({ timeout: 15_000 });
 
-      console.log(`[F3-F1 S3] Lead card moved toward Ganado column.`);
+      console.log(`[F3-F1 S3] Lead card moved toward Listo para contrato column.`);
     }
   );
 });

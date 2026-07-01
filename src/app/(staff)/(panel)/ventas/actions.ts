@@ -31,6 +31,10 @@ import { cookies } from "next/headers";
 import { requireActor, AuthzError } from "@/backend/modules/identity";
 import {
   moveCard,
+  createColumn,
+  updateColumn,
+  reorderColumns,
+  deleteColumn,
   createLead,
   createLeadCategory,
   updateLeadCategory,
@@ -109,6 +113,79 @@ export async function moveKanbanCardAction(input: {
   }
 }
 
+// --------------------------------------------------------------------------
+// Column management (API-KAN-03..06) — same use cases as the legal board; the
+// leads board (Vanessa) owns her columns (RF-VAN-010). RLS: board owner + admin.
+// --------------------------------------------------------------------------
+
+export async function createKanbanColumnAction(input: {
+  boardId: string;
+  label: string;
+  color: string;
+}): Promise<Ok<{ columnId: string }> | Err> {
+  try {
+    const actor = await requireActor();
+    const col = await createColumn(actor, {
+      boardId: input.boardId,
+      label: input.label,
+      color: input.color as Parameters<typeof createColumn>[1]["color"],
+    });
+    return { ok: true, columnId: col.id };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+export async function updateKanbanColumnAction(input: {
+  columnId: string;
+  label?: string;
+  color?: string;
+}): Promise<{ ok: boolean; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    await updateColumn(actor, {
+      columnId: input.columnId,
+      label: input.label,
+      color: input.color as Parameters<typeof updateColumn>[1]["color"],
+    });
+    return { ok: true };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+export async function reorderKanbanColumnsAction(input: {
+  boardId: string;
+  orderedColumnIds: string[];
+}): Promise<{ ok: boolean; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    await reorderColumns(actor, {
+      boardId: input.boardId,
+      orderedColumnIds: input.orderedColumnIds,
+    });
+    return { ok: true };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+export async function deleteKanbanColumnAction(input: {
+  columnId: string;
+  migrateToColumnId?: string;
+}): Promise<{ ok: boolean; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    await deleteColumn(actor, {
+      columnId: input.columnId,
+      migrateToColumnId: input.migrateToColumnId,
+    });
+    return { ok: true };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
 export async function createLeadAction(input: {
   phone: string;
   name: string | null;
@@ -130,6 +207,48 @@ export async function createLeadAction(input: {
       interestedServiceId: input.serviceId ?? undefined,
       categoryId: input.categoryId ?? undefined,
       note: input.note ?? undefined,
+      confirmDuplicate: input.confirmDuplicate,
+    });
+    if (res.type === "warning") {
+      const match = res.exactMatches[0] ?? res.weakMatches[0];
+      return {
+        ok: false,
+        error: { code: "LEAD_DUPLICATE_WARNING" },
+        duplicate: match ? { name: match.fullName ?? match.phoneE164, leadId: match.id } : null,
+      };
+    }
+    return { ok: true, duplicate: null };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+// API-LEAD-04 — full edit of a lead (name, phone, source, service, category,
+// note). Phone changes re-run the duplicate check (same envelope as create).
+export async function updateLeadAction(input: {
+  leadId: string;
+  phone: string;
+  name: string | null;
+  source: string;
+  serviceId: string | null;
+  categoryId: string | null;
+  note: string | null;
+  confirmDuplicate?: boolean;
+}): Promise<{
+  ok: boolean;
+  duplicate?: { name: string; leadId: string } | null;
+  error?: { code: string };
+}> {
+  try {
+    const actor = await requireActor();
+    const res = await updateLead(actor, {
+      leadId: input.leadId,
+      phone: input.phone,
+      fullName: input.name,
+      source: input.source,
+      interestedServiceId: input.serviceId,
+      categoryId: input.categoryId,
+      note: input.note,
       confirmDuplicate: input.confirmDuplicate,
     });
     if (res.type === "warning") {

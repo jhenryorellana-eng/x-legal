@@ -86,18 +86,18 @@ describe("seedColumnsFor('leads')", () => {
     expect(col.color).toBe("green");
   });
 
-  it("exactly one terminal-won column (Ganado, position=6)", () => {
+  it("exactly one terminal-won column (Listo para contrato, position=6)", () => {
     const won = wonColumns(cols);
     expect(won).toHaveLength(1);
-    expect(won[0].label).toBe("Ganado");
+    expect(won[0].label).toBe("Listo para contrato");
     expect(won[0].position).toBe(6);
     expect(won[0].color).toBe("green");
   });
 
-  it("exactly one terminal-lost column (Perdido, position=7)", () => {
+  it("exactly one terminal-lost column (Rechazado, position=7)", () => {
     const lost = lostColumns(cols);
     expect(lost).toHaveLength(1);
-    expect(lost[0].label).toBe("Perdido");
+    expect(lost[0].label).toBe("Rechazado");
     expect(lost[0].position).toBe(7);
     expect(lost[0].color).toBe("red");
   });

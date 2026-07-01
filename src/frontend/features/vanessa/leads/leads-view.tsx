@@ -9,6 +9,12 @@
  * mini-actions). Board/List toggle + filters. Won → Lex "create case" offer;
  * Lost → mandatory reason modal. Modals (Nuevo lead / Nuevo caso) are injected.
  *
+ * Column management (create/rename/recolor/reorder/delete-with-migration,
+ * RF-VAN-010) is the shared `shared-kanban` module (useKanbanColumns +
+ * ColumnMenu + ColumnModals) — same implementation as the legal/cases board.
+ * The terminal columns keep their behavior via the is_terminal_won/lost flags
+ * (renaming them does not change it): won → "create case" offer, lost → reason.
+ *
  * Realtime board:{id} is optional in F3 (degrades to refresh) — DOC-25 §1.6.
  */
 
@@ -19,6 +25,15 @@ import { Chip, sourceMeta } from "../shared/ui";
 import { LexBubble } from "../shared/lex";
 import { useToast } from "../shared/toast-bridge";
 import { Modal } from "@/frontend/components/desktop";
+import {
+  useKanbanColumns,
+  ColumnMenu,
+  ColumnModals,
+  tokenToVar,
+  type KanbanColumnVM,
+  type KanbanColumnActions,
+  type KanbanColumnStrings,
+} from "@/frontend/features/shared-kanban";
 
 export interface LeadCardVM {
   id: string;
@@ -28,22 +43,19 @@ export interface LeadCardVM {
   phone: string;
   source: string;
   sourceLabel: string;
+  serviceId: string | null;
   serviceLabel: string;
   categoryId: string | null;
   categoryLabel: string | null;
   categoryColor: string | null;
+  note: string | null;
   uncontacted: boolean;
   ageLabel: string;
   lostReason: string | null;
 }
 
-export interface LeadColumnVM {
-  id: string;
-  title: string;
-  color: string;
-  isTerminalWon: boolean;
-  isTerminalLost: boolean;
-}
+/** One column of the leads board. Uses the shared kanban column VM. */
+export type LeadColumnVM = KanbanColumnVM;
 
 export interface LeadsStrings {
   title: string;
@@ -51,16 +63,13 @@ export interface LeadsStrings {
   board: string;
   list: string;
   filters: string;
-  column: string;
   manageCategories: string;
   newLead: string;
   addLead: string;
+  editLead: string;
   emptyCol: string;
   lexTipHtml: string;
   lexOk: string;
-  wonOfferHtml: string; // "{name}…"
-  createCase: string;
-  notNow: string;
   call: string;
   whatsapp: string;
   agendar: string;
@@ -85,27 +94,33 @@ export interface LeadsActions {
 }
 
 export interface LeadsViewProps {
+  boardId: string;
   columns: LeadColumnVM[];
   cards: LeadCardVM[];
   strings: LeadsStrings;
+  columnStrings: KanbanColumnStrings;
   actions: LeadsActions;
+  columnActions: KanbanColumnActions;
   onNewLead: (columnId?: string) => void;
   onNewCase: (preset: { name: string | null; phone: string; leadId?: string }) => void;
   onScheduleLead: (lead: { leadId: string; name: string | null; phone: string; source: string }) => void;
-  onOpenColumnMenu: () => void;
+  onEditLead: (card: LeadCardVM) => void;
   onOpenFilters: () => void;
   onManageCategories: () => void;
 }
 
 export function LeadsView({
+  boardId,
   columns,
   cards: initialCards,
   strings,
+  columnStrings,
   actions,
+  columnActions,
   onNewLead,
   onNewCase,
   onScheduleLead,
-  onOpenColumnMenu,
+  onEditLead,
   onOpenFilters,
   onManageCategories,
 }: LeadsViewProps) {
@@ -115,9 +130,23 @@ export function LeadsView({
   // after creating a lead or converting one to a case) so the board updates
   // without a full page reload.
   React.useEffect(() => { setCards(initialCards); }, [initialCards]);
+
+  // Column management (create/edit/reorder/delete-with-migration) — shared.
+  const cols = useKanbanColumns({
+    boardId,
+    initialColumns: columns,
+    actions: columnActions,
+    strings: columnStrings,
+    toast,
+    countCardsIn: (columnId) => cards.filter((c) => c.columnId === columnId).length,
+    onColumnDeleted: (columnId, migrateToColumnId) => {
+      if (!migrateToColumnId) return;
+      setCards((cs) => cs.map((c) => (c.columnId === columnId ? { ...c, columnId: migrateToColumnId } : c)));
+    },
+  });
+
   const [dragId, setDragId] = React.useState<string | null>(null);
   const [overCol, setOverCol] = React.useState<string | null>(null);
-  const [offer, setOffer] = React.useState<LeadCardVM | null>(null);
   const [lostFor, setLostFor] = React.useState<{ card: LeadCardVM; toColumnId: string } | null>(null);
   const [lostReason, setLostReason] = React.useState("");
 
@@ -154,7 +183,12 @@ export function LeadsView({
       toast.error(strings.badgeRedmove);
       return;
     }
-    if (col.isTerminalWon) setOffer(card);
+    // Terminal-won: open the "create case" contract modal directly, prefilled
+    // with the lead's name + phone (RF-VAN-015). Closing it without creating a
+    // case just leaves the lead in this column.
+    if (col.isTerminalWon) {
+      onNewCase({ name: card.name, phone: card.phone, leadId: card.leadId });
+    }
   };
 
   const confirmLost = async () => {
@@ -197,9 +231,9 @@ export function LeadsView({
             <MSym name="filter_list" size={18} />
             {strings.filters}
           </button>
-          <button type="button" className="vbtn vbtn-ghost vbtn-sm" onClick={onOpenColumnMenu}>
+          <button type="button" className="vbtn vbtn-ghost vbtn-sm" onClick={cols.openCreate}>
             <MSym name="add" size={18} />
-            {strings.column}
+            {columnStrings.newColumn}
           </button>
           <button type="button" className="vbtn vbtn-ghost vbtn-sm" onClick={onManageCategories}>
             <MSym name="label" size={18} />
@@ -215,49 +249,55 @@ export function LeadsView({
       <LexBubble dismissKey="leads-tip" orb={30} enabled={strings.lexEnabled} html={strings.lexTipHtml}
         actions={[{ label: strings.lexOk, icon: "check", ghost: true, onClick: () => {} }]} />
 
-      {offer && (
-        <LexBubble
-          dismissKey={`won-offer-${offer.id}-${Date.now()}`}
-          orb={30}
-          enabled={strings.lexEnabled}
-          html={strings.wonOfferHtml.replace("{name}", offer.name ?? offer.phone)}
-          actions={[
-            {
-              label: strings.createCase,
-              icon: "create_new_folder",
-              onClick: () => {
-                onNewCase({ name: offer.name, phone: offer.phone, leadId: offer.leadId });
-                setOffer(null);
-              },
-            },
-            { label: strings.notNow, ghost: true, onClick: () => setOffer(null) },
-          ]}
-        />
-      )}
-
       <div className="kanban">
-        {columns.map((col) => {
+        {cols.columns.map((col, colIdx) => {
           const colCards = cards.filter((c) => c.columnId === col.id);
           return (
-            <div className="kcol" key={col.id}>
-              <div className="kcol-head">
-                <span className="kcol-dot" style={{ background: col.color }} />
+            <div
+              className="kcol"
+              key={col.id}
+              style={
+                cols.colOverId === col.id && cols.colDragId && cols.colDragId !== col.id
+                  ? { outline: "2px dashed var(--accent)", outlineOffset: 2, borderRadius: 12 }
+                  : undefined
+              }
+            >
+              {/* Column header — drag to reorder (RF-VAN-010) */}
+              <div
+                className={`kcol-head${cols.colDragId === col.id ? " dragging" : ""}`}
+                draggable
+                onDragStart={(e) => { cols.setColDragId(col.id); e.dataTransfer.effectAllowed = "move"; }}
+                onDragEnd={() => { cols.setColDragId(null); cols.setColOverId(null); }}
+                onDragOver={(e) => { if (cols.colDragId) { e.preventDefault(); cols.setColOverId(col.id); } }}
+                onDrop={() => { if (cols.colDragId) cols.handleColReorder(col); }}
+                style={{ cursor: "grab" }}
+              >
+                <span className="kcol-dot" style={{ background: tokenToVar(col.color) }} />
                 <span className="kcol-title">{col.title}</span>
                 <span className="kcol-count">{colCards.length}</span>
-                <button type="button" className="kcol-menu" onClick={onOpenColumnMenu} aria-label={`${strings.column}: ${col.title}`}>
-                  <MSym name="more_horiz" size={18} />
-                </button>
+                <ColumnMenu
+                  col={col}
+                  isLast={cols.columns.length <= 1}
+                  canMoveLeft={colIdx > 0}
+                  canMoveRight={colIdx < cols.columns.length - 1}
+                  onMoveLeft={() => cols.moveColumn(col, "left")}
+                  onMoveRight={() => cols.moveColumn(col, "right")}
+                  onEdit={() => cols.openEdit(col)}
+                  onDelete={() => cols.openDelete(col)}
+                  strings={columnStrings}
+                />
               </div>
               <div
                 className={`kcol-body${overCol === col.id ? " dragover" : ""}`}
                 onDragOver={(e) => {
+                  if (cols.colDragId) return;
                   e.preventDefault();
                   setOverCol(col.id);
                 }}
                 onDragLeave={(e) => {
                   if (e.currentTarget === e.target) setOverCol(null);
                 }}
-                onDrop={() => drop(col)}
+                onDrop={() => { if (!cols.colDragId) drop(col); }}
               >
                 {colCards.length === 0 && <div className="kcol-empty">{strings.emptyCol}</div>}
                 {colCards.map((c) => {
@@ -272,6 +312,13 @@ export function LeadsView({
                         setDragId(null);
                         setOverCol(null);
                       }}
+                      // Click the card (anywhere but the mini-action buttons,
+                      // which stopPropagation) to edit the lead (RF-VAN-012).
+                      onClick={() => onEditLead(c)}
+                      onKeyDown={(e) => { if (e.key === "Enter") onEditLead(c); }}
+                      tabIndex={0}
+                      aria-label={`${strings.editLead}: ${c.name ?? c.phone}`}
+                      style={{ cursor: "pointer" }}
                     >
                       {c.uncontacted && <span className="kcard-uncontacted" title="Sin contactar" />}
                       <div className="kcard-top">
@@ -366,6 +413,9 @@ export function LeadsView({
           />
         </div>
       </Modal>
+
+      {/* Column create/edit + delete modals (shared) */}
+      <ColumnModals cols={cols} strings={columnStrings} />
     </div>
   );
 }

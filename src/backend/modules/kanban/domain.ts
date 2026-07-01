@@ -56,8 +56,8 @@ export function seedColumnsFor(kind: BoardKind): SeedColumn[] {
         { label: "Llamada agendada",   color: "purple", position: 3, isTerminalWon: false, isTerminalLost: false },
         { label: "En seguimiento",     color: "gold",   position: 4, isTerminalWon: false, isTerminalLost: false },
         { label: "Listo para cerrar",  color: "green",  position: 5, isTerminalWon: false, isTerminalLost: false },
-        { label: "Ganado",             color: "green",  position: 6, isTerminalWon: true,  isTerminalLost: false },
-        { label: "Perdido",            color: "red",    position: 7, isTerminalWon: false, isTerminalLost: true  },
+        { label: "Listo para contrato",color: "green",  position: 6, isTerminalWon: true,  isTerminalLost: false },
+        { label: "Rechazado",          color: "red",    position: 7, isTerminalWon: false, isTerminalLost: true  },
       ];
 
     case "cases":

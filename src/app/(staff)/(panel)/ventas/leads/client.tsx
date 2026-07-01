@@ -18,6 +18,7 @@ import {
   LexPrefsProvider,
   type LeadColumnVM,
   type LeadCardVM,
+  type EditLeadPreset,
   type LeadsStrings,
   type NuevoLeadStrings,
   type SourceOption,
@@ -51,8 +52,12 @@ export interface LeadsClientProps {
   newCaseServices: NewCaseService[];
   casosStrings: CasosStrings;
   signingBaseUrl: string;
+  boardId: string;
   moveAction: LeadsViewMove;
+  columnActions: LeadsColumnActions;
+  columnStrings: LeadsColumnStrings;
   createLeadAction: CreateLead;
+  updateLeadAction: UpdateLead;
   createCategoryAction: CreateCategory;
   categoryActions: Omit<CategoryManagerActions, "create">;
   citaActions: NuevaCitaActions;
@@ -60,6 +65,9 @@ export interface LeadsClientProps {
 }
 
 type LeadsViewMove = React.ComponentProps<typeof LeadsView>["actions"]["moveCard"];
+type LeadsColumnActions = React.ComponentProps<typeof LeadsView>["columnActions"];
+type LeadsColumnStrings = React.ComponentProps<typeof LeadsView>["columnStrings"];
+type UpdateLead = NonNullable<React.ComponentProps<typeof NuevoLeadModal>["actions"]["updateLead"]>;
 type CreateLead = React.ComponentProps<typeof NuevoLeadModal>["actions"]["createLead"];
 type CreateCategory = React.ComponentProps<typeof NuevoLeadModal>["actions"]["createCategory"];
 
@@ -78,8 +86,12 @@ export function LeadsClient({
   newCaseServices,
   casosStrings,
   signingBaseUrl,
+  boardId,
   moveAction,
+  columnActions,
+  columnStrings,
   createLeadAction,
+  updateLeadAction,
   createCategoryAction,
   categoryActions,
   citaActions,
@@ -87,7 +99,8 @@ export function LeadsClient({
 }: LeadsClientProps) {
   const router = useRouter();
   const [leadModal, setLeadModal] = React.useState<{ open: boolean; columnId?: string }>({ open: false });
-  const [caseModal, setCaseModal] = React.useState<{ open: boolean; leadId?: string }>({ open: false });
+  const [caseModal, setCaseModal] = React.useState<{ open: boolean; leadId?: string; name?: string | null; phone?: string }>({ open: false });
+  const [editLead, setEditLead] = React.useState<EditLeadPreset | null>(null);
   const [catsOpen, setCatsOpen] = React.useState(false);
   const [scheduleProspect, setScheduleProspect] = React.useState<ProspectSearchResult | null>(null);
 
@@ -105,14 +118,27 @@ export function LeadsClient({
   return (
     <LexPrefsProvider>
       <LeadsView
+        boardId={boardId}
         columns={columns}
         cards={cards}
         strings={strings}
+        columnStrings={columnStrings}
         actions={{ moveCard: moveAction }}
+        columnActions={columnActions}
         onNewLead={(columnId) => setLeadModal({ open: true, columnId })}
-        onNewCase={(preset) => setCaseModal({ open: true, leadId: preset.leadId })}
+        onNewCase={(preset) => setCaseModal({ open: true, leadId: preset.leadId, name: preset.name, phone: preset.phone })}
         onScheduleLead={(lead) => setScheduleProspect({ ...lead })}
-        onOpenColumnMenu={() => {}}
+        onEditLead={(card) =>
+          setEditLead({
+            id: card.leadId,
+            phone: card.phone,
+            name: card.name,
+            source: card.source,
+            serviceId: card.serviceId,
+            categoryId: card.categoryId,
+            note: card.note,
+          })
+        }
         onOpenFilters={() => {}}
         onManageCategories={() => setCatsOpen(true)}
       />
@@ -125,6 +151,23 @@ export function LeadsClient({
         categories={categories}
         strings={newLeadStrings}
         actions={{ createLead: createLeadWithRefresh, createCategory: createCategoryAction }}
+      />
+
+      {/* Edit lead — reuses the lead modal in edit mode (click a card). */}
+      <NuevoLeadModal
+        open={editLead != null}
+        onOpenChange={(o) => {
+          if (!o) {
+            setEditLead(null);
+            router.refresh();
+          }
+        }}
+        editLead={editLead}
+        sources={sources}
+        services={services}
+        categories={categories}
+        strings={newLeadStrings}
+        actions={{ createLead: createLeadWithRefresh, updateLead: updateLeadAction, createCategory: createCategoryAction }}
       />
 
       <CategoryManager
@@ -148,11 +191,13 @@ export function LeadsClient({
       <NewCaseModal
         open={caseModal.open}
         onOpenChange={(o) => {
-          setCaseModal({ open: o, leadId: o ? caseModal.leadId : undefined });
+          setCaseModal((prev) => (o ? { ...prev, open: true } : { open: false }));
           // On close, re-hydrate the board so a just-converted lead disappears.
           if (!o) router.refresh();
         }}
         leadId={caseModal.leadId}
+        presetName={caseModal.name ?? undefined}
+        presetPhone={caseModal.phone}
         services={newCaseServices}
         strings={casosStrings}
         actions={{ createCase: createCaseAction }}

@@ -98,6 +98,8 @@ export function NewCaseModal({
   actions,
   signingBaseUrl,
   leadId,
+  presetName,
+  presetPhone,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
@@ -107,6 +109,9 @@ export function NewCaseModal({
   signingBaseUrl: string;
   /** When the modal is opened from a lead card, links the case back to the lead. */
   leadId?: string;
+  /** Prefill step 1 from the originating lead (name/phone the lead already has). */
+  presetName?: string | null;
+  presetPhone?: string | null;
 }) {
   const [step, setStep] = React.useState<1 | 2 | 3 | 4>(1);
   const [name, setName] = React.useState("");
@@ -130,6 +135,15 @@ export function NewCaseModal({
   const [partyNames, setPartyNames] = React.useState<Record<string, string[]>>({});
   const [submitting, setSubmitting] = React.useState(false);
   const [signingLink, setSigningLink] = React.useState<string | null>(null);
+
+  // Prefill client name/phone from the originating lead each time the modal
+  // opens (e.g. dragging a lead to the terminal-won column). Only seeds on the
+  // open transition so it never clobbers what the operator is typing.
+  React.useEffect(() => {
+    if (!open) return;
+    if (presetName) setName(presetName);
+    if (presetPhone) setPhone(presetPhone);
+  }, [open, presetName, presetPhone]);
 
   const service = services.find((s) => s.id === serviceId);
 

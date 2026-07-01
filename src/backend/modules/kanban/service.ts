@@ -121,7 +121,7 @@ export type CreateLeadResult =
 
 export interface UpdateLeadInput {
   leadId: string;
-  fullName?: string;
+  fullName?: string | null;
   source?: string;
   categoryId?: string | null;
   interestedServiceId?: string | null;
@@ -348,10 +348,22 @@ export async function moveCard(
     }
   }
 
-  // Step 2 — Update card position
+  // Step 2 — Update card position.
+  //   Compute the destination slot SERVER-SIDE by appending to the end of the
+  //   target column, from the ACTUAL rows — including cards hidden from the
+  //   client (e.g. a lead already converted to a case still owns its card, but
+  //   the board filters it out). The client-provided `toPosition` is unreliable
+  //   (the leads board sends 0, Diana sends visibleCount+1) and a literal value
+  //   collides with `unique (column_id, position)` whenever the target already
+  //   holds a card at that slot. Cross-column moves append; a same-column call
+  //   (guarded against on the client, defensive here) keeps the card's slot.
+  const nextPosition =
+    fromColumn.id === input.toColumnId
+      ? card.position
+      : (await repo.maxCardPosition(input.toColumnId)) + 1;
   await repo.updateCard(input.cardId, {
     column_id: input.toColumnId,
-    position: input.toPosition,
+    position: nextPosition,
   });
 
   // Step 3 — Audit log

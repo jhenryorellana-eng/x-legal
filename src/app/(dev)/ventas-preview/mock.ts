@@ -60,13 +60,13 @@ export const MOCK_TASKS: MiDiaTask[] = [
 // --- Leads ----------------------------------------------------------------
 
 export const MOCK_COLUMNS: LeadColumnVM[] = [
-  { id: "nuevo", title: "Nuevo", color: "#2F6BFF", isTerminalWon: false, isTerminalLost: false },
-  { id: "contactado", title: "Contactado", color: "#8B5CF6", isTerminalWon: false, isTerminalLost: false },
-  { id: "llamada", title: "Llamada agendada", color: "#F59E0B", isTerminalWon: false, isTerminalLost: false },
-  { id: "seguimiento", title: "En seguimiento", color: "#06B6D4", isTerminalWon: false, isTerminalLost: false },
-  { id: "cerrar", title: "Listo para cerrar", color: "#FFC629", isTerminalWon: false, isTerminalLost: false },
-  { id: "ganado", title: "Ganado", color: "#1BB673", isTerminalWon: true, isTerminalLost: false },
-  { id: "perdido", title: "Perdido", color: "#E4002B", isTerminalWon: false, isTerminalLost: true },
+  { id: "nuevo", boardId: "mock-board", position: 1, title: "Nuevo", color: "#2F6BFF", isTerminalWon: false, isTerminalLost: false },
+  { id: "contactado", boardId: "mock-board", position: 2, title: "Contactado", color: "#8B5CF6", isTerminalWon: false, isTerminalLost: false },
+  { id: "llamada", boardId: "mock-board", position: 3, title: "Llamada agendada", color: "#F59E0B", isTerminalWon: false, isTerminalLost: false },
+  { id: "seguimiento", boardId: "mock-board", position: 4, title: "En seguimiento", color: "#06B6D4", isTerminalWon: false, isTerminalLost: false },
+  { id: "cerrar", boardId: "mock-board", position: 5, title: "Listo para cerrar", color: "#FFC629", isTerminalWon: false, isTerminalLost: false },
+  { id: "ganado", boardId: "mock-board", position: 6, title: "Listo para contrato", color: "#1BB673", isTerminalWon: true, isTerminalLost: false },
+  { id: "perdido", boardId: "mock-board", position: 7, title: "Rechazado", color: "#E4002B", isTerminalWon: false, isTerminalLost: true },
 ];
 
 const CAT = {
@@ -86,10 +86,12 @@ function card(o: Partial<LeadCardVM> & { id: string; phone: string; columnId: st
     phone: o.phone,
     source: o.source ?? "web",
     sourceLabel: o.sourceLabel ?? "Web",
+    serviceId: o.serviceId ?? null,
     serviceLabel: o.serviceLabel ?? "Visa Juvenil",
     categoryId: cat?.id ?? null,
     categoryLabel: cat?.label ?? null,
     categoryColor: cat?.color ?? null,
+    note: o.note ?? null,
     uncontacted: o.uncontacted ?? false,
     ageLabel: o.ageLabel ?? "hace 1 h",
     lostReason: o.lostReason ?? null,

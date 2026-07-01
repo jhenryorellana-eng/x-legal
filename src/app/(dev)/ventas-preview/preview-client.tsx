@@ -110,6 +110,7 @@ function MiDiaPreview() {
 function LeadsPreview() {
   return (
     <LeadsView
+      boardId="mock-board"
       columns={MOCK_COLUMNS}
       cards={MOCK_CARDS}
       strings={{
@@ -118,18 +119,14 @@ function LeadsPreview() {
         board: "Tablero",
         list: "Lista",
         filters: "Filtros",
-        column: "Columna",
         manageCategories: "Categorías",
         newLead: "Nuevo lead",
         addLead: "Agregar lead",
+        editLead: "Editar lead",
         emptyCol: "Arrastra leads aquí",
         lexTipHtml:
-          'Veo <b>4 leads sin contactar</b> en "Nuevo". Cuando muevas uno a <b>Ganado</b> (o pulses "Crear caso"), genero el contrato al instante.',
+          'Veo <b>4 leads sin contactar</b> en "Nuevo". Cuando muevas uno a <b>Listo para contrato</b> (o pulses "Crear caso"), genero el contrato al instante.',
         lexOk: "Entendido",
-        wonOfferHtml:
-          "<b>{name}</b> pasó a <b>Ganado</b> 🎉 ¿Creo su caso ahora? El contrato es lo primero dentro del caso, listo para firmar.",
-        createCase: "Crear caso",
-        notNow: "Ahora no",
         call: "Llamar",
         whatsapp: "WhatsApp",
         agendar: "Agendar cita",
@@ -143,11 +140,39 @@ function LeadsPreview() {
         lexEnabled: true,
         badgeRedmove: "No se pudo mover la tarjeta. Inténtalo de nuevo.",
       }}
+      columnStrings={{
+        newColumn: "Nueva columna",
+        orderError: "No se pudo guardar el orden.",
+        createError: "No se pudo crear la columna.",
+        editError: "No se pudo guardar la columna.",
+        deleteError: "No se pudo completar la operación.",
+        colModalCreateTitle: "Nueva columna",
+        colModalEditTitle: "Editar columna",
+        colNameLabel: "Nombre",
+        colNamePh: "Nombre de la columna…",
+        colNameRequired: "Escribe un nombre",
+        colColorLabel: "Color",
+        colSave: "Guardar",
+        colCancel: "Cancelar",
+        delModalTitle: "¿Eliminar la columna?",
+        delModalBodyEmpty: "La columna está vacía. Se eliminará sin mover tarjetas.",
+        delModalBodyCards: "La columna tiene {n} tarjetas. Selecciona adónde moverlas.",
+        delMigrateLabel: "Mover tarjetas a…",
+        delConfirm: "Eliminar",
+        delCancel: "Cancelar",
+        delLastColumn: "El tablero necesita al menos una columna",
+        colMenuEdit: "Editar",
+        colMenuDelete: "Eliminar",
+        colMenuMoveLeft: "Mover a la izquierda",
+        colMenuMoveRight: "Mover a la derecha",
+        colMenuAria: "Opciones columna {title}",
+      }}
       actions={{ moveCard: ok }}
+      columnActions={{ createColumn: ok, updateColumn: ok, reorderColumns: ok, deleteColumn: ok }}
       onNewLead={() => {}}
       onNewCase={() => {}}
       onScheduleLead={() => {}}
-      onOpenColumnMenu={() => {}}
+      onEditLead={() => {}}
       onOpenFilters={() => {}}
       onManageCategories={() => {}}
     />

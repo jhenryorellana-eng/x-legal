@@ -29,6 +29,7 @@ export type {
   NuevoLeadModalProps,
   NuevoLeadStrings,
   NuevoLeadActions,
+  EditLeadPreset,
   CategoryOption,
   ServiceOption,
   SourceOption,
