@@ -85,6 +85,9 @@ export default async function StaffPanelLayout({
   // (`hiddenForAdmin`) — it already has the org-wide one (settings), so those
   // would otherwise show up as four duplicate "Configuración" items.
   const filtered = filterNav(navForRole(actor.role), (item) => {
+    // Admin-exclusive surfaces (e.g. Demo) never show for non-admins, even if a
+    // role happens to hold the gating module's view permission.
+    if (item.adminOnly && actor.role !== "admin") return false;
     if (actor.role === "admin") return !item.hiddenForAdmin;
     const p = actor.permissions.get(item.module);
     return Boolean(p && (p.view || p.edit));

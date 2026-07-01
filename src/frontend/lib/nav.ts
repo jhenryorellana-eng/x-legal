@@ -35,6 +35,12 @@ export interface NavItem {
    * admin would see four identical "Configuración" items, one per department.
    */
   hiddenForAdmin?: boolean;
+  /**
+   * Visible ONLY to the admin role. Unlike `module`-gating (which any role with
+   * the permission passes), this is a hard role check enforced in the panel
+   * layout. Used for admin-exclusive surfaces like the marketing Demo.
+   */
+  adminOnly?: boolean;
 }
 
 export interface NavGroup {
@@ -106,6 +112,8 @@ export const STAFF_NAV: NavGroup[] = [
       { labelKey: "employees", href: "/admin/empleados", icon: "user", module: "employees" },
       { labelKey: "audit", href: "/admin/auditoria", icon: "scale", module: "audit" },
       { labelKey: "settings", href: "/admin/configuracion", icon: "gear", module: "employees" },
+      // Admin-only marketing demo (no backend writes; pure-UI walkthrough).
+      { labelKey: "demo", href: "/admin/demo", icon: "sparkle", module: "dashboard", adminOnly: true },
     ],
   },
 ];
