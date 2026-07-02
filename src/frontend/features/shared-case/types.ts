@@ -90,6 +90,16 @@ export interface PartyVM {
   lastName?: string | null;
 }
 
+/** A payment attempt/confirmation against an installment (Pagos tab). */
+export interface InstallmentPaymentVM {
+  id: string;
+  method: "stripe" | "zelle";
+  /** pending | succeeded | failed | rejected | refunded */
+  status: string;
+  amountCents: number;
+  createdAt: string;
+}
+
 export interface InstallmentVM {
   id: string;
   number: number;
@@ -97,6 +107,8 @@ export interface InstallmentVM {
   status: string;
   isDownpayment: boolean;
   dueDate: string | null;
+  /** Payments of this installment — a pending zelle one drives "Verificar". */
+  payments: InstallmentPaymentVM[];
 }
 
 export interface TimelineEventVM {
@@ -353,9 +365,37 @@ export interface CaseDetailActions {
     documentId: string;
     displayName: string;
   }) => Promise<{ ok: boolean; error?: { code: string } }>;
-  /** Register the manual Zelle payment of an installment (gate → active). */
+  /**
+   * Register the manual Zelle payment of an installment (gate → active).
+   * The proof is MANDATORY (Henry 2026-07-02): upload it first via
+   * getZelleProofUploadUrl, then register with the storage path.
+   */
   registerPayment: (input: {
     installmentId: string;
+    zelleProofPath: string;
+    notes?: string | null;
+  }) => Promise<{ ok: boolean; error?: { code: string } }>;
+  /**
+   * Signed upload URL for a staff Zelle proof upload. Optional — only surfaces
+   * that authorize payment actions (admin / sales / finance) inject it.
+   */
+  getZelleProofUploadUrl?: (input: {
+    installmentId: string;
+    filename: string;
+    contentType: string;
+  }) => Promise<{ ok: boolean; signedUrl?: string; path?: string; error?: { code: string } }>;
+  /** Short-lived signed URL to view a Zelle proof (image/PDF). Optional. */
+  getZelleProofViewUrl?: (input: {
+    paymentId: string;
+  }) => Promise<{ ok: boolean; url?: string; kind?: "image" | "pdf"; error?: { code: string } }>;
+  /** Approve a pending Zelle payment (cases:edit — RF-AND-011). Optional. */
+  confirmZellePayment?: (input: {
+    paymentId: string;
+  }) => Promise<{ ok: boolean; error?: { code: string } }>;
+  /** Reject a pending Zelle proof with a mandatory reason. Optional. */
+  rejectZelleProof?: (input: {
+    paymentId: string;
+    reason: string;
   }) => Promise<{ ok: boolean; error?: { code: string } }>;
   /** Resend the contract signing link (rotates the token). */
   resendSigningLink: (input: {

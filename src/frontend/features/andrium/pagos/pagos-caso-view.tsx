@@ -33,9 +33,9 @@ import {
 } from "@/frontend/components/brand";
 import {
   Modal,
-  SidePanel,
   toast,
 } from "@/frontend/components/desktop";
+import { ZelleVerifyPanel, ZelleRegisterModal } from "@/frontend/features/billing-shared";
 // BillingResult defined locally (no app/ boundary cross — MEMORY: boundaries rule)
 // Mirrors actions.ts shape: { ok: true, data? } | { ok: false, error: { code } }
 
@@ -104,7 +104,7 @@ export interface PagosCasoActions {
   rejectZelleProof: (input: { paymentId: string; reason: string }) => Promise<BillingResult>;
   registerZellePayment: (input: {
     installmentId: string;
-    zelleProofPath?: string | null;
+    zelleProofPath: string; // mandatory proof (Henry 2026-07-02)
     notes?: string | null;
   }) => Promise<BillingResult>;
   getZelleProofUploadUrl: (input: {
@@ -348,340 +348,11 @@ function StripeSuccessModal({
 }
 
 // ---------------------------------------------------------------------------
-// SidePanel: Verificar comprobante Zelle (RF-AND-011)
+// Zelle verify panel + register modal — shared components (billing-shared).
+// The verify SidePanel (RF-AND-011) and the register modal with MANDATORY
+// proof upload (RF-AND-012, Henry 2026-07-02) are also mounted by the
+// shared-case Pagos tab, so they live in features/billing-shared.
 // ---------------------------------------------------------------------------
-
-function ZelleVerifyPanel({
-  open,
-  onClose,
-  payment,
-  onApprove,
-  onReject,
-  onLoadProof,
-}: {
-  open: boolean;
-  onClose: () => void;
-  payment: PaymentVM | null;
-  onApprove: (paymentId: string) => Promise<void>;
-  onReject: (paymentId: string, reason: string) => Promise<void>;
-  onLoadProof: (
-    paymentId: string,
-  ) => Promise<{ url: string; kind: "image" | "pdf" } | null>;
-}) {
-  const [rejectMode, setRejectMode] = React.useState(false);
-  const [reason, setReason] = React.useState("");
-  const [busyApprove, setBusyApprove] = React.useState(false);
-  const [busyReject, setBusyReject] = React.useState(false);
-  const [proof, setProof] = React.useState<{ url: string; kind: "image" | "pdf" } | null>(null);
-  const [proofLoading, setProofLoading] = React.useState(false);
-  const [proofError, setProofError] = React.useState(false);
-
-  const paymentId = payment?.id ?? null;
-
-  React.useEffect(() => {
-    if (!open) {
-      setRejectMode(false);
-      setReason("");
-      setProof(null);
-      setProofError(false);
-    }
-  }, [open]);
-
-  // Load the uploaded proof (signed URL from bucket payment-proofs) when opened.
-  React.useEffect(() => {
-    if (!open || !paymentId) return;
-    let cancelled = false;
-    setProof(null);
-    setProofError(false);
-    setProofLoading(true);
-    onLoadProof(paymentId)
-      .then((res) => {
-        if (cancelled) return;
-        if (res) setProof(res);
-        else setProofError(true);
-      })
-      .catch(() => { if (!cancelled) setProofError(true); })
-      .finally(() => { if (!cancelled) setProofLoading(false); });
-    return () => { cancelled = true; };
-  }, [open, paymentId, onLoadProof]);
-
-  if (!payment) return null;
-
-  async function handleApprove() {
-    setBusyApprove(true);
-    try { await onApprove(payment!.id); } finally { setBusyApprove(false); }
-  }
-
-  async function handleReject() {
-    if (!reason.trim()) { toast.error("El motivo es obligatorio"); return; }
-    setBusyReject(true);
-    try { await onReject(payment!.id, reason); } finally { setBusyReject(false); }
-  }
-
-  return (
-    <SidePanel
-      open={open}
-      onOpenChange={(v) => { if (!v) onClose(); }}
-      title="Verificar comprobante"
-      subtitle={`Pago Zelle · ${usd(payment.amountCents)}`}
-      footer={
-        rejectMode ? (
-          <div style={{ display: "flex", gap: 10, padding: "0 0 4px" }}>
-            <GhostBtn
-              size="md"
-              full={false}
-              onClick={() => setRejectMode(false)}
-              disabled={busyReject}
-            >
-              Atrás
-            </GhostBtn>
-            <GhostBtn
-              size="md"
-              full={false}
-              color="var(--red)"
-              onClick={handleReject}
-              disabled={busyReject || !reason.trim()}
-            >
-              {busyReject ? "Rechazando…" : "Rechazar"}
-            </GhostBtn>
-          </div>
-        ) : (
-          <div style={{ display: "flex", gap: 10, padding: "0 0 4px" }}>
-            <GhostBtn
-              size="md"
-              full={false}
-              color="var(--red)"
-              onClick={() => setRejectMode(true)}
-              disabled={busyApprove}
-            >
-              Rechazar
-            </GhostBtn>
-            <GradientBtn
-              size="md"
-              full={false}
-              onClick={handleApprove}
-              disabled={busyApprove}
-            >
-              {busyApprove ? "Aprobando…" : "Aprobar pago"}
-            </GradientBtn>
-          </div>
-        )
-      }
-    >
-      <div style={{ padding: "4px 0", display: "flex", flexDirection: "column", gap: 16 }}>
-        {/* Comprobante (signed URL — bucket payment-proofs, RF-AND-011) */}
-        <div
-          style={{
-            background: "var(--hover, rgba(47,107,255,0.04))",
-            borderRadius: 12,
-            minHeight: 200,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            border: "1.5px dashed var(--line)",
-            overflow: "hidden",
-          }}
-        >
-          {proofLoading ? (
-            <p style={{ fontSize: 12, color: "var(--ink-3)" }}>Cargando comprobante…</p>
-          ) : proofError ? (
-            <div style={{ textAlign: "center" }}>
-              <Icon name="doc" size={36} color="var(--ink-3)" />
-              <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--ink-3)" }}>
-                No se pudo cargar el comprobante
-              </p>
-            </div>
-          ) : proof && proof.kind === "image" ? (
-            // eslint-disable-next-line @next/next/no-img-element -- short-lived signed URL from private bucket; next/image remotePatterns not configured for storage
-            <img
-              src={proof.url}
-              alt="Comprobante de pago Zelle"
-              style={{ width: "100%", maxHeight: 360, objectFit: "contain", display: "block" }}
-            />
-          ) : proof && proof.kind === "pdf" ? (
-            <iframe
-              src={proof.url}
-              title="Comprobante de pago Zelle"
-              style={{ width: "100%", height: 360, border: "none" }}
-            />
-          ) : (
-            <div style={{ textAlign: "center" }}>
-              <Icon name="doc" size={36} color="var(--ink-3)" />
-              <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--ink-3)" }}>
-                Sin comprobante
-              </p>
-            </div>
-          )}
-        </div>
-
-        {/* Metadata */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <Row label="Monto" value={usd(payment.amountCents)} />
-          <Row label="Método" value="Zelle" />
-          <Row label="Estado" value={PAY_STATUS[payment.status].label} />
-          <Row
-            label="Subido"
-            value={new Date(payment.createdAt).toLocaleString("es-US", {
-              dateStyle: "medium",
-              timeStyle: "short",
-            })}
-          />
-        </div>
-
-        {/* Cotejo guiado */}
-        <div
-          style={{
-            padding: "10px 12px",
-            background: "var(--gold-soft)",
-            borderRadius: 10,
-            fontSize: 13,
-            color: "var(--gold-deep)",
-          }}
-        >
-          Verifica que el monto y la referencia del comprobante coincidan con los datos de la cuota.
-        </div>
-
-        {/* Reject form */}
-        {rejectMode && (
-          <div>
-            <label
-              htmlFor="reject-reason"
-              style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)", display: "block", marginBottom: 6 }}
-            >
-              Motivo del rechazo (el cliente lo verá) *
-            </label>
-            <textarea
-              id="reject-reason"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              rows={3}
-              placeholder="Escribe el motivo para que el cliente corrija y vuelva a subir…"
-              style={{
-                width: "100%",
-                borderRadius: 10,
-                border: "1.5px solid var(--line)",
-                padding: "10px 12px",
-                fontSize: 13,
-                color: "var(--ink)",
-                background: "var(--card)",
-                resize: "vertical",
-                fontFamily: "inherit",
-                outline: "none",
-                boxSizing: "border-box",
-              }}
-            />
-            <p style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 6 }}>
-              El cliente recibirá este motivo para corregir y volver a subir su comprobante.
-            </p>
-          </div>
-        )}
-      </div>
-    </SidePanel>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Modal: Registrar Zelle (RF-AND-012)
-// ---------------------------------------------------------------------------
-
-function ZelleRegisterModal({
-  open,
-  onClose,
-  installment,
-  onConfirm,
-}: {
-  open: boolean;
-  onClose: () => void;
-  installment: InstallmentVM | null;
-  onConfirm: (input: { installmentId: string; zelleProofPath?: string | null; notes?: string | null }) => Promise<void>;
-}) {
-  const [notes, setNotes] = React.useState("");
-  const [busy, setBusy] = React.useState(false);
-
-  React.useEffect(() => {
-    if (!open) { setNotes(""); }
-  }, [open]);
-
-  if (!installment) return null;
-
-  async function handleConfirm() {
-    setBusy(true);
-    try {
-      await onConfirm({ installmentId: installment!.id, notes: notes || null });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Modal
-      open={open}
-      onOpenChange={(v) => { if (!v) onClose(); }}
-      title="Registrar Zelle"
-      footer={
-        <div style={{ display: "flex", gap: 10 }}>
-          <GhostBtn size="md" full={false} onClick={onClose} disabled={busy}>
-            Cancelar
-          </GhostBtn>
-          <GradientBtn size="md" full={false} onClick={handleConfirm} disabled={busy}>
-            {busy ? "Registrando…" : "Confirmar pago"}
-          </GradientBtn>
-        </div>
-      }
-    >
-      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <div style={{ padding: "12px 14px", background: "var(--hover, rgba(47,107,255,0.04))", borderRadius: 10 }}>
-          <p style={{ margin: 0, fontSize: 13, color: "var(--ink-2)" }}>
-            Monto de la cuota
-          </p>
-          <p style={{ margin: "4px 0 0", fontSize: 20, fontWeight: 800, color: "var(--ink)" }}>
-            {usd(installment.amountCents)}
-          </p>
-        </div>
-
-        <div
-          style={{
-            padding: "10px 12px",
-            background: "var(--gold-soft)",
-            borderRadius: 10,
-            fontSize: 13,
-            color: "var(--gold-deep)",
-          }}
-        >
-          Sin pagos parciales en V2. Si el monto difiere, no se podrá registrar.
-        </div>
-
-        <div>
-          <label
-            htmlFor="zelle-notes"
-            style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)", display: "block", marginBottom: 6 }}
-          >
-            Notas (opcional)
-          </label>
-          <input
-            id="zelle-notes"
-            type="text"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="Referencia, nombre del remitente…"
-            style={{
-              width: "100%",
-              borderRadius: 10,
-              border: "1.5px solid var(--line)",
-              padding: "10px 12px",
-              fontSize: 13,
-              color: "var(--ink)",
-              background: "var(--card)",
-              fontFamily: "inherit",
-              outline: "none",
-              boxSizing: "border-box",
-            }}
-          />
-        </div>
-      </div>
-    </Modal>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Modal: Reprogramar (RF-AND-022)
@@ -1099,19 +770,6 @@ function MenuItem({
 }
 
 // ---------------------------------------------------------------------------
-// Helper: small label-value row
-// ---------------------------------------------------------------------------
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-      <span style={{ fontSize: 12, color: "var(--ink-3)" }}>{label}</span>
-      <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>{value}</span>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Expandable payment sub-rows
 // ---------------------------------------------------------------------------
 
@@ -1379,7 +1037,7 @@ export function PagosCasoView({ vm, actions }: PagosCasoViewProps) {
   // ----- Zelle register handler -----
   async function handleZelleRegister(input: {
     installmentId: string;
-    zelleProofPath?: string | null;
+    zelleProofPath: string;
     notes?: string | null;
   }) {
     const res = await actions.registerZellePayment(input);
@@ -1656,15 +1314,21 @@ export function PagosCasoView({ vm, actions }: PagosCasoViewProps) {
         url={stripeSuccessUrl ?? ""}
       />
 
-      {/* Zelle verify panel */}
+      {/* Zelle verify panel (shared — billing-shared) */}
       <ZelleVerifyPanel
         open={activeOverlay?.kind === "zelle-verify"}
         onClose={() => setActiveOverlay(null)}
-        payment={
-          activeOverlay?.kind === "zelle-verify"
-            ? (findPayment(activeOverlay.paymentId) ?? null)
-            : null
-        }
+        payment={(() => {
+          if (activeOverlay?.kind !== "zelle-verify") return null;
+          const p = findPayment(activeOverlay.paymentId);
+          if (!p) return null;
+          return {
+            id: p.id,
+            amountCents: p.amountCents,
+            createdAt: p.createdAt,
+            statusLabel: PAY_STATUS[p.status].label,
+          };
+        })()}
         onApprove={handleZelleApprove}
         onReject={handleZelleReject}
         onLoadProof={async (paymentId) => {
@@ -1673,7 +1337,7 @@ export function PagosCasoView({ vm, actions }: PagosCasoViewProps) {
         }}
       />
 
-      {/* Zelle register modal */}
+      {/* Zelle register modal (shared — mandatory proof upload) */}
       <ZelleRegisterModal
         open={activeOverlay?.kind === "zelle-register"}
         onClose={() => setActiveOverlay(null)}
@@ -1682,6 +1346,10 @@ export function PagosCasoView({ vm, actions }: PagosCasoViewProps) {
             ? (findInstallment(activeOverlay.installmentId) ?? null)
             : null
         }
+        onGetUploadUrl={async (input) => {
+          const res = await actions.getZelleProofUploadUrl(input);
+          return res.ok && res.data ? res.data : null;
+        }}
         onConfirm={handleZelleRegister}
       />
 

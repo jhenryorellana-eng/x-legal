@@ -25,7 +25,7 @@ import {
   getPriorPhaseMaterials,
   CaseError,
 } from "@/backend/modules/cases";
-import { getPaymentPlanForCase } from "@/backend/modules/billing";
+import { getAccountStatement } from "@/backend/modules/billing";
 import { getCaseTabAccess } from "@/backend/modules/case-tabs";
 import { getContractForCase } from "@/backend/modules/contracts";
 import { getRunsForCase, getPreMortemAssessmentsForCase, isPreMortemEnabledForCase } from "@/backend/modules/ai-engine";
@@ -46,7 +46,7 @@ import {
   confirmAttachmentAction,
   getAttachmentDownloadUrlAction,
 } from "@/backend/modules/messaging/actions";
-import { mapStatusToPill, buildRutaVM, buildPreMortemVM } from "../../../admin/casos/view-helpers";
+import { mapStatusToPill, buildRutaVM, buildPreMortemVM, mapStatementInstallments } from "../../../admin/casos/view-helpers";
 import {
   reviewDocumentAction,
   registerPaymentAction,
@@ -90,10 +90,10 @@ export default async function LegalCasoDetailPage({
     throw err;
   }
 
-  const [documents, plan, contract, timeline, forms, runs, validationRows, expedienteRows, matrix, rutaRaw, priorPhasesRaw, preMortemEnabled, preMortemRows] =
+  const [documents, statement, contract, timeline, forms, runs, validationRows, expedienteRows, matrix, rutaRaw, priorPhasesRaw, preMortemEnabled, preMortemRows] =
     await Promise.all([
       getCaseDocuments(actor, caseId).catch(() => []),
-      getPaymentPlanForCase(actor, caseId).catch(() => null),
+      getAccountStatement(actor, caseId).catch(() => null),
       getContractForCase(actor, caseId).catch(() => null),
       getTimeline(actor, caseId, { limit: 8 }).catch(() => ({ items: [], nextCursor: null })),
       getClientFormsForCase(actor, caseId).catch(() => []),
@@ -139,14 +139,7 @@ export default async function LegalCasoDetailPage({
   const canTranslate = actor.role === "paralegal" || actor.role === "admin";
 
   const pill = mapStatusToPill(workspace.status);
-  const installments = (plan?.installments ?? []).map((i) => ({
-    id: i.id,
-    number: i.number,
-    amountCents: i.amount_cents,
-    status: i.status,
-    isDownpayment: i.is_downpayment,
-    dueDate: i.due_date,
-  }));
+  const installments = mapStatementInstallments(statement);
   const downpayment = installments.find(
     (i) => i.isDownpayment && (i.status === "pending" || i.status === "overdue"),
   );

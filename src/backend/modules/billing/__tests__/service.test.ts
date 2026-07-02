@@ -136,6 +136,7 @@ import {
   submitZelleProof,
   confirmZellePayment,
   rejectZelleProof,
+  registerZellePayment,
   getAccountStatement,
   onContractSigned,
 } from "../service";
@@ -166,7 +167,9 @@ const makePendingInstallment = (overrides?: Partial<InstallmentRow>): Installmen
     payment_plan_id: PLAN_ID,
     number: 1,
     amount_cents: 50000,
-    due_date: "2026-07-01",
+    // Far future: revert paths (reject/fail/expire) must land on "pending", not
+    // "overdue" — a real date here time-bombed the suite the day it passed.
+    due_date: "2099-01-01",
     status: "pending",
     is_downpayment: true,
     paid_at: null,
@@ -526,8 +529,16 @@ describe("submitZelleProof", () => {
       INSTALLMENT_ID,
       { status: "processing" },
     );
+    // Enriched payload: notifications route the sales rule by isDownpayment
     expect(mockAppEvents.emit).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "payment.proof_submitted" }),
+      expect.objectContaining({
+        type: "payment.proof_submitted",
+        payload: expect.objectContaining({
+          caseId: CASE_ID,
+          isDownpayment: true,
+          amountCents: 50000,
+        }),
+      }),
     );
   });
 
@@ -579,6 +590,8 @@ describe("confirmZellePayment", () => {
 
     await confirmZellePayment(makeActor("staff", "finance"), PAYMENT_ID);
 
+    // Authz relaxed to cases:edit (Henry 2026-07-02: sales verifies from the case tab)
+    expect(mockAuthz.can).toHaveBeenCalledWith(expect.anything(), "cases", "edit");
     expect(mockRepo.updatePayment).toHaveBeenCalledWith(
       PAYMENT_ID,
       expect.objectContaining({ status: "succeeded" }),
@@ -629,6 +642,7 @@ describe("rejectZelleProof", () => {
       reason: "El comprobante es ilegible",
     });
 
+    expect(mockAuthz.can).toHaveBeenCalledWith(expect.anything(), "cases", "edit");
     expect(mockRepo.updatePayment).toHaveBeenCalledWith(PAYMENT_ID, { status: "rejected" });
     expect(mockRepo.updateInstallment).toHaveBeenCalledWith(
       INSTALLMENT_ID,
@@ -645,6 +659,92 @@ describe("rejectZelleProof", () => {
 
     // Zod min(1) validation
     expect(error).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// registerZellePayment — mandatory proof (Henry 2026-07-02, RF-AND-012)
+// ---------------------------------------------------------------------------
+
+describe("registerZellePayment", () => {
+  const PROOF_PATH = `payment-proofs/${INSTALLMENT_ID}/1234-proof.jpg`;
+
+  it("rejects without zelleProofPath (Zod)", async () => {
+    mockRepo.findInstallmentById.mockResolvedValue(makePendingInstallment());
+
+    const error = await registerZellePayment(makeActor("staff", "sales"), {
+      installmentId: INSTALLMENT_ID,
+    } as never).catch((e) => e);
+
+    expect(error.name).toBe("ZodError");
+    expect(mockRepo.insertPayment).not.toHaveBeenCalled();
+  });
+
+  it("rejects an empty zelleProofPath (Zod min(1))", async () => {
+    mockRepo.findInstallmentById.mockResolvedValue(makePendingInstallment());
+
+    const error = await registerZellePayment(makeActor("staff", "sales"), {
+      installmentId: INSTALLMENT_ID,
+      zelleProofPath: "",
+    }).catch((e) => e);
+
+    expect(error.name).toBe("ZodError");
+    expect(mockRepo.insertPayment).not.toHaveBeenCalled();
+  });
+
+  it("throws PROOF_INVALID_FILE without inserting the payment", async () => {
+    mockRepo.findInstallmentById.mockResolvedValue(makePendingInstallment());
+    mockStorage.validateUploadedObject.mockResolvedValue({ ok: false, reason: "Bad file" });
+
+    const error = await registerZellePayment(makeActor("staff", "sales"), {
+      installmentId: INSTALLMENT_ID,
+      zelleProofPath: PROOF_PATH,
+    }).catch((e) => e);
+
+    expect(error.code).toBe("PROOF_INVALID_FILE");
+    expect(mockRepo.insertPayment).not.toHaveBeenCalled();
+  });
+
+  it("persists the proof, confirms in one step and audits the notes", async () => {
+    mockRepo.findInstallmentById.mockResolvedValue(makePendingInstallment());
+    mockRepo.insertPayment.mockResolvedValue(
+      makePendingPayment({ zelle_proof_path: PROOF_PATH }),
+    );
+
+    await registerZellePayment(makeActor("staff", "sales"), {
+      installmentId: INSTALLMENT_ID,
+      zelleProofPath: PROOF_PATH,
+      notes: "Referencia 12345",
+    });
+
+    expect(mockAuthz.can).toHaveBeenCalledWith(expect.anything(), "cases", "edit");
+    expect(mockRepo.insertPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "zelle",
+        zelle_proof_path: PROOF_PATH,
+        confirmed_by: USER_ID,
+      }),
+    );
+    // applyPaymentSuccess: payment → succeeded, installment → paid
+    expect(mockRepo.updatePayment).toHaveBeenCalledWith(
+      PAYMENT_ID,
+      expect.objectContaining({ status: "succeeded" }),
+    );
+    expect(mockRepo.updateInstallment).toHaveBeenCalledWith(
+      INSTALLMENT_ID,
+      expect.objectContaining({ status: "paid" }),
+    );
+    // downpayment installment → emits downpayment.confirmed
+    expect(mockAppEvents.emit).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "downpayment.confirmed" }),
+    );
+    expect(mockAudit.writeAudit).toHaveBeenCalledWith(
+      expect.any(Object),
+      "billing.zelle.registered",
+      "payments",
+      PAYMENT_ID,
+      { after: expect.objectContaining({ notes: "Referencia 12345" }) },
+    );
   });
 });
 

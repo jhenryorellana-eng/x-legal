@@ -51,6 +51,11 @@ export interface SharedCaseViewProps {
    * resolves the effective role (admin vs vm.role) itself.
    */
   tabAccessByRole?: Partial<Record<StaffRoleVM, readonly CaseTabId[]>> | null;
+  /**
+   * Tab to open on mount (deep link ?tab=… — e.g. the proof-submitted
+   * notification opens Pagos directly). Ignored when not visible/unlocked.
+   */
+  initialTab?: CaseTabId;
 }
 
 export function SharedCaseView({
@@ -62,6 +67,7 @@ export function SharedCaseView({
   isAdmin,
   chatRaw,
   tabAccessByRole,
+  initialTab,
 }: SharedCaseViewProps) {
   const t = strings.detail;
   const tb = t.tabs;
@@ -96,7 +102,11 @@ export function SharedCaseView({
     hasPreMortem: vm.preMortem?.enabled ?? false,
     allowedTabIds: tabAccessByRole?.[isAdmin ? "admin" : vm.role] ?? null,
   });
-  const [active, setActive] = React.useState<CaseTabId>("resumen");
+  const [active, setActive] = React.useState<CaseTabId>(() =>
+    initialTab && tabs.some((tab) => tab.id === initialTab && !tab.locked)
+      ? initialTab
+      : "resumen",
+  );
   // Shown when a locked tab is clicked before the case is active.
   const [lockedHint, setLockedHint] = React.useState(false);
 

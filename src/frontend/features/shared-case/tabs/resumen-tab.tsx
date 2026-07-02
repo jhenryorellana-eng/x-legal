@@ -18,10 +18,12 @@ import { GhostBtn } from "@/frontend/components/brand/ghost-btn";
 import { ProgressRing } from "@/frontend/components/brand/progress-ring";
 import { toast } from "@/frontend/components/desktop/toast";
 import { getBridge } from "@/frontend/platform-bridge";
+import { ZelleRegisterModal } from "@/frontend/features/billing-shared";
 import type { CaseWorkspaceVM, CaseDetailActions } from "../types";
 import type { CasosStrings } from "../strings";
 import { interp } from "../strings";
 import { formatCents, SectionLabel } from "../ui";
+import { buildZelleRegisterStrings } from "../zelle-strings";
 import { PhaseStepper } from "../components/phase-stepper";
 import { CaseHistory } from "../components/case-history";
 
@@ -61,13 +63,26 @@ export function ResumenTab({
     }
   }
 
-  async function onRegisterPayment() {
-    if (!vm.downpaymentInstallmentId) return;
-    setBusy("pay");
-    const res = await actions.registerPayment({ installmentId: vm.downpaymentInstallmentId });
-    setBusy(null);
-    if (res.ok) toast.success(t.paymentDone);
-    else toast.error(strings.errorTitle);
+  // Manual Zelle registration requires the proof upload (Henry 2026-07-02) —
+  // the button opens the shared modal; only payment-operating roles see it.
+  const [registerOpen, setRegisterOpen] = React.useState(false);
+  const canRegister =
+    (vm.isAdmin || vm.role === "sales" || vm.role === "finance") &&
+    !!actions.getZelleProofUploadUrl;
+
+  async function onRegisterConfirm(input: {
+    installmentId: string;
+    zelleProofPath: string;
+    notes?: string | null;
+  }) {
+    const res = await actions.registerPayment(input);
+    if (res.ok) {
+      toast.success(t.paymentDone);
+      setRegisterOpen(false);
+      router.refresh();
+    } else {
+      toast.error(strings.errorTitle);
+    }
   }
 
   async function onResend() {
@@ -211,14 +226,14 @@ export function ResumenTab({
             </div>
           )}
 
-          {vm.downpaymentInstallmentId && (
+          {vm.downpaymentInstallmentId && canRegister && (
             <div style={{ marginTop: 16 }}>
               <div style={{ background: "var(--gold-soft)", borderRadius: 12, padding: "10px 12px", marginBottom: 12 }}>
                 <p style={{ margin: 0, fontSize: 12.5, color: "var(--gold-deep)", fontWeight: 700 }}>{t.registerPaymentTitle}</p>
                 <p style={{ margin: "4px 0 0", fontSize: 12.5, color: "var(--ink-2)" }}>{t.registerPaymentBody}</p>
               </div>
-              <GradientBtn size="md" full icon="dollar" disabled={busy === "pay"} onClick={onRegisterPayment}>
-                {busy === "pay" ? t.registering : interp(t.registerPayment, { amount: formatCents(downAmount, locale) })}
+              <GradientBtn size="md" full icon="dollar" onClick={() => setRegisterOpen(true)}>
+                {interp(t.registerPayment, { amount: formatCents(downAmount, locale) })}
               </GradientBtn>
             </div>
           )}
@@ -259,6 +274,23 @@ export function ResumenTab({
           </div>
         </Card>
       </div>
+
+      {/* Manual Zelle registration — mandatory proof (billing-shared modal) */}
+      {canRegister && vm.downpaymentInstallmentId && (
+        <ZelleRegisterModal
+          open={registerOpen}
+          onClose={() => setRegisterOpen(false)}
+          installment={{ id: vm.downpaymentInstallmentId, amountCents: downAmount }}
+          onGetUploadUrl={async (input) => {
+            const res = await actions.getZelleProofUploadUrl!(input);
+            return res.ok && res.signedUrl && res.path
+              ? { signedUrl: res.signedUrl, path: res.path }
+              : null;
+          }}
+          onConfirm={onRegisterConfirm}
+          strings={buildZelleRegisterStrings(t)}
+        />
+      )}
     </div>
   );
 }

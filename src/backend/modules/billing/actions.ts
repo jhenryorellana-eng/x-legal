@@ -79,7 +79,7 @@ export async function createInstallmentCheckoutAction(
 }
 
 // ---------------------------------------------------------------------------
-// API-BIL-06 — confirmZellePaymentAction (staff billing:edit)
+// API-BIL-06 — confirmZellePaymentAction (staff cases:edit)
 // ---------------------------------------------------------------------------
 
 export async function confirmZellePaymentAction(
@@ -95,7 +95,7 @@ export async function confirmZellePaymentAction(
 }
 
 // ---------------------------------------------------------------------------
-// API-BIL-07 — rejectZelleProofAction (staff billing:edit)
+// API-BIL-07 — rejectZelleProofAction (staff cases:edit)
 // ---------------------------------------------------------------------------
 
 export async function rejectZelleProofAction(
@@ -112,12 +112,14 @@ export async function rejectZelleProofAction(
 }
 
 // ---------------------------------------------------------------------------
-// API-BIL-08 — registerZellePaymentAction (staff billing:edit, RF-AND-012)
+// API-BIL-08 — registerZellePaymentAction (staff cases:edit, RF-AND-012)
+// Proof is mandatory (Henry 2026-07-02): upload first via
+// getZelleProofUploadUrlAction, then register with the resulting path.
 // ---------------------------------------------------------------------------
 
 export async function registerZellePaymentAction(input: {
   installmentId: string;
-  zelleProofPath?: string | null;
+  zelleProofPath: string;
   notes?: string | null;
 }): Promise<ActionResult<void>> {
   try {

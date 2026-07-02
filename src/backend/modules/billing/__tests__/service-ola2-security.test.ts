@@ -334,6 +334,7 @@ describe("billing security: cross-org isolation — registerZellePayment", () =>
 
     const err = await registerZellePayment(FINANCE_ACTOR_ORG_A, {
       installmentId: INSTALLMENT_ID,
+      zelleProofPath: "payment-proofs/inst/proof.jpg",
     }).catch((e) => e);
 
     expect(err.name).toBe("AuthzError");

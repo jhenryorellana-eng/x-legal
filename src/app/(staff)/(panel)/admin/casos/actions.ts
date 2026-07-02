@@ -28,6 +28,10 @@ import {
 } from "@/backend/modules/contracts";
 import {
   registerZellePayment,
+  confirmZellePayment,
+  rejectZelleProof,
+  getZelleProofUploadUrl,
+  getZelleProofViewUrl,
   BillingError,
 } from "@/backend/modules/billing";
 import {
@@ -324,12 +328,69 @@ export async function advanceCaseMilestoneAction(input: {
   }
 }
 
+// Zelle payment actions for the shared-case Pagos tab (admin / sales / finance).
+// Proof is MANDATORY (Henry 2026-07-02); verification authz is cases:edit
+// (see billing/service.ts confirmZellePayment).
+
 export async function registerPaymentAction(input: {
   installmentId: string;
+  zelleProofPath: string;
+  notes?: string | null;
 }): Promise<{ ok: boolean; error?: { code: string } }> {
   try {
     const actor = await requireActor();
-    await registerZellePayment(actor, { installmentId: input.installmentId });
+    await registerZellePayment(actor, input);
+    return { ok: true };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+export async function getZelleProofUploadUrlCaseAction(input: {
+  installmentId: string;
+  filename: string;
+  contentType: string;
+}): Promise<{ ok: boolean; signedUrl?: string; path?: string; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    const { signedUrl, path } = await getZelleProofUploadUrl(actor, input);
+    return { ok: true, signedUrl, path };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+export async function getZelleProofViewUrlCaseAction(input: {
+  paymentId: string;
+}): Promise<{ ok: boolean; url?: string; kind?: "image" | "pdf"; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    const { url, kind } = await getZelleProofViewUrl(actor, input.paymentId);
+    return { ok: true, url, kind };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+export async function confirmZellePaymentCaseAction(input: {
+  paymentId: string;
+}): Promise<{ ok: boolean; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    await confirmZellePayment(actor, input.paymentId);
+    return { ok: true };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+export async function rejectZelleProofCaseAction(input: {
+  paymentId: string;
+  reason: string;
+}): Promise<{ ok: boolean; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    await rejectZelleProof(actor, input);
     return { ok: true };
   } catch (err) {
     return mapErr(err);

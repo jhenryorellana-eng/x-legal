@@ -52,6 +52,9 @@ export interface PaymentProofSubmittedEvent {
     caseId: string;
     installmentId: string;
     paymentId: string;
+    /** True when the proof belongs to the initial installment (cuota inicial). */
+    isDownpayment: boolean;
+    amountCents: number;
   };
   occurredAt: Date;
 }

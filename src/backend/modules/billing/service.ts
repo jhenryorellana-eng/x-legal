@@ -507,7 +507,7 @@ export async function createPaymentPlan(
 
 const RegisterZelleSchema = z.object({
   installmentId: z.string().uuid(),
-  zelleProofPath: z.string().nullable().optional(),
+  zelleProofPath: z.string().min(1),
   notes: z.string().nullable().optional(),
 });
 
@@ -515,7 +515,9 @@ export type RegisterZellePaymentInput = z.infer<typeof RegisterZelleSchema>;
 
 /**
  * Directly registers a Zelle payment (finance staff, RF-AND-012).
- * No prior proof upload required. Calls applyPaymentSuccess internally.
+ * The proof is mandatory (Henry 2026-07-02): staff uploads the comprobante via
+ * getZelleProofUploadUrl first, then registers+confirms in one step.
+ * Calls applyPaymentSuccess internally.
  */
 export async function registerZellePayment(
   actor: Actor,
@@ -534,6 +536,14 @@ export async function registerZellePayment(
     throw new BillingError("INSTALLMENT_NOT_PAYABLE");
   }
 
+  // Server-side file validation (DOC-30 §14) — same guarantee as the client path
+  const validationResult = await validateUploadedObject(
+    "payment-proofs",
+    parsed.zelleProofPath,
+    "payment-proofs",
+  );
+  if (!validationResult.ok) throw new BillingError("PROOF_INVALID_FILE", { reason: validationResult.reason });
+
   const caseId = await findInstallmentCaseId(parsed.installmentId);
   const orgId = await findOrgIdForCase(caseId);
 
@@ -545,7 +555,7 @@ export async function registerZellePayment(
     payer_user_id: actor.userId,
     confirmed_by: actor.userId,
     confirmed_at: nowIso(),
-    zelle_proof_path: parsed.zelleProofPath ?? null,
+    zelle_proof_path: parsed.zelleProofPath,
     stripe_checkout_session_id: null,
     stripe_payment_intent_id: null,
   });
@@ -557,7 +567,13 @@ export async function registerZellePayment(
     "billing.zelle.registered",
     "payments",
     payment.id,
-    { after: { installmentId: installment.id, amountCents: installment.amount_cents } },
+    {
+      after: {
+        installmentId: installment.id,
+        amountCents: installment.amount_cents,
+        notes: parsed.notes ?? null,
+      },
+    },
   );
 }
 
@@ -1121,6 +1137,8 @@ export async function submitZelleProof(
       caseId: caseId ?? "",
       installmentId: installment.id,
       paymentId: payment.id,
+      isDownpayment: installment.is_downpayment,
+      amountCents: installment.amount_cents,
     },
     occurredAt: new Date(),
   });
@@ -1131,14 +1149,16 @@ export async function submitZelleProof(
 // ---------------------------------------------------------------------------
 
 /**
- * Finance staff confirms a pending Zelle payment.
+ * Staff confirms a pending Zelle payment.
+ * Authorization: cases:edit (Henry 2026-07-02 — the assigned asesora verifies
+ * proofs from the case's Pagos tab, same precedent as registerZellePayment).
  * Calls applyPaymentSuccess which handles ledger + events.
  */
 export async function confirmZellePayment(
   actor: Actor,
   paymentId: string,
 ): Promise<void> {
-  can(actor, "billing", "edit");
+  can(actor, "cases", "edit");
 
   // CRITICAL-1 (complementary): cross-org guard before any data access
   await requirePaymentOrg(actor, paymentId);
@@ -1174,14 +1194,15 @@ const RejectZelleSchema = z.object({
 export type RejectZelleProofInput = z.infer<typeof RejectZelleSchema>;
 
 /**
- * Finance staff rejects a pending Zelle proof.
- * Payment moves to rejected (terminal); installment reverts to pending/overdue.
+ * Staff rejects a pending Zelle proof. Authorization: cases:edit (see
+ * confirmZellePayment). Payment moves to rejected (terminal); installment
+ * reverts to pending/overdue.
  */
 export async function rejectZelleProof(
   actor: Actor,
   input: RejectZelleProofInput,
 ): Promise<void> {
-  can(actor, "billing", "edit");
+  can(actor, "cases", "edit");
   // Zod schema enforces reason.min(1) — no need for a manual guard (nit removed)
   const parsed = RejectZelleSchema.parse(input);
 
@@ -1269,15 +1290,16 @@ export interface ZelleProofView {
 /**
  * Returns a short-lived signed URL to view a Zelle payment proof.
  *
- * Authorization: billing staff (view). Cross-org guard via requirePaymentOrg.
- * Used by the finance verification panel (RF-AND-011) to render the uploaded
- * comprobante (image or PDF) before approving/rejecting the payment.
+ * Authorization: cases:view (see confirmZellePayment). Cross-org guard via
+ * requirePaymentOrg. Used by the verification panels (finance + shared-case
+ * Pagos tab) to render the uploaded comprobante (image or PDF) before
+ * approving/rejecting the payment.
  */
 export async function getZelleProofViewUrl(
   actor: Actor,
   paymentId: string,
 ): Promise<ZelleProofView> {
-  can(actor, "billing", "view");
+  can(actor, "cases", "view");
 
   // CRITICAL-1 (complementary): cross-org guard before any data access
   await requirePaymentOrg(actor, paymentId);

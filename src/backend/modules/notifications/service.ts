@@ -85,6 +85,12 @@ interface MatrixRule {
   unsuppressible?: boolean;
   /** Deep link template */
   deepLinkTemplate: string;
+  /**
+   * Optional payload predicate: the rule only fires when it returns true.
+   * Keeps conditional routing declarative (e.g. notify sales only for the
+   * downpayment proof) instead of special-casing notifyFromEvent.
+   */
+  when?: (payload: Record<string, unknown>) => boolean;
 }
 
 // Canonical matrix (DOC-47 §4.3). F2 + F3 + F7 rows in one map (extending).
@@ -344,13 +350,24 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
   ],
 
   // payment.proof_submitted → Finance ①② + Client ① (payment_reminders)
+  // + Sales of case ①② for the DOWNPAYMENT proof only (Henry 2026-07-02: the
+  //   asesora verifies the initial-installment comprobante from the case tab).
   "payment.proof_submitted": [
     {
       type: "payment.proof_submitted",
       recipients: [{ resolverKey: "finance" }],
       channels: { push: true, email: false }, // ①②
       category: "payment_reminders",
-      deepLinkTemplate: "/finanzas/pagos?caseId={caseId}",
+      // Deep link straight into the verification panel (?paymentId= opens it)
+      deepLinkTemplate: "/finanzas/pagos/caso/{caseId}?paymentId={paymentId}",
+    },
+    {
+      type: "payment.proof_submitted.sales",
+      recipients: [{ resolverKey: "sales_of_case" }],
+      channels: { push: true, email: false }, // ①②
+      category: "payment_reminders",
+      when: (p) => p["isDownpayment"] === true,
+      deepLinkTemplate: "/ventas/clientes/{caseId}?tab=pagos",
     },
     {
       type: "payment.proof_submitted",
@@ -626,6 +643,12 @@ function renderContent(
       icon: "file-check",
       color: "accent",
     },
+    "payment.proof_submitted.sales": {
+      titleI18n: { en: "Your client paid their initial installment via Zelle", es: "Tu cliente pagó su cuota inicial por Zelle" },
+      bodyI18n: { en: "A proof is awaiting verification. Review and approve it in the case's Payments tab.", es: "Hay un comprobante esperando verificación. Revísalo y apruébalo en la pestaña Pagos del caso." },
+      icon: "file-check",
+      color: "accent",
+    },
     "payment.refunded": {
       titleI18n: { en: "Payment refunded", es: "Pago reembolsado" },
       bodyI18n: { en: "A payment has been refunded.", es: "Se ha reembolsado un pago." },
@@ -758,6 +781,9 @@ export async function notifyFromEvent(event: DomainEvent): Promise<void> {
   const payload = (event.payload ?? {}) as Record<string, unknown>;
 
   for (const rule of rules) {
+    // Payload predicate gate (e.g. sales only notified for the downpayment proof)
+    if (rule.when && !rule.when(payload)) continue;
+
     for (const recipientDef of rule.recipients) {
       const userIds = await resolveRecipients(recipientDef.resolverKey, payload);
 
@@ -791,10 +817,15 @@ export async function notifyFromEvent(event: DomainEvent): Promise<void> {
         // independently enforced here and is NOT exposed as a user toggle (the
         // preferences UI exposes the 4 categories + the push device subscription).
 
-        // Build dedupe key — pick the most specific entity id available
+        // Build dedupe key — pick the most specific entity id available.
+        // paymentId/installmentId come BEFORE caseId: payment events must dedupe
+        // per payment (a re-submitted proof after a rejection is a NEW payment and
+        // must re-notify), and each overdue installment notifies on its own.
         const entityId = (
           payload["appointmentId"] ??
           payload["newAppointmentId"] ??
+          payload["paymentId"] ??
+          payload["installmentId"] ??
           payload["caseId"] ??
           payload["leadId"] ??
           payload["documentId"] ??

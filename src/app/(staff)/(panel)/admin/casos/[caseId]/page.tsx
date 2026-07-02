@@ -21,7 +21,7 @@ import {
   getPriorPhaseMaterials,
   CaseError,
 } from "@/backend/modules/cases";
-import { getPaymentPlanForCase } from "@/backend/modules/billing";
+import { getAccountStatement } from "@/backend/modules/billing";
 import { getCaseTabAccess } from "@/backend/modules/case-tabs";
 import { getContractForCase } from "@/backend/modules/contracts";
 import { getRunsForCase, getPreMortemAssessmentsForCase, isPreMortemEnabledForCase } from "@/backend/modules/ai-engine";
@@ -41,15 +41,19 @@ import {
   confirmAttachmentAction,
   getAttachmentDownloadUrlAction,
 } from "@/backend/modules/messaging/actions";
-import type { CaseWorkspaceVM } from "@/frontend/features/shared-case";
+import type { CaseWorkspaceVM, CaseTabId } from "@/frontend/features/shared-case";
 import { buildCasosStrings } from "@/frontend/features/shared-case";
-import { mapStatusToPill, buildRutaVM, buildPreMortemVM } from "../view-helpers";
+import { mapStatusToPill, buildRutaVM, buildPreMortemVM, mapStatementInstallments } from "../view-helpers";
 import {
   reviewDocumentAction,
   setRequirementVisibilityAction,
   advanceCasePhaseAction,
   advanceCaseMilestoneAction,
   registerPaymentAction,
+  getZelleProofUploadUrlCaseAction,
+  getZelleProofViewUrlCaseAction,
+  confirmZellePaymentCaseAction,
+  rejectZelleProofCaseAction,
   resendSigningLinkAction,
   downloadSignedContractAction,
   getTermsAcceptanceAction,
@@ -73,13 +77,16 @@ export const dynamic = "force-dynamic";
 
 export default async function AdminCasoDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ caseId: string }>;
+  searchParams: Promise<{ tab?: string }>;
 }) {
   const actor = await getActor();
   if (!actor || actor.kind !== "staff") redirect("/login");
 
   const { caseId } = await params;
+  const { tab } = await searchParams;
   const locale = (await getLocale()) as Locale;
   const lc = locale === "en" ? "en" : "es";
   const strings = buildCasosStrings(lc);
@@ -93,9 +100,9 @@ export default async function AdminCasoDetailPage({
   }
 
   // Parallel reads: documents, payment plan, contract, recent timeline.
-  const [documents, plan, contract, timeline, forms, runs, validationRows, expedienteRows, matrix, rutaRaw, priorPhasesRaw, preMortemEnabled, preMortemRows] = await Promise.all([
+  const [documents, statement, contract, timeline, forms, runs, validationRows, expedienteRows, matrix, rutaRaw, priorPhasesRaw, preMortemEnabled, preMortemRows] = await Promise.all([
     getCaseDocuments(actor, caseId).catch(() => []),
-    getPaymentPlanForCase(actor, caseId).catch(() => null),
+    getAccountStatement(actor, caseId).catch(() => null),
     getContractForCase(actor, caseId).catch(() => null),
     getTimeline(actor, caseId, { limit: 8 }).catch(() => ({ items: [], nextCursor: null })),
     getClientFormsForCase(actor, caseId).catch(() => []),
@@ -149,14 +156,7 @@ export default async function AdminCasoDetailPage({
   const canManageCalendar = actor.role === "admin" || actor.role === "sales";
 
   const pill = mapStatusToPill(workspace.status);
-  const installments = (plan?.installments ?? []).map((i) => ({
-    id: i.id,
-    number: i.number,
-    amountCents: i.amount_cents,
-    status: i.status,
-    isDownpayment: i.is_downpayment,
-    dueDate: i.due_date,
-  }));
+  const installments = mapStatementInstallments(statement);
   const downpayment = installments.find(
     (i) => i.isDownpayment && (i.status === "pending" || i.status === "overdue"),
   );
@@ -308,6 +308,10 @@ export default async function AdminCasoDetailPage({
         advanceCasePhase: canAdvancePhase ? advanceCasePhaseAction : undefined,
         advanceCaseMilestone: canAdvancePhase ? advanceCaseMilestoneAction : undefined,
         registerPayment: registerPaymentAction,
+        getZelleProofUploadUrl: getZelleProofUploadUrlCaseAction,
+        getZelleProofViewUrl: getZelleProofViewUrlCaseAction,
+        confirmZellePayment: confirmZellePaymentCaseAction,
+        rejectZelleProof: rejectZelleProofCaseAction,
         resendSigningLink: resendSigningLinkAction,
         sendContract: sendContractAction,
         getDocumentUrl: getDocumentUrlAction,
@@ -329,6 +333,7 @@ export default async function AdminCasoDetailPage({
       backHref="/admin/casos"
       isAdmin={actor.role === "admin"}
       tabAccessByRole={tabAccess.allowedByRole}
+      initialTab={tab as CaseTabId | undefined}
       chatRaw={{
         getCaseThread: getCaseThreadAction,
         send: sendMessageAction,

@@ -586,3 +586,101 @@ describe("notifyFromEvent — onboarding flow", () => {
     expect(pushJob).toBeDefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// payment.proof_submitted — finance always; sales only for the DOWNPAYMENT
+// proof (Henry 2026-07-02). Dedupe is per payment (a re-submitted proof after
+// a rejection must re-notify).
+// ---------------------------------------------------------------------------
+
+describe("notifyFromEvent('payment.proof_submitted')", () => {
+  const PAYMENT_ID = "00000000-0000-0000-0000-000000000042";
+  const proofEvent = (over?: Record<string, unknown>) => ({
+    type: "payment.proof_submitted" as const,
+    payload: {
+      caseId: CASE_ID,
+      installmentId: "inst-1",
+      paymentId: PAYMENT_ID,
+      isDownpayment: true,
+      amountCents: 30000,
+      ...over,
+    },
+    occurredAt: new Date(),
+  });
+
+  it("downpayment proof → finance + the case's asesora (sales) + client ack", async () => {
+    await notifyFromEvent(proofEvent());
+
+    expect(mockInsertNotificationIdempotent).toHaveBeenCalledTimes(3);
+
+    const salesCalls = mockInsertNotificationIdempotent.mock.calls.filter(
+      ([i]) => i.userId === SALES_USER_ID,
+    );
+    expect(salesCalls).toHaveLength(1);
+    expect(salesCalls[0][0].type).toBe("payment.proof_submitted.sales");
+    // Deep link opens the case with the Pagos tab active
+    expect(salesCalls[0][0].actionUrl).toBe(`/ventas/clientes/${CASE_ID}?tab=pagos`);
+    // Per-payment dedupe (NOT per case)
+    expect(salesCalls[0][0].dedupeKey).toBe(
+      `payment.proof_submitted:${PAYMENT_ID}:${SALES_USER_ID}`,
+    );
+
+    const financeCalls = mockInsertNotificationIdempotent.mock.calls.filter(
+      ([i]) => i.userId === FINANCE_USER_ID,
+    );
+    expect(financeCalls).toHaveLength(1);
+    // Finance deep-links straight into the verify panel (?paymentId= opens it)
+    expect(financeCalls[0][0].actionUrl).toBe(
+      `/finanzas/pagos/caso/${CASE_ID}?paymentId=${PAYMENT_ID}`,
+    );
+
+    // Push for finance + sales (client ack is in-app only)
+    const pushJobs = mockEnqueueJob.mock.calls.filter(([p]) => p.channel === "push");
+    expect(pushJobs).toHaveLength(2);
+  });
+
+  it("non-downpayment proof → sales NOT notified (when predicate); finance still is", async () => {
+    await notifyFromEvent(proofEvent({ isDownpayment: false }));
+
+    const salesCalls = mockInsertNotificationIdempotent.mock.calls.filter(
+      ([i]) => i.userId === SALES_USER_ID,
+    );
+    expect(salesCalls).toHaveLength(0);
+
+    const financeCalls = mockInsertNotificationIdempotent.mock.calls.filter(
+      ([i]) => i.userId === FINANCE_USER_ID,
+    );
+    expect(financeCalls).toHaveLength(1);
+  });
+
+  it("a second proof (new paymentId) re-notifies — dedupe key is per payment", async () => {
+    await notifyFromEvent(proofEvent({ paymentId: "00000000-0000-0000-0000-000000000043" }));
+
+    const financeCalls = mockInsertNotificationIdempotent.mock.calls.filter(
+      ([i]) => i.userId === FINANCE_USER_ID,
+    );
+    expect(financeCalls[0][0].dedupeKey).toBe(
+      `payment.proof_submitted:00000000-0000-0000-0000-000000000043:${FINANCE_USER_ID}`,
+    );
+  });
+
+  it("payment_reminders OFF for the asesora suppresses her notification", async () => {
+    mockGetPreferences.mockImplementation(async (userId: string) =>
+      userId === SALES_USER_ID
+        ? { ...ALL_TRUE_PREFS, payment_reminders: false }
+        : ALL_TRUE_PREFS,
+    );
+
+    await notifyFromEvent(proofEvent());
+
+    const salesCalls = mockInsertNotificationIdempotent.mock.calls.filter(
+      ([i]) => i.userId === SALES_USER_ID,
+    );
+    expect(salesCalls).toHaveLength(0);
+
+    const financeCalls = mockInsertNotificationIdempotent.mock.calls.filter(
+      ([i]) => i.userId === FINANCE_USER_ID,
+    );
+    expect(financeCalls).toHaveLength(1);
+  });
+});

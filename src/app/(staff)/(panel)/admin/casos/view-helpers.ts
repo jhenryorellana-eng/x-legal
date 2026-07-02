@@ -6,9 +6,36 @@
 import type { StatusKind } from "@/frontend/components/brand/status-pill";
 import { resolveI18n, type Locale } from "@/shared/i18n";
 import type { CaseRutaResult } from "@/backend/modules/scheduling";
-import type { CaseRutaVM, PreMortemAssessmentVM } from "@/frontend/features/shared-case";
+import type { AccountStatementDto } from "@/backend/modules/billing";
+import type { CaseRutaVM, InstallmentVM, PreMortemAssessmentVM } from "@/frontend/features/shared-case";
 import type { PreMortemAssessment } from "@/backend/modules/ai-engine";
 import { DENIAL_REASONS, isDenialReasonCode } from "@/shared/constants/denial-reasons";
+
+/**
+ * Maps the billing account statement into the shared-case InstallmentVM list
+ * (Pagos tab). Payments ride along so the tab can surface a pending Zelle
+ * proof ("Comprobante por verificar" → verify panel). Single mapper shared by
+ * the admin / ventas / legal case pages.
+ */
+export function mapStatementInstallments(
+  statement: AccountStatementDto | null,
+): InstallmentVM[] {
+  return (statement?.installments ?? []).map((i) => ({
+    id: i.id,
+    number: i.number,
+    amountCents: i.amountCents,
+    status: i.status,
+    isDownpayment: i.isDownpayment,
+    dueDate: i.dueDate,
+    payments: i.payments.map((p) => ({
+      id: p.id,
+      method: p.method,
+      status: p.status,
+      amountCents: p.amountCents,
+      createdAt: p.createdAt,
+    })),
+  }));
+}
 
 /** Maps a cases.status to its StatusPill kind (DOC-53 §2.2). "amber" → Chip. */
 export function mapStatusToPill(status: string): { kind: StatusKind | "amber" } {

@@ -22,7 +22,7 @@ import {
   getPriorPhaseMaterials,
   CaseError,
 } from "@/backend/modules/cases";
-import { getPaymentPlanForCase } from "@/backend/modules/billing";
+import { getAccountStatement } from "@/backend/modules/billing";
 import { getCaseTabAccess } from "@/backend/modules/case-tabs";
 import { getContractForCase } from "@/backend/modules/contracts";
 import { getRunsForCase } from "@/backend/modules/ai-engine";
@@ -40,12 +40,16 @@ import {
   confirmAttachmentAction,
   getAttachmentDownloadUrlAction,
 } from "@/backend/modules/messaging/actions";
-import type { CaseWorkspaceVM } from "@/frontend/features/shared-case";
-import { mapStatusToPill, buildRutaVM } from "../../../admin/casos/view-helpers";
+import type { CaseWorkspaceVM, CaseTabId } from "@/frontend/features/shared-case";
+import { mapStatusToPill, buildRutaVM, mapStatementInstallments } from "../../../admin/casos/view-helpers";
 import {
   reviewDocumentAction,
   setRequirementVisibilityAction,
   registerPaymentAction,
+  getZelleProofUploadUrlCaseAction,
+  getZelleProofViewUrlCaseAction,
+  confirmZellePaymentCaseAction,
+  rejectZelleProofCaseAction,
   resendSigningLinkAction,
   sendContractAction,
   getDocumentUrlAction,
@@ -66,13 +70,16 @@ export const dynamic = "force-dynamic";
 
 export default async function VentasCasoDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ caseId: string }>;
+  searchParams: Promise<{ tab?: string }>;
 }) {
   const actor = await getActor();
   if (!actor || actor.kind !== "staff") redirect("/login");
 
   const { caseId } = await params;
+  const { tab } = await searchParams;
   const locale = (await getLocale()) as Locale;
   const lc = locale === "en" ? "en" : "es";
   const strings = buildCasosStrings(lc);
@@ -85,9 +92,9 @@ export default async function VentasCasoDetailPage({
     throw err;
   }
 
-  const [documents, plan, contract, timeline, forms, runs, matrix, rutaRaw, priorPhasesRaw] = await Promise.all([
+  const [documents, statement, contract, timeline, forms, runs, matrix, rutaRaw, priorPhasesRaw] = await Promise.all([
     getCaseDocuments(actor, caseId).catch(() => []),
-    getPaymentPlanForCase(actor, caseId).catch(() => null),
+    getAccountStatement(actor, caseId).catch(() => null),
     getContractForCase(actor, caseId).catch(() => null),
     getTimeline(actor, caseId, { limit: 8 }).catch(() => ({ items: [], nextCursor: null })),
     getClientFormsForCase(actor, caseId).catch(() => []),
@@ -131,14 +138,7 @@ export default async function VentasCasoDetailPage({
   const canManageCalendar = actor.role === "admin" || actor.role === "sales";
 
   const pill = mapStatusToPill(workspace.status);
-  const installments = (plan?.installments ?? []).map((i) => ({
-    id: i.id,
-    number: i.number,
-    amountCents: i.amount_cents,
-    status: i.status,
-    isDownpayment: i.is_downpayment,
-    dueDate: i.due_date,
-  }));
+  const installments = mapStatementInstallments(statement);
   const downpayment = installments.find(
     (i) => i.isDownpayment && (i.status === "pending" || i.status === "overdue"),
   );
@@ -259,6 +259,10 @@ export default async function VentasCasoDetailPage({
         getFilledPdfUrl: getFormResponsePdfUrlAction,
         setRequirementVisibility: canManageDocs ? setRequirementVisibilityAction : undefined,
         registerPayment: registerPaymentAction,
+        getZelleProofUploadUrl: getZelleProofUploadUrlCaseAction,
+        getZelleProofViewUrl: getZelleProofViewUrlCaseAction,
+        confirmZellePayment: confirmZellePaymentCaseAction,
+        rejectZelleProof: rejectZelleProofCaseAction,
         resendSigningLink: resendSigningLinkAction,
         sendContract: sendContractAction,
         getDocumentUrl: getDocumentUrlAction,
@@ -278,6 +282,7 @@ export default async function VentasCasoDetailPage({
       backHref="/ventas/clientes"
       isAdmin={false}
       tabAccessByRole={tabAccess.allowedByRole}
+      initialTab={tab as CaseTabId | undefined}
       chatRaw={{
         getCaseThread: getCaseThreadAction,
         send: sendMessageAction,
