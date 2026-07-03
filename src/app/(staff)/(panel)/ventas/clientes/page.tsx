@@ -16,7 +16,11 @@ import { fmtRelative } from "@/frontend/lib/datetime";
 import type { CaseRowVM } from "@/frontend/features/vanessa";
 import { ClientesClient } from "./client";
 import { buildNewCaseModalData } from "../_lib/new-case-services";
-import { createCaseAction } from "../../admin/casos/actions";
+import {
+  createCaseAction,
+  searchClientsForCaseAction,
+  getClientCasesForNewCaseAction,
+} from "../../admin/casos/actions";
 
 export const dynamic = "force-dynamic";
 
@@ -90,6 +94,8 @@ export default async function VentasClientesPage() {
       newCaseServices={newCaseServices}
       casosStrings={casosStrings}
       createCaseAction={createCaseAction}
+      searchClientsAction={searchClientsForCaseAction}
+      getClientCasesAction={getClientCasesForNewCaseAction}
       signingBaseUrl={process.env.NEXT_PUBLIC_APP_URL ?? ""}
     />
   );

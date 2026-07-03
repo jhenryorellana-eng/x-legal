@@ -17,7 +17,15 @@
  * `caseId` (was absent before) — compatible because callers check `ok` first.
  */
 
-import { requireActor, provisionClientUser, normalizePhoneE164, isValidEmail, AuthzError } from "@/backend/modules/identity";
+import {
+  requireActor,
+  provisionClientUser,
+  searchClients,
+  updateClientAddress,
+  normalizePhoneE164,
+  isValidEmail,
+  AuthzError,
+} from "@/backend/modules/identity";
 import {
   sendContractForSigning,
   resendSigningLink,
@@ -36,6 +44,7 @@ import {
 } from "@/backend/modules/billing";
 import {
   createCaseFromContract,
+  listCaseSummariesForClient,
   updateCaseParty,
   reviewDocument,
   setRequirementVisibility,
@@ -66,7 +75,7 @@ import { addCaseAppointment, SchedulingError } from "@/backend/modules/schedulin
 import { linkLeadToCase } from "@/backend/modules/kanban";
 import { classifySaveError } from "@/frontend/features/form-wizard/classify-save-error";
 import { getLocale } from "next-intl/server";
-import { type Locale } from "@/shared/i18n";
+import { resolveI18n, type Locale } from "@/shared/i18n";
 import { buildPreMortemVM } from "./view-helpers";
 
 type Ok<T> = { ok: true } & T;
@@ -141,6 +150,14 @@ export interface CreateCaseUiInput {
   /** Set when the case is created from a lead card — links leads.won_case_id so
    *  the lead leaves the leads board and the case appears in /ventas/casos. */
   leadId?: string;
+  /**
+   * Set when the operator picked an EXISTING client in step 1 (RF-VAN-018).
+   * Skips provisioning: the client is validated (org + kind) and ONLY their
+   * address is updated with the step-1 edit. Name, phone and email are
+   * immutable in this flow — the phone is the login credential (one account
+   * per client, DOC-22 §1); the UI sends them read-only for display.
+   */
+  existingClientId?: string;
 }
 
 /**
@@ -179,39 +196,59 @@ export async function createCaseAction(
       return { ok: false, error: { code: "INVALID_PLAN" } };
     }
 
-    // Email + phone are BOTH login credentials (DOC-22 §1). Both required.
-    if (!isValidEmail(input.clientEmail)) {
-      return { ok: false, error: { code: "INVALID_EMAIL" } };
-    }
-    if (!input.clientPhone || !input.clientPhone.trim()) {
-      return { ok: false, error: { code: "INVALID_PHONE" } };
-    }
-    let phoneE164: string;
-    try {
-      phoneE164 = normalizePhoneE164(input.clientPhone);
-    } catch {
-      return { ok: false, error: { code: "INVALID_PHONE" } };
-    }
-
-    // Full US address is required — it prefills the I-589 (address.* via profile).
+    // Full US address is required in both paths — it prefills the I-589
+    // (address.* via profile) and is the ONLY field persisted for an existing
+    // client.
     const addr = input.clientAddress;
     if (!addr?.line1?.trim() || !addr.city?.trim() || !addr.state?.trim() || !addr.zip?.trim()) {
       return { ok: false, error: { code: "INVALID_ADDRESS" } };
     }
 
-    // Step 1: Provision client user (idempotent — email is the identity)
-    const { userId } = await provisionClientUser(actor, {
-      fullName: input.clientName,
-      email: input.clientEmail,
-      phoneE164,
-      address: {
-        line1: addr.line1.trim(),
-        city: addr.city.trim(),
-        state: addr.state.trim(),
-        zip: addr.zip.trim(),
-        apartment: addr.apartment?.trim() || null,
-      },
-    });
+    const address = {
+      line1: addr.line1.trim(),
+      city: addr.city.trim(),
+      state: addr.state.trim(),
+      zip: addr.zip.trim(),
+      apartment: addr.apartment?.trim() || null,
+    };
+
+    // Step 1: resolve the primary client.
+    //  - Existing client (RF-VAN-018 picker): validate (org + kind) and update
+    //    ONLY the address (the client may have moved). Name/phone/email are
+    //    immutable — the phone is the login credential (one account per
+    //    client, DOC-22 §1); the UI sends them read-only for display.
+    //  - New client: validate email + phone (both login credentials) and
+    //    provision (idempotent — email is the identity).
+    let userId: string;
+    if (input.existingClientId) {
+      const updated = await updateClientAddress(actor, {
+        userId: input.existingClientId,
+        address,
+      });
+      if (!updated.ok) {
+        return { ok: false, error: { code: updated.code } };
+      }
+      userId = updated.userId;
+    } else {
+      if (!isValidEmail(input.clientEmail)) {
+        return { ok: false, error: { code: "INVALID_EMAIL" } };
+      }
+      if (!input.clientPhone || !input.clientPhone.trim()) {
+        return { ok: false, error: { code: "INVALID_PHONE" } };
+      }
+      let phoneE164: string;
+      try {
+        phoneE164 = normalizePhoneE164(input.clientPhone);
+      } catch {
+        return { ok: false, error: { code: "INVALID_PHONE" } };
+      }
+      ({ userId } = await provisionClientUser(actor, {
+        fullName: input.clientName,
+        email: input.clientEmail,
+        phoneE164,
+        address,
+      }));
+    }
 
     // Map modal parties to the cases module input shape
     const parties = input.parties.map((p) => {
@@ -258,6 +295,90 @@ export async function createCaseAction(
     }
 
     return { ok: true, signingToken, caseId };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Client picker actions — "Nuevo caso" step 1 existing-client mode (RF-VAN-018)
+// ---------------------------------------------------------------------------
+
+/** Client row for the step-1 picker — the modal prefills step 1 from it. */
+export interface ClientPickDto {
+  userId: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  address: { line1: string; city: string; state: string; zip: string; apartment?: string } | null;
+  caseCount: number;
+}
+
+/**
+ * Searches existing clients for the "¿Para quién es el caso?" picker.
+ * Empty query → most recent clients. Gated by can(actor,'clients','view')
+ * inside identity.searchClients.
+ *
+ * @api-id API-AUT-20 (staff search — clients slice)
+ */
+export async function searchClientsForCaseAction(
+  query: string,
+): Promise<Ok<{ results: ClientPickDto[] }> | Err> {
+  try {
+    const actor = await requireActor();
+    const results = await searchClients(actor, { query });
+    return {
+      ok: true,
+      results: results.map((r) => ({
+        userId: r.userId,
+        name: r.fullName,
+        email: r.email,
+        phone: r.phoneE164,
+        address: r.address
+          ? {
+              line1: r.address.line1,
+              city: r.address.city,
+              state: r.address.state,
+              zip: r.address.zip,
+              ...(r.address.apartment ? { apartment: r.address.apartment } : {}),
+            }
+          : null,
+        caseCount: r.caseCount,
+      })),
+    };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+/** Existing case of the picked client — for the RF-VAN-019 duplicate notice. */
+export interface ClientExistingCaseDto {
+  caseId: string;
+  caseNumber: string;
+  serviceId: string;
+  serviceLabel: string;
+}
+
+/**
+ * Lists the picked client's cases with locale-resolved service labels so the
+ * modal can warn (non-blocking) when the chosen service repeats (RF-VAN-019).
+ */
+export async function getClientCasesForNewCaseAction(
+  clientId: string,
+): Promise<Ok<{ cases: ClientExistingCaseDto[] }> | Err> {
+  try {
+    const actor = await requireActor();
+    const locale = (await getLocale()) as Locale;
+    const rows = await listCaseSummariesForClient(actor, clientId);
+    return {
+      ok: true,
+      cases: rows.map((c) => ({
+        caseId: c.caseId,
+        caseNumber: c.caseNumber,
+        serviceId: c.serviceId,
+        serviceLabel: resolveI18n(c.serviceLabelI18n, locale),
+      })),
+    };
   } catch (err) {
     return mapErr(err);
   }

@@ -523,6 +523,122 @@ export async function insertClientRows(input: {
 }
 
 // ---------------------------------------------------------------------------
+// Client picker search + contact update (RF-VAN-018 — "Nuevo caso" step 1)
+// ---------------------------------------------------------------------------
+
+export interface ClientSearchRow {
+  userId: string;
+  firstName: string;
+  lastName: string;
+  email: string | null;
+  phoneE164: string | null;
+  address: ClientAddressInput | null;
+  caseCount: number;
+}
+
+/**
+ * Parses the client_profiles.address JSONB defensively into ClientAddressInput.
+ * Older profiles may lack the address or hold partial shapes — return null when
+ * nothing usable is present so the UI simply leaves the fields empty.
+ */
+function parseAddressJson(json: Json | null): ClientAddressInput | null {
+  if (!json || typeof json !== "object" || Array.isArray(json)) return null;
+  const a = json as Record<string, unknown>;
+  const line1 = typeof a.line1 === "string" ? a.line1 : "";
+  const city = typeof a.city === "string" ? a.city : "";
+  const state = typeof a.state === "string" ? a.state : "";
+  const zip = typeof a.zip === "string" ? a.zip : "";
+  if (!line1 && !city && !state && !zip) return null;
+  return {
+    line1,
+    city,
+    state,
+    zip,
+    apartment: typeof a.apartment === "string" && a.apartment ? a.apartment : null,
+  };
+}
+
+/**
+ * Searches active clients of an org by name (trigram), email, or phone digits
+ * via the search_clients_for_staff RPC (migration 0062). Empty query returns
+ * the most recent clients. Service-client: the RPC is service_role-only; the
+ * caller (identity.searchClients) is the authz gate.
+ */
+export async function searchClientRows(
+  orgId: string,
+  query: string,
+  limit: number,
+): Promise<ClientSearchRow[]> {
+  const supabase = createServiceClient();
+  const { data, error } = await supabase.rpc("search_clients_for_staff", {
+    p_org: orgId,
+    p_query: query,
+    p_limit: limit,
+  });
+  if (error) throw new Error(`searchClientRows: ${error.message}`);
+  return (data ?? []).map((r) => ({
+    userId: r.user_id,
+    firstName: r.first_name,
+    lastName: r.last_name,
+    email: r.email,
+    phoneE164: r.phone_e164,
+    address: parseAddressJson(r.address),
+    caseCount: Number(r.case_count),
+  }));
+}
+
+/**
+ * Looks up a client by id WITHIN an org (cross-org guard for the "existing
+ * client" case-creation path). Returns null when missing, not a client, or
+ * belonging to another org. Service-client (bypass RLS).
+ */
+export async function findClientById(
+  userId: string,
+  orgId: string,
+): Promise<{ id: string; email: string | null; phoneE164: string | null } | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("users")
+    .select("id, email, phone_e164")
+    .eq("id", userId)
+    .eq("org_id", orgId)
+    .eq("kind", "client")
+    .maybeSingle();
+  if (!data) return null;
+  return { id: data.id, email: data.email, phoneE164: data.phone_e164 };
+}
+
+/**
+ * Persists the step-1 ADDRESS edit for an existing client (RF-VAN-018).
+ * Name, phone and email are IMMUTABLE in this flow — the phone is the client's
+ * login credential (one account per client, DOC-22 §1) and identity fixes are
+ * an explicit admin operation, never a side effect of case creation. Only
+ * client_profiles.address is written (it prefills the I-589).
+ */
+export async function updateClientAddressRow(input: {
+  userId: string;
+  address: ClientAddressInput;
+}): Promise<void> {
+  const supabase = createServiceClient();
+
+  const addressJson: Json = {
+    line1: input.address.line1,
+    city: input.address.city,
+    state: input.address.state,
+    zip: input.address.zip,
+    apartment: input.address.apartment ?? null,
+  };
+
+  const { error } = await supabase
+    .from("client_profiles")
+    .update({ address: addressJson })
+    .eq("user_id", input.userId);
+  if (error) {
+    throw new Error(`updateClientAddressRow: ${error.message}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // updateUserLocale — persist the user's UI language (DOC-24 i18n / DOC-47 §5)
 // ---------------------------------------------------------------------------
 

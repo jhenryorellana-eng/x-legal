@@ -287,6 +287,7 @@ export function CasosListView({
         strings={strings}
         actions={newCaseActions}
         signingBaseUrl={signingBaseUrl}
+        caseLinkBase={detailBasePath}
       />
     </div>
   );

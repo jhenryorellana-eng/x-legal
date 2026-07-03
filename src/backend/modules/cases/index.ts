@@ -8,6 +8,7 @@
 // Use cases
 export {
   createCaseFromContract,
+  listCaseSummariesForClient,
   updateCaseParty,
   onDownpaymentConfirmed,
   startDocumentUpload,
@@ -76,6 +77,8 @@ export type { BookableCaseResult } from "./service";
 export type {
   CreateCaseFromContractInput,
   CreateCaseFromContractResult,
+  // RF-VAN-019 duplicate-service notice ("Nuevo caso" modal)
+  ClientCaseSummary,
   CasePartyInput,
   UpdateCasePartyInput,
   SetRequirementVisibilityInput,

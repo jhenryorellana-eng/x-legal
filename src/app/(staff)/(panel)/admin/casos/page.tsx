@@ -23,7 +23,11 @@ import {
 import type { NewCaseService } from "@/frontend/features/admin/casos/new-case-modal";
 import { buildCasosStrings } from "@/frontend/features/shared-case";
 import { mapStatusToPill, relTime } from "./view-helpers";
-import { createCaseAction } from "./actions";
+import {
+  createCaseAction,
+  searchClientsForCaseAction,
+  getClientCasesForNewCaseAction,
+} from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -134,7 +138,11 @@ export default async function AdminCasosPage({
       services={newCaseServices}
       strings={strings}
       detailBasePath="/admin/casos"
-      newCaseActions={{ createCase: createCaseAction }}
+      newCaseActions={{
+        createCase: createCaseAction,
+        searchClients: searchClientsForCaseAction,
+        getClientCases: getClientCasesForNewCaseAction,
+      }}
       signingBaseUrl={signingBaseUrl}
     />
   );

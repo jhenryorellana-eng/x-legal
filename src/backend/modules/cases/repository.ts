@@ -839,6 +839,53 @@ export async function findCasePrimaryClient(caseId: string): Promise<string | nu
   return data?.primary_client_id ?? null;
 }
 
+export interface ClientCaseSummaryRow {
+  id: string;
+  case_number: string;
+  service_id: string;
+  status: string;
+  service_label_i18n: unknown;
+}
+
+/**
+ * Case summaries for one client (org-scoped) — powers the RF-VAN-019
+ * duplicate-service notice in the "Nuevo caso" modal ("{Nombre} ya tiene un
+ * caso de {Servicio}"). Two reads (cases, then service labels) following the
+ * repo's batch-hydration style.
+ */
+export async function getCaseSummariesByClient(
+  orgId: string,
+  clientId: string,
+): Promise<ClientCaseSummaryRow[]> {
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("cases")
+    .select("id, case_number, service_id, status")
+    .eq("org_id", orgId)
+    .eq("primary_client_id", clientId)
+    .order("created_at", { ascending: false });
+  if (error) {
+    throw new Error(`cases.repository: getCaseSummariesByClient — ${error.message}`);
+  }
+  const rows = data ?? [];
+  if (rows.length === 0) return [];
+
+  const serviceIds = [...new Set(rows.map((c) => c.service_id))];
+  const { data: services } = await supabase
+    .from("services")
+    .select("id, label_i18n")
+    .in("id", serviceIds);
+  const labelById = new Map((services ?? []).map((s) => [s.id, s.label_i18n as unknown]));
+
+  return rows.map((c) => ({
+    id: c.id,
+    case_number: c.case_number,
+    service_id: c.service_id,
+    status: c.status,
+    service_label_i18n: labelById.get(c.service_id) ?? null,
+  }));
+}
+
 /** Finds a form definition by id. */
 export async function findFormDefinitionById(
   formDefinitionId: string,

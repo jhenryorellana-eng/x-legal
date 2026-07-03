@@ -168,6 +168,20 @@ export function PreviewClient({ view }: { view: string }) {
             detailBasePath="#"
             newCaseActions={{
               createCase: async () => ({ ok: true, signingToken: "preview-token-demo-1234" }),
+              searchClients: async () => ({
+                ok: true,
+                results: [
+                  {
+                    userId: "00000000-0000-0000-0000-000000000301",
+                    name: "María González",
+                    email: "maria.gonzalez.demo@example.com",
+                    phone: "+13055550301",
+                    address: { line1: "123 Main St", city: "Miami", state: "FL", zip: "33101" },
+                    caseCount: 1,
+                  },
+                ],
+              }),
+              getClientCases: async () => ({ ok: true, cases: [] }),
             }}
             signingBaseUrl="https://app.usalatinoprime.com"
           />

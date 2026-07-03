@@ -105,6 +105,7 @@ import {
   findUserContactFields,
   listDocumentExtractionsForCase,
   findCasePrimaryClient,
+  getCaseSummariesByClient,
   findFormDefinitionById,
   countUploadedDocsByCases,
   findCasesWithLawyerCorrections,
@@ -781,6 +782,42 @@ export async function createCaseFromContract(
   });
 
   return { caseId, contractId, created: true };
+}
+
+// ---------------------------------------------------------------------------
+// listCaseSummariesForClient — RF-VAN-019 duplicate-service notice
+// ---------------------------------------------------------------------------
+
+export interface ClientCaseSummary {
+  caseId: string;
+  caseNumber: string;
+  serviceId: string;
+  /** Raw services.label_i18n — the action layer resolves it to the locale. */
+  serviceLabelI18n: unknown;
+  status: string;
+}
+
+/**
+ * Lists lightweight case summaries for one client of the actor's org. Powers
+ * the non-blocking "⚠ {Nombre} ya tiene un caso de {Servicio}" notice in the
+ * "Nuevo caso" modal (RF-VAN-019) — a client may legitimately hold N cases,
+ * so this only informs, never blocks.
+ */
+export async function listCaseSummariesForClient(
+  actor: Actor,
+  clientId: string,
+): Promise<ClientCaseSummary[]> {
+  can(actor, "cases", "view");
+  const parsedClientId = zUuid.parse(clientId);
+
+  const rows = await getCaseSummariesByClient(actor.orgId, parsedClientId);
+  return rows.map((r) => ({
+    caseId: r.id,
+    caseNumber: r.case_number,
+    serviceId: r.service_id,
+    serviceLabelI18n: r.service_label_i18n,
+    status: r.status,
+  }));
 }
 
 // ---------------------------------------------------------------------------

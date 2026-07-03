@@ -42,6 +42,11 @@ export type {
   ProvisionClientUserInput,
   ProvisionClientUserResult,
   UpsertPersonRecordInput,
+  // Client picker + address update (RF-VAN-018 — "Nuevo caso" step 1)
+  SearchClientsInput,
+  ClientSearchResultDto,
+  UpdateClientAddressInput,
+  UpdateClientAddressResult,
 } from "./service";
 
 // Read-only staff profile for the shell header / sidebar user-chip (DOC-50 §1.3)
@@ -58,6 +63,11 @@ export { getCurrentUserLocation } from "./service";
 
 // Client provisioning — used by cases.createCaseFromContract (DOC-22 §1.2)
 export { provisionClientUser, upsertPersonRecord } from "./service";
+
+// Client picker search + address update — "Nuevo caso" existing-client path
+// (RF-VAN-018; consumed by the admin/casos server actions). Identity fields
+// (name/phone/email) are immutable there — only the address is written.
+export { searchClients, updateClientAddress } from "./service";
 
 // Party row helper — used by cases module only (DOC-41 §3.1 boundary)
 export { insertCasePartyRow } from "./repository";

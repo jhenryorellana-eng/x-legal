@@ -40,7 +40,11 @@ import {
   bookAppointmentAction,
   createProspectApptAction,
 } from "../actions";
-import { createCaseAction } from "../../admin/casos/actions";
+import {
+  createCaseAction,
+  searchClientsForCaseAction,
+  getClientCasesForNewCaseAction,
+} from "../../admin/casos/actions";
 
 export const dynamic = "force-dynamic";
 
@@ -279,6 +283,8 @@ export default async function VentasLeadsPage() {
         createProspectAppointment: createProspectApptAction,
       }}
       createCaseAction={createCaseAction}
+      searchClientsAction={searchClientsForCaseAction}
+      getClientCasesAction={getClientCasesForNewCaseAction}
     />
   );
 }

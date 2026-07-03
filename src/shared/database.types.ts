@@ -5150,6 +5150,18 @@ export type Database = {
       }
       next_case_number: { Args: { org: string }; Returns: string }
       normalize_phone: { Args: { raw: string }; Returns: string }
+      search_clients_for_staff: {
+        Args: { p_limit?: number; p_org: string; p_query: string }
+        Returns: {
+          user_id: string
+          first_name: string
+          last_name: string
+          email: string | null
+          phone_e164: string | null
+          address: Json
+          case_count: number
+        }[]
+      }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
       staff_role: { Args: never; Returns: string }

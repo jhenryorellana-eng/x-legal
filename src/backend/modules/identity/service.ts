@@ -61,6 +61,9 @@ import {
   setStaffActive,
   findClientByEmail,
   findClientByPhone,
+  findClientById,
+  searchClientRows,
+  updateClientAddressRow,
   insertClientRows,
   insertPersonRecord,
   updateUserLocale,
@@ -1160,6 +1163,95 @@ export async function provisionClientUser(
   });
 
   return { userId, created: true };
+}
+
+// ---------------------------------------------------------------------------
+// searchClients — RF-VAN-018 (client picker for the "Nuevo caso" modal step 1)
+// ---------------------------------------------------------------------------
+
+export interface SearchClientsInput {
+  query: string;
+  /** Result cap — clamped to 1..20, default 8 (RF-VAN-018 picker size). */
+  limit?: number;
+}
+
+export interface ClientSearchResultDto {
+  userId: string;
+  fullName: string;
+  email: string | null;
+  phoneE164: string | null;
+  address: ClientAddressInput | null;
+  /** Number of cases where this client is the primary — shown as "N casos". */
+  caseCount: number;
+}
+
+/**
+ * Searches existing clients of the actor's org by name / email / phone for the
+ * "¿Para quién es el caso?" picker (RF-VAN-018). Empty query → most recent
+ * clients. Delegates the heavy lifting to the search_clients_for_staff RPC
+ * (trigram index, one round-trip including the per-client case count).
+ *
+ * @api-id API-AUT-20 (staff search — clients slice)
+ */
+export async function searchClients(
+  actor: Actor,
+  input: SearchClientsInput,
+): Promise<ClientSearchResultDto[]> {
+  can(actor, "clients", "view");
+
+  const query = input.query.trim();
+  const limit = Math.min(Math.max(Math.trunc(input.limit ?? 8), 1), 20);
+
+  const rows = await searchClientRows(actor.orgId, query, limit);
+  return rows.map((r) => ({
+    userId: r.userId,
+    fullName: `${r.firstName} ${r.lastName}`.trim(),
+    email: r.email,
+    phoneE164: r.phoneE164,
+    address: r.address,
+    caseCount: r.caseCount,
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// updateClientAddress — RF-VAN-018 ("existing client" path of Nuevo caso)
+// ---------------------------------------------------------------------------
+
+export interface UpdateClientAddressInput {
+  userId: string;
+  /** Full US mailing address — persisted to client_profiles.address (I-589 prefill). */
+  address: ClientAddressInput;
+}
+
+export type UpdateClientAddressResult =
+  | { ok: true; userId: string }
+  | { ok: false; code: "CLIENT_NOT_FOUND" };
+
+/**
+ * Persists the ADDRESS edited in the "Nuevo caso" step 1 for an EXISTING
+ * client. Name, phone and email are deliberately IMMUTABLE in this flow: the
+ * phone is the client's login credential and the password derives from it
+ * (DOC-22 §1) — one account per client, so identity fields never change as a
+ * side effect of case creation. Only the address may drift (the client moved)
+ * and it feeds the I-589 prefill, so only it is updated.
+ */
+export async function updateClientAddress(
+  actor: Actor,
+  input: UpdateClientAddressInput,
+): Promise<UpdateClientAddressResult> {
+  can(actor, "clients", "edit");
+
+  const existing = await findClientById(input.userId, actor.orgId);
+  if (!existing) return { ok: false, code: "CLIENT_NOT_FOUND" };
+
+  await updateClientAddressRow({ userId: input.userId, address: input.address });
+
+  const audit = await getAudit();
+  await audit.writeAudit(actor, "client.updated", "users", input.userId, {
+    fields: ["address"],
+  });
+
+  return { ok: true, userId: input.userId };
 }
 
 // ---------------------------------------------------------------------------

@@ -62,6 +62,8 @@ export interface LeadsClientProps {
   categoryActions: Omit<CategoryManagerActions, "create">;
   citaActions: NuevaCitaActions;
   createCaseAction: NewCaseActions["createCase"];
+  searchClientsAction: NewCaseActions["searchClients"];
+  getClientCasesAction: NewCaseActions["getClientCases"];
 }
 
 type LeadsViewMove = React.ComponentProps<typeof LeadsView>["actions"]["moveCard"];
@@ -96,6 +98,8 @@ export function LeadsClient({
   categoryActions,
   citaActions,
   createCaseAction,
+  searchClientsAction,
+  getClientCasesAction,
 }: LeadsClientProps) {
   const router = useRouter();
   const [leadModal, setLeadModal] = React.useState<{ open: boolean; columnId?: string }>({ open: false });
@@ -200,8 +204,13 @@ export function LeadsClient({
         presetPhone={caseModal.phone}
         services={newCaseServices}
         strings={casosStrings}
-        actions={{ createCase: createCaseAction }}
+        actions={{
+          createCase: createCaseAction,
+          searchClients: searchClientsAction,
+          getClientCases: getClientCasesAction,
+        }}
         signingBaseUrl={signingBaseUrl}
+        caseLinkBase="/ventas/clientes"
       />
     </LexPrefsProvider>
   );
