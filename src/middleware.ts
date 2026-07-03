@@ -38,6 +38,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { logger } from "@/backend/platform/logger";
+import { DEMO_TOOL_FRAME_ORIGINS } from "@/shared/constants/demo-tools";
 import type { Database } from "@/shared/database.types";
 
 // ---------------------------------------------------------------------------
@@ -145,7 +146,9 @@ function buildCsp(nonce: string): string {
     // `blob:` allows the in-app document preview to frame a same-origin blob URL
     // (PDF/image fetched through /api/v1/.../preview, never an external origin).
     // Without it the preview <iframe> breaks once the CSP flips to enforcing.
-    `frame-src 'self' blob:`,
+    // The demo-tool origins (/admin/demo/* embeds) come from the shared registry
+    // — a conscious allow-list per DOC-27 §6.1; adding a tool never edits this file.
+    `frame-src ${["'self'", "blob:", ...DEMO_TOOL_FRAME_ORIGINS].join(" ")}`,
     `frame-ancestors 'none'`,
     `object-src 'none'`,
     `base-uri 'self'`,

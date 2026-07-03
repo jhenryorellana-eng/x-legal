@@ -20,6 +20,8 @@ export interface DemoCardVM {
   icon: IconName;
   /** Catalog color key (e.g. "green"); resolved to a CSS token for the tile. */
   colorKey: string;
+  /** Per-card CTA override (e.g. external tools) — falls back to `messages.cardCta`. */
+  cta?: string;
 }
 
 export interface DemoIndexProps {
@@ -102,7 +104,7 @@ export function DemoIndex({ cards, messages, assetActions }: DemoIndexProps) {
                   fontWeight: 800,
                 }}
               >
-                {messages.cardCta}
+                {c.cta ?? messages.cardCta}
                 <Icon name="chevR" size={17} color="var(--accent)" />
               </span>
             </Link>

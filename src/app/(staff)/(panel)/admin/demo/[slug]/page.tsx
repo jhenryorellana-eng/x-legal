@@ -9,13 +9,15 @@
  */
 
 import { redirect, notFound } from "next/navigation";
-import { getLocale } from "next-intl/server";
+import { getLocale, getTranslations } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
 import { listServicesAdmin } from "@/backend/modules/catalog";
 import { getDemoAssetUrls } from "@/backend/modules/demo-assets";
 import { staffHomePath } from "@/shared/staff-routes";
+import { getDemoTool } from "@/shared/constants/demo-tools";
 import type { IconName } from "@/frontend/components/brand";
 import { DemoExperience } from "@/frontend/features/admin/demo/demo-experience";
+import { DemoToolExperience } from "@/frontend/features/admin/demo/demo-tool-experience";
 import { getScenario } from "@/frontend/features/admin/demo/scenarios";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +33,22 @@ export default async function DemoServicePage({
 
   const { slug } = await params;
   const scenario = getScenario(slug);
-  if (!scenario) notFound();
+  if (!scenario) {
+    // Not a scenario — an external embedded tool? (returns before the catalog
+    // and asset reads below: a tool page costs zero backend calls).
+    const tool = getDemoTool(slug);
+    if (!tool) notFound();
+    const t = await getTranslations("staff.demo");
+    return (
+      <DemoToolExperience
+        label={tool.label}
+        url={tool.url}
+        icon={tool.icon as IconName}
+        colorKey={tool.colorKey}
+        messages={{ eyebrow: t("title"), openExternal: t("toolOpenExternal") }}
+      />
+    );
+  }
 
   const [locale, services, assetUrls] = await Promise.all([
     getLocale() as Promise<"es" | "en">,

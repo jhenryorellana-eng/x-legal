@@ -18,6 +18,7 @@ import {
   startDemoAssetUploadAction,
 } from "@/backend/modules/demo-assets/actions";
 import { staffHomePath } from "@/shared/staff-routes";
+import { listDemoTools } from "@/shared/constants/demo-tools";
 import type { IconName } from "@/frontend/components/brand";
 import { DemoIndex, type DemoCardVM } from "@/frontend/features/admin/demo/demo-index";
 import { listScenarios } from "@/frontend/features/admin/demo/scenarios";
@@ -46,9 +47,19 @@ export default async function DemoIndexPage() {
     };
   });
 
+  // External embedded tools (shared registry) render as regular cards after
+  // the scenarios, with their own CTA.
+  const toolCards: DemoCardVM[] = listDemoTools().map((tool) => ({
+    slug: tool.slug,
+    label: tool.label,
+    icon: tool.icon as IconName,
+    colorKey: tool.colorKey,
+    cta: t("toolCardCta"),
+  }));
+
   return (
     <DemoIndex
-      cards={cards}
+      cards={[...cards, ...toolCards]}
       messages={{
         title: t("title"),
         subtitle: t("subtitle"),

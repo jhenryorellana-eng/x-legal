@@ -744,6 +744,8 @@
       "title": "Demo en vivo",
       "subtitle": "Recorre el flujo del cliente exactamente como lo vive — sin tocar datos reales.",
       "cardCta": "Abrir demo",
+      "toolCardCta": "Abrir herramienta",
+      "toolOpenExternal": "Abrir en pestaña nueva",
       "comingSoon": "Próximamente",
       "comingSoonBody": "Aún no hay un demo para este servicio.",
       "tabClient": "Vista cliente",
