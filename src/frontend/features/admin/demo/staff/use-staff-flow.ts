@@ -18,16 +18,16 @@ export type GenStatus = "idle" | "running" | "done";
 export type StaffLoader =
   | null
   | { kind: "translate"; docId: string }
-  | { kind: "i589" }
-  | { kind: "memo" }
+  | { kind: "automation" }
+  | { kind: "generation" }
   | { kind: "expediente" };
 
-export type StaffSplash = null | "translate" | "i589" | "memo" | "expediente";
+export type StaffSplash = null | "translate" | "automation" | "generation" | "expediente";
 
 export interface StaffFlowState {
   translations: Record<string, GenStatus>;
-  i589: GenStatus;
-  memo: GenStatus;
+  automation: GenStatus;
+  generation: GenStatus;
   expediente: GenStatus;
   loader: StaffLoader;
   splash: StaffSplash;
@@ -37,10 +37,10 @@ type Action =
   | { type: "reset" }
   | { type: "startTranslate"; docId: string }
   | { type: "loadedTranslate" }
-  | { type: "startI589" }
-  | { type: "loadedI589" }
-  | { type: "startMemo" }
-  | { type: "loadedMemo" }
+  | { type: "startAutomation" }
+  | { type: "loadedAutomation" }
+  | { type: "startGeneration" }
+  | { type: "loadedGeneration" }
   | { type: "startExpediente" }
   | { type: "loadedExpediente" }
   | { type: "dismissSplash" };
@@ -48,8 +48,8 @@ type Action =
 function initialState(): StaffFlowState {
   return {
     translations: {},
-    i589: "idle",
-    memo: "idle",
+    automation: "idle",
+    generation: "idle",
     expediente: "idle",
     loader: null,
     splash: null,
@@ -74,14 +74,14 @@ function reducer(state: StaffFlowState, action: Action): StaffFlowState {
         translations: { ...state.translations, [id]: "done" },
       };
     }
-    case "startI589":
-      return { ...state, loader: { kind: "i589" }, i589: "running" };
-    case "loadedI589":
-      return { ...state, loader: null, splash: "i589", i589: "done" };
-    case "startMemo":
-      return { ...state, loader: { kind: "memo" }, memo: "running" };
-    case "loadedMemo":
-      return { ...state, loader: null, splash: "memo", memo: "done" };
+    case "startAutomation":
+      return { ...state, loader: { kind: "automation" }, automation: "running" };
+    case "loadedAutomation":
+      return { ...state, loader: null, splash: "automation", automation: "done" };
+    case "startGeneration":
+      return { ...state, loader: { kind: "generation" }, generation: "running" };
+    case "loadedGeneration":
+      return { ...state, loader: null, splash: "generation", generation: "done" };
     case "startExpediente":
       return { ...state, loader: { kind: "expediente" }, expediente: "running" };
     case "loadedExpediente":
@@ -99,10 +99,10 @@ export interface StaffFlowActions {
   reset: () => void;
   startTranslate: (docId: string) => void;
   loadedTranslate: () => void;
-  startI589: () => void;
-  loadedI589: () => void;
-  startMemo: () => void;
-  loadedMemo: () => void;
+  startAutomation: () => void;
+  loadedAutomation: () => void;
+  startGeneration: () => void;
+  loadedGeneration: () => void;
   startExpediente: () => void;
   loadedExpediente: () => void;
   dismissSplash: () => void;
@@ -121,10 +121,10 @@ export function useStaffFlow(): StaffFlow {
       reset: () => dispatch({ type: "reset" }),
       startTranslate: (docId) => dispatch({ type: "startTranslate", docId }),
       loadedTranslate: () => dispatch({ type: "loadedTranslate" }),
-      startI589: () => dispatch({ type: "startI589" }),
-      loadedI589: () => dispatch({ type: "loadedI589" }),
-      startMemo: () => dispatch({ type: "startMemo" }),
-      loadedMemo: () => dispatch({ type: "loadedMemo" }),
+      startAutomation: () => dispatch({ type: "startAutomation" }),
+      loadedAutomation: () => dispatch({ type: "loadedAutomation" }),
+      startGeneration: () => dispatch({ type: "startGeneration" }),
+      loadedGeneration: () => dispatch({ type: "loadedGeneration" }),
       startExpediente: () => dispatch({ type: "startExpediente" }),
       loadedExpediente: () => dispatch({ type: "loadedExpediente" }),
       dismissSplash: () => dispatch({ type: "dismissSplash" }),

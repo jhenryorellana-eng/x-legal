@@ -33,13 +33,18 @@ describe("demo asset slots ↔ scenario registry", () => {
     }
   });
 
-  it("asilo-politico covers the three staff generations the tabs consume", () => {
-    // staff-view.tsx wires these exact keys to the Automatización / Generaciones
-    // / Expediente tabs.
-    expect(getDemoAssetSlots("asilo-politico").map((s) => s.key)).toEqual([
-      "i589",
-      "memo",
-      "expediente",
-    ]);
+  it("every scenario wires its three micro-experiences to declared slot keys", () => {
+    // staff-view.tsx resolves each tab's PDF via staff.{automation,generation,
+    // expediente}.slotKey — those keys must be exactly the declared slots.
+    for (const [slug, scenario] of Object.entries(DEMO_SCENARIOS)) {
+      const wired = [
+        scenario.staff.automation.slotKey,
+        scenario.staff.generation.slotKey,
+        scenario.staff.expediente.slotKey,
+      ];
+      const declared = getDemoAssetSlots(slug).map((s) => s.key);
+      expect(new Set(wired).size, `colliding slotKeys in "${slug}"`).toBe(3);
+      expect([...declared].sort(), `slots ↔ slotKeys drift in "${slug}"`).toEqual([...wired].sort());
+    }
   });
 });

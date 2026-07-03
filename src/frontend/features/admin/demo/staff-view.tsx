@@ -24,11 +24,12 @@ import { SuccessOverlay } from "./components/success-overlay";
 type TabId = "resumen" | "documentos" | "automatizacion" | "generaciones" | "expediente";
 
 /**
- * StaffView — "Vista staff": the team-panel view of the Karelis case. A case
+ * StaffView — "Vista staff": the team-panel view of the scenario's case. A case
  * header + subtabs (Resumen · Documentos · Automatización · Generaciones ·
  * Expediente) over a relative panel that hosts the AI micro-experience overlays
- * (translate / I-589 assembly / memo / expediente) and their success screens.
- * Owns its own local flow; the parent remounts it (via `key`) to reset the demo.
+ * (translate / official-form assembly / AI generation / expediente) and their
+ * success screens. All scenario copy comes from the fixture; i18n only carries
+ * chrome. Owns its own local flow; the parent remounts it (via `key`) to reset.
  */
 export function StaffView({
   scenario,
@@ -119,13 +120,13 @@ export function StaffView({
         {tab === "resumen" && <ResumenTab staff={staff} />}
         {tab === "documentos" && <DocumentosTab scenario={scenario} flow={flow} />}
         {tab === "automatizacion" && (
-          <AutomatizacionTab scenario={scenario} flow={flow} pdfBlobUrl={assetBlobs["i589"] ?? null} />
+          <AutomatizacionTab scenario={scenario} flow={flow} pdfBlobUrl={assetBlobs[staff.automation.slotKey] ?? null} />
         )}
         {tab === "generaciones" && (
-          <GeneracionesTab scenario={scenario} flow={flow} pdfBlobUrl={assetBlobs["memo"] ?? null} />
+          <GeneracionesTab scenario={scenario} flow={flow} pdfBlobUrl={assetBlobs[staff.generation.slotKey] ?? null} />
         )}
         {tab === "expediente" && (
-          <ExpedienteTab scenario={scenario} flow={flow} pdfBlobUrl={assetBlobs["expediente"] ?? null} />
+          <ExpedienteTab scenario={scenario} flow={flow} pdfBlobUrl={assetBlobs[staff.expediente.slotKey] ?? null} />
         )}
       </div>
 
@@ -160,38 +161,33 @@ function Overlays({ scenario, flow }: { scenario: DemoScenario; flow: ReturnType
         onComplete={flow.actions.loadedTranslate}
       />
     );
-  } else if (loader?.kind === "i589") {
+  } else if (loader?.kind === "automation") {
     content = (
       <AssemblyAnimation
-        title={t("i589AssemblyTitle")}
-        officialTitle={staff.i589.officialTitle}
-        fields={staff.i589.fields}
-        steps={staff.i589.steps}
-        naLabel={t("i589NaChip", { n: staff.i589.naCount })}
-        leftPanelLabel={t("i589LeftPanel")}
-        rightPanelLabel={t("i589RightPanel")}
-        onComplete={flow.actions.loadedI589}
+        title={staff.automation.loaderTitle}
+        officialTitle={staff.automation.officialTitle}
+        fields={staff.automation.fields}
+        steps={staff.automation.steps}
+        naLabel={staff.automation.filledChipLabel}
+        leftPanelLabel={staff.automation.sourcePanelLabel}
+        rightPanelLabel={staff.automation.targetPanelLabel}
+        onComplete={flow.actions.loadedAutomation}
       />
     );
-  } else if (loader?.kind === "memo") {
-    const counters = [
-      { label: t("memoStatWords"), value: staff.memo.wordCount },
-      { label: t("memoStatPages"), value: staff.memo.pageCount },
-      { label: t("memoStatCites"), value: staff.memo.exhibits + staff.memo.sources },
-    ];
+  } else if (loader?.kind === "generation") {
     content = (
       <SequenceLoader
-        title={t("memoLoaderTitle")}
-        steps={staff.memo.steps}
+        title={staff.generation.loaderTitle}
+        steps={staff.generation.steps}
         accent="var(--gold-deep)"
-        visual={<AiCoreVisual counters={counters} />}
-        onComplete={flow.actions.loadedMemo}
+        visual={<AiCoreVisual counters={staff.generation.loaderCounters} />}
+        onComplete={flow.actions.loadedGeneration}
       />
     );
   } else if (loader?.kind === "expediente") {
     content = (
       <SequenceLoader
-        title={t("expLoaderTitle")}
+        title={staff.expediente.loaderTitle}
         steps={staff.expediente.steps}
         accent="var(--accent)"
         visual={<RobotBuilder />}
@@ -201,9 +197,9 @@ function Overlays({ scenario, flow }: { scenario: DemoScenario; flow: ReturnType
   } else if (splash) {
     const copy: Record<NonNullable<typeof splash>, { title: string; body: string }> = {
       translate: { title: t("splashTranslateTitle"), body: t("splashTranslateBody") },
-      i589: { title: t("splashI589Title"), body: t("splashI589Body") },
-      memo: { title: t("splashMemoTitle"), body: t("splashMemoBody") },
-      expediente: { title: t("splashExpTitle"), body: t("splashExpBody") },
+      automation: staff.automation.splash,
+      generation: staff.generation.splash,
+      expediente: staff.expediente.splash,
     };
     const c = copy[splash];
     content = (

@@ -7,9 +7,11 @@ import type { DemoStaffFixture } from "../../scenarios/types";
 
 /**
  * ExpedienteDocument — the compiled legal file, rendered as a realistic
- * multi-page document (cover, TOC, I-589, memorándum, annexes, chronology) with
- * continuous "Página N de M" numbering. Colors are fixed hex (not theme tokens)
- * so the printed output looks identical in light or dark mode.
+ * multi-page document (cover, TOC, official form, AI generation, annexes,
+ * chronology) with continuous "Página N de M" numbering. Every scenario string
+ * comes from the fixture (`staff.automation/generation/expediente`); only
+ * layout chrome lives here. Colors are fixed hex (not theme tokens) so the
+ * printed output looks identical in light or dark mode.
  *
  * Shown as a full-screen reader portaled to <body>: escaping the staff shell's
  * transformed ancestor makes `position: fixed` truly fill the screen, and — being
@@ -200,12 +202,9 @@ export function ExpedienteDocument({
           </div>
 
           <div style={{ padding: "44px 60px 0" }}>
-            <CoverRow k="Solicitante" v={staff.clientLegalName} />
-            <CoverRow k="Dependientes" v="Alexander, Kamila y Amanda Rondón" />
-            <CoverRow k="Servicio" v="Asilo Político (I-589)" />
-            <CoverRow k="Plan" v={staff.planLabel} />
-            <CoverRow k="Número de caso" v={staff.caseNumber} />
-            <CoverRow k="Responsable" v={`${staff.owner.name} · ${staff.owner.role}`} />
+            {exp.coverRows.map((row) => (
+              <CoverRow key={row.label} k={row.label} v={row.value} />
+            ))}
           </div>
 
           <div style={{ margin: "56px 46px 0", display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: `1px solid ${LINE}`, paddingTop: 12 }}>
@@ -228,13 +227,13 @@ export function ExpedienteDocument({
           </div>
         </PrintPage>
 
-        {/* PAGE 3 — I-589 */}
-        <PrintPage header={labels.org} caseNo={staff.caseNumber} footer={labels.confidential} page={pageLabel(3)}>
-          <SectionKicker>Formulario oficial · USCIS</SectionKicker>
-          <SectionTitle>Formulario I-589 — Parte A</SectionTitle>
-          <p style={{ fontSize: 12.5, color: INK_SOFT, margin: "6px 0 16px", fontWeight: 600 }}>{staff.i589.officialTitle}</p>
+        {/* PAGE 3 — Official form (automation) */}
+        <PrintPage header={labels.org} caseNo={staff.caseNumber} footer={labels.confidential} page={pageLabel(exp.samplePages.form)}>
+          <SectionKicker>{staff.automation.docKicker}</SectionKicker>
+          <SectionTitle>{staff.automation.docPageTitle}</SectionTitle>
+          <p style={{ fontSize: 12.5, color: INK_SOFT, margin: "6px 0 16px", fontWeight: 600 }}>{staff.automation.officialTitle}</p>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 22px" }}>
-            {staff.i589.fields.map((f) => {
+            {staff.automation.fields.map((f) => {
               const na = f.value == null;
               return (
                 <div key={f.fieldName} style={{ borderBottom: `1px solid ${LINE}`, paddingBottom: 6 }}>
@@ -247,40 +246,34 @@ export function ExpedienteDocument({
             })}
           </div>
           <div style={{ marginTop: 18, fontSize: 11.5, color: INK_SOFT, fontStyle: "italic" }}>
-            {staff.i589.naCount} campos sin dato se completaron con “N/A” conforme a 8 CFR 1208.3(c)(3). · {labels.repNote}
+            {staff.automation.fillNote} · {labels.repNote}
           </div>
         </PrintPage>
 
-        {/* PAGE 4 — Memorándum */}
-        <PrintPage header={labels.org} caseNo={staff.caseNumber} footer={labels.confidential} page={pageLabel(15)}>
-          <SectionKicker>Generado con IA · Verificado</SectionKicker>
-          <SectionTitle>Memorándum de Miedo Creíble</SectionTitle>
+        {/* PAGE 4 — AI generation */}
+        <PrintPage header={labels.org} caseNo={staff.caseNumber} footer={labels.confidential} page={pageLabel(exp.samplePages.generation)}>
+          <SectionKicker>{staff.generation.docKicker}</SectionKicker>
+          <SectionTitle>{staff.generation.title}</SectionTitle>
           <p style={{ fontSize: 13.5, color: INK, lineHeight: 1.7, margin: "10px 0 18px", textAlign: "justify" }}>
-            La solicitante, <strong>{staff.clientLegalName}</strong>, ciudadana venezolana, presenta un
-            temor fundado de persecución por su opinión política. Tras participar en manifestaciones
-            pacíficas contra el régimen, fue amenazada, vigilada y agredida por grupos paraestatales, sin
-            que el Estado ofreciera protección efectiva. El presente memorándum sustenta, con fundamento
-            en la INA §208 y la jurisprudencia federal aplicable, que su caso satisface los elementos de
-            un temor creíble de persecución.
+            {staff.generation.longSummary}
           </p>
           <div style={{ background: GOLD_SOFT, borderRadius: 10, padding: "12px 16px", marginBottom: 16 }}>
-            <div style={{ fontSize: 11.5, color: GOLD, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.5 }}>Índice del memorándum</div>
+            <div style={{ fontSize: 11.5, color: GOLD, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.5 }}>{staff.generation.indexTitle}</div>
             <ol style={{ margin: "8px 0 0", paddingLeft: 20, color: INK, fontSize: 13, lineHeight: 1.8 }}>
-              {staff.memo.sections.map((s) => (
+              {staff.generation.sections.map((s) => (
                 <li key={s} style={{ fontWeight: 600 }}>{s}</li>
               ))}
             </ol>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <Stat n={staff.memo.wordCount.toLocaleString("en-US")} label="palabras" />
-            <Stat n={String(staff.memo.pageCount)} label="páginas" />
-            <Stat n={String(staff.memo.exhibits)} label="precedentes" />
-            <Stat n={String(staff.memo.sources)} label="fuentes verificadas" />
+            {staff.generation.stats.map((s) => (
+              <Stat key={s.label} n={s.value} label={s.label} />
+            ))}
           </div>
         </PrintPage>
 
         {/* PAGE 5 — Anexos */}
-        <PrintPage header={labels.org} caseNo={staff.caseNumber} footer={labels.confidential} page={pageLabel(266)}>
+        <PrintPage header={labels.org} caseNo={staff.caseNumber} footer={labels.confidential} page={pageLabel(exp.samplePages.anexos)}>
           <SectionKicker>Documentos de soporte</SectionKicker>
           <SectionTitle>Índice de anexos</SectionTitle>
           <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 18 }}>
@@ -307,11 +300,11 @@ export function ExpedienteDocument({
         </PrintPage>
 
         {/* PAGE 6 — Cronología */}
-        <PrintPage header={labels.org} caseNo={staff.caseNumber} footer={labels.confidential} page={pageLabel(283)}>
+        <PrintPage header={labels.org} caseNo={staff.caseNumber} footer={labels.confidential} page={pageLabel(exp.samplePages.chronology)}>
           <SectionKicker>Resumen del caso</SectionKicker>
           <SectionTitle>Tabla cronológica de hechos</SectionTitle>
           <div style={{ marginTop: 16 }}>
-            {CHRONOLOGY.map((row) => (
+            {exp.chronology.map((row) => (
               <div key={row.when} style={{ display: "flex", gap: 14, padding: "11px 0", borderBottom: `1px solid ${LINE}` }}>
                 <span style={{ width: 96, flexShrink: 0, fontSize: 12.5, color: NAVY, fontWeight: 800 }}>{row.when}</span>
                 <span style={{ fontSize: 13, color: INK, fontWeight: 600, lineHeight: 1.5 }}>{row.event}</span>
@@ -324,15 +317,6 @@ export function ExpedienteDocument({
     document.body,
   );
 }
-
-const CHRONOLOGY: { when: string; event: string }[] = [
-  { when: "2018", event: "Se une a un partido político opositor y participa en manifestaciones pacíficas." },
-  { when: "2021", event: "Recibe la primera amenaza directa tras liderar una protesta comunitaria." },
-  { when: "2022", event: "Es vigilada y hostigada de forma reiterada por grupos afines al régimen." },
-  { when: "2023", event: "Sufre una agresión física documentada en el informe médico del expediente." },
-  { when: "Feb 2024", event: "Huye de Venezuela con sus tres hijos e ingresa a EE. UU. por Eagle Pass, Texas." },
-  { when: "2025", event: "Presenta su solicitud de asilo (Formulario I-589) ante USCIS." },
-];
 
 function PrintPage({
   children,

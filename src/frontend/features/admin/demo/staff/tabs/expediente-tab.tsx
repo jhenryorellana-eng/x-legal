@@ -45,7 +45,7 @@ export function ExpedienteTab({
     const labels: ExpedienteDocLabels = {
       print: t("print"),
       regenerate: t("regenerate"),
-      toolbarNote: t("expToolbarNote"),
+      toolbarNote: exp.toolbarNote,
       close: t("expClose"),
       org: t("expOrg"),
       coverKicker: t("expCoverKicker"),
@@ -94,13 +94,13 @@ export function ExpedienteTab({
             open={reader}
             onClose={() => setReader(false)}
             blobUrl={pdfBlobUrl}
-            title={t("expTitle")}
-            downloadName="expediente.pdf"
+            title={exp.title}
+            downloadName={exp.downloadName}
             labels={{
               close: t("expClose"),
               print: t("print"),
               download: t("pdfDownload"),
-              toolbarNote: t("expToolbarNote"),
+              toolbarNote: exp.toolbarNote,
               regenerate: t("regenerate"),
             }}
             onRegenerate={regenerate}
@@ -120,12 +120,12 @@ export function ExpedienteTab({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <TabIntro icon="briefcase" text={t("expIntro")} />
+      <TabIntro icon="briefcase" text={exp.intro} />
       <GenerationRow
         icon="briefcase"
         tone="var(--gold-deep)"
-        title={t("expTitle")}
-        caption={t("expCaption")}
+        title={exp.title}
+        caption={exp.caption}
         status={status}
         generateLabel={t("generate")}
         generatingLabel={t("generating")}

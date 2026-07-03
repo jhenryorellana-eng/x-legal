@@ -10,10 +10,10 @@ import type { DemoScenario } from "../../scenarios/types";
 import type { StaffFlow } from "../use-staff-flow";
 
 /**
- * AutomatizacionTab — the I-589 AcroForm automation (assembly animation on
- * Generar). With a real PDF uploaded ("⋯ → Data" on the demo card) the done
- * state opens the full-screen PdfReader; without one it keeps the HTML field
- * preview (simulation fallback).
+ * AutomatizacionTab — the official-form AcroForm automation (assembly animation
+ * on Generar), driven entirely by `scenario.staff.automation`. With a real PDF
+ * uploaded ("⋯ → Data" on the demo card) the done state opens the full-screen
+ * PdfReader; without one it keeps the HTML field preview (simulation fallback).
  */
 export function AutomatizacionTab({
   scenario,
@@ -25,8 +25,8 @@ export function AutomatizacionTab({
   pdfBlobUrl: string | null;
 }) {
   const t = useTranslations("staff.demo");
-  const i589 = scenario.staff.i589;
-  const status = flow.state.i589;
+  const auto = scenario.staff.automation;
+  const status = flow.state.automation;
   const done = status === "done";
   const [reader, setReader] = React.useState(false);
 
@@ -39,21 +39,21 @@ export function AutomatizacionTab({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <TabIntro icon="bolt" text={t("autoIntro")} />
+      <TabIntro icon="bolt" text={auto.intro} />
 
       <GenerationRow
         icon="form"
         tone="var(--accent)"
-        title={t("i589Title")}
-        caption={i589.officialTitle}
+        title={auto.title}
+        caption={auto.officialTitle}
         status={status}
         generateLabel={t("generate")}
         generatingLabel={t("generating")}
         doneLabel={t("generated")}
-        doneMeta={t("i589DoneMeta", { pages: i589.pageCount, na: i589.naCount })}
+        doneMeta={auto.doneMeta}
         viewLabel={done && pdfBlobUrl ? t("viewPdf") : undefined}
         onView={pdfBlobUrl ? () => setReader(true) : undefined}
-        onGenerate={flow.actions.startI589}
+        onGenerate={flow.actions.startAutomation}
       />
 
       {done && pdfBlobUrl && (
@@ -61,13 +61,13 @@ export function AutomatizacionTab({
           open={reader}
           onClose={() => setReader(false)}
           blobUrl={pdfBlobUrl}
-          title={t("i589Title")}
-          downloadName="i-589.pdf"
+          title={auto.title}
+          downloadName={auto.downloadName}
           labels={{
             close: t("expClose"),
             print: t("print"),
             download: t("pdfDownload"),
-            toolbarNote: t("splashI589Title"),
+            toolbarNote: auto.splash.title,
           }}
         />
       )}
@@ -80,14 +80,14 @@ export function AutomatizacionTab({
           <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 14 }}>
             <Icon name="shield" size={18} color="var(--gold-deep)" />
             <h3 className="t-title" style={{ margin: 0, fontSize: 16, fontWeight: 800, color: "var(--navy)", flex: 1 }}>
-              {t("i589PreviewTitle")}
+              {auto.previewTitle}
             </h3>
             <Chip tone="gold" dot>
-              {t("i589PdfChip")}
+              {t("autoPdfChip")}
             </Chip>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "10px 20px" }}>
-            {i589.fields.map((f) => {
+            {auto.fields.map((f) => {
               const na = f.value == null;
               return (
                 <div key={f.fieldName} style={{ borderBottom: "1px solid var(--line)", paddingBottom: 6 }}>
@@ -100,7 +100,7 @@ export function AutomatizacionTab({
             })}
           </div>
           <div style={{ marginTop: 14, fontSize: 12, color: "var(--ink-3)", fontWeight: 600, fontStyle: "italic" }}>
-            {t("i589NaNote", { n: i589.naCount })}
+            {auto.fillNote}
           </div>
         </div>
       )}

@@ -2,20 +2,20 @@
 
 import * as React from "react";
 import { Icon } from "@/frontend/components/brand";
-import type { DemoLoaderStep, DemoStaffI589Field } from "../../scenarios/types";
+import type { DemoLoaderStep, DemoAutomationField } from "../../scenarios/types";
 
 /**
- * AssemblyAnimation — the I-589 "Generar" centerpiece. A full-panel overlay with
- * two documents side by side: the plain-language form the client filled (left)
- * and the official USCIS I-589 AcroForm (right). For each answer a value-chip
- * flies across the gutter into its official field; empty fields are stamped
- * "N/A" automatically (8 CFR 1208.3(c)(3)). Pure CSS motion; a single completion
- * timer (cleared on unmount) drives `onComplete`.
+ * AssemblyAnimation — the official-form "Generar" centerpiece. A full-panel
+ * overlay with two documents side by side: the plain-language form the client
+ * filled (left) and the official government AcroForm (right — I-589, EOIR-26,
+ * …). For each answer a value-chip flies across the gutter into its official
+ * field; empty fields are stamped "N/A" automatically. Pure CSS motion; a
+ * single completion timer (cleared on unmount) drives `onComplete`.
  */
 export interface AssemblyAnimationProps {
   title: string;
   officialTitle: string;
-  fields: DemoStaffI589Field[];
+  fields: DemoAutomationField[];
   steps: DemoLoaderStep[];
   /** Already-formatted "N campos en N/A" chip label. */
   naLabel: string;

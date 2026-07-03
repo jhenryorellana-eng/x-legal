@@ -301,11 +301,26 @@ export const asiloPolitico: DemoScenario = {
       { icon: "check", text: "Certificando la traducción…" },
     ],
 
-    i589: {
+    automation: {
+      slotKey: "i589",
+      title: "Formulario I-589",
       officialTitle:
         "Formulario I-589 · Solicitud de Asilo y de Suspensión de Expulsión (USCIS)",
-      naCount: 34,
-      pageCount: 12,
+      intro: "El sistema llena el formulario oficial del USCIS a partir de las respuestas del cliente.",
+      loaderTitle: "Ensamblando el Formulario I-589",
+      sourcePanelLabel: "Formulario de Karelis",
+      targetPanelLabel: "I-589 oficial · USCIS",
+      filledChipLabel: "34 campos vacíos → N/A",
+      fillNote: "34 campos sin dato se completaron automáticamente con “N/A” (8 CFR 1208.3(c)(3)).",
+      previewTitle: "Formulario I-589 — PDF oficial",
+      doneMeta: "12 págs · PDF oficial · 34 campos en N/A",
+      docKicker: "Formulario oficial · USCIS",
+      docPageTitle: "Formulario I-589 — Parte A",
+      downloadName: "i-589.pdf",
+      splash: {
+        title: "¡Formulario I-589 generado!",
+        body: "El PDF oficial del USCIS quedó completo, sin campos en blanco.",
+      },
       steps: [
         { icon: "form", text: "Leyendo las respuestas del formulario…" },
         { icon: "doc", text: "Abriendo el PDF oficial I-589 (USCIS)…" },
@@ -330,11 +345,36 @@ export const asiloPolitico: DemoScenario = {
       ],
     },
 
-    memo: {
-      wordCount: 69103,
-      pageCount: 251,
-      exhibits: 6,
-      sources: 6,
+    generation: {
+      slotKey: "memo",
+      title: "Memorándum de Miedo Creíble",
+      caption: "Sustento legal del temor fundado de persecución.",
+      intro: "La IA redacta el memorándum legal a partir del expediente, la jurisprudencia y las condiciones del país.",
+      loaderTitle: "Generando el Memorándum de Miedo Creíble",
+      previewTitle: "Memorándum de Miedo Creíble",
+      snippet:
+        "La solicitante presenta un temor fundado de persecución por su opinión política, sustentado en la INA §208 y la jurisprudencia federal aplicable.",
+      longSummary:
+        "La solicitante, Karelis Rondón Salazar, ciudadana venezolana, presenta un temor fundado de persecución por su opinión política. Tras participar en manifestaciones pacíficas contra el régimen, fue amenazada, vigilada y agredida por grupos paraestatales, sin que el Estado ofreciera protección efectiva. El presente memorándum sustenta, con fundamento en la INA §208 y la jurisprudencia federal aplicable, que su caso satisface los elementos de un temor creíble de persecución.",
+      indexTitle: "Índice del memorándum",
+      docKicker: "Generado con IA · Verificado",
+      doneMeta: "69,103 palabras · 251 páginas · listo",
+      downloadName: "memorandum.pdf",
+      splash: {
+        title: "¡Memorándum generado!",
+        body: "El memorándum de miedo creíble está listo para revisión.",
+      },
+      stats: [
+        { value: "69,103", label: "palabras" },
+        { value: "251", label: "páginas" },
+        { value: "6", label: "precedentes" },
+        { value: "6", label: "fuentes verificadas" },
+      ],
+      loaderCounters: [
+        { label: "palabras", value: 69103 },
+        { label: "páginas", value: 251 },
+        { label: "citas verificadas", value: 12 },
+      ],
       steps: [
         { icon: "doc", text: "Extrayendo de los documentos del caso…" },
         { icon: "search", text: "Leyendo la información de la solicitante…" },
@@ -356,8 +396,36 @@ export const asiloPolitico: DemoScenario = {
     },
 
     expediente: {
+      slotKey: "expediente",
+      title: "Expediente legal",
+      caption: "Carátula, índice, I-589, memorándum y anexos en un solo PDF.",
+      intro: "El sistema arma el expediente legal completo: carátula, formularios, memorándum y anexos.",
+      loaderTitle: "Compilando el expediente legal",
+      toolbarNote: "Expediente compilado y listo para revisión legal.",
+      downloadName: "expediente.pdf",
+      splash: {
+        title: "¡Expediente compilado!",
+        body: "Tu expediente legal está listo. Puedes revisarlo e imprimirlo.",
+      },
       coverTitle: "EXPEDIENTE DE ASILO POLÍTICO",
       coverSubtitle: "Solicitud I-589 · Memorándum de Miedo Creíble",
+      coverRows: [
+        { label: "Solicitante", value: "Karelis Rondón Salazar" },
+        { label: "Dependientes", value: "Alexander, Kamila y Amanda Rondón" },
+        { label: "Servicio", value: "Asilo Político (I-589)" },
+        { label: "Plan", value: "Asilo Político · Con abogado" },
+        { label: "Número de caso", value: "ULP-2026-0042" },
+        { label: "Responsable", value: "Diana Torres · Paralegal" },
+      ],
+      chronology: [
+        { when: "2018", event: "Se une a un partido político opositor y participa en manifestaciones pacíficas." },
+        { when: "2021", event: "Recibe la primera amenaza directa tras liderar una protesta comunitaria." },
+        { when: "2022", event: "Es vigilada y hostigada de forma reiterada por grupos afines al régimen." },
+        { when: "2023", event: "Sufre una agresión física documentada en el informe médico del expediente." },
+        { when: "Feb 2024", event: "Huye de Venezuela con sus tres hijos e ingresa a EE. UU. por Eagle Pass, Texas." },
+        { when: "2025", event: "Presenta su solicitud de asilo (Formulario I-589) ante USCIS." },
+      ],
+      samplePages: { form: 3, generation: 15, anexos: 266, chronology: 283 },
       totalPages: 284,
       steps: [
         { icon: "shield", text: "Generando la carátula legal…" },

@@ -3,11 +3,17 @@ import type { IconName } from "@/frontend/components/brand";
 /**
  * Demo scenario model (admin-only marketing demo, DOC-21 frontend feature).
  *
- * A scenario is a fully self-contained, Spanish-language fixture that drives the
- * client-side "Vista cliente" walkthrough for one service. It carries NO real
- * data and never touches the backend — it is content authored for a live demo
- * (TikTok), combining phase-1 and phase-2 artifacts into a single simplified
- * flow. New services light up a card simply by adding a file to the registry.
+ * A scenario is a fully self-contained, Spanish-language fixture that drives
+ * BOTH demo walkthroughs ("Vista cliente" and "Vista staff") for one service.
+ * It carries NO real data and never touches the backend — it is content
+ * authored for a live demo (TikTok). New services light up a card simply by
+ * adding a file to the registry (plus its `DEMO_ASSET_SLOTS` entry).
+ *
+ * Every scenario-specific string — including the staff micro-experience
+ * titles, intros, loader headings and success splashes — lives HERE, not in
+ * i18n: `staff.demo` keeps only chrome that is identical across scenarios
+ * (buttons, tab names, generic templates). That is what makes a new demo a
+ * one-file change.
  */
 
 export type PartyRole = "applicant" | "dependent" | "spouse";
@@ -120,14 +126,33 @@ export interface DemoLoaderStep {
   text: string;
 }
 
+/** Copy for the success splash a micro-experience shows when it finishes. */
+export interface DemoSplashCopy {
+  title: string;
+  body: string;
+}
+
+/** One stat chip in a generation preview / printed page (values pre-formatted). */
+export interface DemoStatChip {
+  value: string;
+  label: string;
+}
+
+/** One animated counter in the generation loader (AiCoreVisual). */
+export interface DemoLoaderCounter {
+  label: string;
+  value: number;
+}
+
 /**
- * One field-mapping row for the I-589 assembly animation: a value flies from the
- * plain-language form the client filled into the official USCIS AcroForm field.
+ * One field-mapping row for the automation assembly animation: a value flies
+ * from the plain-language form the client filled into the official AcroForm
+ * field of the government PDF.
  */
-export interface DemoStaffI589Field {
+export interface DemoAutomationField {
   /** Plain-language label as the client saw it. */
   plain: string;
-  /** Human-readable official USCIS field label. */
+  /** Human-readable official field label. */
   official: string;
   /** Real AcroForm field name (e.g. "PtAILine4_LastName") — shown as a mono tag. */
   fieldName: string;
@@ -141,16 +166,141 @@ export interface DemoTocEntry {
   page: number;
 }
 
-/** A grouped list of annex files (mirrors the real Karelis document set). */
+/** A grouped list of annex files (mirrors the scenario's document set). */
 export interface DemoAnexoGroup {
   group: string;
   items: string[];
 }
 
+/** A labelled row on the expediente cover page (Solicitante, Servicio, …). */
+export interface DemoCoverRow {
+  label: string;
+  value: string;
+}
+
+/** A row in the printed chronology table of the compiled expediente. */
+export interface DemoChronologyRow {
+  when: string;
+  event: string;
+}
+
+/**
+ * The "Automatización" micro-experience: the official-form (AcroForm) fill.
+ * Asilo uses the I-589; Apelación the EOIR-26 — everything, including which
+ * agency the kicker credits, comes from the fixture.
+ */
+export interface DemoAutomationFixture {
+  /** `DEMO_ASSET_SLOTS` key whose uploaded PDF this tab reveals when done. */
+  slotKey: string;
+  /** Row/reader title, e.g. "Formulario I-589". */
+  title: string;
+  /** Long official name shown under the title and on the printed page. */
+  officialTitle: string;
+  /** TabIntro line explaining what the automation does. */
+  intro: string;
+  /** Heading of the assembly loader overlay. */
+  loaderTitle: string;
+  /** Left panel label in the assembly animation (the client's plain form). */
+  sourcePanelLabel: string;
+  /** Right panel label in the assembly animation (the official PDF). */
+  targetPanelLabel: string;
+  /** Chip shown while empty fields are auto-filled, e.g. "34 campos vacíos → N/A". */
+  filledChipLabel: string;
+  /** Legal note about auto-filled fields (plain text, citation included). */
+  fillNote: string;
+  /** Heading of the HTML preview (simulation fallback). */
+  previewTitle: string;
+  /** Done-state meta line, e.g. "12 págs · PDF oficial · 34 campos en N/A". */
+  doneMeta: string;
+  /** Kicker on the printed expediente page, e.g. "Formulario oficial · USCIS". */
+  docKicker: string;
+  /** Title on the printed expediente page, e.g. "Formulario I-589 — Parte A". */
+  docPageTitle: string;
+  /** Filename for the real-PDF download, e.g. "i-589.pdf". */
+  downloadName: string;
+  splash: DemoSplashCopy;
+  fields: DemoAutomationField[];
+  steps: DemoLoaderStep[];
+}
+
+/**
+ * The "Generaciones" micro-experience: the long-form AI letter (ai_letter).
+ * Asilo generates the credible-fear memo; Apelación the BIA appeal brief.
+ */
+export interface DemoGenerationFixture {
+  /** `DEMO_ASSET_SLOTS` key whose uploaded PDF this tab reveals when done. */
+  slotKey: string;
+  /** Row/reader title, e.g. "Memorándum de Miedo Creíble". */
+  title: string;
+  /** Short descriptor under the title. */
+  caption: string;
+  /** TabIntro line explaining what the AI drafts. */
+  intro: string;
+  /** Heading of the generation loader overlay. */
+  loaderTitle: string;
+  /** Heading of the HTML preview (simulation fallback). */
+  previewTitle: string;
+  /** One-paragraph excerpt shown in the preview. */
+  snippet: string;
+  /** Longer narrative paragraph on the printed expediente page. */
+  longSummary: string;
+  /** Heading of the section index, e.g. "Índice del memorándum". */
+  indexTitle: string;
+  /** Kicker on the printed expediente page, e.g. "Generado con IA · Verificado". */
+  docKicker: string;
+  /** Done-state meta line, e.g. "69,103 palabras · 251 páginas · listo". */
+  doneMeta: string;
+  /** Filename for the real-PDF download, e.g. "memorandum.pdf". */
+  downloadName: string;
+  splash: DemoSplashCopy;
+  /** Section index shown in the preview and the printed page. */
+  sections: string[];
+  /** Stat chips in the preview and the printed page (pre-formatted values). */
+  stats: DemoStatChip[];
+  /** Animated counters in the loader (AiCoreVisual). */
+  loaderCounters: DemoLoaderCounter[];
+  steps: DemoLoaderStep[];
+}
+
+/** The "Expediente" micro-experience: the compiled, printable legal file. */
+export interface DemoExpedienteFixture {
+  /** `DEMO_ASSET_SLOTS` key whose uploaded PDF this tab reveals when done. */
+  slotKey: string;
+  /** Row/reader title, e.g. "Expediente legal". */
+  title: string;
+  /** Short descriptor under the title. */
+  caption: string;
+  /** TabIntro line explaining what gets compiled. */
+  intro: string;
+  /** Heading of the compile loader overlay. */
+  loaderTitle: string;
+  /** Reader toolbar note, e.g. "Expediente compilado y listo para revisión legal." */
+  toolbarNote: string;
+  /** Filename for the real-PDF download, e.g. "expediente.pdf". */
+  downloadName: string;
+  splash: DemoSplashCopy;
+  coverTitle: string;
+  coverSubtitle: string;
+  /** Labelled rows on the cover page (Solicitante, Servicio, Plan, …). */
+  coverRows: DemoCoverRow[];
+  toc: DemoTocEntry[];
+  anexos: DemoAnexoGroup[];
+  /** Chronology table printed as the closing page. */
+  chronology: DemoChronologyRow[];
+  /**
+   * Page numbers stamped on the representative printed pages (must agree with
+   * `toc`): the official form, the AI generation, the annex index and the
+   * chronology table.
+   */
+  samplePages: { form: number; generation: number; anexos: number; chronology: number };
+  totalPages: number;
+  steps: DemoLoaderStep[];
+}
+
 /**
  * Everything the "Vista staff" needs — case metadata, key facts, timeline, and
- * the fixtures behind the four AI micro-experiences (translate, I-589 assembly,
- * credible-fear memo, expediente). Pure content: no PII, no backend.
+ * the fixtures behind the four AI micro-experiences (translate, official-form
+ * automation, AI generation, expediente). Pure content: no PII, no backend.
  */
 export interface DemoStaffFixture {
   caseNumber: string;
@@ -169,28 +319,7 @@ export interface DemoStaffFixture {
   formsTotal: number;
   /** Translate-flow narration, shared by every document row. */
   translateSteps: DemoLoaderStep[];
-  i589: {
-    officialTitle: string;
-    fields: DemoStaffI589Field[];
-    naCount: number;
-    pageCount: number;
-    steps: DemoLoaderStep[];
-  };
-  memo: {
-    steps: DemoLoaderStep[];
-    wordCount: number;
-    pageCount: number;
-    exhibits: number;
-    sources: number;
-    /** Section index shown in the success preview. */
-    sections: string[];
-  };
-  expediente: {
-    steps: DemoLoaderStep[];
-    coverTitle: string;
-    coverSubtitle: string;
-    toc: DemoTocEntry[];
-    anexos: DemoAnexoGroup[];
-    totalPages: number;
-  };
+  automation: DemoAutomationFixture;
+  generation: DemoGenerationFixture;
+  expediente: DemoExpedienteFixture;
 }

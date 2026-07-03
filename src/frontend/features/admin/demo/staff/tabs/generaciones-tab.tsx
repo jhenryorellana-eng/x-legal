@@ -10,10 +10,10 @@ import type { DemoScenario } from "../../scenarios/types";
 import type { StaffFlow } from "../use-staff-flow";
 
 /**
- * GeneracionesTab — the credible-fear memo (disruptive AI-core loader on
- * Generar). With a real PDF uploaded ("⋯ → Data" on the demo card) the done
- * state opens the full-screen PdfReader; without one it keeps the HTML memo
- * preview (simulation fallback).
+ * GeneracionesTab — the long-form AI letter (disruptive AI-core loader on
+ * Generar), driven entirely by `scenario.staff.generation`. With a real PDF
+ * uploaded ("⋯ → Data" on the demo card) the done state opens the full-screen
+ * PdfReader; without one it keeps the HTML preview (simulation fallback).
  */
 export function GeneracionesTab({
   scenario,
@@ -25,8 +25,8 @@ export function GeneracionesTab({
   pdfBlobUrl: string | null;
 }) {
   const t = useTranslations("staff.demo");
-  const memo = scenario.staff.memo;
-  const status = flow.state.memo;
+  const gen = scenario.staff.generation;
+  const status = flow.state.generation;
   const done = status === "done";
   const [reader, setReader] = React.useState(false);
 
@@ -38,21 +38,21 @@ export function GeneracionesTab({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <TabIntro icon="scale" text={t("genIntro")} />
+      <TabIntro icon="scale" text={gen.intro} />
 
       <GenerationRow
         icon="scale"
         tone="var(--gold-deep)"
-        title={t("memoTitle")}
-        caption={t("memoCaption")}
+        title={gen.title}
+        caption={gen.caption}
         status={status}
         generateLabel={t("generate")}
         generatingLabel={t("generating")}
         doneLabel={t("generated")}
-        doneMeta={t("memoDoneMeta", { words: memo.wordCount.toLocaleString("en-US"), pages: memo.pageCount })}
+        doneMeta={gen.doneMeta}
         viewLabel={done && pdfBlobUrl ? t("viewPdf") : undefined}
         onView={pdfBlobUrl ? () => setReader(true) : undefined}
-        onGenerate={flow.actions.startMemo}
+        onGenerate={flow.actions.startGeneration}
       />
 
       {done && pdfBlobUrl && (
@@ -60,13 +60,13 @@ export function GeneracionesTab({
           open={reader}
           onClose={() => setReader(false)}
           blobUrl={pdfBlobUrl}
-          title={t("memoTitle")}
-          downloadName="memorandum.pdf"
+          title={gen.title}
+          downloadName={gen.downloadName}
           labels={{
             close: t("expClose"),
             print: t("print"),
             download: t("pdfDownload"),
-            toolbarNote: t("splashMemoTitle"),
+            toolbarNote: gen.splash.title,
           }}
         />
       )}
@@ -79,7 +79,7 @@ export function GeneracionesTab({
           <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 12 }}>
             <Icon name="scale" size={18} color="var(--gold-deep)" />
             <h3 className="t-title" style={{ margin: 0, fontSize: 16, fontWeight: 800, color: "var(--navy)", flex: 1 }}>
-              {t("memoPreviewTitle")}
+              {gen.previewTitle}
             </h3>
             <Chip tone="green" dot>
               {t("generated")}
@@ -87,25 +87,24 @@ export function GeneracionesTab({
           </div>
 
           <p style={{ fontSize: 13.5, color: "var(--ink-2)", lineHeight: 1.6, margin: "0 0 14px", fontWeight: 500 }}>
-            {t("memoSnippet")}
+            {gen.snippet}
           </p>
 
           <div style={{ background: "var(--gold-soft)", borderRadius: 12, padding: "12px 16px", marginBottom: 14 }}>
             <div style={{ fontSize: 11, color: "var(--gold-deep)", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.5 }}>
-              {t("memoIndexTitle")}
+              {gen.indexTitle}
             </div>
             <ol style={{ margin: "8px 0 0", paddingLeft: 20, color: "var(--navy)", fontSize: 13, lineHeight: 1.75 }}>
-              {memo.sections.map((s) => (
+              {gen.sections.map((s) => (
                 <li key={s} style={{ fontWeight: 600 }}>{s}</li>
               ))}
             </ol>
           </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <Stat n={memo.wordCount.toLocaleString("en-US")} label={t("memoStatWords")} />
-            <Stat n={String(memo.pageCount)} label={t("memoStatPages")} />
-            <Stat n={String(memo.exhibits)} label={t("memoStatExhibits")} />
-            <Stat n={String(memo.sources)} label={t("memoStatSources")} />
+            {gen.stats.map((s) => (
+              <Stat key={s.label} n={s.value} label={s.label} />
+            ))}
           </div>
         </div>
       )}
