@@ -31,6 +31,16 @@ export const DEMO_ASSET_SLOTS: Record<string, readonly DemoAssetSlot[]> = {
     { key: "memo", title: "Memorándum de Miedo Creíble", tabLabel: "Generaciones" },
     { key: "expediente", title: "Expediente completo", tabLabel: "Expediente" },
   ],
+  "reforzar-asilo": [
+    { key: "i589-bc", title: "I-589 — Partes B y C", tabLabel: "Automatización" },
+    { key: "memo", title: "Memorándum de Miedo Creíble", tabLabel: "Generaciones" },
+    { key: "expediente", title: "Expediente de refuerzo", tabLabel: "Expediente" },
+  ],
+  apelacion: [
+    { key: "eoir26", title: "Formulario EOIR-26", tabLabel: "Automatización" },
+    { key: "brief", title: "Carta de Apelación (Appeal Brief)", tabLabel: "Generaciones" },
+    { key: "expediente", title: "Paquete de apelación", tabLabel: "Expediente" },
+  ],
 };
 
 export function getDemoAssetSlots(slug: string): readonly DemoAssetSlot[] {

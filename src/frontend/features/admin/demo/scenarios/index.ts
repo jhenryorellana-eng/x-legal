@@ -1,12 +1,18 @@
 import type { DemoScenario } from "./types";
 import { asiloPolitico } from "./asilo-politico";
+import { reforzarAsilo } from "./reforzar-asilo";
+import { apelacion } from "./apelacion";
 
 /**
  * Registry of demo scenarios, keyed by service slug. Adding a new service to the
- * demo is a one-file change: author the fixture and register it here.
+ * demo is a one-file change: author the fixture, register it here and declare
+ * its PDF slots in `src/shared/constants/demo-assets.ts` (the anti-drift test
+ * enforces the pairing).
  */
 export const DEMO_SCENARIOS: Record<string, DemoScenario> = {
   [asiloPolitico.slug]: asiloPolitico,
+  [reforzarAsilo.slug]: reforzarAsilo,
+  [apelacion.slug]: apelacion,
 };
 
 export function getScenario(slug: string): DemoScenario | undefined {
