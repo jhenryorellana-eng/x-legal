@@ -4,7 +4,7 @@
  * never surfaced /legal (her kanban) and pointed "Expedientes" at a 404.
  */
 import { describe, it, expect } from "vitest";
-import { navForRole, LEGAL_NAV, SALES_NAV, STAFF_NAV } from "../nav";
+import { filterNav, navForRole, LEGAL_NAV, SALES_NAV, STAFF_NAV } from "../nav";
 
 describe("navForRole", () => {
   it("gives the paralegal the curated legal sidebar", () => {
@@ -59,5 +59,50 @@ describe("navForRole", () => {
         expect(dianaModules.has(item.module)).toBe(true);
       }
     }
+  });
+});
+
+/**
+ * Regression: sidebar reorg — the old "Catálogo" group became "Gerencia"
+ * (management) and a new marketing "Catálogo" group holds the demo entry
+ * renamed to "Servicios" (demoServices).
+ */
+describe("STAFF_NAV structure", () => {
+  it("orders the groups with Gerencia before the marketing Catálogo", () => {
+    expect(STAFF_NAV.map((g) => g.labelKey)).toEqual([
+      "general",
+      "operations",
+      "sales",
+      "finance",
+      "management",
+      "catalog",
+      "administration",
+    ]);
+  });
+
+  it("keeps the service builder and datasets under Gerencia", () => {
+    const management = STAFF_NAV.find((g) => g.labelKey === "management");
+    expect(management?.items.map((i) => i.labelKey)).toEqual(["services", "datasets"]);
+    expect(management?.items.map((i) => i.href)).toEqual(["/admin/catalogo", "/admin/datasets"]);
+  });
+
+  it("the marketing Catálogo group holds only the admin-only demo entry", () => {
+    const catalog = STAFF_NAV.find((g) => g.labelKey === "catalog");
+    expect(catalog?.items).toHaveLength(1);
+    expect(catalog?.items[0]).toMatchObject({
+      labelKey: "demoServices",
+      href: "/admin/demo",
+      adminOnly: true,
+    });
+  });
+
+  it("the demo entry no longer lives under Administración", () => {
+    const administration = STAFF_NAV.find((g) => g.labelKey === "administration");
+    expect(administration?.items.map((i) => i.href)).not.toContain("/admin/demo");
+  });
+
+  it("filterNav drops the whole Catálogo group for non-admins", () => {
+    const visible = filterNav(STAFF_NAV, (item) => !item.adminOnly);
+    expect(visible.map((g) => g.labelKey)).not.toContain("catalog");
   });
 });

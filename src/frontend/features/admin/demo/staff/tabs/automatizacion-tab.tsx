@@ -5,15 +5,37 @@ import { useTranslations } from "next-intl";
 import { Chip, Icon } from "@/frontend/components/brand";
 import { GenerationRow } from "../components/generation-row";
 import { TabIntro } from "../components/tab-intro";
+import { PdfReader } from "../components/pdf-reader";
 import type { DemoScenario } from "../../scenarios/types";
 import type { StaffFlow } from "../use-staff-flow";
 
-/** AutomatizacionTab — the I-589 AcroForm automation (assembly animation on Generar). */
-export function AutomatizacionTab({ scenario, flow }: { scenario: DemoScenario; flow: StaffFlow }) {
+/**
+ * AutomatizacionTab — the I-589 AcroForm automation (assembly animation on
+ * Generar). With a real PDF uploaded ("⋯ → Data" on the demo card) the done
+ * state opens the full-screen PdfReader; without one it keeps the HTML field
+ * preview (simulation fallback).
+ */
+export function AutomatizacionTab({
+  scenario,
+  flow,
+  pdfBlobUrl,
+}: {
+  scenario: DemoScenario;
+  flow: StaffFlow;
+  pdfBlobUrl: string | null;
+}) {
   const t = useTranslations("staff.demo");
   const i589 = scenario.staff.i589;
   const status = flow.state.i589;
   const done = status === "done";
+  const [reader, setReader] = React.useState(false);
+
+  // Reveal the real PDF as soon as the assembly finishes (and on every return
+  // to a done tab) — same contract as ExpedienteTab. The splash (z 9999) covers
+  // the reader (z 9998); dismissing it reveals the document.
+  React.useEffect(() => {
+    if (done && pdfBlobUrl) setReader(true);
+  }, [done, pdfBlobUrl]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -29,10 +51,28 @@ export function AutomatizacionTab({ scenario, flow }: { scenario: DemoScenario; 
         generatingLabel={t("generating")}
         doneLabel={t("generated")}
         doneMeta={t("i589DoneMeta", { pages: i589.pageCount, na: i589.naCount })}
+        viewLabel={done && pdfBlobUrl ? t("viewPdf") : undefined}
+        onView={pdfBlobUrl ? () => setReader(true) : undefined}
         onGenerate={flow.actions.startI589}
       />
 
-      {done && (
+      {done && pdfBlobUrl && (
+        <PdfReader
+          open={reader}
+          onClose={() => setReader(false)}
+          blobUrl={pdfBlobUrl}
+          title={t("i589Title")}
+          downloadName="i-589.pdf"
+          labels={{
+            close: t("expClose"),
+            print: t("print"),
+            download: t("pdfDownload"),
+            toolbarNote: t("splashI589Title"),
+          }}
+        />
+      )}
+
+      {done && !pdfBlobUrl && (
         <div
           className="staff-rise"
           style={{ background: "var(--card)", border: "1px solid var(--line)", borderRadius: 18, padding: 18, boxShadow: "var(--shadow-soft)" }}

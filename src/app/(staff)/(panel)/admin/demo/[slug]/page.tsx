@@ -2,14 +2,17 @@
  * Demo experience — /admin/demo/[slug] (admin-only).
  *
  * Server Component: guards the admin, resolves the real service label/icon/color
- * (fallback to the fixture) and mounts the client-side walkthrough. All
- * interaction past this point is pure UI — no backend, no writes.
+ * (fallback to the fixture), signs the demo-asset PDF URLs and mounts the
+ * client-side walkthrough. Past this point the flow needs NO network: the
+ * client pre-loads the PDFs as blobs on mount, and every interaction stays
+ * pure UI (a slot without a PDF keeps the HTML simulation).
  */
 
 import { redirect, notFound } from "next/navigation";
 import { getLocale } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
 import { listServicesAdmin } from "@/backend/modules/catalog";
+import { getDemoAssetUrls } from "@/backend/modules/demo-assets";
 import { staffHomePath } from "@/shared/staff-routes";
 import type { IconName } from "@/frontend/components/brand";
 import { DemoExperience } from "@/frontend/features/admin/demo/demo-experience";
@@ -30,9 +33,11 @@ export default async function DemoServicePage({
   const scenario = getScenario(slug);
   if (!scenario) notFound();
 
-  const [locale, services] = await Promise.all([
+  const [locale, services, assetUrls] = await Promise.all([
     getLocale() as Promise<"es" | "en">,
     listServicesAdmin(actor).catch(() => []),
+    // The live must never break: any failure just means simulation fallback.
+    getDemoAssetUrls(actor, slug).catch(() => null),
   ]);
   const match = services.find((sv) => sv.slug === slug);
   const li = (match?.label_i18n ?? {}) as Record<string, string>;
@@ -43,5 +48,5 @@ export default async function DemoServicePage({
     colorKey: match?.color ?? scenario.service.color,
   };
 
-  return <DemoExperience scenario={scenario} service={service} />;
+  return <DemoExperience scenario={scenario} service={service} assetUrls={assetUrls} />;
 }

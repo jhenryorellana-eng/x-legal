@@ -9,12 +9,15 @@ import { StaffView } from "./staff-view";
 import { Caption } from "./components/caption";
 import { DemoStyles } from "./components/demo-styles";
 import { useDemoFlow, type DemoFlowState } from "./flow/use-demo-flow";
+import { useDemoAssetBlobs, type DemoAssetUrlMap } from "./use-demo-asset-blobs";
 import { serviceColorToken } from "./scenarios";
 import type { DemoScenario } from "./scenarios/types";
 
 export interface DemoExperienceProps {
   scenario: DemoScenario;
   service: { label: string; icon: IconName; colorKey: string };
+  /** Signed URLs of the real demo PDFs (null = none / read failed). */
+  assetUrls: DemoAssetUrlMap | null;
 }
 
 type Tab = "client" | "staff";
@@ -39,13 +42,16 @@ function captionFor(scenario: DemoScenario, state: DemoFlowState): string {
   }
 }
 
-export function DemoExperience({ scenario, service }: DemoExperienceProps) {
+export function DemoExperience({ scenario, service, assetUrls }: DemoExperienceProps) {
   const t = useTranslations("staff.demo");
   const flow = useDemoFlow(scenario);
   const [tab, setTab] = React.useState<Tab>("client");
   const [captions, setCaptions] = React.useState(true);
   // Bumped on reset so the staff view remounts and clears its local flow/timers.
   const [runId, setRunId] = React.useState(0);
+  // Pre-loaded HERE (outside the key={runId} subtree) so resetting the demo
+  // never re-fetches: the whole live runs without network.
+  const assetBlobs = useDemoAssetBlobs(assetUrls);
   const color = serviceColorToken(service.colorKey);
 
   const handleReset = React.useCallback(() => {
@@ -189,7 +195,7 @@ export function DemoExperience({ scenario, service }: DemoExperienceProps) {
           {captions && <Caption text={captionFor(scenario, flow.state)} />}
         </div>
       ) : (
-        <StaffView key={runId} scenario={scenario} service={service} />
+        <StaffView key={runId} scenario={scenario} service={service} assetBlobs={assetBlobs} />
       )}
     </div>
   );

@@ -2,11 +2,16 @@ import * as React from "react";
 import Link from "next/link";
 import { Icon, IconTile, type IconName } from "@/frontend/components/brand";
 import { ViewHead } from "@/frontend/features/admin/shared/chrome";
+import { getDemoAssetSlots } from "@/shared/constants/demo-assets";
 import { serviceColorToken } from "./scenarios";
+import { DemoCardMenu } from "./demo-card-menu";
+import type { DemoAssetActions } from "./demo-data-modal";
 
 /**
- * DemoIndex — grid of service cards on /admin/demo. Presentational: hover-lift is
- * pure CSS (`.mp-lift`), navigation is a `<Link>`, so no client JS is needed here.
+ * DemoIndex — grid of service cards on /admin/demo. The card itself stays
+ * presentational (hover-lift is pure CSS `.mp-lift`, navigation is a `<Link>`);
+ * the "⋯ → Data" menu is a small client island rendered as a SIBLING of the
+ * link (not a child) so opening it never navigates.
  */
 
 export interface DemoCardVM {
@@ -20,9 +25,11 @@ export interface DemoCardVM {
 export interface DemoIndexProps {
   cards: DemoCardVM[];
   messages: { title: string; subtitle: string; cardCta: string };
+  /** demo-assets server actions, injected by the page (module-pub border). */
+  assetActions: DemoAssetActions;
 }
 
-export function DemoIndex({ cards, messages }: DemoIndexProps) {
+export function DemoIndex({ cards, messages, assetActions }: DemoIndexProps) {
   return (
     <div
       className="anim-fade-in-up"
@@ -38,14 +45,16 @@ export function DemoIndex({ cards, messages }: DemoIndexProps) {
       >
         {cards.map((c) => {
           const color = serviceColorToken(c.colorKey);
+          const hasAssetSlots = getDemoAssetSlots(c.slug).length > 0;
           return (
+            <div key={c.slug} style={{ position: "relative", display: "flex" }}>
             <Link
-              key={c.slug}
               href={`/admin/demo/${c.slug}`}
               className="mp-lift"
               style={{
                 position: "relative",
                 overflow: "hidden",
+                flex: 1,
                 display: "flex",
                 flexDirection: "column",
                 gap: 16,
@@ -97,6 +106,8 @@ export function DemoIndex({ cards, messages }: DemoIndexProps) {
                 <Icon name="chevR" size={17} color="var(--accent)" />
               </span>
             </Link>
+            {hasAssetSlots && <DemoCardMenu slug={c.slug} assetActions={assetActions} />}
+            </div>
           );
         })}
       </div>

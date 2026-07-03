@@ -99,10 +99,18 @@ export const STAFF_NAV: NavGroup[] = [
     ],
   },
   {
-    labelKey: "catalog",
+    labelKey: "management",
     items: [
       { labelKey: "services", href: "/admin/catalogo", icon: "grid", module: "catalog" },
       { labelKey: "datasets", href: "/admin/datasets", icon: "sparkle", module: "datasets" },
+    ],
+  },
+  {
+    // Marketing catalog: the live-demo walkthroughs shown to prospects. The only
+    // item is adminOnly, so filterNav drops the whole group for non-admins.
+    labelKey: "catalog",
+    items: [
+      { labelKey: "demoServices", href: "/admin/demo", icon: "sparkle", module: "dashboard", adminOnly: true },
     ],
   },
   {
@@ -112,8 +120,6 @@ export const STAFF_NAV: NavGroup[] = [
       { labelKey: "employees", href: "/admin/empleados", icon: "user", module: "employees" },
       { labelKey: "audit", href: "/admin/auditoria", icon: "scale", module: "audit" },
       { labelKey: "settings", href: "/admin/configuracion", icon: "gear", module: "employees" },
-      // Admin-only marketing demo (no backend writes; pure-UI walkthrough).
-      { labelKey: "demo", href: "/admin/demo", icon: "sparkle", module: "dashboard", adminOnly: true },
     ],
   },
 ];

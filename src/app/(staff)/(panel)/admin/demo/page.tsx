@@ -11,6 +11,12 @@ import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
 import { listServicesAdmin } from "@/backend/modules/catalog";
+import {
+  confirmDemoAssetUploadAction,
+  deleteDemoAssetAction,
+  listDemoAssetStatusAction,
+  startDemoAssetUploadAction,
+} from "@/backend/modules/demo-assets/actions";
 import { staffHomePath } from "@/shared/staff-routes";
 import type { IconName } from "@/frontend/components/brand";
 import { DemoIndex, type DemoCardVM } from "@/frontend/features/admin/demo/demo-index";
@@ -47,6 +53,12 @@ export default async function DemoIndexPage() {
         title: t("title"),
         subtitle: t("subtitle"),
         cardCta: t("cardCta"),
+      }}
+      assetActions={{
+        listStatus: listDemoAssetStatusAction,
+        startUpload: startDemoAssetUploadAction,
+        confirmUpload: confirmDemoAssetUploadAction,
+        deleteAsset: deleteDemoAssetAction,
       }}
     />
   );

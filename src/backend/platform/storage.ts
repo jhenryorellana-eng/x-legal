@@ -166,16 +166,20 @@ export function validateFileSize(
  *
  * @param bucket - Supabase Storage bucket name
  * @param path - Server-generated storage path (e.g. `case/{caseId}/doc-123.pdf`)
+ * @param opts - `upsert: true` lets the PUT replace an existing object (the
+ *   signed token embeds the permission) — for deterministic paths where
+ *   re-uploading means replacing.
  * @returns signed URL (15-min TTL) + the canonical path
  */
 export async function createSignedUploadUrl(
   bucket: string,
   path: string,
+  opts?: { upsert?: boolean },
 ): Promise<{ signedUrl: string; path: string }> {
   const storage = createServiceClient().storage;
   const { data, error } = await storage
     .from(bucket)
-    .createSignedUploadUrl(path);
+    .createSignedUploadUrl(path, opts?.upsert ? { upsert: true } : undefined);
 
   if (error || !data) {
     logger.error({ bucket, path, err: error }, "storage: failed to create signed upload URL");
@@ -224,6 +228,10 @@ export async function validateUploadedObject(
   bucket: string,
   path: string,
   bucketContext: BucketContext,
+  opts?: {
+    /** Overrides the 25 MB default — only up to the bucket's own limit. */
+    maxBytes?: number;
+  },
 ): Promise<StorageValidationResult> {
   const storage = createServiceClient().storage;
 
@@ -241,7 +249,7 @@ export async function validateUploadedObject(
   const filename = path.split("/").pop() ?? path;
 
   // Size check
-  const sizeResult = validateFileSize(buf.length);
+  const sizeResult = validateFileSize(buf.length, opts?.maxBytes ?? MAX_FILE_SIZE_BYTES);
   if (!sizeResult.ok) {
     await deleteObject(bucket, path);
     return sizeResult;
@@ -328,4 +336,36 @@ export async function deleteObject(bucket: string, path: string): Promise<void> 
   if (error) {
     logger.warn({ bucket, path, err: error }, "storage: failed to delete invalid object");
   }
+}
+
+export interface StorageObjectInfo {
+  /** Object name relative to the listed prefix (no folders in between). */
+  name: string;
+  updatedAt: string | null;
+  sizeBytes: number | null;
+}
+
+/**
+ * Lists the objects directly under a prefix (service client — callers MUST
+ * authorize first). Used for deterministic-path features that treat Storage as
+ * the source of truth (no companion table), e.g. demo assets.
+ */
+export async function listObjects(
+  bucket: string,
+  prefix: string,
+): Promise<StorageObjectInfo[]> {
+  const { data, error } = await createServiceClient().storage
+    .from(bucket)
+    .list(prefix, { limit: 100 });
+
+  if (error || !data) {
+    logger.error({ bucket, prefix, err: error }, "storage: failed to list objects");
+    throw new Error(`Failed to list storage objects: ${error?.message}`);
+  }
+
+  return data.map((f) => ({
+    name: f.name,
+    updatedAt: f.updated_at ?? null,
+    sizeBytes: typeof f.metadata?.size === "number" ? f.metadata.size : null,
+  }));
 }

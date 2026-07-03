@@ -30,7 +30,16 @@ type TabId = "resumen" | "documentos" | "automatizacion" | "generaciones" | "exp
  * (translate / I-589 assembly / memo / expediente) and their success screens.
  * Owns its own local flow; the parent remounts it (via `key`) to reset the demo.
  */
-export function StaffView({ scenario, service }: { scenario: DemoScenario; service: DemoService }) {
+export function StaffView({
+  scenario,
+  service,
+  assetBlobs,
+}: {
+  scenario: DemoScenario;
+  service: DemoService;
+  /** slot key → blob URL of the real PDF (preloaded by the parent). */
+  assetBlobs: Record<string, string>;
+}) {
   const t = useTranslations("staff.demo");
   const flow = useStaffFlow();
   const [tab, setTab] = React.useState<TabId>("resumen");
@@ -109,9 +118,15 @@ export function StaffView({ scenario, service }: { scenario: DemoScenario; servi
       <div>
         {tab === "resumen" && <ResumenTab staff={staff} />}
         {tab === "documentos" && <DocumentosTab scenario={scenario} flow={flow} />}
-        {tab === "automatizacion" && <AutomatizacionTab scenario={scenario} flow={flow} />}
-        {tab === "generaciones" && <GeneracionesTab scenario={scenario} flow={flow} />}
-        {tab === "expediente" && <ExpedienteTab scenario={scenario} flow={flow} />}
+        {tab === "automatizacion" && (
+          <AutomatizacionTab scenario={scenario} flow={flow} pdfBlobUrl={assetBlobs["i589"] ?? null} />
+        )}
+        {tab === "generaciones" && (
+          <GeneracionesTab scenario={scenario} flow={flow} pdfBlobUrl={assetBlobs["memo"] ?? null} />
+        )}
+        {tab === "expediente" && (
+          <ExpedienteTab scenario={scenario} flow={flow} pdfBlobUrl={assetBlobs["expediente"] ?? null} />
+        )}
       </div>
 
       {/* Full-screen, fixed overlay layer (loaders + success splash) — always

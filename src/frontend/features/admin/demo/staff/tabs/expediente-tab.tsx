@@ -6,15 +6,25 @@ import { GhostBtn, GradientBtn, IconTile } from "@/frontend/components/brand";
 import { GenerationRow } from "../components/generation-row";
 import { TabIntro } from "../components/tab-intro";
 import { ExpedienteDocument, type ExpedienteDocLabels } from "../components/expediente-document";
+import { PdfReader } from "../components/pdf-reader";
 import type { DemoScenario } from "../../scenarios/types";
 import type { StaffFlow } from "../use-staff-flow";
 
 /**
  * ExpedienteTab — compiles the legal file (robot loader) and reveals it in a
- * full-screen, printable reader. The done state keeps a compact summary in the
- * tab; the document itself lives in `ExpedienteDocument` (portaled to <body>).
+ * full-screen, printable reader. With a real PDF uploaded ("⋯ → Data" on the
+ * demo card) the reader is `PdfReader`; without one it falls back to the HTML
+ * simulation (`ExpedienteDocument`, portaled to <body>).
  */
-export function ExpedienteTab({ scenario, flow }: { scenario: DemoScenario; flow: StaffFlow }) {
+export function ExpedienteTab({
+  scenario,
+  flow,
+  pdfBlobUrl,
+}: {
+  scenario: DemoScenario;
+  flow: StaffFlow;
+  pdfBlobUrl: string | null;
+}) {
   const t = useTranslations("staff.demo");
   const status = flow.state.expediente;
   const exp = scenario.staff.expediente;
@@ -79,13 +89,31 @@ export function ExpedienteTab({ scenario, flow }: { scenario: DemoScenario; flow
           </div>
         </div>
 
-        <ExpedienteDocument
-          open={reader}
-          onClose={() => setReader(false)}
-          staff={scenario.staff}
-          labels={labels}
-          onRegenerate={regenerate}
-        />
+        {pdfBlobUrl ? (
+          <PdfReader
+            open={reader}
+            onClose={() => setReader(false)}
+            blobUrl={pdfBlobUrl}
+            title={t("expTitle")}
+            downloadName="expediente.pdf"
+            labels={{
+              close: t("expClose"),
+              print: t("print"),
+              download: t("pdfDownload"),
+              toolbarNote: t("expToolbarNote"),
+              regenerate: t("regenerate"),
+            }}
+            onRegenerate={regenerate}
+          />
+        ) : (
+          <ExpedienteDocument
+            open={reader}
+            onClose={() => setReader(false)}
+            staff={scenario.staff}
+            labels={labels}
+            onRegenerate={regenerate}
+          />
+        )}
       </>
     );
   }
