@@ -297,6 +297,39 @@ describe("createCheckoutSessionForInstallment({ enrollAutopay: true })", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Autopay active → block CLIENT manual payment (card + Zelle); allow staff
+// ---------------------------------------------------------------------------
+
+describe("manual payment blocked while autopay is active", () => {
+  beforeEach(() => {
+    mockRepo.findInstallmentById.mockResolvedValue(makeInstallment({ status: "pending" }));
+    mockRepo.findOrphanStripePaymentForInstallment.mockResolvedValue(null);
+    mockRepo.insertPayment.mockResolvedValue(makePayment());
+    stripeMocks.sessionCreate.mockResolvedValue({ id: "cs_x", url: "https://stripe.test/cs_x" });
+  });
+
+  it("blocks a CLIENT card checkout when autopay is enabled", async () => {
+    mockRepo.findPaymentPlanById.mockResolvedValue(makePlanRow({ autopay_enabled: true }));
+    await expect(
+      createCheckoutSessionForInstallment(CLIENT_ACTOR, "inst-1"),
+    ).rejects.toThrow(BillingError);
+    expect(stripeMocks.sessionCreate).not.toHaveBeenCalled();
+  });
+
+  it("ALLOWS a STAFF checkout even with autopay enabled (reconciliation)", async () => {
+    mockRepo.findPaymentPlanById.mockResolvedValue(makePlanRow({ autopay_enabled: true }));
+    await createCheckoutSessionForInstallment(FINANCE_ACTOR, "inst-1");
+    expect(stripeMocks.sessionCreate).toHaveBeenCalled();
+  });
+
+  it("allows a CLIENT checkout when autopay is NOT enabled", async () => {
+    mockRepo.findPaymentPlanById.mockResolvedValue(makePlanRow({ autopay_enabled: false }));
+    await createCheckoutSessionForInstallment(CLIENT_ACTOR, "inst-1");
+    expect(stripeMocks.sessionCreate).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // createSetupCheckoutSession — enroll without charging (mode=setup)
 // ---------------------------------------------------------------------------
 

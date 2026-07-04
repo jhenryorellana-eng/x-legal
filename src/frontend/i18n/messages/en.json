@@ -520,6 +520,7 @@
       "autopayReactivateBtn": "Re-enable automatic payments",
       "autopayDisabledNotice": "Automatic payments were turned off because we could not charge your card. Pay manually or save a new card.",
       "autopaySaveCardLink": "Save a card for automatic payments",
+      "autopayAutoChargeBadge": "Charged automatically",
       "autopayError": "We could not update automatic payments. Please try again.",
       "setupConfirmingTitle": "Saving your card…",
       "setupConfirmingBody": "Please wait while we confirm with Stripe.",

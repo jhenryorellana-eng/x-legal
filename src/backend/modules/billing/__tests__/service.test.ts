@@ -38,6 +38,8 @@ const mockRepo = vi.hoisted(() => ({
   findPaymentBySessionId: vi.fn(),
   findStripeCustomer: vi.fn(),
   upsertStripeCustomer: vi.fn(),
+  // Autopay guard on client manual-payment paths reads the plan; default = no autopay.
+  findPaymentPlanById: vi.fn().mockResolvedValue({ autopay_enabled: false }),
   insertLedgerIfAbsent: vi.fn(),
   getAccountStatement: vi.fn(),
   findPlanByContractId: vi.fn(),

@@ -90,6 +90,7 @@ export interface PagosLabels {
   autopayReactivateBtn: string;
   autopayDisabledNotice: string;
   autopaySaveCardLink: string;
+  autopayAutoChargeBadge: string;
   autopayError: string;
 }
 
@@ -609,6 +610,7 @@ export function PagosView({
           <NavySummaryCard
             allPaid={allPaid}
             hasNextDue={hasNextDue}
+            autopayActive={autopay?.enabled === true}
             nextDueAmount={nextDueAmount}
             nextDueDateLabel={nextDueDateLabel}
             paidCount={paidCount}
@@ -675,8 +677,11 @@ export function PagosView({
             </div>
           </section>
 
-          {/* Zone 4 — How to pay */}
-          {hasNextDue && !allPaid && (
+          {/* Zone 4 — How to pay. Hidden while autopay is active: the plan is
+             charged automatically, so manual payment (Zelle + manual card) is
+             not offered — the client disables autopay first (Zone 4.5) to pay
+             by hand. This prevents a confusing "pay now" that races the cron. */}
+          {hasNextDue && !allPaid && !autopay?.enabled && (
             <section id="how-to-pay" style={{ marginBottom: 24 }}>
               <h2
                 className="t-title"
@@ -926,6 +931,7 @@ export function PagosView({
 function NavySummaryCard({
   allPaid,
   hasNextDue,
+  autopayActive,
   nextDueAmount,
   nextDueDateLabel,
   paidCount,
@@ -938,6 +944,7 @@ function NavySummaryCard({
 }: {
   allPaid: boolean;
   hasNextDue: boolean;
+  autopayActive: boolean;
   nextDueAmount: string | null;
   nextDueDateLabel: string | null;
   paidCount: number;
@@ -1039,8 +1046,10 @@ function NavySummaryCard({
         </div>
       )}
 
-      {/* CTA pill — only when there's a next due and not all paid */}
-      {hasNextDue && !allPaid && (
+      {/* CTA pill — only when there's a next due, not all paid, AND autopay is
+         NOT active. With autopay on, the cuota is charged automatically, so we
+         show a badge instead of a manual "Pagar ahora" button. */}
+      {hasNextDue && !allPaid && !autopayActive && (
         <button
           type="button"
           onClick={isOffline ? undefined : onPayNow}
@@ -1069,6 +1078,29 @@ function NavySummaryCard({
           <Icon name="bolt" size={20} color="var(--accent)" fill="var(--accent)" />
           {labels.payNow}
         </button>
+      )}
+
+      {/* Autopay active → informational badge in place of the manual CTA. */}
+      {hasNextDue && !allPaid && autopayActive && (
+        <div
+          style={{
+            position: "relative",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            height: 46,
+            padding: "0 18px",
+            borderRadius: 999,
+            background: "rgba(255,255,255,0.14)",
+            color: "#fff",
+            fontFamily: "var(--font-title)",
+            fontWeight: 700,
+            fontSize: 14.5,
+          }}
+        >
+          <Icon name="bolt" size={18} color="#fff" fill="#fff" />
+          {labels.autopayAutoChargeBadge}
+        </div>
       )}
     </div>
   );

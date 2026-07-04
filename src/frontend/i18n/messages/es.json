@@ -520,6 +520,7 @@
       "autopayReactivateBtn": "Reactivar cobro automático",
       "autopayDisabledNotice": "El cobro automático se desactivó porque no pudimos cobrar a tu tarjeta. Paga manualmente o guarda una tarjeta nueva.",
       "autopaySaveCardLink": "Guardar tarjeta para pagos automáticos",
+      "autopayAutoChargeBadge": "Se cobra automáticamente",
       "autopayError": "No pudimos actualizar el cobro automático. Inténtalo de nuevo.",
       "setupConfirmingTitle": "Guardando tu tarjeta…",
       "setupConfirmingBody": "Espera un momento mientras confirmamos con Stripe.",

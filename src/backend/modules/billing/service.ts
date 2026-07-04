@@ -131,7 +131,8 @@ export class BillingError extends Error {
       // Autopay (DOC-71 §2.4)
       | "PAYMENT_PLAN_NOT_FOUND"
       | "AUTOPAY_NO_CARD"
-      | "AUTOPAY_STAFF_CANNOT_ENABLE",
+      | "AUTOPAY_STAFF_CANNOT_ENABLE"
+      | "AUTOPAY_ACTIVE_MANUAL_BLOCKED",
     public readonly details?: Record<string, unknown>,
   ) {
     super(code);
@@ -226,6 +227,25 @@ async function markWebhookError(
  * orgId parameter: MUST derive from findOrgIdForCase (BD-authoritative).
  * Never pass orgId from Stripe metadata directly (MED-3).
  */
+/**
+ * Blocks CLIENT-initiated manual payment (card checkout / Zelle proof) when the
+ * plan has autopay enabled: the cron charges automatically, so the client would
+ * be double-handling. Defense-in-depth behind the UI, which already hides the
+ * manual options — this catches stale pages / direct action calls (DOC-71 §2.4).
+ * Staff paths (finance link generation, Zelle registration) are NOT blocked —
+ * they remain available for reconciliation.
+ */
+async function assertClientManualPaymentAllowed(
+  actor: Actor,
+  installment: InstallmentRow,
+): Promise<void> {
+  if (actor.kind !== "client" || !installment.payment_plan_id) return;
+  const plan = await findPaymentPlanById(installment.payment_plan_id);
+  if (plan?.autopay_enabled) {
+    throw new BillingError("AUTOPAY_ACTIVE_MANUAL_BLOCKED");
+  }
+}
+
 async function applyPaymentSuccess(
   payment: PaymentRow,
   installment: InstallmentRow,
@@ -668,6 +688,10 @@ export async function createCheckoutSessionForInstallment(
   if (!PAYABLE_STATUSES.includes(installment.status as "pending" | "overdue")) {
     throw new BillingError("INSTALLMENT_NOT_PAYABLE");
   }
+
+  // Autopay active → the client cannot pay this cuota manually (the cron charges
+  // it). They disable autopay first to switch to manual (DOC-71 §2.4).
+  await assertClientManualPaymentAllowed(actor, installment);
 
   const payerUserId = actor.userId;
   const stripeCustomerId = await resolveStripeCustomer(payerUserId);
@@ -1781,6 +1805,9 @@ export async function submitZelleProof(
   if (!PAYABLE_STATUSES.includes(installment.status as "pending" | "overdue")) {
     throw new BillingError("INSTALLMENT_NOT_PAYABLE");
   }
+
+  // Autopay active → the client cannot submit a Zelle proof either (DOC-71 §2.4).
+  await assertClientManualPaymentAllowed(actor, installment);
 
   const existingZelle = await findPendingZellePayment(parsed.installmentId);
   if (existingZelle) throw new BillingError("PROOF_ALREADY_SUBMITTED");

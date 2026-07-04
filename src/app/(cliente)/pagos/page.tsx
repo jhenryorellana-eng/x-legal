@@ -344,6 +344,7 @@ export default async function PagosPage({
     autopayReactivateBtn: t("autopayReactivateBtn"),
     autopayDisabledNotice: t("autopayDisabledNotice"),
     autopaySaveCardLink: t("autopaySaveCardLink"),
+    autopayAutoChargeBadge: t("autopayAutoChargeBadge"),
     autopayError: t("autopayError"),
   };
 
