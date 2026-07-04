@@ -33,6 +33,7 @@ export interface WizardPlan {
   currency: string;
   default_installments: number;
   default_downpayment_cents: number | null;
+  default_frequency: "weekly" | "monthly";
   is_active: boolean;
 }
 
@@ -249,8 +250,8 @@ export function CatalogWizard({
     initialPlans.length
       ? initialPlans
       : [
-          { kind: "self", offered: false, price_cents: 0, currency: "USD", default_installments: 1, default_downpayment_cents: null, is_active: false },
-          { kind: "with_lawyer", offered: false, price_cents: 0, currency: "USD", default_installments: 1, default_downpayment_cents: null, is_active: false },
+          { kind: "self", offered: false, price_cents: 0, currency: "USD", default_installments: 1, default_downpayment_cents: null, default_frequency: "monthly", is_active: false },
+          { kind: "with_lawyer", offered: false, price_cents: 0, currency: "USD", default_installments: 1, default_downpayment_cents: null, default_frequency: "monthly", is_active: false },
         ],
   );
 
@@ -369,6 +370,7 @@ export function CatalogWizard({
         requires_lawyer_validation: p.kind === "with_lawyer",
         default_installments: p.default_installments,
         default_downpayment_cents: p.default_downpayment_cents,
+        default_frequency: p.default_frequency,
         is_active: p.is_active,
       });
     }
@@ -918,6 +920,16 @@ function PlansStep({ plans, setPlans, t }: { plans: WizardPlan[]; setPlans: Reac
                   onChange={(e) => update(p.kind, { default_downpayment_cents: e.target.value ? Math.round(Number(e.target.value) * 100) : null })}
                 />
               </div>
+            </div>
+            <div>
+              <FieldLabel>{t.frequency}</FieldLabel>
+              <SelectInput
+                value={p.default_frequency}
+                onChange={(e) => update(p.kind, { default_frequency: e.target.value === "weekly" ? "weekly" : "monthly" })}
+              >
+                <option value="monthly">{t.frequencyMonthly}</option>
+                <option value="weekly">{t.frequencyWeekly}</option>
+              </SelectInput>
             </div>
           </div>
         </div>

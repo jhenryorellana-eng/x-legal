@@ -28,6 +28,7 @@ export function buildCatalogStrings(tt: Translator): Record<string, string> {
     "labelField", "descShort", "descLong", "benefits", "addBenefit", "appearance", "icon",
     "color", "visibility", "isPublic", "entryToggle", "entryNote", "previewMobile",
     "offerPlan", "price", "currency", "installments", "downpayment", "planActive",
+    "frequency", "frequencyMonthly", "frequencyWeekly",
     "lawyerIncluded", "lawyerNote", "priceNote", "addPhase", "phaseSlug", "phaseLabel",
     "phaseDesc", "clientExplainer", "milestones", "apptPolicy", "apptCount", "apptDuration",
     "milestonesTitle", "milestonesHelp", "milestoneN", "milestoneLabel", "milestoneGlossary", "addMilestone",

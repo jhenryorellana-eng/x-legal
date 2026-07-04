@@ -389,6 +389,42 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
     },
   ],
 
+  // autopay.charge_failed → Client ①② + Finance ① (DOC-71 §2.4)
+  "autopay.charge_failed": [
+    {
+      type: "autopay.charge_failed",
+      recipients: [{ resolverKey: "clients_of_case" }],
+      channels: { push: true, email: false }, // ①② (no email template in V2)
+      category: "payment_reminders",
+      deepLinkTemplate: "/pagos",
+    },
+    {
+      type: "autopay.charge_failed",
+      recipients: [{ resolverKey: "finance" }],
+      channels: { push: false, email: false }, // in-app ① only
+      category: "payment_reminders",
+      deepLinkTemplate: "/finanzas/pagos/caso/{caseId}",
+    },
+  ],
+
+  // autopay.disabled (system kill-switch) → Client ①② + Finance ①②
+  "autopay.disabled": [
+    {
+      type: "autopay.disabled",
+      recipients: [{ resolverKey: "clients_of_case" }],
+      channels: { push: true, email: false },
+      category: "payment_reminders",
+      deepLinkTemplate: "/pagos",
+    },
+    {
+      type: "autopay.disabled",
+      recipients: [{ resolverKey: "finance" }],
+      channels: { push: true, email: false },
+      category: "payment_reminders",
+      deepLinkTemplate: "/finanzas/pagos/caso/{caseId}",
+    },
+  ],
+
   // ---------------------------------------------------------------------------
   // F7 — message.sent → message.received (anti-burst §4.2). Routed to
   // notifyMessageBurst inside notifyFromEvent (special-cased before the loop).
@@ -654,6 +690,25 @@ function renderContent(
       bodyI18n: { en: "A payment has been refunded.", es: "Se ha reembolsado un pago." },
       icon: "dollar-sign",
       color: "gold",
+    },
+    // Autopay (DOC-71 §2.4)
+    "autopay.charge_failed": {
+      titleI18n: { en: "Automatic payment failed", es: "El cobro automático falló" },
+      bodyI18n: {
+        en: "We could not charge your card for this installment. We will retry tomorrow, or you can pay now from your payments screen.",
+        es: "No pudimos cobrar tu cuota a tu tarjeta. Reintentaremos mañana, o puedes pagarla ahora desde tu pantalla de pagos.",
+      },
+      icon: "alert-circle",
+      color: "amber", // never red toward the client (RF-TRX-022)
+    },
+    "autopay.disabled": {
+      titleI18n: { en: "Automatic payments turned off", es: "Cobro automático desactivado" },
+      bodyI18n: {
+        en: "Automatic card payments were turned off for your plan. Please pay your installments manually or re-enable automatic payments from your payments screen.",
+        es: "Se desactivó el cobro automático de tu plan. Paga tus cuotas manualmente o vuelve a activarlo desde tu pantalla de pagos.",
+      },
+      icon: "credit-card",
+      color: "amber",
     },
     // F7 message digest (anti-burst). Title carries the thread label; the body is
     // replaced by notifyMessageBurst with a counter on the 2nd+ message.

@@ -8,11 +8,14 @@ import { describe, it, expect } from "vitest";
 import {
   buildInstallments,
   addMonthsClamped,
+  addDaysUTC,
+  installmentDueDate,
   canTransitionInstallment,
   reanchorDueDates,
   isOverdue,
   daysLate,
   PAYABLE_STATUSES,
+  DEFAULT_WEEKLY_ANCHOR,
   type InstallmentStatus,
   type InstallmentTransitionActor,
 } from "../domain";
@@ -209,6 +212,144 @@ describe("addMonthsClamped", () => {
 
   it("adds 0 months returns same date", () => {
     expect(addMonthsClamped("2024-06-15", 0)).toBe("2024-06-15");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// addDaysUTC (weekly frequency support)
+// ---------------------------------------------------------------------------
+
+describe("addDaysUTC", () => {
+  it("adds days within the same month", () => {
+    expect(addDaysUTC("2026-07-02", 7)).toBe("2026-07-09");
+    expect(addDaysUTC("2026-07-02", 14)).toBe("2026-07-16");
+  });
+
+  it("crosses month boundary", () => {
+    expect(addDaysUTC("2026-07-30", 7)).toBe("2026-08-06");
+  });
+
+  it("crosses year boundary", () => {
+    expect(addDaysUTC("2026-12-28", 7)).toBe("2027-01-04");
+  });
+
+  it("handles leap-year February", () => {
+    expect(addDaysUTC("2024-02-26", 7)).toBe("2024-03-04"); // 2024 leap → Feb 29 exists
+    expect(addDaysUTC("2023-02-26", 7)).toBe("2023-03-05"); // 2023 not leap
+  });
+
+  it("0 days returns same date", () => {
+    expect(addDaysUTC("2026-06-15", 0)).toBe("2026-06-15");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// installmentDueDate (frequency-aware schedule rule)
+// ---------------------------------------------------------------------------
+
+describe("installmentDueDate", () => {
+  it("monthly: cuota k = addMonthsClamped(anchor, k)", () => {
+    expect(installmentDueDate("2026-07-02", 1, "monthly")).toBe("2026-08-02");
+    expect(installmentDueDate("2026-01-31", 1, "monthly")).toBe("2026-02-28"); // clamp
+    expect(installmentDueDate("2026-07-02", 12, "monthly")).toBe("2027-07-02");
+  });
+
+  it("weekly same-weekday: cuota k = anchor + 7k days (firma jueves → cuotas los jueves)", () => {
+    // 2026-07-02 is a Thursday
+    expect(installmentDueDate("2026-07-02", 1, "weekly", { kind: "same-weekday" })).toBe("2026-07-09");
+    expect(installmentDueDate("2026-07-02", 2, "weekly", { kind: "same-weekday" })).toBe("2026-07-16");
+    expect(installmentDueDate("2026-07-02", 5, "weekly", { kind: "same-weekday" })).toBe("2026-08-06"); // crosses month
+  });
+
+  it("weekly defaults to DEFAULT_WEEKLY_ANCHOR (same-weekday, Henry 2026-07-03)", () => {
+    expect(DEFAULT_WEEKLY_ANCHOR).toEqual({ kind: "same-weekday" });
+    expect(installmentDueDate("2026-07-02", 1, "weekly")).toBe("2026-07-09");
+  });
+
+  it("weekly fixed-weekday: cuota k = k-th occurrence of weekday strictly after anchor", () => {
+    // 2026-07-02 is Thursday; weekday 5 = Friday → first Friday strictly after = 2026-07-03
+    expect(installmentDueDate("2026-07-02", 1, "weekly", { kind: "fixed-weekday", weekday: 5 })).toBe("2026-07-03");
+    expect(installmentDueDate("2026-07-02", 2, "weekly", { kind: "fixed-weekday", weekday: 5 })).toBe("2026-07-10");
+    // Anchor already a Friday → "strictly after" pushes to next Friday
+    expect(installmentDueDate("2026-07-03", 1, "weekly", { kind: "fixed-weekday", weekday: 5 })).toBe("2026-07-10");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildInstallments — weekly frequency
+// ---------------------------------------------------------------------------
+
+describe("buildInstallments (weekly)", () => {
+  it("weekly schedule: cuotas every 7 days from the anchor, same weekday", () => {
+    // $1100 total, $500 inicial + 10 weekly cuotas of $60
+    const plans = buildInstallments({
+      totalCents: 1100_00,
+      downpaymentCents: 500_00,
+      installmentCount: 11,
+      startDate: "2026-07-02", // Thursday
+      frequency: "weekly",
+    });
+    expect(plans).toHaveLength(11);
+    expect(plans[0].dueDate).toBe("2026-07-02");
+    expect(plans[1].dueDate).toBe("2026-07-09");
+    expect(plans[2].dueDate).toBe("2026-07-16");
+    expect(plans[10].dueDate).toBe("2026-09-10");
+    expect(plans[1].amountCents).toBe(60_00);
+  });
+
+  it("I1 — sum invariant holds with weekly frequency and odd rounding", () => {
+    const plans = buildInstallments({
+      totalCents: 9999,
+      downpaymentCents: 1000,
+      installmentCount: 7,
+      startDate: "2026-03-01",
+      frequency: "weekly",
+    });
+    const total = plans.reduce((s, p) => s + p.amountCents, 0);
+    expect(total).toBe(9999);
+  });
+
+  it("omitting frequency keeps monthly behavior (backward compatible)", () => {
+    const explicit = buildInstallments({
+      totalCents: 600_00,
+      downpaymentCents: 100_00,
+      installmentCount: 4,
+      startDate: "2026-01-01",
+      frequency: "monthly",
+    });
+    const implicit = buildInstallments({
+      totalCents: 600_00,
+      downpaymentCents: 100_00,
+      installmentCount: 4,
+      startDate: "2026-01-01",
+    });
+    expect(explicit).toEqual(implicit);
+    expect(explicit[1].dueDate).toBe("2026-02-01");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reanchorDueDates — weekly frequency
+// ---------------------------------------------------------------------------
+
+describe("reanchorDueDates (weekly)", () => {
+  const installments = [
+    { number: 0, amountCents: 100, dueDate: "2026-01-01", isDownpayment: true },
+    { number: 1, amountCents: 100, dueDate: "2026-02-01", isDownpayment: false },
+    { number: 2, amountCents: 100, dueDate: "2026-03-01", isDownpayment: false },
+  ];
+
+  it("weekly: inicial → anchor; cuota k → anchor + 7k days", () => {
+    const anchored = reanchorDueDates(installments, "2026-07-02", "weekly");
+    expect(anchored[0].dueDate).toBe("2026-07-02");
+    expect(anchored[1].dueDate).toBe("2026-07-09");
+    expect(anchored[2].dueDate).toBe("2026-07-16");
+  });
+
+  it("omitting frequency keeps monthly behavior (backward compatible)", () => {
+    const anchored = reanchorDueDates(installments, "2026-06-15");
+    expect(anchored[1].dueDate).toBe("2026-07-15");
+    expect(anchored[2].dueDate).toBe("2026-08-15");
   });
 });
 

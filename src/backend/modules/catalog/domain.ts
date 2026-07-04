@@ -133,6 +133,9 @@ export type UpdateServiceDto = z.infer<typeof UpdateServiceDtoSchema>;
 // Service Plan
 // ---------------------------------------------------------------------------
 
+export const PaymentFrequencySchema = z.enum(["weekly", "monthly"]);
+export type CatalogPaymentFrequency = z.infer<typeof PaymentFrequencySchema>;
+
 export const ServicePlanSchema = z.object({
   id: z.string().uuid(),
   service_id: z.string().uuid(),
@@ -142,6 +145,7 @@ export const ServicePlanSchema = z.object({
   requires_lawyer_validation: z.boolean().default(false),
   default_installments: z.number().int().min(1).default(1),
   default_downpayment_cents: z.number().int().min(0).nullable(),
+  default_frequency: PaymentFrequencySchema.default("monthly"),
   is_active: z.boolean().default(true),
 });
 export type ServicePlan = z.infer<typeof ServicePlanSchema>;
@@ -154,6 +158,7 @@ export const UpsertPlanDtoSchema = z.object({
   requires_lawyer_validation: z.boolean().optional(),
   default_installments: z.number().int().min(1).default(1),
   default_downpayment_cents: z.number().int().min(0).nullable().optional(),
+  default_frequency: PaymentFrequencySchema.default("monthly"),
   is_active: z.boolean().default(true),
 });
 export type UpsertPlanDto = z.infer<typeof UpsertPlanDtoSchema>;

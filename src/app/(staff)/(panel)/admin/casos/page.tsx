@@ -95,8 +95,9 @@ export default async function AdminCasosPage({
       for (const p of plans) {
         const down = p.default_downpayment_cents ?? Math.round(p.price_cents * 0.2);
         const inst = p.default_installments ?? 1;
-        // serviceId|planId|priceCents|downCents|installments (decoded by createCaseAction)
-        encodedByKind[p.kind] = `${s.id}|${p.id}|${p.price_cents}|${down}|${inst}`;
+        const freq = p.default_frequency === "weekly" ? "weekly" : "monthly";
+        // serviceId|planId|priceCents|downCents|installments|frequency (decoded by createCaseAction)
+        encodedByKind[p.kind] = `${s.id}|${p.id}|${p.price_cents}|${down}|${inst}|${freq}`;
       }
       return {
         id: s.id,
@@ -107,6 +108,7 @@ export default async function AdminCasosPage({
           priceCents: p.price_cents,
           downpaymentCents: p.default_downpayment_cents ?? null,
           installments: p.default_installments ?? 1,
+          frequency: (p.default_frequency === "weekly" ? "weekly" : "monthly") as "weekly" | "monthly",
         })),
         encodedByKind,
         partyRoles: partyRoles.map((r) => ({

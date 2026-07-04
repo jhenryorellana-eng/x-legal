@@ -64,7 +64,11 @@ interface ReminderContent {
   emailTemplateKey: "installment-reminder-3d" | "installment-reminder-due";
 }
 
-function buildReminderContent(dueDate: string, isToday: boolean): ReminderContent {
+function buildReminderContent(
+  dueDate: string,
+  isToday: boolean,
+  autopayEnabled: boolean,
+): ReminderContent {
   if (isToday) {
     return {
       type: "installment.reminder_due",
@@ -79,6 +83,24 @@ function buildReminderContent(dueDate: string, isToday: boolean): ReminderConten
       icon: "alert-circle",
       color: "red",
       emailTemplateKey: "installment-reminder-due",
+    };
+  }
+  if (autopayEnabled) {
+    // Autopay plan: the due-3d reminder is a heads-up, not a call to action —
+    // the charge cron will collect it automatically on the due date.
+    return {
+      type: "installment.reminder_3d",
+      titleI18n: {
+        en: "Upcoming automatic payment",
+        es: "Próximo cobro automático",
+      },
+      bodyI18n: {
+        en: `Your installment of ${dueDate} will be charged automatically to your saved card on its due date. No action needed.`,
+        es: `Tu cuota del ${dueDate} se cobrará automáticamente a tu tarjeta guardada en su fecha de vencimiento. No necesitas hacer nada.`,
+      },
+      icon: "credit-card",
+      color: "gold",
+      emailTemplateKey: "installment-reminder-3d",
     };
   }
   return {
@@ -107,6 +129,7 @@ async function dispatchReminderForTarget(
   clientUserId: string | null,
   dueDate: string,
   today: string,
+  autopayEnabled: boolean,
 ): Promise<void> {
   if (!clientUserId) {
     logger.warn(
@@ -117,7 +140,7 @@ async function dispatchReminderForTarget(
   }
 
   const isToday = dueDate === today;
-  const content = buildReminderContent(dueDate, isToday);
+  const content = buildReminderContent(dueDate, isToday, autopayEnabled);
   const dedupeKey = `${content.type}:${installmentId}:${clientUserId}`;
   // Client payments live at the account-level /pagos screen (there is no
   // /caso/[caseId]/cuotas route — linking there 404s). ?caseId opens that
@@ -244,8 +267,17 @@ export async function handleInstallmentReminders(rawPayload: unknown): Promise<v
 
   // Step 3 — process each target
   let totalNotified = 0;
+  let autopaySkipped = 0;
   for (const target of targets) {
     try {
+      // Autopay plans: skip the due-day reminder — charge-due-installments
+      // (10:30 UTC, before this job) collects it automatically; a "pay today"
+      // nudge would contradict the automatic charge (DOC-44 §3.13).
+      if (target.autopayEnabled && target.dueDate === today) {
+        autopaySkipped += 1;
+        continue;
+      }
+
       // Mark BEFORE dispatching (same pattern as appointment-reminders H-4 FIX)
       await recordReminderSent(actor, target.installmentId);
 
@@ -255,6 +287,7 @@ export async function handleInstallmentReminders(rawPayload: unknown): Promise<v
         target.clientUserId,
         target.dueDate,
         today,
+        target.autopayEnabled,
       );
       totalNotified += 1;
     } catch (err) {
@@ -270,6 +303,7 @@ export async function handleInstallmentReminders(rawPayload: unknown): Promise<v
       job: "installment-reminders",
       overdueMarked: overdueResult.marked,
       totalNotified,
+      autopaySkipped,
     },
     "installment-reminders: end",
   );

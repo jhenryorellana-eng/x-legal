@@ -320,6 +320,12 @@ export interface CaseWorkspaceVM {
   docsTotal: number;
   parties: PartyVM[];
   installments: InstallmentVM[];
+  /** Installment cadence of the payment plan; null = no plan yet. */
+  planFrequency: "weekly" | "monthly" | null;
+  /** Autopay (automatic card charges) is active on the plan. */
+  planAutopayEnabled: boolean;
+  /** Why autopay was turned off (5 known reasons), or null. */
+  planAutopayDisabledReason: string | null;
   /** First pending/overdue downpayment installment id (gate trigger), or null. */
   downpaymentInstallmentId: string | null;
   downpaymentAmountCents: number | null;

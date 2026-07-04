@@ -28,6 +28,9 @@ import { getCasesForClient } from "@/backend/modules/cases";
 import {
   getAccountStatement,
   createCheckoutSessionForInstallment,
+  createSetupCheckoutSession,
+  setAutopay,
+  getSavedCard,
   getZelleProofUploadUrl,
   submitZelleProof,
   BillingError,
@@ -110,17 +113,49 @@ function resolveDisplayStatus(
 // Server actions (app layer → billing use-cases via index)
 // ---------------------------------------------------------------------------
 
-/** API-BIL-01 — Stripe Checkout session for an installment. */
+/** API-BIL-01 — Stripe Checkout session for an installment (+ autopay opt-in). */
 async function createInstallmentCheckoutAction(
   installmentId: string,
+  enrollAutopay: boolean = false,
 ): Promise<{ ok: true; data: { url: string } } | { ok: false; error: string }> {
   "use server";
   try {
     const actor = await requireActor();
-    const { url } = await createCheckoutSessionForInstallment(actor, installmentId);
+    const { url } = await createCheckoutSessionForInstallment(actor, installmentId, {
+      enrollAutopay,
+    });
     return { ok: true, data: { url } };
   } catch (err) {
     return { ok: false, error: err instanceof BillingError ? err.code : "CHECKOUT_FAILED" };
+  }
+}
+
+/** DOC-71 §2.4 — Checkout mode=setup: save/replace the card without charging. */
+async function createSetupCheckoutAction(
+  caseId: string,
+): Promise<{ ok: true; data: { url: string } } | { ok: false; error: string }> {
+  "use server";
+  try {
+    const actor = await requireActor();
+    const { url } = await createSetupCheckoutSession(actor, caseId);
+    return { ok: true, data: { url } };
+  } catch (err) {
+    return { ok: false, error: err instanceof BillingError ? err.code : "SETUP_FAILED" };
+  }
+}
+
+/** DOC-71 §2.4 — toggle autopay consent on the client's own plan. */
+async function setAutopayClientAction(
+  planId: string,
+  enabled: boolean,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  "use server";
+  try {
+    const actor = await requireActor();
+    await setAutopay(actor, { planId, enabled });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof BillingError ? err.code : "AUTOPAY_FAILED" };
   }
 }
 
@@ -212,6 +247,22 @@ export default async function PagosPage({
   // TODO BIL-RSC-2: Read from orgs.settings.zelle_destination once schema is extended.
   const zelleDestination = process.env.NEXT_PUBLIC_ZELLE_DESTINATION ?? null;
 
+  // Autopay VM (DOC-71 §2.4): plan consent state + the client's saved card.
+  let savedCard: { brand: string | null; last4: string | null } | null = null;
+  try {
+    const card = await getSavedCard(actor);
+    savedCard = card ? { brand: card.brand, last4: card.last4 } : null;
+  } catch {
+    savedCard = null;
+  }
+  const autopay = statement?.plan
+    ? {
+        planId: statement.plan.id,
+        enabled: statement.plan.autopayEnabled,
+        disabledReason: statement.plan.autopayDisabledReason,
+      }
+    : null;
+
   // Map to view-model
   let installments: InstallmentVM[] | null = null;
   let nextDueId: string | null = null;
@@ -284,6 +335,16 @@ export default async function PagosPage({
     downpaymentLabel: t("downpaymentLabel"),
     zelleDestinationTodo: t("zelleDestinationTodo"),
     caseSelectorLabel: t("caseSelectorLabel"),
+    autopayConsent: t("autopayConsent"),
+    autopayActiveTitle: t("autopayActiveTitle"),
+    autopayActiveSub: t("autopayActiveSub"),
+    autopayCardLabel: t.raw("autopayCardLabel"),
+    autopayChangeCard: t("autopayChangeCard"),
+    autopayDisableBtn: t("autopayDisableBtn"),
+    autopayReactivateBtn: t("autopayReactivateBtn"),
+    autopayDisabledNotice: t("autopayDisabledNotice"),
+    autopaySaveCardLink: t("autopaySaveCardLink"),
+    autopayError: t("autopayError"),
   };
 
   return (
@@ -296,10 +357,21 @@ export default async function PagosPage({
       totalCount={totalCount}
       progressPct={progressPct}
       zelleDestination={zelleDestination}
+      planFrequencyLabel={
+        statement?.plan
+          ? statement.plan.frequency === "weekly"
+            ? t("planWeekly")
+            : t("planMonthly")
+          : null
+      }
       labels={labels}
       cases={cases}
       selectedCaseId={caseId}
+      autopay={autopay}
+      savedCard={savedCard}
       onCreateCheckout={createInstallmentCheckoutAction}
+      onCreateSetupCheckout={createSetupCheckoutAction}
+      onSetAutopay={setAutopayClientAction}
       onGetZelleUploadUrl={getZelleUploadUrlAction}
       onConfirmZelleProof={confirmZelleProofAction}
     />

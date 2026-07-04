@@ -76,9 +76,13 @@ export interface InstallmentVM {
 export interface PagosCasoVM {
   caseId: string;
   plan: {
+    id: string;
     totalCents: number;
     downpaymentCents: number;
     installmentCount: number;
+    frequency: "weekly" | "monthly";
+    autopayEnabled: boolean;
+    autopayDisabledReason: string | null;
     notes: string | null;
   } | null;
   installments: InstallmentVM[];
@@ -123,6 +127,8 @@ export interface PagosCasoActions {
     installmentId: string;
     reason: string;
   }) => Promise<BillingResult>;
+  /** Staff can only DISABLE autopay (consent belongs to the client, DOC-71 §2.4). */
+  setAutopay: (input: { planId: string; enabled: boolean }) => Promise<BillingResult>;
 }
 
 // ---------------------------------------------------------------------------
@@ -148,6 +154,18 @@ function formatDate(iso: string | null): string {
 function daysUntil(dueDateStr: string): number {
   const due = new Date(dueDateStr + "T23:59:59");
   return Math.round((due.getTime() - Date.now()) / 86_400_000);
+}
+
+/** autopay_disabled_reason → staff-facing label (DOC-71 §2.4). */
+function autopayReasonLabel(reason: string): string {
+  const MAP: Record<string, string> = {
+    card_declined_max_retries: "tarjeta rechazada (3 intentos)",
+    authentication_required: "el banco requiere autenticación",
+    customer_request: "a pedido del cliente",
+    staff_request: "desactivado por el equipo",
+    refund_issued: "por reembolso",
+  };
+  return MAP[reason] ?? reason;
 }
 
 // Error code → readable toast message
@@ -977,6 +995,7 @@ export interface PagosCasoViewProps {
 export function PagosCasoView({ vm, actions }: PagosCasoViewProps) {
   const [activeOverlay, setActiveOverlay] = React.useState<ActiveOverlay>(null);
   const [stripeSuccessUrl, setStripeSuccessUrl] = React.useState<string | null>(null);
+  const [autopayConfirming, setAutopayConfirming] = React.useState(false);
 
   // Deep-link focus: open zelle verify panel on mount if focusedPaymentId present
   React.useEffect(() => {
@@ -1074,6 +1093,23 @@ export function PagosCasoView({ vm, actions }: PagosCasoViewProps) {
     }
   }
 
+  // ----- Autopay disable handler (two-step inline confirm) -----
+  async function handleAutopayDisable() {
+    if (!vm.plan) return;
+    if (!autopayConfirming) {
+      setAutopayConfirming(true);
+      return;
+    }
+    setAutopayConfirming(false);
+    const res = await actions.setAutopay({ planId: vm.plan.id, enabled: false });
+    if (res.ok) {
+      toast.success("✓ Cobro automático desactivado");
+      window.location.reload();
+    } else {
+      toast.error(billingErrorMessage(res.error?.code ?? "UNEXPECTED"));
+    }
+  }
+
   // ---- Compute progress bar percentages ----
   const agg = vm.aggregates;
   const total = agg.totalCents || 1; // avoid divide-by-zero
@@ -1160,10 +1196,46 @@ export function PagosCasoView({ vm, actions }: PagosCasoViewProps) {
                 Inicial: {usd(vm.plan.downpaymentCents)}
               </p>
               <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--ink-3)" }}>
-                {vm.plan.installmentCount} cuotas
+                {vm.plan.installmentCount} cuotas{" "}
+                {vm.plan.frequency === "weekly" ? "semanales" : "mensuales"}
               </p>
             </div>
           </div>
+
+          {/* Autopay status (DOC-71 §2.4) */}
+          {(vm.plan.autopayEnabled || vm.plan.autopayDisabledReason) && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                flexWrap: "wrap",
+                marginBottom: 14,
+              }}
+            >
+              {vm.plan.autopayEnabled ? (
+                <>
+                  <Chip tone="green">Autopay activo</Chip>
+                  <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+                    Las cuotas se cobran automáticamente a la tarjeta guardada del cliente.
+                  </span>
+                  <GhostBtn
+                    full={false}
+                    onClick={() => void handleAutopayDisable()}
+                    style={{ marginLeft: "auto" }}
+                  >
+                    {autopayConfirming
+                      ? "¿Confirmar desactivación?"
+                      : "Desactivar cobro automático"}
+                  </GhostBtn>
+                </>
+              ) : (
+                <Chip tone="gold">
+                  {`Autopay desactivado: ${autopayReasonLabel(vm.plan.autopayDisabledReason ?? "")}`}
+                </Chip>
+              )}
+            </div>
+          )}
 
           {/* Stacked progress bar */}
           <div

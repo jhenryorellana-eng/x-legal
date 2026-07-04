@@ -26,6 +26,7 @@ const mockRepo = vi.hoisted(() => ({
   updateInstallment: vi.fn().mockResolvedValue(undefined),
   insertLedgerIfAbsent: vi.fn().mockResolvedValue(undefined),
   listPendingStripeSessionsToReconcile: vi.fn(),
+  listPendingIntentPaymentsToReconcile: vi.fn().mockResolvedValue([]),
   // present so the service module import does not blow up
   findPlanByContractId: vi.fn(),
   findPlanByCaseId: vi.fn(),

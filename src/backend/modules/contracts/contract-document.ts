@@ -70,6 +70,8 @@ export interface ContractDocumentInput {
     totalCents: number;
     downpaymentCents?: number | null;
     installmentCount?: number | null;
+    /** Cadence of the cuotas (default monthly — pre-0063 snapshots). */
+    frequency?: "weekly" | "monthly" | null;
     currency: string;
   };
   schedule: ContractScheduleRow[];
@@ -228,8 +230,11 @@ export function buildContractDocument(input: ContractDocumentInput): ContractDoc
     const balanceCents = Math.max(0, input.fees.totalCents - downpaymentCents);
     const monthlyCount = downpaymentCents > 0 ? installmentCount - 1 : installmentCount;
     const monthlyCents = monthlyCount > 0 ? Math.round(balanceCents / monthlyCount) : balanceCents;
+    const planSentence = input.fees.frequency === "weekly"
+      ? b.feeSentences.installmentPlanWeekly
+      : b.feeSentences.installmentPlan;
     feesParas.push(
-      interpolate(b.feeSentences.installmentPlan, {
+      interpolate(planSentence, {
         downpayment: formatContractMoney(downpaymentCents, currency),
         balance: formatContractMoney(balanceCents, currency),
         count: String(monthlyCount),

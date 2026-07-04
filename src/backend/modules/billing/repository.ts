@@ -262,9 +262,13 @@ export type LedgerEntryRow = Tables<"ledger_entries">;
 
 export interface AccountStatementDto {
   plan: {
+    id: string;
     totalCents: number;
     downpaymentCents: number;
     installmentCount: number;
+    frequency: "weekly" | "monthly";
+    autopayEnabled: boolean;
+    autopayDisabledReason: string | null;
     notes: string | null;
   } | null;
   installments: Array<{
@@ -313,7 +317,8 @@ export async function getAccountStatement(
   const { data: planData } = await supabase
     .from("payment_plans")
     .select(`
-      id, total_cents, downpayment_cents, installment_count, notes,
+      id, total_cents, downpayment_cents, installment_count, frequency,
+      autopay_enabled, autopay_disabled_reason, notes,
       contracts!inner(case_id),
       installments(
         id, number, is_downpayment, amount_cents, due_date, status, paid_at,
@@ -332,6 +337,9 @@ export async function getAccountStatement(
     total_cents: number;
     downpayment_cents: number;
     installment_count: number;
+    frequency: "weekly" | "monthly";
+    autopay_enabled: boolean;
+    autopay_disabled_reason: string | null;
     notes: string | null;
     installments: Array<{
       id: string;
@@ -394,9 +402,13 @@ export async function getAccountStatement(
 
   return {
     plan: {
+      id: raw.id,
       totalCents: raw.total_cents,
       downpaymentCents: raw.downpayment_cents,
       installmentCount: raw.installment_count,
+      frequency: raw.frequency ?? "monthly",
+      autopayEnabled: raw.autopay_enabled ?? false,
+      autopayDisabledReason: raw.autopay_disabled_reason,
       notes: raw.notes,
     },
     installments,
@@ -484,6 +496,10 @@ export async function listOrphanStripePayments(
     .eq("method", "stripe")
     .eq("status", "pending")
     .is("stripe_checkout_session_id", null)
+    // Autopay rows are born with session NULL but intent SET — they are NOT
+    // orphans; the intent reconcile sweep owns them. Orphan = no session AND
+    // no intent (the Stripe call never happened / never returned an id).
+    .is("stripe_payment_intent_id", null)
     .lt("created_at", olderThanIso);
 
   if (error) {
@@ -523,6 +539,32 @@ export async function listPendingStripeSessionsToReconcile(
 }
 
 /**
+ * Twin sweep for autopay charges: pending/stripe rows that carry a Payment
+ * Intent but NO Checkout Session (off-session MIT charges whose inline settle
+ * or webhook never landed), older than the cutoff.
+ */
+export async function listPendingIntentPaymentsToReconcile(
+  olderThanIso: string,
+): Promise<PaymentRow[]> {
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("payments")
+    .select("*")
+    .eq("method", "stripe")
+    .eq("status", "pending")
+    .is("stripe_checkout_session_id", null)
+    .not("stripe_payment_intent_id", "is", null)
+    .lt("created_at", olderThanIso);
+
+  if (error) {
+    throw new Error(
+      `billing.repository: listPendingIntentPaymentsToReconcile failed — ${error.message}`,
+    );
+  }
+  return data ?? [];
+}
+
+/**
  * Returns the orphaned Stripe payment for a single installment (session_id IS NULL
  * and older than the cutoff), if any. Used by the lazy cleanup inside
  * createCheckoutSessionForInstallment so a client can retry without waiting for cron.
@@ -539,6 +581,9 @@ export async function findOrphanStripePaymentForInstallment(
     .eq("method", "stripe")
     .eq("status", "pending")
     .is("stripe_checkout_session_id", null)
+    // Same predicate as listOrphanStripePayments: an autopay row (intent SET,
+    // session NULL) must never be expired by the lazy cleanup.
+    .is("stripe_payment_intent_id", null)
     .lt("created_at", olderThanIso)
     .maybeSingle();
 
@@ -601,13 +646,293 @@ export async function upsertStripeCustomer(
   stripeCustomerId: string,
 ): Promise<void> {
   const supabase = createServiceClient();
+  // Clears any saved card: this runs only on first creation (no card yet) or
+  // when a stale customer is recreated (test↔live switch / Dashboard delete) —
+  // a payment method saved under the OLD customer is unusable with the new one.
   const { error } = await supabase
     .from("stripe_customers")
-    .upsert({ user_id: userId, stripe_customer_id: stripeCustomerId });
+    .upsert({
+      user_id: userId,
+      stripe_customer_id: stripeCustomerId,
+      default_payment_method_id: null,
+      card_brand: null,
+      card_last4: null,
+      card_exp_month: null,
+      card_exp_year: null,
+      pm_updated_at: null,
+    });
 
   if (error) {
     throw new Error(`billing.repository: upsertStripeCustomer failed — ${error.message}`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Autopay (DOC-71 §2.4) — saved card + per-plan consent
+// ---------------------------------------------------------------------------
+
+export interface SavedCardInput {
+  paymentMethodId: string;
+  brand: string | null;
+  last4: string | null;
+  expMonth: number | null;
+  expYear: number | null;
+}
+
+/** Persists the default saved card on an EXISTING stripe_customers row. */
+export async function upsertStripeCustomerCard(
+  userId: string,
+  card: SavedCardInput,
+): Promise<void> {
+  const supabase = createServiceClient();
+  const { error } = await supabase
+    .from("stripe_customers")
+    .update({
+      default_payment_method_id: card.paymentMethodId,
+      card_brand: card.brand,
+      card_last4: card.last4,
+      card_exp_month: card.expMonth,
+      card_exp_year: card.expYear,
+      pm_updated_at: new Date().toISOString(),
+    })
+    .eq("user_id", userId);
+
+  if (error) {
+    throw new Error(`billing.repository: upsertStripeCustomerCard failed — ${error.message}`);
+  }
+}
+
+export async function findUserByStripeCustomerId(
+  stripeCustomerId: string,
+): Promise<string | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("stripe_customers")
+    .select("user_id")
+    .eq("stripe_customer_id", stripeCustomerId)
+    .maybeSingle();
+  return data?.user_id ?? null;
+}
+
+export async function findPaymentPlanById(
+  planId: string,
+): Promise<PaymentPlanRow | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("payment_plans")
+    .select("*")
+    .eq("id", planId)
+    .maybeSingle();
+  return data ?? null;
+}
+
+/** plan → contract → case (mirror of findInstallmentCaseId one level up). */
+export async function findCaseIdForPlan(planId: string): Promise<string | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("payment_plans")
+    .select("contracts!inner(case_id)")
+    .eq("id", planId)
+    .maybeSingle();
+  const contracts = (data as unknown as { contracts: { case_id: string | null } } | null)
+    ?.contracts;
+  return contracts?.case_id ?? null;
+}
+
+export async function findPlanIdByCaseId(caseId: string): Promise<string | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("payment_plans")
+    .select("id, contracts!inner(case_id)")
+    .eq("contracts.case_id", caseId)
+    .maybeSingle();
+  return (data as unknown as { id: string } | null)?.id ?? null;
+}
+
+/** The client who owns the plan's case (cases.primary_client_id). */
+export async function findPlanClientUserId(planId: string): Promise<string | null> {
+  const caseId = await findCaseIdForPlan(planId);
+  if (!caseId) return null;
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("cases")
+    .select("primary_client_id")
+    .eq("id", caseId)
+    .maybeSingle();
+  return data?.primary_client_id ?? null;
+}
+
+export async function updatePaymentPlanAutopay(
+  planId: string,
+  patch: {
+    autopay_enabled: boolean;
+    autopay_consented_at?: string | null;
+    autopay_consent_by?: string | null;
+    autopay_disabled_reason?: string | null;
+  },
+): Promise<void> {
+  const supabase = createServiceClient();
+  const { error } = await supabase
+    .from("payment_plans")
+    .update(patch)
+    .eq("id", planId);
+
+  if (error) {
+    throw new Error(`billing.repository: updatePaymentPlanAutopay failed — ${error.message}`);
+  }
+}
+
+/** One chargeable installment of an autopay-enrolled plan (charge cron). */
+export interface AutopayChargeTarget {
+  installmentId: string;
+  number: number;
+  isDownpayment: boolean;
+  amountCents: number;
+  dueDate: string;
+  planId: string;
+  caseId: string;
+  orgId: string;
+  clientUserId: string;
+  stripeCustomerId: string;
+  paymentMethodId: string;
+  /** Start of the current consent cycle — bounds the retry counter. */
+  autopayConsentedAt: string | null;
+}
+
+/**
+ * Universe for the charge-due-installments cron: pending/overdue installments
+ * with due_date <= today whose plan has autopay enabled, excluding cancelled
+ * cases, installments with a refunded payment (a refund means staff must
+ * intervene — never re-charge automatically), and clients without a saved card.
+ */
+export async function listAutopayChargeTargets(
+  today: string,
+): Promise<AutopayChargeTarget[]> {
+  const supabase = createServiceClient();
+
+  const { data, error } = await supabase
+    .from("installments")
+    .select(`
+      id, number, is_downpayment, amount_cents, due_date,
+      payments(status),
+      payment_plans!inner(
+        id, autopay_enabled, autopay_consented_at,
+        contracts!inner(
+          case_id,
+          cases!inner(org_id, primary_client_id, status)
+        )
+      )
+    `)
+    .in("status", ["pending", "overdue"])
+    .lte("due_date", today)
+    .eq("payment_plans.autopay_enabled", true);
+
+  if (error) {
+    throw new Error(`billing.repository: listAutopayChargeTargets — ${error.message}`);
+  }
+
+  const rows = (data ?? []) as unknown as Array<{
+    id: string;
+    number: number;
+    is_downpayment: boolean;
+    amount_cents: number;
+    due_date: string;
+    payments: Array<{ status: string }> | null;
+    payment_plans: {
+      id: string;
+      autopay_enabled: boolean;
+      autopay_consented_at: string | null;
+      contracts: {
+        case_id: string | null;
+        cases: { org_id: string; primary_client_id: string | null; status: string } | null;
+      };
+    };
+  }>;
+
+  const eligible = rows.filter((r) => {
+    const caseRow = r.payment_plans.contracts.cases;
+    if (!caseRow || caseRow.status === "cancelled") return false;
+    if (!r.payment_plans.contracts.case_id || !caseRow.primary_client_id) return false;
+    if ((r.payments ?? []).some((p) => p.status === "refunded")) return false;
+    return true;
+  });
+
+  if (eligible.length === 0) return [];
+
+  // Batch-resolve saved cards for the clients involved.
+  const clientIds = [
+    ...new Set(eligible.map((r) => r.payment_plans.contracts.cases!.primary_client_id as string)),
+  ];
+  const { data: customers, error: custError } = await supabase
+    .from("stripe_customers")
+    .select("user_id, stripe_customer_id, default_payment_method_id")
+    .in("user_id", clientIds)
+    .not("default_payment_method_id", "is", null);
+
+  if (custError) {
+    throw new Error(`billing.repository: listAutopayChargeTargets customers — ${custError.message}`);
+  }
+
+  const cardByUser = new Map(
+    (customers ?? []).map((c) => [
+      c.user_id,
+      { customerId: c.stripe_customer_id, paymentMethodId: c.default_payment_method_id as string },
+    ]),
+  );
+
+  const targets: AutopayChargeTarget[] = [];
+  for (const r of eligible) {
+    const caseRow = r.payment_plans.contracts.cases!;
+    const clientUserId = caseRow.primary_client_id as string;
+    const card = cardByUser.get(clientUserId);
+    if (!card) continue; // enrolled plan but no usable card — kill-switch handled elsewhere
+    targets.push({
+      installmentId: r.id,
+      number: r.number,
+      isDownpayment: r.is_downpayment,
+      amountCents: r.amount_cents,
+      dueDate: r.due_date,
+      planId: r.payment_plans.id,
+      caseId: r.payment_plans.contracts.case_id as string,
+      orgId: caseRow.org_id,
+      clientUserId,
+      stripeCustomerId: card.customerId,
+      paymentMethodId: card.paymentMethodId,
+      autopayConsentedAt: r.payment_plans.autopay_consented_at,
+    });
+  }
+  return targets;
+}
+
+/**
+ * Derived autopay retry count: failed autopay payments for the installment.
+ * Counting rows (instead of a mutable counter) is immune to duplicate webhooks
+ * and concurrent cron runs. `sinceIso` bounds the count to the current consent
+ * cycle (payment_plans.autopay_consented_at) so re-enrolling a new card resets
+ * the retries.
+ */
+export async function countFailedAutopayPayments(
+  installmentId: string,
+  sinceIso?: string | null,
+): Promise<number> {
+  const supabase = createServiceClient();
+  let query = supabase
+    .from("payments")
+    .select("id", { count: "exact", head: true })
+    .eq("installment_id", installmentId)
+    .eq("autopay", true)
+    .eq("status", "failed");
+
+  if (sinceIso) {
+    query = query.gte("created_at", sinceIso);
+  }
+
+  const { count, error } = await query;
+
+  if (error) {
+    throw new Error(`billing.repository: countFailedAutopayPayments — ${error.message}`);
+  }
+  return count ?? 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -680,6 +1005,8 @@ export interface ReminderTargetRow {
   clientUserId: string | null;
   dueDate: string;
   number: number;
+  /** Plan is autopay-enrolled → due-day reminder is skipped (the cron charges it). */
+  autopayEnabled: boolean;
 }
 
 /**
@@ -700,6 +1027,7 @@ export async function listReminderTargets(today: string): Promise<ReminderTarget
     .select(`
       id, due_date, number, last_reminder_at,
       payment_plans!inner(
+        autopay_enabled,
         contracts!inner(
           case_id,
           cases!inner(status)
@@ -718,6 +1046,7 @@ export async function listReminderTargets(today: string): Promise<ReminderTarget
     number: number;
     last_reminder_at: string | null;
     payment_plans: {
+      autopay_enabled: boolean;
       contracts: {
         case_id: string;
         cases: { status: string };
@@ -761,6 +1090,7 @@ export async function listReminderTargets(today: string): Promise<ReminderTarget
     clientUserId: clientMap.get(r.payment_plans.contracts.case_id) ?? null,
     dueDate: r.due_date,
     number: r.number,
+    autopayEnabled: r.payment_plans.autopay_enabled === true,
   }));
 }
 

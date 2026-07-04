@@ -89,9 +89,48 @@ export interface InstallmentOverdueEvent {
   occurredAt: Date;
 }
 
+/**
+ * Emitted by the charge-due-installments cron when an off-session charge
+ * fails but autopay stays enabled (attempt < max, DOC-71 §2.4).
+ */
+export interface AutopayChargeFailedEvent {
+  type: "autopay.charge_failed";
+  payload: {
+    caseId: string;
+    orgId: string;
+    planId: string;
+    installmentId: string;
+    number: number;
+    amountCents: number;
+    attempt: number;
+    maxAttempts: number;
+    /** Stripe decline_code / code, or "provider_error" for non-card failures. */
+    reason: string;
+  };
+  occurredAt: Date;
+}
+
+/**
+ * Emitted when autopay is turned off by the SYSTEM (kill-switch, SCA, refund).
+ * Customer/staff-initiated disables only write timeline/audit — no event.
+ */
+export interface AutopayDisabledEvent {
+  type: "autopay.disabled";
+  payload: {
+    caseId: string;
+    orgId: string;
+    planId: string;
+    installmentId?: string;
+    reason: string;
+  };
+  occurredAt: Date;
+}
+
 export type BillingEvent =
   | DownpaymentConfirmedEvent
   | InstallmentPaidEvent
   | PaymentProofSubmittedEvent
   | PaymentRefundedEvent
-  | InstallmentOverdueEvent;
+  | InstallmentOverdueEvent
+  | AutopayChargeFailedEvent
+  | AutopayDisabledEvent;

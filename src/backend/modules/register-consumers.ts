@@ -426,5 +426,15 @@ export function registerConsumers(): void {
     await notifyFromEvent(event);
   });
 
+  // autopay.charge_failed → notifications (client: pay manually; finance: in-app)
+  appEvents.on("autopay.charge_failed", async (event) => {
+    await notifyFromEvent(event);
+  });
+
+  // autopay.disabled → notifications (client + finance) [system kill-switch only]
+  appEvents.on("autopay.disabled", async (event) => {
+    await notifyFromEvent(event);
+  });
+
   logger.info({}, "consumers: F2+F3+F4+F5+F6+F7-Ola7a/7b event consumers registered (kanban + ai-engine + integrations + andrium + billing-reanchor + overdue + printed + messaging + notifications anti-burst)");
 }

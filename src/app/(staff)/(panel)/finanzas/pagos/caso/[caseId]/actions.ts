@@ -22,6 +22,7 @@ import {
   getZelleProofViewUrl,
   waiveInstallment,
   rescheduleInstallment,
+  setAutopay,
   BillingError,
   type RejectZelleProofInput,
   type RegisterZellePaymentInput,
@@ -176,6 +177,24 @@ export async function waiveInstallmentAction(input: {
   try {
     const actor = await requireActor();
     await waiveInstallment(actor, input);
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof BillingError) return { ok: false, error: { code: err.code } };
+    return { ok: false, error: { code: "UNEXPECTED" } };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// setAutopayAction (DOC-71 §2.4) — staff can only disable
+// ---------------------------------------------------------------------------
+
+export async function setAutopayAction(input: {
+  planId: string;
+  enabled: boolean;
+}): Promise<BillingResult> {
+  try {
+    const actor = await requireActor();
+    await setAutopay(actor, input);
     return { ok: true };
   } catch (err) {
     if (err instanceof BillingError) return { ok: false, error: { code: err.code } };

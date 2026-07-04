@@ -46,6 +46,24 @@ function pendingZelleOf(inst: InstallmentVM): InstallmentPaymentVM | null {
   return inst.payments.find((p) => p.method === "zelle" && p.status === "pending") ?? null;
 }
 
+/** Maps an autopay_disabled_reason to its localized label (DOC-71 §2.4). */
+function autopayReasonLabel(reason: string, t: CasosStrings["detail"]): string {
+  switch (reason) {
+    case "card_declined_max_retries":
+      return t.autopayReasonCardDeclined;
+    case "authentication_required":
+      return t.autopayReasonAuthRequired;
+    case "customer_request":
+      return t.autopayReasonCustomer;
+    case "staff_request":
+      return t.autopayReasonStaff;
+    case "refund_issued":
+      return t.autopayReasonRefund;
+    default:
+      return reason;
+  }
+}
+
 export function PagosTab({
   vm,
   actions,
@@ -123,7 +141,20 @@ export function PagosTab({
 
   return (
     <Card>
-      <SectionLabel icon="wallet">{t.pagosTitle}</SectionLabel>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <SectionLabel icon="wallet">{t.pagosTitle}</SectionLabel>
+        {vm.planFrequency && (
+          <Chip tone="blue">
+            {vm.planFrequency === "weekly" ? t.planWeekly : t.planMonthly}
+          </Chip>
+        )}
+        {vm.planAutopayEnabled && <Chip tone="green">{t.autopayActive}</Chip>}
+        {!vm.planAutopayEnabled && vm.planAutopayDisabledReason && (
+          <Chip tone="gold">
+            {interp(t.autopayOff, { reason: autopayReasonLabel(vm.planAutopayDisabledReason, t) })}
+          </Chip>
+        )}
+      </div>
 
       {vm.installments.length === 0 ? (
         <div style={{ marginTop: 14 }}>

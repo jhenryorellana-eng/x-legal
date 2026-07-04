@@ -3775,9 +3775,14 @@ export type Database = {
       }
       payment_plans: {
         Row: {
+          autopay_consent_by: string | null
+          autopay_consented_at: string | null
+          autopay_disabled_reason: string | null
+          autopay_enabled: boolean
           contract_id: string
           created_at: string
           downpayment_cents: number
+          frequency: string
           id: string
           installment_count: number
           notes: string | null
@@ -3785,9 +3790,14 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          autopay_consent_by?: string | null
+          autopay_consented_at?: string | null
+          autopay_disabled_reason?: string | null
+          autopay_enabled?: boolean
           contract_id: string
           created_at?: string
           downpayment_cents?: number
+          frequency?: string
           id?: string
           installment_count?: number
           notes?: string | null
@@ -3795,9 +3805,14 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          autopay_consent_by?: string | null
+          autopay_consented_at?: string | null
+          autopay_disabled_reason?: string | null
+          autopay_enabled?: boolean
           contract_id?: string
           created_at?: string
           downpayment_cents?: number
+          frequency?: string
           id?: string
           installment_count?: number
           notes?: string | null
@@ -3805,6 +3820,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "payment_plans_autopay_consent_by_fkey"
+            columns: ["autopay_consent_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "payment_plans_contract_id_fkey"
             columns: ["contract_id"]
@@ -3817,6 +3839,7 @@ export type Database = {
       payments: {
         Row: {
           amount_cents: number
+          autopay: boolean
           confirmed_at: string | null
           confirmed_by: string | null
           created_at: string
@@ -3832,6 +3855,7 @@ export type Database = {
         }
         Insert: {
           amount_cents: number
+          autopay?: boolean
           confirmed_at?: string | null
           confirmed_by?: string | null
           created_at?: string
@@ -3847,6 +3871,7 @@ export type Database = {
         }
         Update: {
           amount_cents?: number
+          autopay?: boolean
           confirmed_at?: string | null
           confirmed_by?: string | null
           created_at?: string
@@ -4621,6 +4646,7 @@ export type Database = {
           created_at: string
           currency: string
           default_downpayment_cents: number | null
+          default_frequency: string
           default_installments: number
           id: string
           is_active: boolean
@@ -4634,6 +4660,7 @@ export type Database = {
           created_at?: string
           currency?: string
           default_downpayment_cents?: number | null
+          default_frequency?: string
           default_installments?: number
           id?: string
           is_active?: boolean
@@ -4647,6 +4674,7 @@ export type Database = {
           created_at?: string
           currency?: string
           default_downpayment_cents?: number | null
+          default_frequency?: string
           default_installments?: number
           id?: string
           is_active?: boolean
@@ -4857,19 +4885,37 @@ export type Database = {
       }
       stripe_customers: {
         Row: {
+          card_brand: string | null
+          card_exp_month: number | null
+          card_exp_year: number | null
+          card_last4: string | null
           created_at: string
+          default_payment_method_id: string | null
+          pm_updated_at: string | null
           stripe_customer_id: string
           updated_at: string
           user_id: string
         }
         Insert: {
+          card_brand?: string | null
+          card_exp_month?: number | null
+          card_exp_year?: number | null
+          card_last4?: string | null
           created_at?: string
+          default_payment_method_id?: string | null
+          pm_updated_at?: string | null
           stripe_customer_id: string
           updated_at?: string
           user_id: string
         }
         Update: {
+          card_brand?: string | null
+          card_exp_month?: number | null
+          card_exp_year?: number | null
+          card_last4?: string | null
           created_at?: string
+          default_payment_method_id?: string | null
+          pm_updated_at?: string | null
           stripe_customer_id?: string
           updated_at?: string
           user_id?: string

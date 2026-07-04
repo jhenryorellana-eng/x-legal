@@ -81,6 +81,16 @@ export interface PagosLabels {
   downpaymentLabel: string;
   zelleDestinationTodo: string;
   caseSelectorLabel: string;
+  autopayConsent: string;
+  autopayActiveTitle: string;
+  autopayActiveSub: string;
+  autopayCardLabel: string; // "{brand}" and "{last4}" substituted inline
+  autopayChangeCard: string;
+  autopayDisableBtn: string;
+  autopayReactivateBtn: string;
+  autopayDisabledNotice: string;
+  autopaySaveCardLink: string;
+  autopayError: string;
 }
 
 export interface PagosViewProps {
@@ -98,11 +108,27 @@ export interface PagosViewProps {
   progressPct: number;
   /** Zelle destination from orgs.settings; null = not configured yet */
   zelleDestination: string | null;
+  /** Localized cadence chip ("Plan semanal" / "Plan mensual"); null = no plan */
+  planFrequencyLabel?: string | null;
+  /** Autopay consent state of the plan (DOC-71 §2.4); null = no plan */
+  autopay?: { planId: string; enabled: boolean; disabledReason: string | null } | null;
+  /** The client's saved card (brand/last4); null = none enrolled */
+  savedCard?: { brand: string | null; last4: string | null } | null;
   labels: PagosLabels;
-  /** Stripe Checkout URL (server action) */
+  /** Stripe Checkout URL (server action). enrollAutopay = save card + consent. */
   onCreateCheckout: (
     installmentId: string,
+    enrollAutopay?: boolean,
   ) => Promise<{ ok: true; data: { url: string } } | { ok: false; error: string }>;
+  /** Checkout mode=setup — save/replace the card without charging */
+  onCreateSetupCheckout?: (
+    caseId: string,
+  ) => Promise<{ ok: true; data: { url: string } } | { ok: false; error: string }>;
+  /** Toggle autopay consent on the plan */
+  onSetAutopay?: (
+    planId: string,
+    enabled: boolean,
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
   /** Signed upload URL for Zelle proof */
   onGetZelleUploadUrl: (
     installmentId: string,
@@ -331,8 +357,13 @@ export function PagosView({
   totalCount,
   progressPct,
   zelleDestination,
+  planFrequencyLabel = null,
+  autopay = null,
+  savedCard = null,
   labels,
   onCreateCheckout,
+  onCreateSetupCheckout,
+  onSetAutopay,
   onGetZelleUploadUrl,
   onConfirmZelleProof,
   isOffline: initialOffline = false,
@@ -343,6 +374,8 @@ export function PagosView({
   const [busyCheckout, setBusyCheckout] = React.useState(false);
   const [busyUpload, setBusyUpload] = React.useState(false);
   const [zelleSubmitted, setZelleSubmitted] = React.useState(false);
+  const [enrollAutopay, setEnrollAutopay] = React.useState(false); // NEVER pre-checked (consent)
+  const [busyAutopay, setBusyAutopay] = React.useState(false);
   const [toast, setToast] = React.useState<{ message: string; tone: "success" | "error" } | null>(null);
   const [isOffline, setIsOffline] = React.useState(initialOffline);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -363,12 +396,14 @@ export function PagosView({
     setToast({ message, tone });
   }, []);
 
-  // "Pagar con tarjeta" → Stripe Checkout
+  // "Pagar con tarjeta" → Stripe Checkout (optionally enrolling autopay)
   const handleStripeCheckout = React.useCallback(async () => {
     if (!nextDueId || isOffline) return;
     setBusyCheckout(true);
     try {
-      const result = await onCreateCheckout(nextDueId);
+      // The consent checkbox only matters while autopay is not yet active.
+      const withEnroll = enrollAutopay && autopay !== null && !autopay.enabled;
+      const result = await onCreateCheckout(nextDueId, withEnroll);
       if (result.ok) {
         window.location.href = result.data.url;
       } else {
@@ -379,7 +414,47 @@ export function PagosView({
       showToast(labels.stripeError, "error");
       setBusyCheckout(false);
     }
-  }, [nextDueId, isOffline, onCreateCheckout, labels.stripeError, showToast]);
+  }, [nextDueId, isOffline, enrollAutopay, autopay, onCreateCheckout, labels.stripeError, showToast]);
+
+  // "Guardar/cambiar tarjeta" → Stripe Checkout mode=setup
+  const handleSetupCheckout = React.useCallback(async () => {
+    if (!selectedCaseId || isOffline || !onCreateSetupCheckout) return;
+    setBusyAutopay(true);
+    try {
+      const result = await onCreateSetupCheckout(selectedCaseId);
+      if (result.ok) {
+        window.location.href = result.data.url;
+      } else {
+        showToast(labels.autopayError, "error");
+        setBusyAutopay(false);
+      }
+    } catch {
+      showToast(labels.autopayError, "error");
+      setBusyAutopay(false);
+    }
+  }, [selectedCaseId, isOffline, onCreateSetupCheckout, labels.autopayError, showToast]);
+
+  // Activar/desactivar el cobro automático (requiere tarjeta guardada para ON)
+  const handleSetAutopay = React.useCallback(
+    async (enabled: boolean) => {
+      if (!autopay || isOffline || !onSetAutopay) return;
+      setBusyAutopay(true);
+      try {
+        const result = await onSetAutopay(autopay.planId, enabled);
+        if (result.ok) {
+          // Reload so the statement reflects the new consent state.
+          window.location.reload();
+        } else {
+          showToast(labels.autopayError, "error");
+          setBusyAutopay(false);
+        }
+      } catch {
+        showToast(labels.autopayError, "error");
+        setBusyAutopay(false);
+      }
+    },
+    [autopay, isOffline, onSetAutopay, labels.autopayError, showToast],
+  );
 
   // "Subir comprobante Zelle" → signed-URL upload
   const handleZelleUpload = React.useCallback(
@@ -554,17 +629,33 @@ export function PagosView({
 
           {/* Zone 3 — Payment plan */}
           <section style={{ marginBottom: 24 }}>
-            <h2
-              className="t-title"
-              style={{
-                margin: "0 0 12px",
-                fontSize: 18,
-                color: "var(--navy)",
-                fontWeight: 700,
-              }}
-            >
-              {labels.planTitle}
-            </h2>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 12px" }}>
+              <h2
+                className="t-title"
+                style={{
+                  margin: 0,
+                  fontSize: 18,
+                  color: "var(--navy)",
+                  fontWeight: 700,
+                }}
+              >
+                {labels.planTitle}
+              </h2>
+              {planFrequencyLabel && (
+                <span
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 700,
+                    color: "var(--navy)",
+                    background: "rgba(11,27,51,.08)",
+                    borderRadius: 999,
+                    padding: "3px 10px",
+                  }}
+                >
+                  {planFrequencyLabel}
+                </span>
+              )}
+            </div>
             <div
               style={{
                 background: "var(--card)",
@@ -736,16 +827,55 @@ export function PagosView({
 
                 {/* Expanded card body */}
                 {selectedMethod === "card" && (
-                  <GradientBtn
-                    icon="card"
-                    disabled={isOffline || busyCheckout}
-                    onClick={() => void handleStripeCheckout()}
-                  >
-                    {busyCheckout ? labels.stripeRedirecting : labels.cardPayBtn}
-                  </GradientBtn>
+                  <div>
+                    {/* Autopay consent (DOC-71 §2.4) — NEVER pre-checked; hidden once active */}
+                    {autopay && !autopay.enabled && (
+                      <label
+                        style={{
+                          display: "flex",
+                          alignItems: "flex-start",
+                          gap: 10,
+                          marginBottom: 14,
+                          cursor: "pointer",
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={enrollAutopay}
+                          onChange={(e) => setEnrollAutopay(e.target.checked)}
+                          style={{ marginTop: 3, width: 18, height: 18, accentColor: "var(--accent)", flexShrink: 0 }}
+                        />
+                        <span style={{ fontSize: 13.5, color: "var(--ink-2)", lineHeight: 1.45, fontWeight: 600 }}>
+                          {labels.autopayConsent}
+                        </span>
+                      </label>
+                    )}
+                    <GradientBtn
+                      icon="card"
+                      disabled={isOffline || busyCheckout}
+                      onClick={() => void handleStripeCheckout()}
+                    >
+                      {busyCheckout ? labels.stripeRedirecting : labels.cardPayBtn}
+                    </GradientBtn>
+                  </div>
                 )}
               </PaymentMethodCard>
             </section>
+          )}
+
+          {/* Zone 4.5 — Autopay management (DOC-71 §2.4) */}
+          {autopay && (autopay.enabled || savedCard || !allPaid) && (
+            <AutopayCard
+              autopay={autopay}
+              savedCard={savedCard ?? null}
+              labels={labels}
+              busy={busyAutopay}
+              isOffline={isOffline}
+              onChangeCard={() => void handleSetupCheckout()}
+              onToggle={(enabled) => void handleSetAutopay(enabled)}
+              canSetup={Boolean(onCreateSetupCheckout && selectedCaseId)}
+            />
           )}
 
           {/* Zone 5 — Footer */}
@@ -1064,6 +1194,161 @@ function InstallmentRow({
         )}
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Autopay management card (DOC-71 §2.4)
+// ---------------------------------------------------------------------------
+
+function AutopayCard({
+  autopay,
+  savedCard,
+  labels,
+  busy,
+  isOffline,
+  onChangeCard,
+  onToggle,
+  canSetup,
+}: {
+  autopay: { planId: string; enabled: boolean; disabledReason: string | null };
+  savedCard: { brand: string | null; last4: string | null } | null;
+  labels: PagosLabels;
+  busy: boolean;
+  isOffline: boolean;
+  onChangeCard: () => void;
+  onToggle: (enabled: boolean) => void;
+  canSetup: boolean;
+}) {
+  const cardLine = savedCard
+    ? labels.autopayCardLabel
+        .replace("{brand}", (savedCard.brand ?? "").toUpperCase())
+        .replace("{last4}", savedCard.last4 ?? "····")
+    : null;
+  const killSwitched =
+    autopay.disabledReason === "card_declined_max_retries" ||
+    autopay.disabledReason === "authentication_required";
+
+  // No card + autopay off → just a discreet enroll link.
+  if (!autopay.enabled && !savedCard) {
+    if (!canSetup) return null;
+    return (
+      <section style={{ marginBottom: 24, textAlign: "center" }}>
+        <button
+          type="button"
+          disabled={isOffline || busy}
+          onClick={onChangeCard}
+          style={{
+            background: "none",
+            border: "none",
+            color: "var(--accent)",
+            fontSize: 14.5,
+            fontWeight: 700,
+            fontFamily: "var(--font-title)",
+            cursor: isOffline || busy ? "default" : "pointer",
+            opacity: isOffline || busy ? 0.6 : 1,
+            textDecoration: "underline",
+            padding: 8,
+          }}
+        >
+          {labels.autopaySaveCardLink}
+        </button>
+      </section>
+    );
+  }
+
+  return (
+    <section style={{ marginBottom: 24 }}>
+      <div
+        style={{
+          background: "var(--card)",
+          borderRadius: 20,
+          padding: 18,
+          boxShadow: "0 4px 12px rgba(11,27,51,0.05)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+          <div
+            style={{
+              width: 44,
+              height: 44,
+              borderRadius: 13,
+              background: autopay.enabled ? "var(--green-soft)" : "var(--gold-soft)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+            }}
+          >
+            <Icon
+              name="card"
+              size={24}
+              color={autopay.enabled ? "var(--green)" : "var(--gold-deep)"}
+            />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="t-title" style={{ fontSize: 16, color: "var(--navy)", fontWeight: 700 }}>
+              {autopay.enabled ? labels.autopayActiveTitle : labels.autopayReactivateBtn}
+            </div>
+            {autopay.enabled && (
+              <div style={{ fontSize: 13, color: "var(--ink-2)", fontWeight: 600, marginTop: 2 }}>
+                {labels.autopayActiveSub}
+              </div>
+            )}
+            {cardLine && (
+              <div style={{ fontSize: 13.5, color: "var(--ink-3)", fontWeight: 700, marginTop: 4 }}>
+                {cardLine}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Kill-switch notice (amber, never red — RF-TRX-022) */}
+        {!autopay.enabled && killSwitched && (
+          <div
+            role="alert"
+            style={{
+              background: "var(--gold-soft)",
+              color: "var(--gold-deep)",
+              borderRadius: 14,
+              padding: "10px 14px",
+              marginBottom: 12,
+              fontSize: 13.5,
+              fontWeight: 700,
+              lineHeight: 1.45,
+            }}
+          >
+            {labels.autopayDisabledNotice}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          {autopay.enabled ? (
+            <>
+              {canSetup && (
+                <GhostBtn disabled={isOffline || busy} onClick={onChangeCard}>
+                  {labels.autopayChangeCard}
+                </GhostBtn>
+              )}
+              <GhostBtn disabled={isOffline || busy} onClick={() => onToggle(false)}>
+                {labels.autopayDisableBtn}
+              </GhostBtn>
+            </>
+          ) : (
+            <>
+              <GradientBtn icon="card" disabled={isOffline || busy} onClick={() => onToggle(true)}>
+                {labels.autopayReactivateBtn}
+              </GradientBtn>
+              {canSetup && (
+                <GhostBtn disabled={isOffline || busy} onClick={onChangeCard}>
+                  {labels.autopayChangeCard}
+                </GhostBtn>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 

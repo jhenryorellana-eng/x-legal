@@ -247,6 +247,9 @@ export default async function LegalCasoDetailPage({
     docsTotal: workspace.totalDocuments,
     parties,
     installments,
+    planFrequency: statement?.plan?.frequency ?? null,
+    planAutopayEnabled: statement?.plan?.autopayEnabled ?? false,
+    planAutopayDisabledReason: statement?.plan?.autopayDisabledReason ?? null,
     downpaymentInstallmentId: downpayment?.id ?? null,
     downpaymentAmountCents: downpayment?.amountCents ?? null,
     timeline: timeline.items.map((ev) => ({

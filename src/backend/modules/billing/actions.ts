@@ -65,14 +65,32 @@ function fail(err: unknown): ActionResult<never> {
  */
 export async function createInstallmentCheckoutAction(
   installmentId: string,
+  opts?: { enrollAutopay?: boolean },
 ): Promise<ActionResult<{ url: string }>> {
   try {
     const actor = await requireActor();
     // Rate limiting now lives inside createCheckoutSessionForInstallment (service
     // layer) so it covers the real client path (pagos/page.tsx) too — it throws
     // BillingError("RATE_LIMITED"), mapped by fail() below.
-    const result = await svc.createCheckoutSessionForInstallment(actor, installmentId);
+    const result = await svc.createCheckoutSessionForInstallment(actor, installmentId, opts);
     return ok(result);
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// setAutopayAction — toggle autopay consent (client on/off; staff off only)
+// ---------------------------------------------------------------------------
+
+export async function setAutopayAction(
+  planId: string,
+  enabled: boolean,
+): Promise<ActionResult<void>> {
+  try {
+    const actor = await requireActor();
+    await svc.setAutopay(actor, { planId, enabled });
+    return ok(undefined);
   } catch (err) {
     return fail(err);
   }

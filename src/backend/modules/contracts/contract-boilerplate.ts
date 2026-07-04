@@ -70,6 +70,7 @@ export interface ContractBoilerplate {
   feeSentences: {
     total: string;
     installmentPlan: string;
+    installmentPlanWeekly: string;
     singlePayment: string;
     zelle: string;
   };
@@ -128,6 +129,8 @@ export const CONTRACT_BOILERPLATE: Record<ContractLocale, ContractBoilerplate> =
       total: "Los honorarios por los servicios descritos en este contrato ascienden a un total de {total}.",
       installmentPlan:
         "EL CLIENTE realizará un pago inicial de {downpayment} al momento de la firma del contrato, y el saldo restante de {balance} será pagadero en {count} cuotas mensuales de {installment} cada una.",
+      installmentPlanWeekly:
+        "EL CLIENTE realizará un pago inicial de {downpayment} al momento de la firma del contrato, y el saldo restante de {balance} será pagadero en {count} cuotas semanales de {installment} cada una.",
       singlePayment: "El pago se realizará en un único abono de {total} al momento de la firma del contrato.",
       zelle: "Método de pago Zelle: {zelle}.",
     },
@@ -199,6 +202,8 @@ export const CONTRACT_BOILERPLATE: Record<ContractLocale, ContractBoilerplate> =
       total: "The fees for the services described in this agreement amount to a total of {total}.",
       installmentPlan:
         "THE CLIENT will make an initial payment of {downpayment} upon signing the agreement, and the remaining balance of {balance} will be payable in {count} monthly installments of {installment} each.",
+      installmentPlanWeekly:
+        "THE CLIENT will make an initial payment of {downpayment} upon signing the agreement, and the remaining balance of {balance} will be payable in {count} weekly installments of {installment} each.",
       singlePayment: "Payment will be made in a single amount of {total} upon signing the agreement.",
       zelle: "Zelle payment method: {zelle}.",
     },

@@ -18,7 +18,11 @@ export const dynamic = "force-dynamic";
 
 import { redirect } from "next/navigation";
 import { getActor, requireActor } from "@/backend/modules/identity";
-import { reconcileCheckoutSession, BillingError } from "@/backend/modules/billing";
+import {
+  reconcileCheckoutSession,
+  reconcileSetupSession,
+  BillingError,
+} from "@/backend/modules/billing";
 import { ConfirmacionView } from "@/frontend/features/cliente/pagos/confirmacion-view";
 import { getTranslations } from "next-intl/server";
 
@@ -42,16 +46,59 @@ async function reconcileSessionAction(
   }
 }
 
+/**
+ * Server-side reconcile of a mode=setup session (autopay enrollment, DOC-71
+ * §2.4). Adapted to the same result shape so ConfirmacionView is reused as-is:
+ * `settled` = the card was saved and autopay is now enabled on the plan.
+ */
+async function reconcileSetupSessionAction(
+  sessionId: string,
+): Promise<
+  | { ok: true; settled: boolean; installmentStatus: string }
+  | { ok: false; error: string }
+> {
+  "use server";
+  try {
+    const actor = await requireActor();
+    const r = await reconcileSetupSession(actor, sessionId);
+    return { ok: true, settled: r.enrolled, installmentStatus: "" };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof BillingError ? err.code : "RECONCILE_FAILED",
+    };
+  }
+}
+
 export default async function PagosConfirmacionPage({
   searchParams,
 }: {
-  searchParams: Promise<{ session_id?: string }>;
+  searchParams: Promise<{ session_id?: string; setup_session_id?: string }>;
 }) {
   const actor = await getActor();
   if (!actor || actor.kind !== "client") redirect("/welcome");
 
-  const sessionId = (await searchParams)?.session_id ?? null;
+  const params = await searchParams;
+  const setupSessionId = params?.setup_session_id ?? null;
+  const sessionId = params?.session_id ?? null;
   const t = await getTranslations("cliente.pagos");
+
+  // Autopay enrollment return (mode=setup) — no money involved.
+  if (setupSessionId) {
+    return (
+      <ConfirmacionView
+        sessionId={setupSessionId}
+        redirectTo="/pagos"
+        onReconcile={reconcileSetupSessionAction}
+        labels={{
+          title: t("setupConfirmingTitle"),
+          body: t("setupConfirmingBody"),
+          confirmedTitle: t("setupConfirmedTitle"),
+          confirmedBody: t("setupConfirmedBody"),
+        }}
+      />
+    );
+  }
 
   return (
     <ConfirmacionView

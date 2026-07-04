@@ -212,6 +212,7 @@ export interface CreateCaseAtomicPayload {
     total_cents: number;
     downpayment_cents: number;
     installment_count: number;
+    frequency: "weekly" | "monthly";
     notes: string | null;
   };
   installments: Array<{

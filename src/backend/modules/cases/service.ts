@@ -380,11 +380,14 @@ const CreateCaseFromContractInputSchema = z.object({
     totalCents: z.number().int().positive(),
     downpaymentCents: z.number().int().positive(),
     installmentCount: z.number().int().min(1),
+    frequency: z.enum(["weekly", "monthly"]).default("monthly"),
     notes: z.string().nullable().optional(),
   }),
 });
 
-export type CreateCaseFromContractInput = z.infer<
+// z.input (not z.infer): callers may omit defaulted fields like `frequency` —
+// the service's .parse() fills them in.
+export type CreateCaseFromContractInput = z.input<
   typeof CreateCaseFromContractInputSchema
 >;
 
@@ -615,6 +618,7 @@ export async function createCaseFromContract(
     totalCents: p.paymentPlan.totalCents,
     downpaymentCents: p.paymentPlan.downpaymentCents,
     installmentCount: p.paymentPlan.installmentCount,
+    frequency: p.paymentPlan.frequency,
     currency: "USD",
     // Optional per-contract discount/promo reason, frozen for the record.
     discountNote: p.paymentPlan.notes ?? null,
@@ -648,6 +652,7 @@ export async function createCaseFromContract(
   const { buildInstallments } = await import("@/backend/modules/billing") as {
     buildInstallments: (i: {
       totalCents: number; downpaymentCents: number; installmentCount: number; startDate: string;
+      frequency?: "weekly" | "monthly";
     }) => Array<{ number: number; amountCents: number; dueDate: string; isDownpayment: boolean }>;
   };
   const installmentsPayload = buildInstallments({
@@ -655,6 +660,7 @@ export async function createCaseFromContract(
     downpaymentCents: p.paymentPlan.downpaymentCents,
     installmentCount: p.paymentPlan.installmentCount,
     startDate: new Date().toISOString().slice(0, 10),
+    frequency: p.paymentPlan.frequency,
   }).map((d) => ({
     number: d.number,
     is_downpayment: d.isDownpayment,
@@ -677,6 +683,7 @@ export async function createCaseFromContract(
       totalCents: p.paymentPlan.totalCents,
       downpaymentCents: p.paymentPlan.downpaymentCents,
       installmentCount: p.paymentPlan.installmentCount,
+      frequency: p.paymentPlan.frequency,
     },
     schedule: installmentsPayload.map((d) => ({
       number: d.number,
@@ -721,6 +728,7 @@ export async function createCaseFromContract(
       total_cents: p.paymentPlan.totalCents,
       downpayment_cents: p.paymentPlan.downpaymentCents,
       installment_count: p.paymentPlan.installmentCount,
+      frequency: p.paymentPlan.frequency,
       notes: p.paymentPlan.notes ?? null,
     },
     installments: installmentsPayload,
@@ -927,7 +935,12 @@ async function buildContractDocumentSnapshot(input: {
   clientName: string | null;
   committed: ReadonlyArray<{ role: string; name: string | null }>;
   roleLabelByKey: Map<string, { es?: string; en?: string }>;
-  fees: { totalCents: number; downpaymentCents: number; installmentCount: number };
+  fees: {
+    totalCents: number;
+    downpaymentCents: number;
+    installmentCount: number;
+    frequency?: "weekly" | "monthly";
+  };
   schedule: Array<{ number: number; amountCents: number; dueDate: string; isDownpayment: boolean }>;
 }): Promise<Record<string, unknown> | null> {
   try {
@@ -1030,15 +1043,20 @@ async function buildDocumentSnapshotForResync(
     const committed: Array<{ role: string; name: string | null }> = [];
     for (const c of committedRaw) committed.push({ role: c.role, name: await resolvePartyFullName(c.party) });
 
-    const plan = (planSnapshot ?? {}) as { totalCents?: number; downpaymentCents?: number; installmentCount?: number };
+    const plan = (planSnapshot ?? {}) as {
+      totalCents?: number; downpaymentCents?: number; installmentCount?: number; frequency?: string;
+    };
     const fees = {
       totalCents: Number(plan.totalCents) || 0,
       downpaymentCents: Number(plan.downpaymentCents) || 0,
       installmentCount: Number(plan.installmentCount) || 1,
+      // Pre-0063 snapshots have no frequency → monthly (historic behavior).
+      frequency: (plan.frequency === "weekly" ? "weekly" : "monthly") as "weekly" | "monthly",
     };
     const { buildInstallments } = (await import("@/backend/modules/billing")) as {
       buildInstallments: (i: {
         totalCents: number; downpaymentCents: number; installmentCount: number; startDate: string;
+        frequency?: "weekly" | "monthly";
       }) => Array<{ number: number; amountCents: number; dueDate: string; isDownpayment: boolean }>;
     };
     const schedule = buildInstallments({ ...fees, startDate: new Date().toISOString().slice(0, 10) }).map((d) => ({

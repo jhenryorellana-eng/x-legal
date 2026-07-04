@@ -104,6 +104,39 @@ describe("buildContractDocument", () => {
     expect(text).toContain("Henryorellana@usalatinoprime.com");
   });
 
+  it("uses the weekly fee clause when fees.frequency is weekly (es + en)", () => {
+    const weeklyFees = {
+      totalCents: 350000,
+      downpaymentCents: 50000,
+      installmentCount: 11,
+      frequency: "weekly" as const,
+      currency: "USD",
+    };
+    const es = buildContractDocument(baseInput({ fees: weeklyFees }));
+    const esText = es.sections
+      .find((s) => s.key === "fees")!
+      .blocks.map((bl) => (bl.kind === "paragraph" ? bl.text : ""))
+      .join(" ");
+    expect(esText).toContain("cuotas semanales");
+    expect(esText).not.toContain("cuotas mensuales");
+
+    const en = buildContractDocument(baseInput({ locale: "en", fees: weeklyFees }));
+    const enText = en.sections
+      .find((s) => s.key === "fees")!
+      .blocks.map((bl) => (bl.kind === "paragraph" ? bl.text : ""))
+      .join(" ");
+    expect(enText).toContain("weekly installments");
+  });
+
+  it("keeps the monthly fee clause when frequency is omitted (pre-0063 snapshots)", () => {
+    const doc = buildContractDocument(baseInput());
+    const text = doc.sections
+      .find((s) => s.key === "fees")!
+      .blocks.map((bl) => (bl.kind === "paragraph" ? bl.text : ""))
+      .join(" ");
+    expect(text).toContain("cuotas mensuales");
+  });
+
   it("uses the single-payment clause when there is one installment", () => {
     const doc = buildContractDocument(
       baseInput({ fees: { totalCents: 250000, downpaymentCents: 0, installmentCount: 1, currency: "USD" } }),

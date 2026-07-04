@@ -38,6 +38,8 @@ export interface NewCasePlan {
   priceCents: number;
   downpaymentCents: number | null;
   installments: number;
+  /** Catalog default cadence — seeds the editable selector (Henry 2026-07-03). */
+  frequency: "weekly" | "monthly";
 }
 
 /** An additional case party a service declares (besides the applicant). */
@@ -104,6 +106,7 @@ export interface NewCaseInput {
     totalCents: number;
     downpaymentCents: number;
     installmentCount: number;
+    frequency: "weekly" | "monthly";
     note?: string;
   };
   /** Originating lead id when launched from a lead card — links leads.won_case_id. */
@@ -182,6 +185,7 @@ export function NewCaseModal({
   const [priceDollars, setPriceDollars] = React.useState("");
   const [downDollars, setDownDollars] = React.useState("");
   const [installmentsCount, setInstallmentsCount] = React.useState("");
+  const [frequency, setFrequency] = React.useState<"weekly" | "monthly">("monthly");
   const [discountNote, setDiscountNote] = React.useState("");
   // Additional parties keyed by the service's role_key → list of names. The
   // applicant is implicit (auto-added by the backend), so it is NOT here.
@@ -281,6 +285,7 @@ export function NewCaseModal({
     setPriceDollars(centsToInput(p.priceCents));
     setDownDollars(centsToInput(p.downpaymentCents ?? 0));
     setInstallmentsCount(String(p.installments || 1));
+    setFrequency(p.frequency ?? "monthly");
     setDiscountNote("");
   }
 
@@ -321,6 +326,7 @@ export function NewCaseModal({
     setPriceDollars("");
     setDownDollars("");
     setInstallmentsCount("");
+    setFrequency("monthly");
     setDiscountNote("");
     setPartyNames({});
     setSigningLink(null);
@@ -398,6 +404,7 @@ export function NewCaseModal({
         totalCents: priceCents,
         downpaymentCents: downCents,
         installmentCount: instCount,
+        frequency,
         note: discountNote.trim() || undefined,
       },
       ...(leadId ? { leadId } : {}),
@@ -913,9 +920,40 @@ export function NewCaseModal({
             </div>
           </div>
 
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <span style={{ fontSize: 12.5, fontWeight: 800, color: "var(--ink-2)" }}>
+              {strings.payFrequency}
+            </span>
+            <div style={{ display: "flex", gap: 8 }}>
+              {(["monthly", "weekly"] as const).map((f) => {
+                const on = frequency === f;
+                return (
+                  <button
+                    key={f}
+                    type="button"
+                    onClick={() => setFrequency(f)}
+                    style={{
+                      flex: 1,
+                      cursor: "pointer",
+                      borderRadius: 12,
+                      border: on ? "2px solid var(--accent)" : "1px solid var(--line)",
+                      background: on ? "var(--blue-soft)" : "var(--card)",
+                      padding: "9px 12px",
+                      fontSize: 13,
+                      fontWeight: on ? 800 : 500,
+                      color: on ? "var(--ink)" : "var(--ink-2)",
+                    }}
+                  >
+                    {f === "monthly" ? strings.payFrequencyMonthly : strings.payFrequencyWeekly}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {paymentValid && monthlyCount > 0 && (
             <p style={{ margin: 0, fontSize: 13, color: "var(--ink-2)" }}>
-              {interpStr(strings.payMonthlyPreview, {
+              {interpStr(frequency === "weekly" ? strings.payWeeklyPreview : strings.payMonthlyPreview, {
                 count: String(monthlyCount),
                 amount: formatUsd(monthlyCents),
               })}

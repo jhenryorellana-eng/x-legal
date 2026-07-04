@@ -46,6 +46,12 @@ export {
   getMonthlySummary,
   listLedger,
   sendInstallmentReminder,
+  // Autopay (DOC-71 §2.4)
+  createSetupCheckoutSession,
+  reconcileSetupSession,
+  setAutopay,
+  getSavedCard,
+  chargeDueInstallments,
 } from "./service";
 
 // Error class
@@ -78,6 +84,11 @@ export type {
   ListLedgerInput,
   LedgerEntryDto,
   MonthlySummaryDto,
+  // Autopay
+  SetAutopayInput,
+  SavedCardDto,
+  ChargeDueResult,
+  AutopayDisabledReason,
 } from "./service";
 
 // Domain (pure functions — safe to import widely)
@@ -85,10 +96,13 @@ export {
   buildInstallments,
   reanchorDueDates,
   addMonthsClamped,
+  addDaysUTC,
+  installmentDueDate,
   canTransitionInstallment,
   isOverdue,
   daysLate,
   PAYABLE_STATUSES,
+  DEFAULT_WEEKLY_ANCHOR,
 } from "./domain";
 
 export type {
@@ -96,6 +110,8 @@ export type {
   InstallmentPlan,
   InstallmentStatus,
   InstallmentTransitionActor,
+  PaymentFrequency,
+  WeeklyAnchorPolicy,
 } from "./domain";
 
 // STRONG-4: findInstallmentById / findInstallmentCaseId are NOT exported from
@@ -120,4 +136,6 @@ export type {
   PaymentProofSubmittedEvent,
   PaymentRefundedEvent,
   InstallmentOverdueEvent,
+  AutopayChargeFailedEvent,
+  AutopayDisabledEvent,
 } from "./events";

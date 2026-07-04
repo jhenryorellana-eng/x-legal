@@ -71,6 +71,7 @@ function makePlan(overrides: Partial<ServicePlan> = {}): ServicePlan {
     requires_lawyer_validation: false,
     default_installments: 1,
     default_downpayment_cents: null,
+    default_frequency: "monthly",
     is_active: true,
     ...overrides,
   };

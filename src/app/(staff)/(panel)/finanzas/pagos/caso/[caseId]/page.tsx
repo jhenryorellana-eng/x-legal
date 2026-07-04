@@ -31,6 +31,7 @@ import {
   getZelleProofViewUrlAction,
   rescheduleInstallmentAction,
   waiveInstallmentAction,
+  setAutopayAction,
 } from "./actions";
 
 // ---------------------------------------------------------------------------
@@ -101,9 +102,13 @@ export default async function PagosCasoPage({
       caseId,
       plan: stmt.plan
         ? {
+            id: stmt.plan.id,
             totalCents: stmt.plan.totalCents,
             downpaymentCents: stmt.plan.downpaymentCents,
             installmentCount: stmt.plan.installmentCount,
+            frequency: stmt.plan.frequency,
+            autopayEnabled: stmt.plan.autopayEnabled,
+            autopayDisabledReason: stmt.plan.autopayDisabledReason,
             notes: stmt.plan.notes,
           }
         : null,
@@ -130,6 +135,7 @@ export default async function PagosCasoPage({
           getZelleProofViewUrl: getZelleProofViewUrlAction,
           rescheduleInstallment: rescheduleInstallmentAction,
           waiveInstallment: waiveInstallmentAction,
+          setAutopay: setAutopayAction,
         }}
       />
     </div>

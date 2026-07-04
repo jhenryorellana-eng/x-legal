@@ -80,6 +80,7 @@ export const newCaseServicesMock: NewCaseService[] = [
         priceCents: 500000,
         downpaymentCents: 125000,
         installments: 4,
+        frequency: "monthly",
       },
       {
         kind: "self",
@@ -87,11 +88,12 @@ export const newCaseServicesMock: NewCaseService[] = [
         priceCents: 250000,
         downpaymentCents: 60000,
         installments: 4,
+        frequency: "monthly",
       },
     ],
     encodedByKind: {
-      with_lawyer: "svc-asilo|plan-wl|500000|125000|4",
-      self: "svc-asilo|plan-self|250000|60000|4",
+      with_lawyer: "svc-asilo|plan-wl|500000|125000|4|monthly",
+      self: "svc-asilo|plan-self|250000|60000|4|monthly",
     },
     partyRoles: [
       { roleKey: "spouse", label: "Cónyuge", cardinality: "single", required: false },
@@ -108,9 +110,10 @@ export const newCaseServicesMock: NewCaseService[] = [
         priceCents: 360000,
         downpaymentCents: 60000,
         installments: 6,
+        frequency: "weekly",
       },
     ],
-    encodedByKind: { self: "svc-sijs|plan-sijs|360000|60000|6" },
+    encodedByKind: { self: "svc-sijs|plan-sijs|360000|60000|6|weekly" },
     partyRoles: [],
   },
 ];
@@ -160,6 +163,9 @@ export const caseWorkspaceVmMock: CaseWorkspaceVM = {
     { id: "i3", number: 3, amountCents: 125000, status: "pending", isDownpayment: false, dueDate: "2026-08-15", payments: [] },
     { id: "i4", number: 4, amountCents: 125000, status: "pending", isDownpayment: false, dueDate: "2026-09-15", payments: [] },
   ],
+  planFrequency: "monthly",
+  planAutopayEnabled: false,
+  planAutopayDisabledReason: null,
   downpaymentInstallmentId: "i1",
   downpaymentAmountCents: 125000,
   timeline: [

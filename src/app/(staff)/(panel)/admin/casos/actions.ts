@@ -134,17 +134,19 @@ export interface CreateCaseUiInput {
     apartment?: string;
   };
   /**
-   * Encoded plan resolution: serviceId|planId|priceCents|downCents|installments.
+   * Encoded plan resolution: serviceId|planId|priceCents|downCents|installments|frequency.
    * Matches the encoding used by the plan selector in new-case-modal.tsx.
+   * The 6th field is optional (older 5-field encodings decode as monthly).
    */
   serviceId: string;
   planKind: "self" | "with_lawyer";
   parties: { name: string; role: string }[];
-  /** Per-contract payment plan override (price/downpayment/installments + note). */
+  /** Per-contract payment plan override (price/downpayment/installments/frequency + note). */
   paymentPlan?: {
     totalCents: number;
     downpaymentCents: number;
     installmentCount: number;
+    frequency?: "weekly" | "monthly";
     note?: string;
   };
   /** Set when the case is created from a lead card — links leads.won_case_id so
@@ -180,10 +182,13 @@ export async function createCaseAction(
     // Parse the encoded serviceId field from the modal selector (serviceId|planId
     // resolution). The price/downpayment/installments come from the per-contract
     // payment plan override when present, else the encoded service-plan defaults.
-    const [serviceId, planId, priceStr, downStr, instStr] = input.serviceId.split("|");
+    const [serviceId, planId, priceStr, downStr, instStr, freqStr] = input.serviceId.split("|");
     const priceCents = input.paymentPlan ? input.paymentPlan.totalCents : Number(priceStr);
     const downCents = input.paymentPlan ? input.paymentPlan.downpaymentCents : Number(downStr);
     const installments = input.paymentPlan ? input.paymentPlan.installmentCount : Number(instStr);
+    // 6th field is optional: 5-field encodings (pre-0063) decode as monthly.
+    const encodedFrequency = freqStr === "weekly" ? "weekly" : "monthly";
+    const frequency = input.paymentPlan?.frequency ?? encodedFrequency;
 
     // M-3 FIX: fail fast if any numeric plan field is NaN or non-positive.
     // `Number(x) || 0` masked malformed input and could produce zero-value contracts.
@@ -271,6 +276,7 @@ export async function createCaseAction(
         totalCents: priceCents,
         downpaymentCents: downCents,
         installmentCount: installments,
+        frequency,
         notes: input.paymentPlan?.note?.trim() || null,
       },
     });

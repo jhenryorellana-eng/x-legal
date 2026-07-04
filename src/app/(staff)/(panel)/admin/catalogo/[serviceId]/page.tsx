@@ -75,6 +75,7 @@ export default async function ServiceDetailPage({
       currency: p?.currency ?? "USD",
       default_installments: p?.default_installments ?? 1,
       default_downpayment_cents: p?.default_downpayment_cents ?? null,
+      default_frequency: p?.default_frequency === "weekly" ? "weekly" : "monthly",
       is_active: p?.is_active ?? false,
     };
   });

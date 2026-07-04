@@ -32,6 +32,7 @@ import {
   monthRange,
   previousMonth,
   PAYABLE_STATUSES,
+  type PaymentFrequency,
 } from "./domain";
 import { enqueueJob } from "@/backend/platform/qstash";
 import {
@@ -60,6 +61,16 @@ import {
   findPaymentBySessionId,
   findStripeCustomer,
   upsertStripeCustomer,
+  listPendingIntentPaymentsToReconcile,
+  upsertStripeCustomerCard,
+  findUserByStripeCustomerId,
+  findPaymentPlanById,
+  findCaseIdForPlan,
+  findPlanIdByCaseId,
+  findPlanClientUserId,
+  updatePaymentPlanAutopay,
+  listAutopayChargeTargets,
+  countFailedAutopayPayments,
   insertLedgerIfAbsent,
   listOverdueUniverse,
   listReminderTargets as repoListReminderTargets,
@@ -116,7 +127,11 @@ export class BillingError extends Error {
       | "LEDGER_ENTRY_NOT_FOUND"
       | "REMINDER_TOO_SOON"
       // Rate limiting (HIGH-3)
-      | "RATE_LIMITED",
+      | "RATE_LIMITED"
+      // Autopay (DOC-71 §2.4)
+      | "PAYMENT_PLAN_NOT_FOUND"
+      | "AUTOPAY_NO_CARD"
+      | "AUTOPAY_STAFF_CANNOT_ENABLE",
     public readonly details?: Record<string, unknown>,
   ) {
     super(code);
@@ -343,6 +358,25 @@ async function applyRefund(
   // Installment reverts to pending (DOC-71 §4.2); cron handles overdue next day
   await updateInstallment(installment.id, { status: "pending", paid_at: null });
 
+  // A refunded AUTOPAY charge means staff intervened (dispute/agreement) —
+  // never let the charge cron re-collect the reverted cuota automatically.
+  if (payment.autopay && installment.payment_plan_id) {
+    await disableAutopayForPlan(installment.payment_plan_id, "refund_issued");
+    if (caseId && orgId) {
+      await appEvents.emitAndWait({
+        type: "autopay.disabled",
+        payload: {
+          caseId,
+          orgId,
+          planId: installment.payment_plan_id,
+          installmentId: installment.id,
+          reason: "refund_issued",
+        },
+        occurredAt: new Date(),
+      });
+    }
+  }
+
   // Ledger entry (expense, 'reembolso') — idempotent
   if (caseId && orgId) {
     await insertLedgerIfAbsent({
@@ -433,6 +467,7 @@ const CreatePaymentPlanSchema = z.object({
   totalCents: z.number().int().positive(),
   downpaymentCents: z.number().int().positive(),
   installmentCount: z.number().int().min(1),
+  frequency: z.enum(["weekly", "monthly"]).default("monthly"),
   notes: z.string().nullable().optional(),
 });
 
@@ -471,6 +506,7 @@ export async function createPaymentPlan(
     total_cents: parsed.totalCents,
     downpayment_cents: parsed.downpaymentCents,
     installment_count: parsed.installmentCount,
+    frequency: parsed.frequency,
     notes: parsed.notes ?? null,
   });
 
@@ -481,6 +517,7 @@ export async function createPaymentPlan(
     downpaymentCents: parsed.downpaymentCents,
     installmentCount: parsed.installmentCount,
     startDate: today,
+    frequency: parsed.frequency,
   });
 
   const installmentRows = drafts.map((d) => ({
@@ -605,6 +642,7 @@ export async function getPaymentPlanForCase(
 export async function createCheckoutSessionForInstallment(
   actor: Actor,
   installmentId: string,
+  opts?: { enrollAutopay?: boolean },
 ): Promise<{ url: string }> {
   const installment = await findInstallmentById(installmentId);
   if (!installment) throw new BillingError("INSTALLMENT_NOT_FOUND");
@@ -633,6 +671,10 @@ export async function createCheckoutSessionForInstallment(
 
   const payerUserId = actor.userId;
   const stripeCustomerId = await resolveStripeCustomer(payerUserId);
+
+  // Autopay opt-in (DOC-71 §2.4): only the CLIENT can consent to saving their
+  // card — a staff-generated checkout never enrolls on the client's behalf.
+  const enrollAutopay = opts?.enrollAutopay === true && actor.kind === "client";
 
   // Resolve plan info for product name
   const orgId = await findOrgIdForCase(caseId);
@@ -707,12 +749,17 @@ export async function createCheckoutSessionForInstallment(
       installment_id: installmentId,
       case_id: caseId ?? "",
       org_id: orgId ?? "",
+      ...(enrollAutopay ? { autopay_optin: "1" } : {}),
     },
     payment_intent_data: {
+      // off_session future usage = Stripe collects the mandate during this
+      // interactive payment so later autopay charges (MIT) are authorized.
+      ...(enrollAutopay ? { setup_future_usage: "off_session" as const } : {}),
       metadata: {
         installment_id: installmentId,
         case_id: caseId ?? "",
         org_id: orgId ?? "",
+        ...(enrollAutopay ? { autopay_optin: "1" } : {}),
       },
     },
     expires_at: expiresAt,
@@ -735,6 +782,586 @@ export async function createCheckoutSessionForInstallment(
   }
 
   return { url: session.url };
+}
+
+// ---------------------------------------------------------------------------
+// Autopay (DOC-71 §2.4) — card capture + consent
+// ---------------------------------------------------------------------------
+
+export type AutopayDisabledReason =
+  | "card_declined_max_retries"
+  | "authentication_required"
+  | "customer_request"
+  | "staff_request"
+  | "refund_issued";
+
+/**
+ * Retrieves the payment method from Stripe and persists brand/last4/exp on
+ * stripe_customers as the user's default saved card.
+ */
+async function persistSavedCardFromPaymentMethod(
+  userId: string,
+  paymentMethodId: string,
+): Promise<void> {
+  const stripe = getStripe();
+  const pm = await stripe.paymentMethods.retrieve(paymentMethodId);
+  await upsertStripeCustomerCard(userId, {
+    paymentMethodId,
+    brand: pm.card?.brand ?? null,
+    last4: pm.card?.last4 ?? null,
+    expMonth: pm.card?.exp_month ?? null,
+    expYear: pm.card?.exp_year ?? null,
+  });
+}
+
+/**
+ * Enables autopay on a plan, recording the client's consent. The consent is
+ * persisted HERE — after the payment/enrollment is confirmed by Stripe — never
+ * at checkbox time (DOC-71 §2.4). Idempotent; timeline only on the OFF→ON edge.
+ */
+async function enableAutopayForPlan(planId: string, consentUserId: string): Promise<void> {
+  const plan = await findPaymentPlanById(planId);
+  const wasEnabled = plan?.autopay_enabled === true;
+
+  await updatePaymentPlanAutopay(planId, {
+    autopay_enabled: true,
+    autopay_consented_at: nowIso(),
+    autopay_consent_by: consentUserId,
+    autopay_disabled_reason: null,
+  });
+
+  if (!wasEnabled) {
+    const caseId = await findCaseIdForPlan(planId);
+    if (caseId) {
+      await writeBillingTimeline({
+        caseId,
+        eventType: "autopay.enabled",
+        titleI18n: {
+          en: "Automatic card payments enabled",
+          es: "Cobro automático con tarjeta activado",
+        },
+        visibleToClient: true,
+      });
+    }
+  }
+}
+
+/** Disables autopay on a plan with a reason + timeline (idempotent). */
+async function disableAutopayForPlan(
+  planId: string,
+  reason: AutopayDisabledReason,
+): Promise<void> {
+  const plan = await findPaymentPlanById(planId);
+  const wasEnabled = plan?.autopay_enabled === true;
+
+  await updatePaymentPlanAutopay(planId, {
+    autopay_enabled: false,
+    autopay_disabled_reason: reason,
+  });
+
+  if (wasEnabled) {
+    const caseId = await findCaseIdForPlan(planId);
+    if (caseId) {
+      await writeBillingTimeline({
+        caseId,
+        eventType: "autopay.disabled",
+        titleI18n: {
+          en: "Automatic card payments disabled",
+          es: "Cobro automático con tarjeta desactivado",
+        },
+        visibleToClient: true,
+      });
+    }
+  }
+}
+
+/**
+ * Creates a Checkout Session in mode="setup" so the client can save a card
+ * WITHOUT being charged (paid the downpayment via Zelle, or wants to replace
+ * the card). Clients only — staff cannot enroll a card on someone's behalf.
+ */
+export async function createSetupCheckoutSession(
+  actor: Actor,
+  caseId: string,
+): Promise<{ url: string }> {
+  if (actor.kind !== "client") throw new AuthzError("wrong_kind");
+  await requireCaseAccess(actor, caseId);
+
+  const rl = await limitBillingCheckout(actor.userId);
+  if (!rl.allowed) throw new BillingError("RATE_LIMITED");
+
+  const planId = await findPlanIdByCaseId(caseId);
+  if (!planId) throw new BillingError("PAYMENT_PLAN_NOT_FOUND");
+
+  const orgId = await findOrgIdForCase(caseId);
+  const stripeCustomerId = await resolveStripeCustomer(actor.userId);
+
+  const stripe = getStripe();
+  const session = await stripe.checkout.sessions.create({
+    mode: "setup",
+    customer: stripeCustomerId,
+    payment_method_types: ["card"],
+    metadata: {
+      purpose: "autopay_enroll",
+      payment_plan_id: planId,
+      case_id: caseId,
+      org_id: orgId ?? "",
+    },
+    success_url: `${env.NEXT_PUBLIC_APP_URL}/pagos/confirmacion?setup_session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${env.NEXT_PUBLIC_APP_URL}/pagos`,
+    locale: "auto",
+  });
+
+  if (!session.url) throw new Error("billing: Stripe setup session has no URL");
+  return { url: session.url };
+}
+
+/** Saved-card summary for the payments UI (never exposes the PM id). */
+export interface SavedCardDto {
+  brand: string | null;
+  last4: string | null;
+  expMonth: number | null;
+  expYear: number | null;
+}
+
+/**
+ * Returns the actor's own saved card (clients only — staff have no card here).
+ * Null when no card is enrolled.
+ */
+export async function getSavedCard(actor: Actor): Promise<SavedCardDto | null> {
+  if (actor.kind !== "client") return null;
+  const customer = await findStripeCustomer(actor.userId);
+  if (!customer?.default_payment_method_id) return null;
+  return {
+    brand: customer.card_brand,
+    last4: customer.card_last4,
+    expMonth: customer.card_exp_month,
+    expYear: customer.card_exp_year,
+  };
+}
+
+const SetAutopaySchema = z.object({
+  planId: z.string().uuid(),
+  enabled: z.boolean(),
+});
+
+export type SetAutopayInput = z.infer<typeof SetAutopaySchema>;
+
+/**
+ * Toggles autopay consent on a plan. Clients (case members) may enable —
+ * requires a saved card — and disable; staff (billing:edit) may only disable
+ * (consent belongs to the client, DOC-71 §2.4).
+ */
+export async function setAutopay(
+  actor: Actor,
+  input: SetAutopayInput,
+): Promise<void> {
+  const parsed = SetAutopaySchema.parse(input);
+
+  const plan = await findPaymentPlanById(parsed.planId);
+  if (!plan) throw new BillingError("PAYMENT_PLAN_NOT_FOUND");
+
+  const caseId = await findCaseIdForPlan(parsed.planId);
+
+  if (actor.kind === "client") {
+    if (!caseId) throw new AuthzError("forbidden_case");
+    await requireCaseAccess(actor, caseId);
+
+    if (parsed.enabled) {
+      const customer = await findStripeCustomer(actor.userId);
+      if (!customer?.default_payment_method_id) {
+        throw new BillingError("AUTOPAY_NO_CARD");
+      }
+      await enableAutopayForPlan(parsed.planId, actor.userId);
+    } else {
+      await disableAutopayForPlan(parsed.planId, "customer_request");
+    }
+    return;
+  }
+
+  // Staff: billing:edit + same-org guard (CRITICAL-1 pattern)
+  can(actor, "billing", "edit");
+  const orgId = await findOrgIdForCase(caseId);
+  if (orgId && orgId !== actor.orgId) throw new AuthzError("cross_org_access_denied");
+
+  if (parsed.enabled) throw new BillingError("AUTOPAY_STAFF_CANNOT_ENABLE");
+
+  await disableAutopayForPlan(parsed.planId, "staff_request");
+  await writeAudit(actor, "billing.autopay.disabled", "payment_plans", parsed.planId, {
+    after: { reason: "staff_request" },
+  });
+}
+
+/**
+ * Handles a completed mode="setup" Checkout Session: persists the captured
+ * payment method as the client's saved card and enables autopay on the plan.
+ *
+ * All identities derive from the BD (customer→user mapping, plan→client) —
+ * metadata is only used for the plan pointer and is cross-checked (MED-3 spirit).
+ * `webhookKey` null = called from the L2 return-URL reconcile (no webhook row).
+ */
+async function handleSetupSessionCompleted(
+  session: import("stripe").Stripe.Checkout.Session,
+  webhookKey: string | null,
+): Promise<void> {
+  const source = "stripe";
+  const fail = async (msg: string) => {
+    if (webhookKey) await markWebhookError(source, webhookKey, msg);
+    else logger.warn({ sessionId: session.id }, `billing.setupSession: ${msg}`);
+  };
+
+  if (session.metadata?.purpose !== "autopay_enroll") return; // not ours — ignore
+  if (session.status !== "complete") return;
+
+  const planId = session.metadata?.payment_plan_id ?? null;
+  const customerId =
+    typeof session.customer === "string" ? session.customer : session.customer?.id ?? null;
+  const setupIntentId =
+    typeof session.setup_intent === "string" ? session.setup_intent : session.setup_intent?.id ?? null;
+
+  if (!planId || !customerId || !setupIntentId) {
+    await fail(`setup session ${session.id}: missing plan/customer/setup_intent`);
+    return;
+  }
+
+  const userId = await findUserByStripeCustomerId(customerId);
+  if (!userId) {
+    await fail(`setup session ${session.id}: no user for customer ${customerId}`);
+    return;
+  }
+
+  // Defense-in-depth: the metadata plan must belong to THIS customer's client.
+  const planClient = await findPlanClientUserId(planId);
+  if (planClient !== userId) {
+    await fail(`setup session ${session.id}: plan ${planId} does not belong to customer's client`);
+    return;
+  }
+
+  const stripe = getStripe();
+  const seti = await stripe.setupIntents.retrieve(setupIntentId);
+  const pmId =
+    typeof seti.payment_method === "string" ? seti.payment_method : seti.payment_method?.id ?? null;
+  if (!pmId) {
+    await fail(`setup session ${session.id}: setup intent has no payment method`);
+    return;
+  }
+
+  await persistSavedCardFromPaymentMethod(userId, pmId);
+  await enableAutopayForPlan(planId, userId);
+}
+
+/**
+ * After a PAID checkout session with the autopay opt-in flag settles, persist
+ * the card used and enable autopay. Failure here must NEVER break settlement —
+ * the client can always re-enroll via the mode="setup" flow.
+ */
+async function maybeEnrollAutopayFromPaidSession(
+  session: import("stripe").Stripe.Checkout.Session,
+  payment: PaymentRow,
+  installment: InstallmentRow,
+): Promise<void> {
+  if (session.metadata?.autopay_optin !== "1") return;
+  if (!payment.payer_user_id || !installment.payment_plan_id) return;
+
+  try {
+    const intentId =
+      typeof session.payment_intent === "string"
+        ? session.payment_intent
+        : session.payment_intent?.id ?? null;
+    if (!intentId) return;
+
+    const stripe = getStripe();
+    const intent = await stripe.paymentIntents.retrieve(intentId);
+    const pmId =
+      typeof intent.payment_method === "string"
+        ? intent.payment_method
+        : intent.payment_method?.id ?? null;
+    if (!pmId) return;
+
+    await persistSavedCardFromPaymentMethod(payment.payer_user_id, pmId);
+    await enableAutopayForPlan(installment.payment_plan_id, payment.payer_user_id);
+  } catch (err) {
+    logger.warn(
+      { err, paymentId: payment.id, sessionId: session.id },
+      "billing: autopay enrollment after settle failed — payment remains settled",
+    );
+  }
+}
+
+export interface ChargeDueResult {
+  examined: number;
+  charged: number;
+  failed: number;
+  skipped: number;
+  killSwitched: number;
+}
+
+/** Retry policy (Henry 2026-07-03): daily retry ×3, then kill-switch. */
+const MAX_AUTOPAY_ATTEMPTS = 3;
+
+interface StripeCardErrorLike {
+  type?: string;
+  code?: string | null;
+  decline_code?: string | null;
+  payment_intent?: { id?: string } | null;
+}
+
+function isStripeCardError(err: unknown): err is StripeCardErrorLike {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    (err as { type?: string }).type === "StripeCardError"
+  );
+}
+
+type AutopayChargeTargetRow = Awaited<ReturnType<typeof listAutopayChargeTargets>>[number];
+
+async function emitAutopayDisabled(
+  target: AutopayChargeTargetRow,
+  reason: AutopayDisabledReason,
+): Promise<void> {
+  await appEvents.emitAndWait({
+    type: "autopay.disabled",
+    payload: {
+      caseId: target.caseId,
+      orgId: target.orgId,
+      planId: target.planId,
+      installmentId: target.installmentId,
+      reason,
+    },
+    occurredAt: new Date(),
+  });
+}
+
+/**
+ * Failure path of one autopay charge: mark the payment failed, revert the
+ * installment, then decide — SCA disables immediately (retrying off-session is
+ * pointless), the 3rd decline trips the kill-switch, otherwise notify attempt N.
+ */
+async function handleAutopayChargeError(
+  err: unknown,
+  target: AutopayChargeTargetRow,
+  localPayment: PaymentRow,
+  installment: InstallmentRow,
+  priorAttempts: number,
+): Promise<void> {
+  const cardError = isStripeCardError(err) ? err : null;
+
+  // Link the PI if Stripe created one before failing — lets payment_intent.*
+  // webhooks and the reconcile sweep resolve this row.
+  const intentId = cardError?.payment_intent?.id ?? null;
+  if (intentId) {
+    await updatePayment(localPayment.id, { stripe_payment_intent_id: intentId });
+  }
+
+  await applyPaymentFailure(localPayment, installment);
+
+  if (cardError?.code === "authentication_required") {
+    await disableAutopayForPlan(target.planId, "authentication_required");
+    await emitAutopayDisabled(target, "authentication_required");
+    return;
+  }
+
+  const attemptNumber = priorAttempts + 1;
+  if (attemptNumber >= MAX_AUTOPAY_ATTEMPTS) {
+    await disableAutopayForPlan(target.planId, "card_declined_max_retries");
+    await emitAutopayDisabled(target, "card_declined_max_retries");
+    return;
+  }
+
+  await appEvents.emitAndWait({
+    type: "autopay.charge_failed",
+    payload: {
+      caseId: target.caseId,
+      orgId: target.orgId,
+      planId: target.planId,
+      installmentId: target.installmentId,
+      number: target.number,
+      amountCents: target.amountCents,
+      attempt: attemptNumber,
+      maxAttempts: MAX_AUTOPAY_ATTEMPTS,
+      reason: cardError ? (cardError.decline_code ?? cardError.code ?? "card_error") : "provider_error",
+    },
+    occurredAt: new Date(),
+  });
+}
+
+/**
+ * Daily MIT charge cron (DOC-71 §2.4): charges due installments of
+ * autopay-enrolled plans off-session with the client's saved card.
+ *
+ * Per target:
+ *   1. Derived retry count (failed autopay payments) — ≥3 → kill-switch.
+ *   2. Mutex FIRST: insert the payments row (BLOCKER-2 pattern; the unique
+ *      partial index rejects a concurrent manual checkout / double cron run).
+ *   3. PaymentIntent off_session+confirm, amount ALWAYS from BD, idempotencyKey
+ *      bound to the local payment row.
+ *   4. Inline settle on success (webhook stays as idempotent backstop).
+ *
+ * Runs daily → a failed attempt naturally retries the next day (policy ×3).
+ */
+export async function chargeDueInstallments(
+  actor: Actor,
+  todayArg?: string,
+): Promise<ChargeDueResult> {
+  requireSystemActor(actor);
+  const today = todayArg ?? todayIso();
+
+  const targets = await listAutopayChargeTargets(today);
+  const result: ChargeDueResult = {
+    examined: targets.length,
+    charged: 0,
+    failed: 0,
+    skipped: 0,
+    killSwitched: 0,
+  };
+
+  const stripe = getStripe();
+
+  for (const target of targets) {
+    try {
+      // Retry counter scoped to the CURRENT consent cycle: re-enrolling a new
+      // card (which stamps a fresh autopay_consented_at) resets the count, so
+      // the kill-switch never fires without trying the new card at least once.
+      const priorAttempts = await countFailedAutopayPayments(
+        target.installmentId,
+        target.autopayConsentedAt,
+      );
+      if (priorAttempts >= MAX_AUTOPAY_ATTEMPTS) {
+        await disableAutopayForPlan(target.planId, "card_declined_max_retries");
+        await emitAutopayDisabled(target, "card_declined_max_retries");
+        result.killSwitched += 1;
+        continue;
+      }
+
+      let localPayment: PaymentRow;
+      try {
+        localPayment = await insertPayment({
+          installment_id: target.installmentId,
+          method: "stripe",
+          status: "pending",
+          autopay: true,
+          amount_cents: target.amountCents, // ALWAYS from BD (DOC-71 §7)
+          payer_user_id: target.clientUserId,
+          stripe_checkout_session_id: null,
+          stripe_payment_intent_id: null,
+          confirmed_by: null,
+          confirmed_at: null,
+          zelle_proof_path: null,
+        });
+      } catch (err) {
+        if ((err as { code?: string }).code === "23505") {
+          // A manual checkout (or concurrent run) holds the mutex — skip.
+          result.skipped += 1;
+          continue;
+        }
+        throw err;
+      }
+
+      const installment = await findInstallmentById(target.installmentId);
+      if (!installment) {
+        await updatePayment(localPayment.id, { status: "failed" });
+        result.skipped += 1;
+        continue;
+      }
+
+      // NOTE: the installment is NOT marked "processing" before the Stripe
+      // call (same invariant as the manual checkout flow): if the process dies
+      // mid-call, the cuota stays pending/overdue and remains chargeable/
+      // payable; the orphan sweep only has to free the payments mutex.
+      try {
+        const intent = await stripe.paymentIntents.create(
+          {
+            amount: target.amountCents,
+            currency: "usd",
+            customer: target.stripeCustomerId,
+            payment_method: target.paymentMethodId,
+            off_session: true,
+            confirm: true,
+            metadata: {
+              installment_id: target.installmentId,
+              case_id: target.caseId,
+              org_id: target.orgId,
+              autopay: "1",
+            },
+          },
+          { idempotencyKey: `autopay:${localPayment.id}` },
+        );
+
+        await updatePayment(localPayment.id, { stripe_payment_intent_id: intent.id });
+
+        if (intent.status === "succeeded") {
+          await applyPaymentSuccess(localPayment, installment, target.caseId, target.orgId);
+          result.charged += 1;
+        } else {
+          // processing / requires_capture etc. — the payment_intent.* webhook
+          // and the reconcile sweep settle or fail it later. Only NOW (with a
+          // live intent) is "processing" a truthful installment state.
+          await updateInstallment(target.installmentId, { status: "processing" });
+          logger.info(
+            { intentId: intent.id, status: intent.status, installmentId: target.installmentId },
+            "billing.autopay: intent not settled inline — deferred to webhook/reconcile",
+          );
+        }
+      } catch (err) {
+        result.failed += 1;
+        await handleAutopayChargeError(err, target, localPayment, installment, priorAttempts);
+      }
+    } catch (err) {
+      logger.error(
+        { err, installmentId: target.installmentId },
+        "billing.autopay: unexpected error on target — continuing",
+      );
+    }
+  }
+
+  if (result.examined > 0) {
+    logger.info(
+      { job: "charge-due-installments", ...result },
+      "billing.autopay: run complete",
+    );
+  }
+  return result;
+}
+
+/**
+ * L2 reconcile for the mode="setup" return URL
+ * (`/pagos/confirmacion?setup_session_id=…`). Retrieves the session from
+ * Stripe (authoritative — never trusts client-reported state) and runs the
+ * same persistence as the webhook. Idempotent and safe to poll.
+ */
+export async function reconcileSetupSession(
+  actor: Actor,
+  sessionId: string,
+): Promise<{ enrolled: boolean }> {
+  const stripe = getStripe();
+  let session: import("stripe").Stripe.Checkout.Session;
+  try {
+    session = await stripe.checkout.sessions.retrieve(sessionId);
+  } catch {
+    throw new BillingError("PAYMENT_NOT_PENDING");
+  }
+  if (session.mode !== "setup" || session.metadata?.purpose !== "autopay_enroll") {
+    throw new BillingError("PAYMENT_NOT_PENDING");
+  }
+
+  const planId = session.metadata?.payment_plan_id ?? null;
+  const caseId = planId ? await findCaseIdForPlan(planId) : null;
+  if (actor.kind === "client") {
+    if (!caseId) throw new AuthzError("forbidden_case");
+    await requireCaseAccess(actor, caseId);
+  } else {
+    can(actor, "billing", "edit");
+    // Same-org guard (CRITICAL-1 pattern, mirrors setAutopay): staff must not
+    // reconcile enrollment sessions of another org's case.
+    const orgId = await findOrgIdForCase(caseId);
+    if (orgId && orgId !== actor.orgId) throw new AuthzError("cross_org_access_denied");
+  }
+
+  await handleSetupSessionCompleted(session, null);
+
+  const plan = planId ? await findPaymentPlanById(planId) : null;
+  return { enrolled: plan?.autopay_enabled === true };
 }
 
 // ---------------------------------------------------------------------------
@@ -774,7 +1401,12 @@ async function settlePaidCheckoutSession(
   // We skip even the intent-link write: the intent was linked when the payment
   // was first settled. Reported distinctly so the cron telemetry does not count
   // already-confirmed rows as "settled this run".
-  if (installment.status === "paid") return "already_settled";
+  if (installment.status === "paid") {
+    // Enrollment may still be pending if the process crashed between the
+    // settle and the enroll on a prior attempt — idempotent, so re-run it.
+    await maybeEnrollAutopayFromPaidSession(session, payment, installment);
+    return "already_settled";
+  }
 
   // Link payment → intent INSIDE the not-yet-paid guard (consistent with the
   // applyPaymentSuccess crash-safety contract — no writes once paid).
@@ -790,6 +1422,9 @@ async function settlePaidCheckoutSession(
   // (23505) race protection — the early return above is an optimisation and
   // accurate telemetry, NOT the safety mechanism against concurrent layers.
   await applyPaymentSuccess(payment, installment, caseId, orgId);
+
+  // Autopay opt-in: enroll AFTER the money is settled (never blocks settlement).
+  await maybeEnrollAutopayFromPaidSession(session, payment, installment);
   return "settled_now";
 }
 
@@ -817,6 +1452,12 @@ export async function handleStripeEvent(
     // -----------------------------------------------------------------------
     case "checkout.session.completed": {
       const session = event.data.object as import("stripe").Stripe.Checkout.Session;
+      // Autopay enrollment sessions (mode=setup) carry no money — they only
+      // capture a payment method (DOC-71 §2.4).
+      if (session.mode === "setup") {
+        await handleSetupSessionCompleted(session, webhookKey);
+        break;
+      }
       // Funnel through the shared settle path (same logic used by the reconcile
       // layers). "not_paid" → no-op; "no_payment" → record a webhook error.
       const outcome = await settlePaidCheckoutSession(session);
@@ -1059,14 +1700,50 @@ export async function reconcilePendingStripePayments(
     }
   }
 
+  // Twin sweep: autopay MIT charges (intent set, session NULL) whose inline
+  // settle or webhook never landed (DOC-71 §2.4).
+  const pendingIntents = await listPendingIntentPaymentsToReconcile(cutoffIso);
+  for (const payment of pendingIntents) {
+    if (!payment.stripe_payment_intent_id) continue;
+    try {
+      const intent = await stripe.paymentIntents.retrieve(payment.stripe_payment_intent_id);
+      const installment = await findInstallmentById(payment.installment_id);
+      if (!installment) continue;
+
+      if (intent.status === "succeeded") {
+        if (installment.status === "paid") {
+          alreadySettled += 1;
+          continue;
+        }
+        const caseId = await findInstallmentCaseId(installment.id);
+        const orgId = await findOrgIdForCase(caseId);
+        await applyPaymentSuccess(payment, installment, caseId, orgId);
+        settled += 1;
+      } else if (intent.status === "canceled" || intent.status === "requires_payment_method") {
+        // requires_payment_method = the off-session confirm was declined and
+        // the intent cannot recover without a new PM — mark the row failed so
+        // tomorrow's cron can retry with a fresh payment (mutex freed).
+        await applyPaymentFailure(payment, installment);
+        expired += 1;
+      }
+      // requires_action / processing → leave pending; a later sweep resolves it.
+    } catch (err) {
+      logger.warn(
+        { err, paymentId: payment.id, intentId: payment.stripe_payment_intent_id },
+        "billing.reconcilePendingStripePayments: failed to reconcile one intent — continuing",
+      );
+    }
+  }
+
+  const examined = pending.length + pendingIntents.length;
   if (settled > 0 || expired > 0 || alreadySettled > 0) {
     logger.info(
-      { job: "reconcile-stripe-payments", examined: pending.length, settled, alreadySettled, expired },
+      { job: "reconcile-stripe-payments", examined, settled, alreadySettled, expired },
       "billing: reconciled pending stripe payments",
     );
   }
 
-  return { reconciled: pending.length, settled, alreadySettled, expired };
+  return { reconciled: examined, settled, alreadySettled, expired };
 }
 
 // ---------------------------------------------------------------------------
@@ -1390,7 +2067,7 @@ export async function onContractSigned(payload: {
   // Resolve plan via contractId
   const { data: plan } = await supabase
     .from("payment_plans")
-    .select("id, installment_count")
+    .select("id, installment_count, frequency")
     .eq("contract_id", payload.contractId)
     .maybeSingle();
 
@@ -1433,7 +2110,11 @@ export async function onContractSigned(payload: {
     isDownpayment: i.is_downpayment,
   }));
 
-  const reanchored = reanchorDueDates(drafts, anchorLocalDate);
+  const reanchored = reanchorDueDates(
+    drafts,
+    anchorLocalDate,
+    (plan.frequency ?? "monthly") as PaymentFrequency,
+  );
 
   // Update due dates
   for (const d of reanchored) {
@@ -1691,6 +2372,8 @@ export interface ReminderTarget {
   clientUserId: string | null;
   dueDate: string;
   number: number;
+  /** Plan is autopay-enrolled — the reminders job skips due-day and uses the autopay copy for due-3d. */
+  autopayEnabled: boolean;
 }
 
 export async function listReminderTargets(today: string, actor?: Actor): Promise<ReminderTarget[]> {

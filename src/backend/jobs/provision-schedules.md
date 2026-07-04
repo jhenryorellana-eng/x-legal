@@ -20,6 +20,7 @@ them here.
 | `0 7 * * *`      | `purge-retention`         | `{jobKey,entityId:null,attempt:1,dedupeId:"purge-retention:<YYYY-MM-DD>"}` | 02:00 ET, low traffic                  |
 | `17 * * * *`     | `expire-stale-checkouts`  | `{jobKey,entityId:null,attempt:1,dedupeId:"expire-stale-checkouts:<YYYY-MM-DD-HH>"}` | Hourly; clears orphaned pending/stripe payments (session_id null > 60min) |
 | `*/15 * * * *`   | `reconcile-stripe-payments` | `{jobKey,entityId:null,attempt:1,dedupeId:"reconcile-stripe-payments:<ISO-15min-window>"}` | Every 15 min; settles/expires created-but-unconfirmed Stripe sessions (session_id NOT null > 3min) — card-confirmation safety net |
+| `30 10 * * *`    | `charge-due-installments` | `{jobKey,entityId:null,attempt:1,dedupeId:"charge-due-installments:<YYYY-MM-DD>"}` | Daily autopay MIT charges (DOC-71 §2.4). MUST run BEFORE installment-reminders (11:00) so charged cuotas are processing/paid when reminders compute |
 
 ## Provisioning commands (Upstash CLI)
 
@@ -57,6 +58,13 @@ upstash qstash schedule create \
   --cron "*/15 * * * *" \
   --url "${APP_URL}/api/webhooks/qstash/reconcile-stripe-payments" \
   --body '{"jobKey":"reconcile-stripe-payments","entityId":null,"attempt":1,"dedupeId":"reconcile-stripe-payments:__window__"}' \
+  --retries 1
+
+# charge-due-installments — daily 10:30 UTC (autopay MIT charges, before installment-reminders)
+upstash qstash schedule create \
+  --cron "30 10 * * *" \
+  --url "${APP_URL}/api/webhooks/qstash/charge-due-installments" \
+  --body '{"jobKey":"charge-due-installments","entityId":null,"attempt":1,"dedupeId":"charge-due-installments:__date__"}' \
   --retries 1
 ```
 

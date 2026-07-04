@@ -44,6 +44,7 @@ import { handleRetryAbogadosPolling } from "@/backend/jobs/retry-abogados-pollin
 import { handleInstallmentReminders } from "@/backend/jobs/installment-reminders";
 import { handleExpireStaleCheckouts } from "@/backend/jobs/expire-stale-checkouts";
 import { handleReconcileStripePayments } from "@/backend/jobs/reconcile-stripe-payments";
+import { handleChargeDueInstallments } from "@/backend/jobs/charge-due-installments";
 import { handleSendCampaign } from "@/backend/jobs/send-campaign";
 import { handleFetchExhibit } from "@/backend/jobs/fetch-exhibit";
 
@@ -76,6 +77,8 @@ const JOB_REGISTRY: Record<string, JobHandler> = {
   "expire-stale-checkouts": handleExpireStaleCheckouts,
   // Billing cron — reconcile created-but-unconfirmed Stripe sessions (card safety net)
   "reconcile-stripe-payments": handleReconcileStripePayments,
+  // Billing cron — daily off-session autopay charges (DOC-71 §2.4)
+  "charge-due-installments": handleChargeDueInstallments,
   // F6-Ola3 campaigns (DOC-26 §2.5)
   "send-campaign": handleSendCampaign,
   // Exhibits — download/render ONE cited source to a PDF annex (fan-out per exhibit)

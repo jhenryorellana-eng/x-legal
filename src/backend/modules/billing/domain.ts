@@ -67,6 +67,61 @@ export function canTransitionInstallment(
 }
 
 // ---------------------------------------------------------------------------
+// PaymentFrequency — installment cadence (DOC-44 §2.1, extended 2026-07-03)
+// ---------------------------------------------------------------------------
+
+/** Cadence of the non-downpayment cuotas. Extensible to "biweekly" later. */
+export type PaymentFrequency = "weekly" | "monthly";
+
+/**
+ * How weekly cuotas anchor to a weekday.
+ *   - same-weekday: cuota k = anchor + 7k days (signs Thursday → Thursdays)
+ *   - fixed-weekday: cuota k = k-th occurrence of `weekday` strictly after the
+ *     anchor (0=Sunday .. 6=Saturday)
+ */
+export type WeeklyAnchorPolicy =
+  | { kind: "same-weekday" }
+  | { kind: "fixed-weekday"; weekday: number };
+
+/** Business decision (Henry, 2026-07-03): weekly cuotas follow the signing weekday. */
+export const DEFAULT_WEEKLY_ANCHOR: WeeklyAnchorPolicy = { kind: "same-weekday" };
+
+/**
+ * Due date of cuota k (k >= 1) for a plan anchored at `anchor` (YYYY-MM-DD).
+ *
+ * The single source of the schedule rule — buildInstallments and
+ * reanchorDueDates both delegate here.
+ */
+export function installmentDueDate(
+  anchor: string,
+  k: number,
+  frequency: PaymentFrequency,
+  weeklyAnchor: WeeklyAnchorPolicy = DEFAULT_WEEKLY_ANCHOR,
+): string {
+  if (frequency === "monthly") {
+    return addMonthsClamped(anchor, k);
+  }
+  if (weeklyAnchor.kind === "same-weekday") {
+    return addDaysUTC(anchor, 7 * k);
+  }
+  // fixed-weekday: k-th occurrence of the weekday STRICTLY after the anchor
+  // (anchor already on that weekday → first cuota lands a full week later).
+  const anchorWeekday = new Date(`${anchor}T00:00:00Z`).getUTCDay();
+  const daysToFirst = ((weeklyAnchor.weekday - anchorWeekday + 6) % 7) + 1;
+  return addDaysUTC(anchor, daysToFirst + 7 * (k - 1));
+}
+
+/**
+ * Adds `days` to an ISO date (YYYY-MM-DD) using pure UTC arithmetic
+ * (no local-timezone/DST drift).
+ */
+export function addDaysUTC(isoDate: string, days: number): string {
+  const date = new Date(`${isoDate}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+// ---------------------------------------------------------------------------
 // buildInstallments — pure payment plan computation
 // ---------------------------------------------------------------------------
 
@@ -90,6 +145,10 @@ export interface BuildInstallmentsInput {
   installmentCount: number;
   /** ISO date for the downpayment due date (anchor — usually the signing date) */
   startDate: string;
+  /** Cadence of cuotas 1..N-1 (default "monthly" — pre-feature plans) */
+  frequency?: PaymentFrequency;
+  /** Weekly anchoring policy (default DEFAULT_WEEKLY_ANCHOR) */
+  weeklyAnchor?: WeeklyAnchorPolicy;
 }
 
 /**
@@ -107,7 +166,14 @@ export interface BuildInstallmentsInput {
  * @throws Error on invariant violation (programming error, not user error)
  */
 export function buildInstallments(input: BuildInstallmentsInput): InstallmentDraft[] {
-  const { totalCents, downpaymentCents, installmentCount, startDate } = input;
+  const {
+    totalCents,
+    downpaymentCents,
+    installmentCount,
+    startDate,
+    frequency = "monthly",
+    weeklyAnchor = DEFAULT_WEEKLY_ANCHOR,
+  } = input;
 
   if (installmentCount < 1) {
     throw new Error("billing: installmentCount must be >= 1");
@@ -153,7 +219,7 @@ export function buildInstallments(input: BuildInstallmentsInput): InstallmentDra
       ? remainder - alreadyAllocated
       : baseAmount;
 
-    const dueDate = addMonthsClamped(startDate, i + 1);
+    const dueDate = installmentDueDate(startDate, i + 1, frequency, weeklyAnchor);
 
     plans.push({
       number,
@@ -182,12 +248,14 @@ export function buildInstallments(input: BuildInstallmentsInput): InstallmentDra
 export function reanchorDueDates(
   installments: InstallmentDraft[],
   anchorLocalDate: string, // YYYY-MM-DD
+  frequency: PaymentFrequency = "monthly",
+  weeklyAnchor: WeeklyAnchorPolicy = DEFAULT_WEEKLY_ANCHOR,
 ): InstallmentDraft[] {
   return installments.map((inst) => ({
     ...inst,
     dueDate: inst.isDownpayment
       ? anchorLocalDate
-      : addMonthsClamped(anchorLocalDate, inst.number),
+      : installmentDueDate(anchorLocalDate, inst.number, frequency, weeklyAnchor),
   }));
 }
 
