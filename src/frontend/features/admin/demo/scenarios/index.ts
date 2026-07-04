@@ -2,6 +2,7 @@ import type { DemoScenario } from "./types";
 import { asiloPolitico } from "./asilo-politico";
 import { reforzarAsilo } from "./reforzar-asilo";
 import { apelacion } from "./apelacion";
+import { cambioDeCorte } from "./cambio-de-corte";
 
 /**
  * Registry of demo scenarios, keyed by service slug. Adding a new service to the
@@ -13,6 +14,7 @@ export const DEMO_SCENARIOS: Record<string, DemoScenario> = {
   [asiloPolitico.slug]: asiloPolitico,
   [reforzarAsilo.slug]: reforzarAsilo,
   [apelacion.slug]: apelacion,
+  [cambioDeCorte.slug]: cambioDeCorte,
 };
 
 export function getScenario(slug: string): DemoScenario | undefined {

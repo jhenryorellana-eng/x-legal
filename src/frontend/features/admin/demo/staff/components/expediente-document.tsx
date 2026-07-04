@@ -304,8 +304,10 @@ export function ExpedienteDocument({
           <SectionKicker>Resumen del caso</SectionKicker>
           <SectionTitle>Tabla cronológica de hechos</SectionTitle>
           <div style={{ marginTop: 16 }}>
-            {exp.chronology.map((row) => (
-              <div key={row.when} style={{ display: "flex", gap: 14, padding: "11px 0", borderBottom: `1px solid ${LINE}` }}>
+            {exp.chronology.map((row, i) => (
+              // Positional key: a chronology can legitimately have several events
+              // in the same period (e.g. two "Jul 2026" rows), so `when` is not unique.
+              <div key={i} style={{ display: "flex", gap: 14, padding: "11px 0", borderBottom: `1px solid ${LINE}` }}>
                 <span style={{ width: 96, flexShrink: 0, fontSize: 12.5, color: NAVY, fontWeight: 800 }}>{row.when}</span>
                 <span style={{ fontSize: 13, color: INK, fontWeight: 600, lineHeight: 1.5 }}>{row.event}</span>
               </div>

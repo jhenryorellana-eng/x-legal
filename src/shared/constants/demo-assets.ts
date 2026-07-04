@@ -41,6 +41,11 @@ export const DEMO_ASSET_SLOTS: Record<string, readonly DemoAssetSlot[]> = {
     { key: "brief", title: "Carta de Apelación (Appeal Brief)", tabLabel: "Generaciones" },
     { key: "expediente", title: "Paquete de apelación", tabLabel: "Expediente" },
   ],
+  "cambio-de-corte": [
+    { key: "eoir33", title: "Formulario EOIR-33", tabLabel: "Automatización" },
+    { key: "mocion", title: "Moción de Cambio de Corte", tabLabel: "Generaciones" },
+    { key: "expediente", title: "Paquete de cambio de corte", tabLabel: "Expediente" },
+  ],
 };
 
 export function getDemoAssetSlots(slug: string): readonly DemoAssetSlot[] {
