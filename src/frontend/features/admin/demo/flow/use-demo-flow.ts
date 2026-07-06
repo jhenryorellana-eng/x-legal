@@ -19,7 +19,8 @@ export type DemoStage =
   | "pagos"
   | "disclaimer"
   | "caseDocs"
-  | "caseForms";
+  | "caseForms"
+  | "caseCitas";
 
 export type DemoOverlay =
   | null
@@ -28,7 +29,14 @@ export type DemoOverlay =
   | "paySuccess"
   | "disclaimerOk"
   | "docSuccess"
-  | "formSent";
+  | "formSent"
+  | "citaSuccess";
+
+/** The appointment the client "booked" in the Citas tab (pure UI, no backend). */
+export interface BookedCita {
+  dateLabel: string;
+  hourLabel: string;
+}
 
 export type DocStatus = "pendiente" | "subiendo" | "subido";
 
@@ -43,6 +51,8 @@ export interface DemoFlowState {
   sentForms: string[];
   /** Form being reviewed (full-screen panel over the forms stage). */
   reviewFormId: string | null;
+  /** Confirmed appointment; drives the "cita agendada" state of the Citas tab. */
+  bookedCita: BookedCita | null;
 }
 
 type Action =
@@ -55,7 +65,9 @@ type Action =
   | { type: "confirmPay" }
   | { type: "disclaimerOk" }
   | { type: "enterCase" }
-  | { type: "tab"; stage: "caseDocs" | "caseForms" }
+  | { type: "tab"; stage: "caseDocs" | "caseForms" | "caseCitas" }
+  | { type: "bookCita"; cita: BookedCita }
+  | { type: "confirmCita" }
   | { type: "docUploading"; id: string }
   | { type: "docSuccess" }
   | { type: "confirmDoc" }
@@ -76,6 +88,7 @@ function initialState(scenario: DemoScenario): DemoFlowState {
     activeDocId: null,
     sentForms: [],
     reviewFormId: null,
+    bookedCita: null,
   };
 }
 
@@ -99,6 +112,10 @@ function reducer(state: DemoFlowState, action: Action): DemoFlowState {
       return { ...state, stage: "caseDocs", overlay: null };
     case "tab":
       return { ...state, stage: action.stage, overlay: null, reviewFormId: null };
+    case "bookCita":
+      return { ...state, overlay: "citaSuccess", bookedCita: action.cita };
+    case "confirmCita":
+      return { ...state, overlay: null };
     case "docUploading":
       return {
         ...state,
@@ -151,7 +168,9 @@ export interface DemoFlowActions {
   openCase: () => void;
   acceptDisclaimer: () => void;
   enterCase: () => void;
-  tab: (stage: "caseDocs" | "caseForms") => void;
+  tab: (stage: "caseDocs" | "caseForms" | "caseCitas") => void;
+  bookCita: (cita: BookedCita) => void;
+  confirmCita: () => void;
   uploadDoc: (id: string) => void;
   confirmDoc: () => void;
   review: (id: string) => void;
@@ -205,6 +224,8 @@ export function useDemoFlow(scenario: DemoScenario): DemoFlow {
       acceptDisclaimer: () => dispatch({ type: "disclaimerOk" }),
       enterCase: () => dispatch({ type: "enterCase" }),
       tab: (stage) => dispatch({ type: "tab", stage }),
+      bookCita: (cita) => dispatch({ type: "bookCita", cita }),
+      confirmCita: () => dispatch({ type: "confirmCita" }),
       uploadDoc: (id) => {
         dispatch({ type: "docUploading", id });
         schedule(() => dispatch({ type: "docSuccess" }), UPLOAD_MS);

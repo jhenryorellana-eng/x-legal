@@ -14,6 +14,7 @@ import { PagosStage } from "./stages/pagos-stage";
 import { DisclaimerStage } from "./stages/disclaimer-stage";
 import { DocumentosStage } from "./stages/documentos-stage";
 import { FormulariosStage } from "./stages/formularios-stage";
+import { CitasStage } from "./stages/citas-stage";
 import { FormReview } from "./stages/form-review";
 
 export interface DemoService {
@@ -45,6 +46,8 @@ export function ClientFlow({ flow, service }: { flow: DemoFlow; service: DemoSer
         return <DocumentosStage flow={flow} />;
       case "caseForms":
         return <FormulariosStage flow={flow} />;
+      case "caseCitas":
+        return <CitasStage flow={flow} advisorName={scenario.staff.owner.name} />;
       default:
         return null;
     }
@@ -75,14 +78,17 @@ export function ClientFlow({ flow, service }: { flow: DemoFlow; service: DemoSer
         />
       );
     }
-    if (state.stage === "caseDocs" || state.stage === "caseForms") {
+    if (state.stage === "caseDocs" || state.stage === "caseForms" || state.stage === "caseCitas") {
+      const active =
+        state.stage === "caseForms" ? "formularios" : state.stage === "caseCitas" ? "citas" : "documentos";
       return (
         <DemoBottomNav
           variant="caso"
-          active={state.stage === "caseForms" ? "formularios" : "documentos"}
-          enabled={["documentos", "formularios"]}
+          active={active}
+          enabled={["citas", "documentos", "formularios"]}
           onNavigate={(id) => {
-            if (id === "documentos") actions.tab("caseDocs");
+            if (id === "citas") actions.tab("caseCitas");
+            else if (id === "documentos") actions.tab("caseDocs");
             else if (id === "formularios") actions.tab("caseForms");
           }}
         />
@@ -146,6 +152,17 @@ export function ClientFlow({ flow, service }: { flow: DemoFlow; service: DemoSer
           body={t("successFormBody")}
           continueLabel={t("continue")}
           onContinue={actions.confirmForm}
+        />
+      )}
+      {state.overlay === "citaSuccess" && (
+        <SuccessOverlay
+          title={t("citas.successTitle")}
+          body={t("citas.successBody", {
+            date: state.bookedCita?.dateLabel ?? "",
+            hour: state.bookedCita?.hourLabel ?? "",
+          })}
+          continueLabel={t("continue")}
+          onContinue={actions.confirmCita}
         />
       )}
     </>

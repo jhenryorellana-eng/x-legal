@@ -47,10 +47,15 @@ export function StaffView({
   const staff = scenario.staff;
   const color = serviceColorToken(service.colorKey);
 
+  // The "Automatización" tab exists only for scenarios that generate an official
+  // form (`staff.automation`). Reforzar Asilo omits it: the I-589 was filed by
+  // the client, so there is nothing to generate — the tab derives from the data.
   const tabs: { id: TabId; label: string; icon: IconName }[] = [
     { id: "resumen", label: t("tabResumen"), icon: "grid" },
     { id: "documentos", label: t("tabDocumentos"), icon: "doc" },
-    { id: "automatizacion", label: t("tabAutomatizacion"), icon: "form" },
+    ...(staff.automation
+      ? [{ id: "automatizacion" as const, label: t("tabAutomatizacion"), icon: "form" as IconName }]
+      : []),
     { id: "generaciones", label: t("tabGeneraciones"), icon: "sparkle" },
     { id: "expediente", label: t("tabExpediente"), icon: "briefcase" },
   ];
@@ -119,7 +124,7 @@ export function StaffView({
       <div>
         {tab === "resumen" && <ResumenTab staff={staff} />}
         {tab === "documentos" && <DocumentosTab scenario={scenario} flow={flow} />}
-        {tab === "automatizacion" && (
+        {tab === "automatizacion" && staff.automation && (
           <AutomatizacionTab scenario={scenario} flow={flow} pdfBlobUrl={assetBlobs[staff.automation.slotKey] ?? null} />
         )}
         {tab === "generaciones" && (
@@ -161,7 +166,7 @@ function Overlays({ scenario, flow }: { scenario: DemoScenario; flow: ReturnType
         onComplete={flow.actions.loadedTranslate}
       />
     );
-  } else if (loader?.kind === "automation") {
+  } else if (loader?.kind === "automation" && staff.automation) {
     content = (
       <AssemblyAnimation
         title={staff.automation.loaderTitle}
@@ -195,13 +200,16 @@ function Overlays({ scenario, flow }: { scenario: DemoScenario; flow: ReturnType
       />
     );
   } else if (splash) {
-    const copy: Record<NonNullable<typeof splash>, { title: string; body: string }> = {
-      translate: { title: t("splashTranslateTitle"), body: t("splashTranslateBody") },
-      automation: staff.automation.splash,
-      generation: staff.generation.splash,
-      expediente: staff.expediente.splash,
-    };
-    const c = copy[splash];
+    // Resolve lazily so we never dereference an absent micro-experience fixture
+    // (e.g. `staff.automation` for scenarios that omit the Automatización tab).
+    const c =
+      splash === "generation"
+        ? staff.generation.splash
+        : splash === "expediente"
+          ? staff.expediente.splash
+          : splash === "automation" && staff.automation
+            ? staff.automation.splash
+            : { title: t("splashTranslateTitle"), body: t("splashTranslateBody") };
     content = (
       <SuccessOverlay
         title={c.title}

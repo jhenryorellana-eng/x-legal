@@ -227,28 +227,48 @@ export function ExpedienteDocument({
           </div>
         </PrintPage>
 
-        {/* PAGE 3 — Official form (automation) */}
-        <PrintPage header={labels.org} caseNo={staff.caseNumber} footer={labels.confidential} page={pageLabel(exp.samplePages.form)}>
-          <SectionKicker>{staff.automation.docKicker}</SectionKicker>
-          <SectionTitle>{staff.automation.docPageTitle}</SectionTitle>
-          <p style={{ fontSize: 12.5, color: INK_SOFT, margin: "6px 0 16px", fontWeight: 600 }}>{staff.automation.officialTitle}</p>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 22px" }}>
-            {staff.automation.fields.map((f) => {
-              const na = f.value == null;
-              return (
-                <div key={f.fieldName} style={{ borderBottom: `1px solid ${LINE}`, paddingBottom: 6 }}>
-                  <div style={{ fontSize: 10.5, color: INK_SOFT, fontWeight: 700 }}>{f.official}</div>
-                  <div style={{ fontSize: 13.5, color: na ? GOLD : INK, fontWeight: 800, marginTop: 2 }}>
-                    {na ? "N/A" : f.value}
+        {/* PAGE 3 — Official form: the generated automation OR, for scenarios that
+            do not generate it, the client's already-filed document annexed as-is. */}
+        {staff.automation ? (
+          <PrintPage header={labels.org} caseNo={staff.caseNumber} footer={labels.confidential} page={pageLabel(exp.samplePages.form)}>
+            <SectionKicker>{staff.automation.docKicker}</SectionKicker>
+            <SectionTitle>{staff.automation.docPageTitle}</SectionTitle>
+            <p style={{ fontSize: 12.5, color: INK_SOFT, margin: "6px 0 16px", fontWeight: 600 }}>{staff.automation.officialTitle}</p>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 22px" }}>
+              {staff.automation.fields.map((f) => {
+                const na = f.value == null;
+                return (
+                  <div key={f.fieldName} style={{ borderBottom: `1px solid ${LINE}`, paddingBottom: 6 }}>
+                    <div style={{ fontSize: 10.5, color: INK_SOFT, fontWeight: 700 }}>{f.official}</div>
+                    <div style={{ fontSize: 13.5, color: na ? GOLD : INK, fontWeight: 800, marginTop: 2 }}>
+                      {na ? "N/A" : f.value}
+                    </div>
                   </div>
+                );
+              })}
+            </div>
+            <div style={{ marginTop: 18, fontSize: 11.5, color: INK_SOFT, fontStyle: "italic" }}>
+              {staff.automation.fillNote} · {labels.repNote}
+            </div>
+          </PrintPage>
+        ) : exp.filedDoc ? (
+          <PrintPage header={labels.org} caseNo={staff.caseNumber} footer={labels.confidential} page={pageLabel(exp.samplePages.form)}>
+            <SectionKicker>{exp.filedDoc.docKicker}</SectionKicker>
+            <SectionTitle>{exp.filedDoc.docPageTitle}</SectionTitle>
+            <p style={{ fontSize: 12.5, color: INK_SOFT, margin: "6px 0 16px", fontWeight: 600 }}>{exp.filedDoc.officialTitle}</p>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 22px" }}>
+              {exp.filedDoc.rows.map((r) => (
+                <div key={r.label} style={{ borderBottom: `1px solid ${LINE}`, paddingBottom: 6 }}>
+                  <div style={{ fontSize: 10.5, color: INK_SOFT, fontWeight: 700 }}>{r.label}</div>
+                  <div style={{ fontSize: 13.5, color: INK, fontWeight: 800, marginTop: 2 }}>{r.value}</div>
                 </div>
-              );
-            })}
-          </div>
-          <div style={{ marginTop: 18, fontSize: 11.5, color: INK_SOFT, fontStyle: "italic" }}>
-            {staff.automation.fillNote} · {labels.repNote}
-          </div>
-        </PrintPage>
+              ))}
+            </div>
+            <div style={{ marginTop: 18, fontSize: 11.5, color: INK_SOFT, fontStyle: "italic" }}>
+              {exp.filedDoc.note} · {labels.repNote}
+            </div>
+          </PrintPage>
+        ) : null}
 
         {/* PAGE 4 — AI generation */}
         <PrintPage header={labels.org} caseNo={staff.caseNumber} footer={labels.confidential} page={pageLabel(exp.samplePages.generation)}>

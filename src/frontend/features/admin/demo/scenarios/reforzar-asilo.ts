@@ -57,8 +57,8 @@ export const reforzarAsilo: DemoScenario = {
   documents: [
     {
       id: "i589-presentado",
-      label: "I-589 presentado (págs. 1–4)",
-      hint: "Las primeras 4 páginas del formulario que ya presentaste.",
+      label: "I-589 presentado (completo)",
+      hint: "Todas las páginas del formulario que ya presentaste.",
       category: "Caso presentado",
       extract: [
         { field: "Solicitante", value: "Yenifer Pacheco Morales" },
@@ -70,11 +70,11 @@ export const reforzarAsilo: DemoScenario = {
     },
     {
       id: "declaracion-jurada",
-      label: "Carta de declaración jurada",
+      label: "Carta de declaración jurada ampliada",
       hint: "Tu historia en primera persona, si ya la tienes escrita.",
       category: "Caso presentado",
       extract: [
-        { field: "Tipo", value: "Declaración jurada personal" },
+        { field: "Tipo", value: "Declaración jurada ampliada" },
         { field: "Páginas", value: "9" },
         { field: "Idioma", value: "Español" },
         { field: "Uso", value: "Narrativa primaria del memorándum" },
@@ -274,49 +274,6 @@ export const reforzarAsilo: DemoScenario = {
       { icon: "check", text: "Certificando la traducción…" },
     ],
 
-    automation: {
-      slotKey: "i589-bc",
-      title: "I-589 — Partes B y C",
-      officialTitle:
-        "Formulario I-589 · Partes B y C — Información sobre la solicitud de asilo (USCIS)",
-      intro: "El sistema traslada las respuestas del cuestionario de miedo creíble a las Partes B y C del I-589 oficial.",
-      loaderTitle: "Ensamblando el I-589 — Partes B y C",
-      sourcePanelLabel: "Cuestionario de Yenifer",
-      targetPanelLabel: "I-589 oficial · USCIS",
-      filledChipLabel: "9 campos vacíos → N/A",
-      fillNote: "9 campos sin dato se completaron automáticamente con “N/A” (8 CFR 1208.3(c)(3)).",
-      previewTitle: "I-589 Partes B y C — PDF oficial",
-      doneMeta: "6 págs · PDF oficial · 9 campos en N/A",
-      docKicker: "Formulario oficial · USCIS",
-      docPageTitle: "Formulario I-589 — Partes B y C",
-      downloadName: "i-589-partes-b-c.pdf",
-      splash: {
-        title: "¡I-589 Partes B y C generado!",
-        body: "El reclamo de asilo quedó volcado al formulario oficial del USCIS.",
-      },
-      steps: [
-        { icon: "form", text: "Leyendo el cuestionario de miedo creíble…" },
-        { icon: "doc", text: "Abriendo el PDF oficial I-589 (USCIS)…" },
-        { icon: "bolt", text: "Mapeando incidentes a la Parte B…" },
-        { icon: "edit", text: "Rellenando campos vacíos con N/A…" },
-        { icon: "check", text: "Generando el PDF final…" },
-      ],
-      fields: [
-        { plain: "¿Por qué solicitas asilo?", official: "Parte B · Pregunta 1 — Why applying", fieldName: "PtB1_WhyApplying", value: "Particular social group" },
-        { plain: "¿Sufriste daño o amenazas?", official: "Parte B · Pregunta 1.A — Harm or threats", fieldName: "PtB1A_HarmYesNo", value: "Yes" },
-        { plain: "Describe el daño sufrido", official: "Parte B · Pregunta 1.A — Explain", fieldName: "PtB1A_Explain", value: "Amenazas de muerte y agresiones de la MS-13" },
-        { plain: "¿Temes volver a tu país?", official: "Parte B · Pregunta 1.B — Fear of return", fieldName: "PtB1B_FearYesNo", value: "Yes" },
-        { plain: "¿Quién te haría daño?", official: "Parte B · Pregunta 1.B — Who would harm you", fieldName: "PtB1B_WhoWouldHarm", value: "Pandilla MS-13 (clica local)" },
-        { plain: "¿Fuiste arrestada o acusada?", official: "Parte B · Pregunta 2 — Arrested / charged", fieldName: "PtB2_ArrestedYesNo", value: "No" },
-        { plain: "¿Familiares con daño similar?", official: "Parte B · Pregunta 3.A — Family harmed", fieldName: "PtB3A_FamilyHarm", value: null },
-        { plain: "¿Buscaste protección oficial?", official: "Parte B · Pregunta 3.B — Sought protection", fieldName: "PtB3B_SoughtProtection", value: "Sí — denuncia PNC 03/11/2023" },
-        { plain: "¿Solicitaste asilo antes?", official: "Parte C · Pregunta 1 — Prior applications", fieldName: "PtC1_PriorApplication", value: "No" },
-        { plain: "¿Podrías reubicarte en tu país?", official: "Parte C · Pregunta 2 — Relocation", fieldName: "PtC2_Relocation", value: "No — presencia nacional de la pandilla" },
-        { plain: "¿Pasaste por otros países?", official: "Parte C · Pregunta 4 — Transit countries", fieldName: "PtC4_TransitCountries", value: "Guatemala y México (tránsito)" },
-        { plain: "Presentación fuera del año", official: "Parte C · Pregunta 5 — One-year exception", fieldName: "PtC5_OneYearException", value: null },
-      ],
-    },
-
     generation: {
       slotKey: "memo",
       title: "Memorándum de Miedo Creíble",
@@ -384,7 +341,7 @@ export const reforzarAsilo: DemoScenario = {
       coverRows: [
         { label: "Solicitante", value: "Yenifer Pacheco Morales" },
         { label: "País de origen", value: "El Salvador" },
-        { label: "Servicio", value: "Reforzar Asilo (I-589 Partes B y C)" },
+        { label: "Servicio", value: "Reforzar Asilo (sobre I-589 ya presentado)" },
         { label: "Plan", value: "Reforzar Asilo · Con abogado" },
         { label: "Número de caso", value: "ULP-2026-0057" },
         { label: "Responsable", value: "Diana Torres · Paralegal" },
@@ -399,6 +356,18 @@ export const reforzarAsilo: DemoScenario = {
       ],
       samplePages: { form: 3, generation: 18, anexos: 144, chronology: 179 },
       totalPages: 180,
+      filedDoc: {
+        docKicker: "Documento del cliente · Anexo",
+        docPageTitle: "I-589 presentado (completo)",
+        officialTitle: "Formulario I-589 · Solicitud de asilo presentada ante USCIS por la clienta",
+        rows: [
+          { label: "Solicitante", value: "Yenifer Pacheco Morales" },
+          { label: "N.º de recibo USCIS", value: "EAC-25-188-50432" },
+          { label: "Base del asilo", value: "Grupo social particular" },
+          { label: "Oficina de asilo", value: "Houston, Texas" },
+        ],
+        note: "Documento presentado por la clienta ante USCIS; se anexa tal cual (no se genera en el sistema).",
+      },
       steps: [
         { icon: "shield", text: "Generando la carátula legal…" },
         { icon: "doc", text: "Ensamblando y ordenando los documentos…" },
@@ -409,7 +378,7 @@ export const reforzarAsilo: DemoScenario = {
       toc: [
         { title: "Carátula", page: 1 },
         { title: "Índice de contenidos", page: 2 },
-        { title: "Formulario I-589 (Partes B y C)", page: 3 },
+        { title: "I-589 presentado — anexo del cliente (completo)", page: 3 },
         { title: "Declaración Jurada (9 páginas)", page: 9 },
         { title: "Memorándum de Miedo Creíble", page: 18 },
         { title: "Guion de preparación — 28 preguntas modeladas", page: 136 },
@@ -421,8 +390,8 @@ export const reforzarAsilo: DemoScenario = {
         {
           group: "Caso presentado",
           items: [
-            "I-589 presentado (págs. 1–4) — Yenifer",
-            "Carta de declaración jurada — 9 páginas",
+            "I-589 presentado (completo) — Yenifer",
+            "Carta de declaración jurada ampliada — 9 páginas",
           ],
         },
         {

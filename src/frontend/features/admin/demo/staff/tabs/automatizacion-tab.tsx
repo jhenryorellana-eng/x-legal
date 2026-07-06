@@ -37,6 +37,11 @@ export function AutomatizacionTab({
     if (done && pdfBlobUrl) setReader(true);
   }, [done, pdfBlobUrl]);
 
+  // Rendered only when the scenario has an automation fixture (see StaffView);
+  // this guard (after all hooks) keeps the component total for scenarios that
+  // omit it, without breaking the Rules of Hooks.
+  if (!auto) return null;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <TabIntro icon="bolt" text={auto.intro} />

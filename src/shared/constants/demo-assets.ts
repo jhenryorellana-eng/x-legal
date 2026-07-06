@@ -31,8 +31,9 @@ export const DEMO_ASSET_SLOTS: Record<string, readonly DemoAssetSlot[]> = {
     { key: "memo", title: "Memorándum de Miedo Creíble", tabLabel: "Generaciones" },
     { key: "expediente", title: "Expediente completo", tabLabel: "Expediente" },
   ],
+  // Reforzar Asilo has no "Automatización" tab (the I-589 was filed by the client,
+  // not generated) — so it declares no official-form slot, only memo + expediente.
   "reforzar-asilo": [
-    { key: "i589-bc", title: "I-589 — Partes B y C", tabLabel: "Automatización" },
     { key: "memo", title: "Memorándum de Miedo Creíble", tabLabel: "Generaciones" },
     { key: "expediente", title: "Expediente de refuerzo", tabLabel: "Expediente" },
   ],

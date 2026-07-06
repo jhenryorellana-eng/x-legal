@@ -262,6 +262,25 @@ export interface DemoGenerationFixture {
   steps: DemoLoaderStep[];
 }
 
+/**
+ * A client-filed official document annexed into the compiled expediente. Used
+ * when the scenario does NOT generate the official form itself (no `automation`
+ * micro-experience) — e.g. Reforzar Asilo, where the applicant already filed
+ * her I-589 with USCIS and it is annexed as-is, not re-generated.
+ */
+export interface DemoExpedienteFiledDoc {
+  /** Kicker on the printed page, e.g. "Documento del cliente · Anexo". */
+  docKicker: string;
+  /** Title on the printed page, e.g. "I-589 presentado (completo)". */
+  docPageTitle: string;
+  /** Long official name shown under the title. */
+  officialTitle: string;
+  /** Labelled rows extracted from the filed document (Solicitante, Nº recibo, …). */
+  rows: DemoCoverRow[];
+  /** Plain-text note under the rows (e.g. that this is the client's own filing). */
+  note: string;
+}
+
 /** The "Expediente" micro-experience: the compiled, printable legal file. */
 export interface DemoExpedienteFixture {
   /** `DEMO_ASSET_SLOTS` key whose uploaded PDF this tab reveals when done. */
@@ -295,6 +314,13 @@ export interface DemoExpedienteFixture {
   samplePages: { form: number; generation: number; anexos: number; chronology: number };
   totalPages: number;
   steps: DemoLoaderStep[];
+  /**
+   * Content for the representative "official form" page (`samplePages.form`) when
+   * the scenario has no `automation` micro-experience: the client's already-filed
+   * document, annexed. When both `automation` and `filedDoc` are absent, the page
+   * is omitted.
+   */
+  filedDoc?: DemoExpedienteFiledDoc;
 }
 
 /**
@@ -319,7 +345,12 @@ export interface DemoStaffFixture {
   formsTotal: number;
   /** Translate-flow narration, shared by every document row. */
   translateSteps: DemoLoaderStep[];
-  automation: DemoAutomationFixture;
+  /**
+   * The official-form automation. Optional: a scenario that does not generate an
+   * official form (e.g. Reforzar Asilo — the I-589 was already filed by the
+   * client) omits it, and the "Automatización" tab is not shown for that demo.
+   */
+  automation?: DemoAutomationFixture;
   generation: DemoGenerationFixture;
   expediente: DemoExpedienteFixture;
 }

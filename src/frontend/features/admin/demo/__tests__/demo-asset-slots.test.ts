@@ -33,17 +33,19 @@ describe("demo asset slots ↔ scenario registry", () => {
     }
   });
 
-  it("every scenario wires its three micro-experiences to declared slot keys", () => {
+  it("every scenario wires its present micro-experiences to declared slot keys", () => {
     // staff-view.tsx resolves each tab's PDF via staff.{automation,generation,
-    // expediente}.slotKey — those keys must be exactly the declared slots.
+    // expediente}.slotKey — those keys must be exactly the declared slots. The
+    // automation micro-experience is optional (e.g. Reforzar Asilo omits it), so
+    // the wiring is derived from whichever fixtures the scenario actually declares.
     for (const [slug, scenario] of Object.entries(DEMO_SCENARIOS)) {
       const wired = [
-        scenario.staff.automation.slotKey,
+        scenario.staff.automation?.slotKey,
         scenario.staff.generation.slotKey,
         scenario.staff.expediente.slotKey,
-      ];
+      ].filter((k): k is string => Boolean(k));
       const declared = getDemoAssetSlots(slug).map((s) => s.key);
-      expect(new Set(wired).size, `colliding slotKeys in "${slug}"`).toBe(3);
+      expect(new Set(wired).size, `colliding slotKeys in "${slug}"`).toBe(wired.length);
       expect([...declared].sort(), `slots ↔ slotKeys drift in "${slug}"`).toEqual([...wired].sort());
     }
   });
