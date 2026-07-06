@@ -54,6 +54,7 @@ export interface LeadsClientProps {
   signingBaseUrl: string;
   boardId: string;
   moveAction: LeadsViewMove;
+  contactAction: LeadsViewContact;
   columnActions: LeadsColumnActions;
   columnStrings: LeadsColumnStrings;
   createLeadAction: CreateLead;
@@ -67,6 +68,7 @@ export interface LeadsClientProps {
 }
 
 type LeadsViewMove = React.ComponentProps<typeof LeadsView>["actions"]["moveCard"];
+type LeadsViewContact = NonNullable<React.ComponentProps<typeof LeadsView>["actions"]["contactLead"]>;
 type LeadsColumnActions = React.ComponentProps<typeof LeadsView>["columnActions"];
 type LeadsColumnStrings = React.ComponentProps<typeof LeadsView>["columnStrings"];
 type UpdateLead = NonNullable<React.ComponentProps<typeof NuevoLeadModal>["actions"]["updateLead"]>;
@@ -90,6 +92,7 @@ export function LeadsClient({
   signingBaseUrl,
   boardId,
   moveAction,
+  contactAction,
   columnActions,
   columnStrings,
   createLeadAction,
@@ -127,7 +130,7 @@ export function LeadsClient({
         cards={cards}
         strings={strings}
         columnStrings={columnStrings}
-        actions={{ moveCard: moveAction }}
+        actions={{ moveCard: moveAction, contactLead: contactAction }}
         columnActions={columnActions}
         onNewLead={(columnId) => setLeadModal({ open: true, columnId })}
         onNewCase={(preset) => setCaseModal({ open: true, leadId: preset.leadId, name: preset.name, phone: preset.phone })}

@@ -11,11 +11,12 @@
  * index + requireActor from @/backend/modules/identity (app → platform is barred
  * by eslint-boundaries; app → module is allowed). Same pattern as F5 validaciones.
  *
+ * The Zelle destination comes from the org's configured payment email
+ * (orgs.settings.payment_zelle_email, surfaced by org.getOrgContractInfo), with
+ * NEXT_PUBLIC_ZELLE_DESTINATION kept only as a fallback for orgs that haven't set
+ * one (null → UI shows the method without a destination line).
+ *
  * Remaining gap (Ola-1):
- *   - TODO BIL-RSC-2: the Zelle destination should come from
- *     orgs.settings.zelle_destination; OrgSettings doesn't carry it yet, so it
- *     reads from NEXT_PUBLIC_ZELLE_DESTINATION as a temporary bridge (null → UI
- *     shows the method without a destination line). Admin config lands later.
  *   - TODO BIL-RSC-4: multi-case clients use the FIRST active case (same as /home).
  */
 
@@ -25,6 +26,7 @@ import { redirect } from "next/navigation";
 import { getLocale, getTranslations, getTimeZone } from "next-intl/server";
 import { getActor, requireActor } from "@/backend/modules/identity";
 import { getCasesForClient } from "@/backend/modules/cases";
+import { getOrgContractInfo } from "@/backend/modules/org";
 import {
   getAccountStatement,
   createCheckoutSessionForInstallment,
@@ -244,8 +246,15 @@ export default async function PagosPage({
     }
   }
 
-  // TODO BIL-RSC-2: Read from orgs.settings.zelle_destination once schema is extended.
-  const zelleDestination = process.env.NEXT_PUBLIC_ZELLE_DESTINATION ?? null;
+  // Zelle destination = the org's configured payment email (orgs.settings.payment_zelle_email),
+  // with the env var kept only as a fallback for orgs that haven't set one yet.
+  let zelleDestination: string | null = process.env.NEXT_PUBLIC_ZELLE_DESTINATION ?? null;
+  try {
+    const orgInfo = await getOrgContractInfo(actor.orgId);
+    zelleDestination = orgInfo.zelleEmail ?? zelleDestination;
+  } catch {
+    // Keep the env fallback; a missing org row must not 500 the payments page.
+  }
 
   // Autopay VM (DOC-71 §2.4): plan consent state + the client's saved card.
   let savedCard: { brand: string | null; last4: string | null } | null = null;

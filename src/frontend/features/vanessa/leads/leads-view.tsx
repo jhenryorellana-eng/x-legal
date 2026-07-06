@@ -91,6 +91,16 @@ export interface LeadsActions {
     toPosition: number;
     lostReason?: string;
   }) => Promise<{ ok: boolean; error?: { code: string } }>;
+  /**
+   * Records first contact when the advisor reaches out from a lead card
+   * (call / WhatsApp). Best-effort + idempotent server-side: stamps
+   * contacted_at once so the conversion funnel counts the lead as contacted.
+   * Optional so preview/mock renders can omit it.
+   */
+  contactLead?: (input: {
+    leadId: string;
+    channel: "call" | "whatsapp";
+  }) => Promise<{ ok: boolean; error?: { code: string } }>;
 }
 
 export interface LeadsViewProps {
@@ -149,6 +159,16 @@ export function LeadsView({
   const [overCol, setOverCol] = React.useState<string | null>(null);
   const [lostFor, setLostFor] = React.useState<{ card: LeadCardVM; toColumnId: string } | null>(null);
   const [lostReason, setLostReason] = React.useState("");
+
+  // First contact from a lead card (call / WhatsApp): optimistically clear the
+  // "uncontacted" rail and fire the idempotent server stamp. Best-effort — a
+  // failed stamp never blocks opening the dialer/WhatsApp.
+  const markContacted = (card: LeadCardVM, channel: "call" | "whatsapp") => {
+    if (!card.uncontacted || !actions.contactLead) return;
+    setCards((cs) => cs.map((x) => (x.id === card.id ? { ...x, uncontacted: false } : x)));
+    // Best-effort: never let a failed stamp surface as an unhandled rejection.
+    void actions.contactLead({ leadId: card.leadId, channel }).catch(() => {});
+  };
 
   const drop = async (col: LeadColumnVM) => {
     const id = dragId;
@@ -352,11 +372,11 @@ export function LeadsView({
                       </div>
                       <div className="kcard-foot">
                         <button type="button" className="kmini" title={strings.call} aria-label={`${strings.call} ${c.name ?? c.phone}`}
-                          onClick={(e) => { e.stopPropagation(); getBridge().share.openExternal(`tel:${c.phone}`); }}>
+                          onClick={(e) => { e.stopPropagation(); markContacted(c, "call"); getBridge().share.openExternal(`tel:${c.phone}`); }}>
                           <MSym name="call" size={15} />
                         </button>
                         <button type="button" className="kmini" title={strings.whatsapp} aria-label={`${strings.whatsapp} ${c.name ?? c.phone}`}
-                          onClick={(e) => { e.stopPropagation(); getBridge().share.openExternal(`https://wa.me/${c.phone.replace(/[^\d]/g, "")}`); }}>
+                          onClick={(e) => { e.stopPropagation(); markContacted(c, "whatsapp"); getBridge().share.openExternal(`https://wa.me/${c.phone.replace(/[^\d]/g, "")}`); }}>
                           <MSym name="chat" size={15} />
                         </button>
                         <button type="button" className="kmini" title={strings.agendar} aria-label={`${strings.agendar} ${c.name ?? c.phone}`}

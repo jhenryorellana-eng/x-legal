@@ -36,6 +36,7 @@ export {
 export {
   createLead,
   updateLead,
+  markLeadContacted,
   markLeadWon,
   markLeadLost,
   createCaseFromLead,

@@ -42,6 +42,7 @@ import {
   reorderLeadCategories,
   listLeadCategories,
   updateLead,
+  markLeadContacted,
   listLeads,
   toggleTaskDone,
   KanbanError,
@@ -354,8 +355,9 @@ export async function contactLeadAction(input: {
 }): Promise<{ ok: boolean; error?: { code: string } }> {
   try {
     const actor = await requireActor();
-    // Registers first contact (service no-ops if contacted_at already set).
-    await updateLead(actor, { leadId: input.leadId });
+    // Stamps contacted_at on first outreach (idempotent; no-op if already set).
+    // The channel (call/whatsapp) is recorded in the audit trail.
+    await markLeadContacted(actor, input.leadId, input.channel);
     return { ok: true };
   } catch (err) {
     return mapErr(err);

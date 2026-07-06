@@ -11,10 +11,73 @@
  * and QSTASH_NEXT_SIGNING_KEY rotation without downtime (DOC-27 §3.1).
  */
 
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { Client, Receiver } from "@upstash/qstash";
 import { env, providerEnv } from "./env";
 import { logger } from "./logger";
 import { isAiStubEnabled } from "./ai-stub";
+
+// ---------------------------------------------------------------------------
+// Local-dev job dispatch (DX)
+//
+// QStash can only deliver to a PUBLIC url — it refuses to even publish a job
+// whose callback resolves to a loopback address ("invalid destination url:
+// endpoint resolves to a loopback address"). That makes the whole async
+// pipeline (AI extraction/translation, reminders, campaigns, …) impossible to
+// exercise in local dev against real providers.
+//
+// Outside production, when the callback base url is loopback, `enqueueJob`
+// dispatches the job straight to the LOCAL webhook over HTTP instead of QStash.
+// The request carries a derived shared secret so `verifyQStashSignature` can
+// tell a genuine self-dispatch from an unauthenticated request. Both ends are
+// hard-gated to `NODE_ENV !== "production"`, so production behaviour is byte-for
+// -byte unchanged: a real QStash delivery is the only path there.
+// ---------------------------------------------------------------------------
+
+const LOCAL_DISPATCH_HEADER = "x-local-job-dispatch";
+
+/** True when a callback URL points at this machine (QStash cannot reach it). */
+function isLoopbackUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "0.0.0.0";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Origin of THIS running dev server for the self-dispatch. Prefers the runtime
+ * PORT (set by `next dev -p <port>` / an explicit `PORT=…`) so it hits the actual
+ * listening port even when `NEXT_PUBLIC_APP_URL` names a different one; falls back
+ * to the configured callback base.
+ */
+function localWebhookBase(): string {
+  const port = process.env.PORT?.trim();
+  if (port) return `http://127.0.0.1:${port}`;
+  return jobCallbackBaseUrl();
+}
+
+/**
+ * Shared secret for the local self-dispatch, derived from the QStash signing key
+ * (already a deployment secret) so it needs no new env var and is not guessable.
+ * Only ever honored outside production.
+ */
+function localDispatchToken(): string {
+  const qenv = providerEnv("qstash");
+  return createHmac("sha256", qenv.QSTASH_CURRENT_SIGNING_KEY)
+    .update("local-job-dispatch/v1")
+    .digest("hex");
+}
+
+function safeEqualHex(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  try {
+    return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  } catch {
+    return false;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -104,6 +167,31 @@ export async function enqueueJob(
   options: EnqueueOptions = {},
 ): Promise<{ messageId: string }> {
   const url = `${jobCallbackBaseUrl()}/api/webhooks/qstash/${payload.jobKey}`;
+
+  // Local dev (non-production, loopback callback): dispatch straight to the local
+  // webhook — QStash would reject a loopback destination. Fire-and-forget to keep
+  // async semantics; the webhook runs the handler in its own request and is
+  // internally idempotent (dedupe barrier on dedupeId+orgId), so a delay option
+  // is intentionally not honored here (dev-only convenience).
+  if (process.env.NODE_ENV !== "production" && isLoopbackUrl(url)) {
+    const dispatchUrl = `${localWebhookBase()}/api/webhooks/qstash/${payload.jobKey}`;
+    void fetch(dispatchUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        [LOCAL_DISPATCH_HEADER]: localDispatchToken(),
+      },
+      body: JSON.stringify(payload),
+    }).catch((err) =>
+      logger.warn({ err, jobKey: payload.jobKey }, "qstash: local job dispatch failed"),
+    );
+    logger.info(
+      { jobKey: payload.jobKey, entityId: payload.entityId },
+      "qstash: job dispatched to local webhook (loopback callback, non-production)",
+    );
+    return { messageId: `local-${toQStashDeduplicationId(payload.dedupeId)}` };
+  }
+
   const client = getClient();
 
   const result = await client.publishJSON({
@@ -146,6 +234,16 @@ export async function verifyQStashSignature(req: Request): Promise<string> {
   // header) still goes through full signature verification below.
   if (isAiStubEnabled() && req.headers.get("x-e2e-qstash-bypass") === "1") {
     return await req.text();
+  }
+
+  // Local self-dispatch (see enqueueJob): outside production only, and only with
+  // the derived shared secret. A real QStash delivery never carries this header,
+  // and in production this branch is skipped entirely.
+  if (process.env.NODE_ENV !== "production") {
+    const localToken = req.headers.get(LOCAL_DISPATCH_HEADER);
+    if (localToken && safeEqualHex(localToken, localDispatchToken())) {
+      return await req.text();
+    }
   }
 
   const qenv = providerEnv("qstash");

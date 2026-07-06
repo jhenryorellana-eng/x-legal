@@ -899,6 +899,40 @@ export async function updateLead(
 }
 
 // ---------------------------------------------------------------------------
+// API-LEAD-08: markLeadContacted
+// ---------------------------------------------------------------------------
+
+/**
+ * Records first contact with a lead (idempotent): stamps `contacted_at` the
+ * first time the advisor reaches out (call / WhatsApp from the lead card) — the
+ * same business signal `moveCard` sets when a card first leaves the entry
+ * column. Powers the conversion funnel (`getSalesMetrics` stage1 = leads with a
+ * non-null `contacted_at`). A second call is a no-op so the timestamp always
+ * reflects the FIRST contact, never the most recent one.
+ *
+ * @API-LEAD-08
+ */
+export async function markLeadContacted(
+  actor: Actor,
+  leadId: string,
+  channel?: "call" | "whatsapp",
+): Promise<LeadRow> {
+  can(actor, "leads", "edit");
+  const lead = await repo.findLead(leadId);
+  if (!lead || lead.org_id !== actor.orgId) throw new KanbanError("LEAD_NOT_FOUND");
+  if (lead.contacted_at !== null) return lead; // idempotent: keep the first-contact time
+
+  const updated = await repo.updateLead(leadId, { contacted_at: now().toISOString() });
+
+  await writeAudit(actor, "leads.lead.contacted", "leads", leadId, {
+    before: { contacted_at: lead.contacted_at },
+    after: { contacted_at: updated.contacted_at, channel: channel ?? null },
+  });
+
+  return updated;
+}
+
+// ---------------------------------------------------------------------------
 // API-LEAD-04: markLeadWon
 // ---------------------------------------------------------------------------
 

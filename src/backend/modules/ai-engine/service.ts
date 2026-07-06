@@ -1444,6 +1444,14 @@ export interface TranslateDocumentResult {
  *
  * @api-id API-AI-08
  */
+/**
+ * A `document_translations` row stuck in `processing` longer than this is treated
+ * as a dead job (worker killed / enqueue lost) and becomes retryable. Generous
+ * relative to the job's maxDuration (300s) + retries so a legitimately in-flight
+ * translation is never pre-empted.
+ */
+const STALE_TRANSLATION_MS = 15 * 60 * 1000;
+
 export async function translateDocument(
   actor: Actor,
   input: { caseId: string; caseDocumentId: string; direction: "es-en" | "en-es" },
@@ -1463,30 +1471,50 @@ export async function translateDocument(
   const existing = await findTranslation(p.caseDocumentId, p.direction);
 
   if (existing?.status === "completed") return { translation: existing, cached: true };
-  if (existing?.status === "processing") return { translation: existing, cached: false };
 
-  if (existing?.status === "failed") {
-    await resetTranslation(existing.id, {
-      status: "processing",
-      requested_by: actor.userId,
-    });
-    const attempt = (existing as unknown as Record<string, number>)["attempt"] ?? 1;
-    await enqueueJob(
-      {
-        jobKey: "translate-document",
-        entityId: existing.id,
-        attempt: attempt + 1,
-        dedupeId: `translate-document:${p.caseDocumentId}:${p.direction}:retry-${attempt + 1}`,
-        translationId: existing.id,
-        direction: p.direction,
-        orgId: actor.orgId,
-      },
-      { retries: 3 },
-    );
+  // A `processing` row normally means a worker is on it. But if the enqueue died
+  // or the worker was killed mid-flight, the row would otherwise stay `processing`
+  // forever and the UI would poll a dead job. Treat a processing row that has been
+  // stuck well past the job's max lifetime (maxDuration + retries) as retryable.
+  const processingSince = existing
+    ? new Date(existing.updated_at ?? existing.created_at ?? 0).getTime()
+    : 0;
+  const staleProcessing =
+    existing?.status === "processing" &&
+    Number.isFinite(processingSince) &&
+    Date.now() - processingSince > STALE_TRANSLATION_MS;
+
+  if (existing?.status === "processing" && !staleProcessing) {
     return { translation: existing, cached: false };
   }
 
-  // Mutex via INSERT — unique_violation means concurrent request won the race
+  // Retry path: a prior attempt failed, or a processing row went stale. Reset →
+  // re-enqueue; if the enqueue itself fails, mark the row `failed` so it never
+  // gets stuck in `processing` (self-healing on the next retry).
+  if (existing && (existing.status === "failed" || staleProcessing)) {
+    const attempt = (existing as unknown as Record<string, number>)["attempt"] ?? 1;
+    await resetTranslation(existing.id, { status: "processing", requested_by: actor.userId });
+    try {
+      await enqueueJob(
+        {
+          jobKey: "translate-document",
+          entityId: existing.id,
+          attempt: attempt + 1,
+          dedupeId: `translate-document:${p.caseDocumentId}:${p.direction}:retry-${attempt + 1}`,
+          translationId: existing.id,
+          direction: p.direction,
+          orgId: actor.orgId,
+        },
+        { retries: 3 },
+      );
+    } catch (err) {
+      await resetTranslation(existing.id, { status: "failed" });
+      throw err;
+    }
+    return { translation: { ...existing, status: "processing" }, cached: false };
+  }
+
+  // First attempt: INSERT acts as a mutex (unique_violation = concurrent winner).
   try {
     const row = await insertTranslation({
       case_document_id: p.caseDocumentId,
@@ -1495,18 +1523,24 @@ export async function translateDocument(
       requested_by: actor.userId,
     });
 
-    await enqueueJob(
-      {
-        jobKey: "translate-document",
-        entityId: row.id,
-        attempt: 1,
-        dedupeId: `translate-document:${p.caseDocumentId}:${p.direction}`,
-        translationId: row.id,
-        direction: p.direction,
-        orgId: actor.orgId,
-      },
-      { retries: 3 },
-    );
+    try {
+      await enqueueJob(
+        {
+          jobKey: "translate-document",
+          entityId: row.id,
+          attempt: 1,
+          dedupeId: `translate-document:${p.caseDocumentId}:${p.direction}`,
+          translationId: row.id,
+          direction: p.direction,
+          orgId: actor.orgId,
+        },
+        { retries: 3 },
+      );
+    } catch (err) {
+      // Do not leave the freshly-inserted row stuck in `processing`.
+      await resetTranslation(row.id, { status: "failed" });
+      throw err;
+    }
 
     return { translation: row, cached: false };
   } catch (err) {

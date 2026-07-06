@@ -25,6 +25,7 @@ import {
   updateKanbanColumnAction,
   reorderKanbanColumnsAction,
   deleteKanbanColumnAction,
+  contactLeadAction,
   createLeadAction,
   updateLeadAction,
   createLeadCategoryAction,
@@ -257,6 +258,7 @@ export default async function VentasLeadsPage() {
       signingBaseUrl={process.env.NEXT_PUBLIC_APP_URL ?? ""}
       boardId={boardId}
       moveAction={moveKanbanCardAction}
+      contactAction={contactLeadAction}
       columnActions={{
         createColumn: createKanbanColumnAction,
         updateColumn: updateKanbanColumnAction,
