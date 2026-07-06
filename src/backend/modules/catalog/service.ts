@@ -1057,13 +1057,38 @@ export async function redetectFields(
  */
 export async function aiProposeStructure(
   actor: Actor,
-  input: { version_id: string; group_id?: string; mode: "replace" | "merge" },
+  input: {
+    version_id: string;
+    group_id?: string;
+    mode: "replace" | "merge";
+    /**
+     * Restrict the proposal to a subset of the PDF's pages (PDF forms only). Lets
+     * the admin generate questions for a page range (e.g. the I-589 pages 5-12)
+     * with `mode:"merge"` without re-proposing the already-mapped pages.
+     */
+    pageRange?: { from: number; to: number };
+  },
 ): Promise<{ groups: number; questions: number }> {
   can(actor, "catalog", "edit");
 
   const version = await repo.findVersionById(input.version_id);
   if (!version) throw catalogError("CATALOG_VERSION_NOT_FOUND");
   if (version.status !== "draft") throw catalogError("CATALOG_VERSION_PUBLISHED_IMMUTABLE");
+
+  if (input.pageRange) {
+    // A page-range proposal is ADDITIVE by design (generate questions for a slice of
+    // pages on top of what's already mapped). Combining it with the destructive
+    // `replace` mode would delete every group and then only re-populate the sliced
+    // pages — silently wiping the rest of the form. Reject at the module boundary.
+    if (input.mode === "replace") {
+      throw catalogError("CATALOG_BAD_PAGE_RANGE", "A page range can only be proposed in merge mode.");
+    }
+    // Validate the range here too, not only in the admin UI (module-pub entry point).
+    const { from, to } = input.pageRange;
+    if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to < from) {
+      throw catalogError("CATALOG_BAD_PAGE_RANGE", `Invalid page range ${from}-${to}.`);
+    }
+  }
 
   const formDef = await repo.findFormDefinition(version.form_definition_id);
   // A questionnaire has NO PDF/AcroForm — its proposal is grounded in the parent
@@ -1091,6 +1116,49 @@ export async function aiProposeStructure(
     // field list (silent no-op / hallucination) — fail loudly instead.
     if (scopeFields.length === 0) {
       throw catalogError("CATALOG_NO_ACROFORM_FIELDS", "No AcroForm fields in this group's scope.");
+    }
+  }
+
+  // Narrow to a page range (PDF forms only): the admin generates questions for a
+  // subset of pages (e.g. I-589 pages 5-12) without re-proposing the rest. Combined
+  // with mode:"merge" the new sections are appended after the existing ones.
+  if (!isQuestionnaire && input.pageRange) {
+    const { from, to } = input.pageRange;
+    scopeFields = scopeFields.filter((f) => f.page >= from && f.page <= to);
+    if (scopeFields.length === 0) {
+      throw catalogError("CATALOG_NO_ACROFORM_FIELDS", `No AcroForm fields on pages ${from}-${to}.`);
+    }
+  }
+
+  // Merge mode appends to an existing form: read its groups ONCE to (a) place the new
+  // groups AFTER the existing ones (position offset) so a page-5-12 section doesn't
+  // sort before / collide with the already-mapped page-1-4 groups, and (b) — PDF forms
+  // only — exclude AcroForm fields ALREADY mapped in another group so an OVERLAPPING
+  // page range (e.g. proposing "5-8" then "8-10", or an off-by-one "1-4"/"4-8") can't
+  // map the same pdf_field_name twice: a duplicate mapping would ask the client the same
+  // USCIS field twice AND make the PDF fill non-deterministic (generateFilledPdf's loop
+  // lets the last question win). A group_id re-proposal / replace mode are exempt from
+  // both (replace deletes every existing group below, so "already mapped" never applies).
+  let positionOffset = 0;
+  if (input.mode === "merge" && !input.group_id) {
+    const existingGroups = await repo.listQuestionGroups(input.version_id);
+    positionOffset = existingGroups.reduce((max, g) => Math.max(max, (g.position ?? 0) + 1), 0);
+
+    if (!isQuestionnaire) {
+      const mappedNames = new Set<string>();
+      for (const g of existingGroups) {
+        const qs = (await repo.listQuestions(g.id)) ?? [];
+        for (const q of qs) if (q.pdf_field_name) mappedNames.add(q.pdf_field_name);
+      }
+      if (mappedNames.size > 0) {
+        scopeFields = scopeFields.filter((f) => !mappedNames.has(f.pdf_field_name));
+        if (scopeFields.length === 0) {
+          throw catalogError(
+            "CATALOG_NO_ACROFORM_FIELDS",
+            "Every AcroForm field in this scope is already mapped to a question.",
+          );
+        }
+      }
     }
   }
 
@@ -1159,6 +1227,7 @@ export async function aiProposeStructure(
       serviceName: pickEs(service?.label_i18n),
       serviceContext,
       profileFields: PROFILE_SOURCE_FIELDS,
+      ...(input.pageRange ? { pageRange: input.pageRange } : {}),
     });
   }
 
@@ -1195,6 +1264,8 @@ export async function aiProposeStructure(
     }
   }
 
+  // (positionOffset was computed above, from the single merge-mode groups read.)
+
   // Conditions reference other questions by an AI-assigned `key`; questions get
   // their real ids only on insert. So we insert everything first (recording
   // key → id), then resolve + persist each condition in a second pass.
@@ -1208,7 +1279,7 @@ export async function aiProposeStructure(
     const group = await repo.upsertQuestionGroup({
       automation_version_id: input.version_id,
       title_i18n: titleI18n as import("@/shared/database.types").Json,
-      position: g.position ?? gi,
+      position: positionOffset + (g.position ?? gi),
     });
 
     const questions = g.questions ?? [];

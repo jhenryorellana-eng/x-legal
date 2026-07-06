@@ -683,6 +683,140 @@ describe("aiProposeStructure", () => {
 
     expect(mocks.repo.deleteQuestionGroup).toHaveBeenCalledTimes(2);
   });
+
+  it("filters detected fields to the requested page range and forwards pageRange to the engine", async () => {
+    mocks.repo.findVersionById.mockResolvedValue({
+      ...makeDraftVersion(),
+      detected_fields: [
+        { pdf_field_name: "A_p1", field_type: "text", page: 1 },
+        { pdf_field_name: "B_p4", field_type: "text", page: 4 },
+        { pdf_field_name: "C_p5", field_type: "text", page: 5 },
+        { pdf_field_name: "D_p12", field_type: "text", page: 12 },
+      ],
+    });
+    mocks.aiEngine.proposeFormSegmentation.mockResolvedValue({ groups: [] });
+    mocks.repo.listQuestionGroups.mockResolvedValue([]);
+
+    await aiProposeStructure(makeActor(), {
+      version_id: "version-id-111",
+      mode: "merge",
+      pageRange: { from: 5, to: 12 },
+    });
+
+    expect(mocks.aiEngine.proposeFormSegmentation).toHaveBeenCalledOnce();
+    const arg = mocks.aiEngine.proposeFormSegmentation.mock.calls[0][1];
+    // Only pages 5-12 reached the model; pages 1-4 were excluded.
+    expect(arg.detectedFields.map((f: { name: string }) => f.name)).toEqual(["C_p5", "D_p12"]);
+    expect(arg.pageRange).toEqual({ from: 5, to: 12 });
+  });
+
+  it("throws CATALOG_NO_ACROFORM_FIELDS when the page range has no fields", async () => {
+    mocks.repo.findVersionById.mockResolvedValue({
+      ...makeDraftVersion(),
+      detected_fields: [{ pdf_field_name: "A_p1", field_type: "text", page: 1 }],
+    });
+
+    await expect(
+      aiProposeStructure(makeActor(), { version_id: "version-id-111", mode: "merge", pageRange: { from: 5, to: 12 } }),
+    ).rejects.toMatchObject({ code: "CATALOG_NO_ACROFORM_FIELDS" });
+    expect(mocks.aiEngine.proposeFormSegmentation).not.toHaveBeenCalled();
+  });
+
+  it("merge mode appends new groups AFTER the existing ones (position offset)", async () => {
+    mocks.repo.findVersionById.mockResolvedValue({
+      ...makeDraftVersion(),
+      detected_fields: [{ pdf_field_name: "C_p5", field_type: "text", page: 5 }],
+    });
+    mocks.aiEngine.proposeFormSegmentation.mockResolvedValue({
+      groups: [
+        {
+          title_i18n: { es: "Parte B", en: "Part B" },
+          position: 0,
+          questions: [
+            { question_i18n: { es: "q", en: "q" }, field_type: "text", pdf_field_name: "C_p5", is_required: true, position: 0 },
+          ],
+        },
+      ],
+    });
+    // Existing page-1-4 groups occupy positions 0 and 1 → new group must land at 2.
+    mocks.repo.listQuestionGroups.mockResolvedValue([
+      { id: "g0", position: 0 },
+      { id: "g1", position: 1 },
+    ]);
+    // Existing groups map only page-1-4 fields — none collide with C_p5.
+    mocks.repo.listQuestions.mockResolvedValue([
+      { pdf_field_name: "A_p1" },
+      { pdf_field_name: "B_p4" },
+    ]);
+    mocks.repo.upsertQuestionGroup.mockResolvedValue({ id: "new-g", automation_version_id: "version-id-111", title_i18n: {}, position: 2 });
+    mocks.repo.upsertQuestion.mockResolvedValue({ id: "q-1" });
+
+    await aiProposeStructure(makeActor(), { version_id: "version-id-111", mode: "merge", pageRange: { from: 5, to: 12 } });
+
+    expect(mocks.repo.upsertQuestionGroup).toHaveBeenCalledWith(expect.objectContaining({ position: 2 }));
+  });
+
+  it("merge mode excludes AcroForm fields already mapped in another group (overlapping ranges don't duplicate)", async () => {
+    // Version has fields on pages 5-8; page 6 (C_p6) is ALREADY mapped by an existing
+    // group. A second merge proposal covering pages 5-8 must NOT re-offer C_p6.
+    mocks.repo.findVersionById.mockResolvedValue({
+      ...makeDraftVersion(),
+      detected_fields: [
+        { pdf_field_name: "C_p5", field_type: "text", page: 5 },
+        { pdf_field_name: "C_p6", field_type: "text", page: 6 },
+        { pdf_field_name: "C_p7", field_type: "text", page: 7 },
+      ],
+    });
+    mocks.aiEngine.proposeFormSegmentation.mockResolvedValue({ groups: [] });
+    mocks.repo.listQuestionGroups.mockResolvedValue([{ id: "g0", position: 0 }]);
+    mocks.repo.listQuestions.mockResolvedValue([{ pdf_field_name: "C_p6" }]);
+
+    await aiProposeStructure(makeActor(), { version_id: "version-id-111", mode: "merge", pageRange: { from: 5, to: 8 } });
+
+    const arg = mocks.aiEngine.proposeFormSegmentation.mock.calls[0][1];
+    // C_p6 is already mapped → excluded; only the unmapped fields reach the model.
+    expect(arg.detectedFields.map((f: { name: string }) => f.name)).toEqual(["C_p5", "C_p7"]);
+  });
+
+  it("merge mode throws when EVERY field in scope is already mapped", async () => {
+    mocks.repo.findVersionById.mockResolvedValue({
+      ...makeDraftVersion(),
+      detected_fields: [{ pdf_field_name: "C_p5", field_type: "text", page: 5 }],
+    });
+    mocks.repo.listQuestionGroups.mockResolvedValue([{ id: "g0", position: 0 }]);
+    mocks.repo.listQuestions.mockResolvedValue([{ pdf_field_name: "C_p5" }]);
+
+    await expect(
+      aiProposeStructure(makeActor(), { version_id: "version-id-111", mode: "merge", pageRange: { from: 5, to: 8 } }),
+    ).rejects.toMatchObject({ code: "CATALOG_NO_ACROFORM_FIELDS" });
+    expect(mocks.aiEngine.proposeFormSegmentation).not.toHaveBeenCalled();
+  });
+
+  it("rejects a page range combined with replace mode (would silently wipe the rest of the form)", async () => {
+    mocks.repo.findVersionById.mockResolvedValue({
+      ...makeDraftVersion(),
+      detected_fields: [{ pdf_field_name: "C_p5", field_type: "text", page: 5 }],
+    });
+
+    await expect(
+      aiProposeStructure(makeActor(), { version_id: "version-id-111", mode: "replace", pageRange: { from: 5, to: 8 } }),
+    ).rejects.toMatchObject({ code: "CATALOG_BAD_PAGE_RANGE" });
+    expect(mocks.aiEngine.proposeFormSegmentation).not.toHaveBeenCalled();
+  });
+
+  it("rejects an inverted / out-of-bounds page range at the service boundary", async () => {
+    mocks.repo.findVersionById.mockResolvedValue({
+      ...makeDraftVersion(),
+      detected_fields: [{ pdf_field_name: "C_p5", field_type: "text", page: 5 }],
+    });
+
+    for (const bad of [{ from: 8, to: 5 }, { from: 0, to: 4 }]) {
+      await expect(
+        aiProposeStructure(makeActor(), { version_id: "version-id-111", mode: "merge", pageRange: bad }),
+      ).rejects.toMatchObject({ code: "CATALOG_BAD_PAGE_RANGE" });
+    }
+    expect(mocks.aiEngine.proposeFormSegmentation).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------

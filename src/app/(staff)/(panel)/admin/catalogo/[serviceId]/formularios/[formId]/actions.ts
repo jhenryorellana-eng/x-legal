@@ -66,6 +66,7 @@ export async function aiProposeStructureUi(input: {
   version_id: string;
   group_id?: string;
   mode: "replace" | "merge";
+  pageRange?: { from: number; to: number };
 }): Promise<Res<{ groups: number; questions: number }>> {
   return envelope(await aiProposeStructureAction(input));
 }

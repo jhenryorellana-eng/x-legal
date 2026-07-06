@@ -154,7 +154,7 @@ export interface FormEditorActions {
   createVersion: (input: { form_definition_id: string; uploaded_pdf_path: string; source_language?: "en" | "es" }) => Promise<Res<unknown>>;
   redetect: (versionId: string) => Promise<Res<unknown>>;
   getPdfUrl: (versionId: string) => Promise<Res<string | null>>;
-  aiPropose: (input: { version_id: string; group_id?: string; mode: "replace" | "merge" }) => Promise<Res<{ groups: number; questions: number }>>;
+  aiPropose: (input: { version_id: string; group_id?: string; mode: "replace" | "merge"; pageRange?: { from: number; to: number } }) => Promise<Res<{ groups: number; questions: number }>>;
   upsertGroup: (input: { id?: string; automation_version_id: string; title_i18n?: Record<string, string>; position?: number }) => Promise<Res<{ id: string }>>;
   deleteGroup: (groupId: string) => Promise<Res<unknown>>;
   upsertQuestion: (input: Record<string, unknown>) => Promise<Res<{ id: string }>>;

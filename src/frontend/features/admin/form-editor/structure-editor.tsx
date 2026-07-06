@@ -47,6 +47,8 @@ export function StructureEditor({
   const [savingFlash, setSavingFlash] = React.useState(false);
   const [aiBusy, setAiBusy] = React.useState(false);
   const [aiMenuOpen, setAiMenuOpen] = React.useState(false);
+  const [pageFrom, setPageFrom] = React.useState("");
+  const [pageTo, setPageTo] = React.useState("");
   const [openGroups, setOpenGroups] = React.useState<Set<string>>(() => new Set(groups.map((g) => g.id)));
 
   const detectedFields = vm.openVersion?.version.detected_fields ?? [];
@@ -200,6 +202,21 @@ export function StructureEditor({
     window.location.reload();
   }
 
+  // Propose questions for a PDF page range only (merged after existing groups).
+  async function runAiProposePages() {
+    const from = Number.parseInt(pageFrom, 10);
+    const to = Number.parseInt(pageTo, 10);
+    if (!Number.isFinite(from) || !Number.isFinite(to) || from < 1 || to < from) {
+      return toast.error(strings.aiPagesInvalid);
+    }
+    setAiMenuOpen(false);
+    setAiBusy(true);
+    const r = await actions.aiPropose({ version_id: versionId, mode: "merge", pageRange: { from, to } });
+    setAiBusy(false);
+    if (!r.success) return toast.error(strings.aiFailed);
+    window.location.reload();
+  }
+
   return (
     <div style={{ position: "relative" }}>
       {/* Toolbar */}
@@ -211,9 +228,24 @@ export function StructureEditor({
               <Icon name="chevD" size={15} />
             </GradientBtn>
             {aiMenuOpen && (
-              <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 30, background: "var(--card,#fff)", border: "1px solid var(--line)", borderRadius: 12, boxShadow: "var(--shadow-md, 0 8px 28px rgba(7,17,33,.16))", overflow: "hidden", minWidth: 220 }}>
+              <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 30, background: "var(--card,#fff)", border: "1px solid var(--line)", borderRadius: 12, boxShadow: "var(--shadow-md, 0 8px 28px rgba(7,17,33,.16))", overflow: "hidden", minWidth: 240 }}>
                 <MenuItem label={strings.aiModeReplace} onClick={() => runAiPropose("replace")} />
                 <MenuItem label={strings.aiModeMerge} onClick={() => runAiPropose("merge")} />
+                {!noPdf && (
+                  <div style={{ borderTop: "1px solid var(--line)", padding: "10px 12px", display: "grid", gap: 7 }}>
+                    <span style={{ fontSize: 11.5, fontWeight: 700, color: "var(--ink-3)" }}>{strings.aiPagesLabel}</span>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                      <input type="number" min={1} value={pageFrom} onChange={(e) => setPageFrom(e.target.value)}
+                        aria-label={strings.aiPagesFrom} placeholder={strings.aiPagesFrom}
+                        style={{ width: 62, padding: "6px 8px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
+                      <span style={{ color: "var(--ink-3)" }}>–</span>
+                      <input type="number" min={1} value={pageTo} onChange={(e) => setPageTo(e.target.value)}
+                        aria-label={strings.aiPagesTo} placeholder={strings.aiPagesTo}
+                        style={{ width: 62, padding: "6px 8px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
+                      <GhostBtn size="md" full={false} onClick={runAiProposePages} disabled={!pageFrom || !pageTo}>{strings.aiPagesGo}</GhostBtn>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

@@ -3460,6 +3460,18 @@ async function getQuestionsForVersion(
  *
  * @api-id (helper — consumed by getFormForClient and generateFilledPdf)
  */
+/**
+ * Request-scoped memo cache for prefill resolution. A single form load resolves
+ * MANY questions against the SAME client profile / primary client / contact row;
+ * without this each `source='profile'` question re-queries them (N+1). Callers
+ * that resolve one question in isolation (e.g. a single ai_field) omit it.
+ */
+export interface FormResolveCache {
+  primaryClientId?: Promise<string | null>;
+  profile?: Promise<Awaited<ReturnType<typeof findClientProfileForForm>>>;
+  userContact?: Promise<Awaited<ReturnType<typeof findUserContactFields>>>;
+}
+
 export async function resolveBySource(
   question: {
     id: string;
@@ -3469,7 +3481,35 @@ export async function resolveBySource(
   responseAnswers: Record<string, unknown>,
   caseId: string,
   partyId: string | null,
+  cache?: FormResolveCache,
 ): Promise<unknown> {
+  // Memoized loaders — dedupe the profile/client/contact lookups across every
+  // question in one form load. Concurrent (Promise.all) callers share the promise.
+  // EVICT on rejection: a memoized REJECTED promise would turn one transient DB
+  // hiccup into "every profile-sourced field on the form goes blank" (each caller
+  // reuses the same rejection instead of retrying). Clearing the slot on failure
+  // keeps a failure isolated to the question that hit it.
+  const loadPrimaryClient = (): Promise<string | null> => {
+    if (!cache) return findCasePrimaryClient(caseId);
+    return (cache.primaryClientId ??= findCasePrimaryClient(caseId).catch((e) => {
+      cache.primaryClientId = undefined;
+      throw e;
+    }));
+  };
+  const loadProfile = (pid: string): Promise<Awaited<ReturnType<typeof findClientProfileForForm>>> => {
+    if (!cache) return findClientProfileForForm(pid);
+    return (cache.profile ??= findClientProfileForForm(pid).catch((e) => {
+      cache.profile = undefined;
+      throw e;
+    }));
+  };
+  const loadUserContact = (pid: string): Promise<Awaited<ReturnType<typeof findUserContactFields>>> => {
+    if (!cache) return findUserContactFields(pid);
+    return (cache.userContact ??= findUserContactFields(pid).catch((e) => {
+      cache.userContact = undefined;
+      throw e;
+    }));
+  };
   const source = question.source;
   const sourceRef = (question.source_ref ?? {}) as Record<string, unknown>;
 
@@ -3545,14 +3585,14 @@ export async function resolveBySource(
       throw new CaseError("FORM_PROFILE_FIELD_FORBIDDEN", { field: profileField });
     }
 
-    // Find primary client for the case
-    const primaryClientId = await findCasePrimaryClient(caseId);
+    // Find primary client for the case (memoized across the form load)
+    const primaryClientId = await loadPrimaryClient();
     if (!primaryClientId) return null;
 
     // PII resolution is LOCAL — never forwarded to AI (DOC-74 §7.1)
     if (profileField.startsWith("pii.")) {
       const piiKey = profileField.slice(4); // e.g. "ssn"
-      const profile = await findClientProfileForForm(primaryClientId);
+      const profile = await loadProfile(primaryClientId);
       if (!profile) return null;
 
       const piiEncrypted = profile.pii_encrypted as Record<string, unknown> | null;
@@ -3570,19 +3610,19 @@ export async function resolveBySource(
     // Address sub-fields
     if (profileField.startsWith("address.")) {
       const addrKey = profileField.slice(8);
-      const profile = await findClientProfileForForm(primaryClientId);
+      const profile = await loadProfile(primaryClientId);
       const address = (profile?.address ?? {}) as Record<string, unknown>;
       return address[addrKey] ?? null;
     }
 
     // Contact fields on users table
     if (profileField === "phone_e164" || profileField === "email") {
-      const user = await findUserContactFields(primaryClientId);
+      const user = await loadUserContact(primaryClientId);
       return profileField === "phone_e164" ? (user?.phone_e164 ?? null) : (user?.email ?? null);
     }
 
     // Standard profile fields
-    const profile = await findClientProfileForForm(primaryClientId);
+    const profile = await loadProfile(primaryClientId);
     if (!profile) return null;
     return (profile as unknown as Record<string, unknown>)[profileField] ?? null;
   }
@@ -3772,6 +3812,9 @@ export async function getFormForClient(
   if (versionId && catalog.listQuestionGroups && catalog.listQuestions) {
     const rawGroups = await catalog.listQuestionGroups(versionId);
     const answers = (existingResponse?.answers ?? {}) as Record<string, unknown>;
+    // Shared across every question in this form load so the profile / primary
+    // client / contact row are fetched once, not once per prefilled question.
+    const resolveCache: FormResolveCache = {};
 
     groups = await Promise.all(rawGroups.map(async (g) => {
       const rawQuestions = await catalog.listQuestions(g.id);
@@ -3787,6 +3830,7 @@ export async function getFormForClient(
               answers,
               input.caseId,
               partyId,
+              resolveCache,
             );
           } catch {
             // Non-fatal — show as empty

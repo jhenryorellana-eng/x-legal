@@ -1310,6 +1310,64 @@ describe("resolveBySource", () => {
     expect(decryptPiiField).not.toHaveBeenCalled();
   });
 
+  it("memoizes the profile + primary client across a shared cache (no N+1)", async () => {
+    mockFindCasePrimaryClient.mockResolvedValue(CLIENT_ID);
+    mockFindClientProfileForForm.mockResolvedValue({
+      first_name: "Maria",
+      last_name: "Garcia",
+      preferred_name: null,
+      country_of_origin: "MX",
+      address: {},
+      pii_encrypted: {},
+    });
+
+    // Two profile-sourced questions in the same form load share one cache.
+    const cache = {};
+    const [a, b] = await Promise.all([
+      resolveBySource({ id: "q1", source: "profile", source_ref: { profile_field: "first_name" } }, {}, CASE_ID, null, cache),
+      resolveBySource({ id: "q2", source: "profile", source_ref: { profile_field: "last_name" } }, {}, CASE_ID, null, cache),
+    ]);
+
+    expect(a).toBe("Maria");
+    expect(b).toBe("Garcia");
+    // Fetched exactly once each — not once per prefilled question.
+    expect(mockFindCasePrimaryClient).toHaveBeenCalledTimes(1);
+    expect(mockFindClientProfileForForm).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT memoize a rejected profile load — a later question retries (no poisoned cache)", async () => {
+    mockFindCasePrimaryClient.mockResolvedValue(CLIENT_ID);
+    // A transient failure on the first load must not blank out every other
+    // profile-sourced field on the form: the second question retries and succeeds.
+    mockFindClientProfileForForm
+      .mockRejectedValueOnce(new Error("transient db error"))
+      .mockResolvedValueOnce({
+        first_name: "Maria",
+        last_name: "Garcia",
+        preferred_name: null,
+        country_of_origin: "MX",
+        address: {},
+        pii_encrypted: {},
+      });
+
+    const cache = {};
+    await expect(
+      resolveBySource({ id: "q1", source: "profile", source_ref: { profile_field: "first_name" } }, {}, CASE_ID, null, cache),
+    ).rejects.toThrow("transient db error");
+
+    // SAME cache: the rejected promise was evicted, so this retries instead of
+    // reusing the cached rejection.
+    const b = await resolveBySource(
+      { id: "q2", source: "profile", source_ref: { profile_field: "last_name" } },
+      {},
+      CASE_ID,
+      null,
+      cache,
+    );
+    expect(b).toBe("Garcia");
+    expect(mockFindClientProfileForForm).toHaveBeenCalledTimes(2);
+  });
+
   it("resolves profile.pii.ssn via local decryption (PII never leaves server)", async () => {
     mockFindCasePrimaryClient.mockResolvedValue(CLIENT_ID);
     mockFindClientProfileForForm.mockResolvedValue({
