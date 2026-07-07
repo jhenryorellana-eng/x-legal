@@ -351,6 +351,7 @@ export async function fillAcroForm(
       const widget = w as {
         getName?: () => string;
         getFieldType?: () => string;
+        getValue?: () => string;
         setTextValue?: (v: string) => void;
         setChoiceValue?: (v: string) => void;
         toggle?: () => void;
@@ -364,8 +365,16 @@ export async function fillAcroForm(
 
       try {
         if (fieldType === "checkbox") {
-          // For checkboxes, a truthy value toggles on
-          if (val) widget.toggle?.();
+          // Set an EXPLICIT on/off state (idempotent) instead of a blind toggle().
+          // A blind flip is non-deterministic when a field has several kid widgets
+          // that share one name (USCIS AcroForms do) and cannot turn a box OFF. We
+          // read the current value ("Off"/"" = off) and toggle only when it differs
+          // from the target — so N kids sharing a name converge to the same state and
+          // a Yes/No · Sex · Marital group never ends up with BOTH boxes ticked.
+          const wantOn = val === true || (typeof val === "string" && val !== "" && val !== "Off");
+          const cur = widget.getValue?.() ?? "Off";
+          const isOn = cur !== "Off" && cur !== "";
+          if (isOn !== wantOn) widget.toggle?.();
         } else if (fieldType === "combobox" || fieldType === "radiobutton") {
           widget.setChoiceValue?.(String(val));
         } else {
@@ -401,32 +410,34 @@ const PDF_OFFICE_USE_RE =
 /**
  * USCIS rejects a form that leaves ANY field blank, but the instructions allow
  * "N/A"/"None" for inapplicable fields (8 CFR 1208.3(c)(3)). This writes a
- * placeholder into every applicant TEXT field that is still empty — SCOPED to the
- * pages this form actually covers (so a split form, e.g. I-589 Part A on pages 1-4,
- * does not stamp "N/A" onto another form's pages). Office-use / signature fields and
- * non-text widgets (checkboxes) are never touched. Mutates `filled` in place.
+ * placeholder into the caller-supplied set of **applicable, still-empty** applicant
+ * TEXT fields — the questions that are VISIBLE (not hidden by a condition), not in a
+ * do-not-fill section, and whose type holds free text. The caller decides what is
+ * applicable; this helper only enforces the two hard rules USCIS/our engine share:
+ * a placeholder never lands on a non-text widget (a checkbox can't hold "N/A") nor on
+ * an office-use / signature field (`PDF_OFFICE_USE_RE`). Mutates `filled` in place.
  *
+ * This is deliberately NOT a page-wide scan: a blind page scan stamped "N/A" onto
+ * fields that belong to hidden blocks (spouse when single, unused child slots, Parts
+ * F/G, the signature line), which is exactly what we must avoid.
+ *
+ * @param naTargets pdf_field_names of visible, applicable, empty text/textarea questions.
  * @returns how many fields were back-filled.
  */
 export function backfillNaTextFields(
   detectedFields: Array<{ pdf_field_name: string; field_type: string; page: number }>,
   filled: Record<string, string | boolean>,
-  formFieldNames: Iterable<string>,
+  naTargets: Iterable<string>,
   placeholder = "N/A",
 ): number {
-  const formFieldSet = new Set(formFieldNames);
-  // The form's page scope = the pages its mapped questions live on.
-  const formPages = new Set<number>();
-  for (const f of detectedFields) if (formFieldSet.has(f.pdf_field_name)) formPages.add(f.page);
-  if (formPages.size === 0) return 0;
-
+  const typeByName = new Map(detectedFields.map((f) => [f.pdf_field_name, f.field_type]));
   let n = 0;
-  for (const f of detectedFields) {
-    if (!formPages.has(f.page)) continue;
-    if (f.field_type !== "text") continue; // checkboxes can't hold "N/A"
-    if (f.pdf_field_name in filled) continue; // already has a value (answer or a SELECT's ticked box)
-    if (PDF_OFFICE_USE_RE.test(f.pdf_field_name)) continue;
-    filled[f.pdf_field_name] = placeholder;
+  for (const name of naTargets) {
+    if (name in filled) continue; // already has a value (answer or a SELECT's ticked box)
+    const detectedType = typeByName.get(name);
+    if (detectedType !== undefined && detectedType !== "text") continue; // only text widgets hold "N/A"
+    if (PDF_OFFICE_USE_RE.test(name)) continue;
+    filled[name] = placeholder;
     n++;
   }
   return n;

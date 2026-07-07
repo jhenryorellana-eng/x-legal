@@ -24,6 +24,7 @@ const FIELD_TYPES: { id: FieldType; key: string }[] = [
   { id: "date", key: "ftDate" },
   { id: "checkbox", key: "ftCheckbox" },
   { id: "select", key: "ftSelect" },
+  { id: "multiselect", key: "ftMultiselect" },
   { id: "textarea", key: "ftTextarea" },
 ];
 
@@ -178,8 +179,8 @@ export function QuestionCard({
             </label>
           </div>
 
-          {/* Options editor (select only) */}
-          {q.field_type === "select" && (
+          {/* Options editor (select + multiselect map a group of checkboxes) */}
+          {(q.field_type === "select" || q.field_type === "multiselect") && (
             <OptionsEditor question={q} strings={strings} readOnly={readOnly} onChange={onChange} />
           )}
 
@@ -312,7 +313,7 @@ export function QuestionCard({
 }
 
 function tType(ft: FieldType, s: FormEditorStrings): string {
-  return s[{ text: "ftText", number: "ftNumber", date: "ftDate", checkbox: "ftCheckbox", select: "ftSelect", textarea: "ftTextarea" }[ft]];
+  return s[{ text: "ftText", number: "ftNumber", date: "ftDate", checkbox: "ftCheckbox", select: "ftSelect", multiselect: "ftMultiselect", textarea: "ftTextarea" }[ft]];
 }
 
 function defaultRef(source: QuestionSource): Record<string, unknown> | null {
@@ -501,18 +502,34 @@ interface PickerProps {
 
 function ValidationPopover({ q, strings, readOnly, onChange }: { q: QuestionVM; strings: FormEditorStrings; readOnly: boolean; onChange: (patch: Partial<QuestionVM>) => void }) {
   const [open, setOpen] = React.useState(false);
-  const v = (q.validation ?? {}) as { regex?: string; min?: number; max?: number };
+  const v = (q.validation ?? {}) as { regex?: string; min?: number; max?: number; minSelected?: number };
   return (
     <div>
       <button type="button" onClick={() => setOpen((o) => !o)} style={{ border: "none", background: "none", color: "var(--accent)", fontSize: 12.5, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}>
         <Icon name="gear" size={14} /> {strings.validation}
       </button>
       {open && (
-        <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 8 }}>
-          <TextInput value={v.regex ?? ""} placeholder="regex" disabled={readOnly} aria-label="regex" onChange={(e) => onChange({ validation: { ...v, regex: e.target.value } })} style={{ height: 36 }} />
-          <TextInput type="number" value={v.min ?? ""} placeholder="min" disabled={readOnly} aria-label="min" onChange={(e) => onChange({ validation: { ...v, min: e.target.value === "" ? undefined : Number(e.target.value) } })} style={{ height: 36 }} />
-          <TextInput type="number" value={v.max ?? ""} placeholder="max" disabled={readOnly} aria-label="max" onChange={(e) => onChange({ validation: { ...v, max: e.target.value === "" ? undefined : Number(e.target.value) } })} style={{ height: 36 }} />
-        </div>
+        <>
+          <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 8 }}>
+            <TextInput value={v.regex ?? ""} placeholder="regex" disabled={readOnly} aria-label="regex" onChange={(e) => onChange({ validation: { ...v, regex: e.target.value } })} style={{ height: 36 }} />
+            <TextInput type="number" value={v.min ?? ""} placeholder="min" disabled={readOnly} aria-label="min" onChange={(e) => onChange({ validation: { ...v, min: e.target.value === "" ? undefined : Number(e.target.value) } })} style={{ height: 36 }} />
+            <TextInput type="number" value={v.max ?? ""} placeholder="max" disabled={readOnly} aria-label="max" onChange={(e) => onChange({ validation: { ...v, max: e.target.value === "" ? undefined : Number(e.target.value) } })} style={{ height: 36 }} />
+          </div>
+          {q.field_type === "multiselect" && (
+            <div style={{ marginTop: 8 }}>
+              <FieldLabel>{strings.minSelected}</FieldLabel>
+              <TextInput
+                type="number"
+                value={v.minSelected ?? ""}
+                placeholder="1"
+                disabled={readOnly}
+                aria-label={strings.minSelected}
+                onChange={(e) => onChange({ validation: { ...v, minSelected: e.target.value === "" ? undefined : Number(e.target.value) } })}
+                style={{ height: 36, maxWidth: 140 }}
+              />
+            </div>
+          )}
+        </>
       )}
     </div>
   );

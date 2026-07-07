@@ -40,6 +40,7 @@ export const formEditorPdfMock: FormEditorVM = {
         automation_version_id: "v3",
         title_i18n: { es: "Datos del peticionario", en: "Petitioner data" },
         position: 0,
+        do_not_fill: false,
         questions: [
           {
             id: "q1",
@@ -77,6 +78,7 @@ export const formEditorPdfMock: FormEditorVM = {
         automation_version_id: "v3",
         title_i18n: { es: "Clasificación solicitada", en: "Requested classification" },
         position: 1,
+        do_not_fill: false,
         questions: [
           {
             id: "q3",

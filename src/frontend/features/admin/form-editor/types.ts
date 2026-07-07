@@ -17,7 +17,7 @@ export type QuestionSource =
   | "profile"
   | "ai_field";
 
-export type FieldType = "text" | "number" | "date" | "checkbox" | "select" | "textarea";
+export type FieldType = "text" | "number" | "date" | "checkbox" | "select" | "textarea" | "multiselect";
 
 export interface DetectedFieldVM {
   pdf_field_name: string;
@@ -55,6 +55,8 @@ export interface QuestionGroupVM {
   automation_version_id: string;
   title_i18n: I18nValue;
   position: number;
+  /** When true, the generator leaves this whole section blank (Part D signature, Parts F/G). */
+  do_not_fill: boolean;
   questions: QuestionVM[];
 }
 
@@ -155,7 +157,7 @@ export interface FormEditorActions {
   redetect: (versionId: string) => Promise<Res<unknown>>;
   getPdfUrl: (versionId: string) => Promise<Res<string | null>>;
   aiPropose: (input: { version_id: string; group_id?: string; mode: "replace" | "merge"; pageRange?: { from: number; to: number } }) => Promise<Res<{ groups: number; questions: number }>>;
-  upsertGroup: (input: { id?: string; automation_version_id: string; title_i18n?: Record<string, string>; position?: number }) => Promise<Res<{ id: string }>>;
+  upsertGroup: (input: { id?: string; automation_version_id: string; title_i18n?: Record<string, string>; position?: number; do_not_fill?: boolean }) => Promise<Res<{ id: string }>>;
   deleteGroup: (groupId: string) => Promise<Res<unknown>>;
   upsertQuestion: (input: Record<string, unknown>) => Promise<Res<{ id: string }>>;
   deleteQuestion: (questionId: string) => Promise<Res<unknown>>;

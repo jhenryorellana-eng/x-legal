@@ -888,6 +888,37 @@ describe("generateTestPdf", () => {
     ).rejects.toMatchObject({ code: "CATALOG_VERSION_NOT_FOUND" });
   });
 
+  it("mirrors production: option-group siblings OFF and a do_not_fill group stays blank", async () => {
+    mocks.repo.getVersionTree.mockResolvedValue({
+      version: { ...makeDraftVersion(), source_pdf_path: "forms/f/v1/f.pdf" },
+      groups: [
+        { id: "gA", do_not_fill: false },
+        { id: "gSig", do_not_fill: true }, // Part D signature / Parts F/G
+      ],
+      questions: [
+        {
+          id: "qSex", group_id: "gA", field_type: "select", is_required: true, pdf_field_name: null, position: 0,
+          options: [
+            { value: "m", pdf_field_name: "SexM" },
+            { value: "f", pdf_field_name: "SexF" },
+          ],
+        },
+        { id: "qSign", group_id: "gSig", field_type: "text", is_required: false, pdf_field_name: "SignName", position: 0 },
+      ],
+    });
+    mocks.storageDownload.mockResolvedValue({ data: new Blob([makePdfBytes().buffer as ArrayBuffer]), error: null });
+    mocks.fillAcroForm.mockResolvedValue(new Uint8Array([37, 80, 68, 70]));
+
+    await generateTestPdf(makeActor(), {
+      version_id: "version-id-111",
+      sample_answers: { qSex: "m", qSign: "should be ignored" },
+    });
+
+    const values = mocks.fillAcroForm.mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(values).toMatchObject({ SexM: true, SexF: false }); // chosen ON, sibling explicitly OFF
+    expect(values).not.toHaveProperty("SignName"); // do_not_fill group → blank even with an answer
+  });
+
   it("skips questions without pdf_field_name (intermediate fields)", async () => {
     mocks.repo.getVersionTree.mockResolvedValue({
       version: { ...makeDraftVersion(), source_pdf_path: "forms/f/v1/f.pdf" },

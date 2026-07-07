@@ -47,7 +47,18 @@ export const AppointmentKindSchema = z.enum(["video", "phone", "presencial"]);
 export const FormKindSchema = z.enum(["ai_letter", "pdf_automation", "questionnaire"]);
 export const FilledBySchema = z.enum(["client", "staff", "both"]);
 export const VersionStatusSchema = z.enum(["draft", "published", "archived"]);
-export const FieldTypeSchema = z.enum(["text", "number", "date", "checkbox", "select", "textarea"]);
+export const FieldTypeSchema = z.enum([
+  "text",
+  "number",
+  "date",
+  "checkbox",
+  "select",
+  "textarea",
+  // multiselect: a checkbox GROUP where several boxes may be ticked at once (each
+  // option carries its own pdf_field_name). validation.minSelected enforces a floor
+  // (e.g. I-589 Part B.1 asylum bases: at least one basis must be marked).
+  "multiselect",
+]);
 // 'ai_field' = a field whose value is produced by AI at resolution time from a
 // connected source (a client document the AI INTERPRETS, or an ai_letter
 // generation the AI SYNTHESIZES), guided by a per-field instruction. See
@@ -418,6 +429,10 @@ export const QuestionGroupSchema = z.object({
   automation_version_id: z.string().uuid(),
   title_i18n: I18nTextDraftSchema,
   position: z.number().int(),
+  // When true, the generator leaves every field in this group BLANK by design (no
+  // value, no N/A backfill) — e.g. I-589 Part D signature, Parts F/G "to be completed
+  // at the interview/hearing". Default false. See migration 0065.
+  do_not_fill: z.boolean().default(false),
 });
 export type QuestionGroup = z.infer<typeof QuestionGroupSchema>;
 
@@ -433,7 +448,9 @@ export const SourceRefSchema = z.discriminatedUnion("source", [
   }),
   z.object({
     source: z.literal("profile"),
-    source_ref: z.object({ profile_field: z.string() }),
+    // `format` (optional) post-processes the resolved value — e.g. split a phone into
+    // its area code / local number for forms that print them in separate boxes.
+    source_ref: z.object({ profile_field: z.string(), format: z.string().optional() }),
   }),
   z.object({
     source: z.literal("ai_field"),

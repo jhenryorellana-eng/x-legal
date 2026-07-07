@@ -36,6 +36,7 @@ export interface RawFormEditorData {
       automation_version_id: string;
       title_i18n: RawI18n;
       position: number;
+      do_not_fill?: boolean | null;
       questions: Array<Record<string, unknown>>;
     }>;
   } | null;
@@ -81,6 +82,7 @@ export function buildFormEditorVM(data: RawFormEditorData, datasets: RawDataset[
     automation_version_id: g.automation_version_id,
     title_i18n: i18n(g.title_i18n),
     position: g.position,
+    do_not_fill: g.do_not_fill === true,
     questions: (g.questions ?? []).map(toQuestion).sort((a, b) => a.position - b.position),
   }));
 

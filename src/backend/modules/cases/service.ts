@@ -3589,6 +3589,11 @@ export async function resolveBySource(
     const primaryClientId = await loadPrimaryClient();
     if (!primaryClientId) return null;
 
+    // Resolve the raw profile value, then apply the optional `format` transform (e.g.
+    // split a phone into area code / local number for forms with separate boxes).
+    const format = sourceRef["format"] as string | undefined;
+    let raw: unknown = null;
+
     // PII resolution is LOCAL — never forwarded to AI (DOC-74 §7.1)
     if (profileField.startsWith("pii.")) {
       const piiKey = profileField.slice(4); // e.g. "ssn"
@@ -3600,34 +3605,55 @@ export async function resolveBySource(
 
       const { decryptPiiField } = await import("@/backend/platform/crypto");
       try {
-        return decryptPiiField(piiEncrypted[piiKey] as import("@/backend/platform/crypto").EncryptedField);
+        raw = decryptPiiField(piiEncrypted[piiKey] as import("@/backend/platform/crypto").EncryptedField);
       } catch {
         logger.warn({ piiKey }, "resolveBySource: PII decryption failed — returning null");
         return null;
       }
-    }
-
-    // Address sub-fields
-    if (profileField.startsWith("address.")) {
+    } else if (profileField.startsWith("address.")) {
+      // Address sub-fields
       const addrKey = profileField.slice(8);
       const profile = await loadProfile(primaryClientId);
       const address = (profile?.address ?? {}) as Record<string, unknown>;
-      return address[addrKey] ?? null;
-    }
-
-    // Contact fields on users table
-    if (profileField === "phone_e164" || profileField === "email") {
+      raw = address[addrKey] ?? null;
+    } else if (profileField === "phone_e164" || profileField === "email") {
+      // Contact fields on users table
       const user = await loadUserContact(primaryClientId);
-      return profileField === "phone_e164" ? (user?.phone_e164 ?? null) : (user?.email ?? null);
+      raw = profileField === "phone_e164" ? (user?.phone_e164 ?? null) : (user?.email ?? null);
+    } else {
+      // Standard profile fields
+      const profile = await loadProfile(primaryClientId);
+      if (!profile) return null;
+      raw = (profile as unknown as Record<string, unknown>)[profileField] ?? null;
     }
 
-    // Standard profile fields
-    const profile = await loadProfile(primaryClientId);
-    if (!profile) return null;
-    return (profile as unknown as Record<string, unknown>)[profileField] ?? null;
+    return formatProfileValue(raw, format);
   }
 
   return null;
+}
+
+/**
+ * Optional post-processing of a resolved `profile` value. Currently supports splitting
+ * a US phone number (E.164 or raw digits) into the pieces USCIS forms print separately:
+ *   us_area_code  → "305"        (the 3-digit area code, for the "( )" box)
+ *   us_local_number → "555-1234" (the 7-digit local number)
+ *   us_phone      → "(305) 555-1234"
+ * Unknown/absent format → value unchanged. Reusable for any form with split phone boxes.
+ */
+function formatProfileValue(value: unknown, format: string | undefined): unknown {
+  if (value == null || !format) return value;
+  const digits = String(value).replace(/\D/g, "");
+  const local = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  if (local.length !== 10) return value; // not a US 10-digit number — leave as-is
+  const area = local.slice(0, 3);
+  const number = `${local.slice(3, 6)}-${local.slice(6, 10)}`;
+  switch (format) {
+    case "us_area_code": return area;
+    case "us_local_number": return number;
+    case "us_phone": return `(${area}) ${number}`;
+    default: return value;
+  }
 }
 
 /** A single ai_field to resolve: question id + its connected source + per-field prompt. */
@@ -4493,11 +4519,22 @@ export type GenerateFilledPdfInput = z.infer<typeof GenerateFilledPdfSchema>;
  * A value that is not ISO (already formatted, or free text) is returned untouched.
  */
 function formatPdfDate(value: string, monthYearOnly: boolean): string {
-  const m = /^(\d{4})-(\d{2})(?:-(\d{2}))?$/.exec(value.trim());
+  const trimmed = value.trim();
+  if (!trimmed) return ""; // never emit a placeholder date — blank in, blank out
+  const m = /^(\d{4})-(\d{2})(?:-(\d{2}))?$/.exec(trimmed);
   if (!m) return value;
   const [, yyyy, mm, dd] = m;
   if (monthYearOnly || !dd) return `${mm}/${yyyy}`;
   return `${mm}/${dd}/${yyyy}`;
+}
+
+/** validation.minSelected for a multiselect group (e.g. Part B.1 ≥ 1); 0 when unset. */
+function readMinSelected(validation: unknown): number {
+  if (validation && typeof validation === "object" && "minSelected" in validation) {
+    const v = (validation as { minSelected?: unknown }).minSelected;
+    if (typeof v === "number" && Number.isFinite(v) && v > 0) return Math.floor(v);
+  }
+  return 0;
 }
 
 /** A date question is month/year-only when its prompt asks for "mes/año" (Mo/Yr). */
@@ -4560,7 +4597,7 @@ export async function generateFilledPdf(
   // Gate: FORM_VERSION_MISMATCH — only fill against the currently published version
   const catalog = await import("@/backend/modules/catalog" as string) as {
     getPublishedAutomationVersion: (id: string) => Promise<{ id: string; source_pdf_path: string; detected_fields: unknown; source_language?: string } | null>;
-    listQuestionGroups: (versionId: string) => Promise<Array<{ id: string }>>;
+    listQuestionGroups: (versionId: string) => Promise<Array<{ id: string; do_not_fill?: boolean | null }>>;
     listQuestions: (groupId: string) => Promise<Array<{
       id: string;
       source: string;
@@ -4570,6 +4607,7 @@ export async function generateFilledPdf(
       field_type: string;
       condition: unknown;
       options: unknown;
+      validation?: unknown;
       question_i18n?: unknown;
     }>>;
   };
@@ -4585,7 +4623,9 @@ export async function generateFilledPdf(
     });
   }
 
-  // Collect all questions for the version
+  // Collect all questions for the version. Each question is tagged with its group's
+  // do_not_fill flag: a "do not fill" section (I-589 Part D signature, Parts F/G) is
+  // left ENTIRELY blank by legal design — no value, no N/A backfill.
   const questions: Array<{
     id: string;
     source: string;
@@ -4595,14 +4635,17 @@ export async function generateFilledPdf(
     field_type: string;
     condition: unknown;
     options: unknown;
+    validation?: unknown;
     question_i18n?: unknown;
+    do_not_fill?: boolean;
   }> = [];
 
   if (catalog.listQuestionGroups && catalog.listQuestions) {
     const groups = await catalog.listQuestionGroups(published.id);
     for (const g of groups) {
+      const doNotFill = g.do_not_fill === true;
       const qs = await catalog.listQuestions(g.id);
-      questions.push(...qs);
+      questions.push(...qs.map((q) => ({ ...q, do_not_fill: doNotFill })));
     }
   }
 
@@ -4673,15 +4716,25 @@ export async function generateFilledPdf(
   // Resolve all field values
   const fieldValues: Record<string, string | boolean> = {};
   const missingRequired: string[] = [];
+  // pdf_field_names of VISIBLE, applicable, still-empty free-text questions — the only
+  // fields that get an "N/A" placeholder (8 CFR 1208.3(c)(3)). Hidden blocks, do-not-fill
+  // sections, dates and checkboxes are deliberately absent, so they stay blank.
+  const naTargets: string[] = [];
 
   for (const q of questions) {
-    // A SELECT may map a GROUP of checkboxes (Sex Male/Female, Marital, a Yes/No
-    // pair): each option carries its own pdf_field_name and the chosen option's box
-    // is the one we check. Such a question can have a null top-level pdf_field_name.
-    const optionFields =
-      q.field_type === "select" && Array.isArray(q.options)
-        ? (q.options as Array<{ value: string; pdf_field_name?: string | null }>)
-        : null;
+    // Do-not-fill section (I-589 Part D signature, Parts F/G): left ENTIRELY blank by
+    // legal design — no value AND no "N/A" backfill.
+    if (q.do_not_fill) continue;
+
+    // A SELECT/MULTISELECT may map a GROUP of checkboxes (Sex, Marital, a Yes/No pair,
+    // the Part B.1 asylum bases): each option carries its own pdf_field_name. select →
+    // exactly one box on; multiselect → several. Such a question can have a null
+    // top-level pdf_field_name.
+    const isOptionGroup =
+      (q.field_type === "select" || q.field_type === "multiselect") && Array.isArray(q.options);
+    const optionFields = isOptionGroup
+      ? (q.options as Array<{ value: string; pdf_field_name?: string | null }>)
+      : null;
     const hasOptionFields = !!optionFields && optionFields.some((o) => o?.pdf_field_name);
     if (!q.pdf_field_name && !hasOptionFields) continue; // intermediate — no AcroField mapping
 
@@ -4709,18 +4762,47 @@ export async function generateFilledPdf(
       );
     }
 
+    // MULTISELECT (e.g. Part B.1 asylum bases): value is a list. Tick every chosen box,
+    // turn the rest OFF, and enforce validation.minSelected / required (≥ N boxes).
+    if (q.field_type === "multiselect") {
+      const selected = Array.isArray(resolved)
+        ? resolved.map((v) => String(v))
+        : resolved != null && resolved !== "" ? [String(resolved)] : [];
+      const need = Math.max(readMinSelected(q.validation), condState.required ? 1 : 0);
+      if (selected.length < need) {
+        missingRequired.push(q.pdf_field_name ?? q.id);
+        continue;
+      }
+      if (optionFields) {
+        const chosen = new Set(selected);
+        for (const o of optionFields) {
+          if (o?.pdf_field_name) fieldValues[o.pdf_field_name] = chosen.has(String(o.value));
+        }
+      }
+      continue;
+    }
+
     const isEmpty = resolved === null || resolved === undefined || resolved === "";
     if (isEmpty && condState.required) {
       missingRequired.push(q.pdf_field_name ?? q.id);
       continue;
     }
-    if (isEmpty) continue;
+    if (isEmpty) {
+      // Applicable but unanswered free text → eligible for "N/A" (never dates/selects).
+      if ((q.field_type === "text" || q.field_type === "textarea") && q.pdf_field_name) {
+        naTargets.push(q.pdf_field_name);
+      }
+      continue;
+    }
 
-    // SELECT → checkbox group: tick the chosen option's box (an option with no
-    // pdf_field_name, e.g. "No" on a single "I am married" checkbox, ticks nothing).
-    if (hasOptionFields) {
-      const chosen = optionFields.find((o) => String(o.value) === String(resolved));
-      if (chosen?.pdf_field_name) fieldValues[chosen.pdf_field_name] = true;
+    // SELECT → checkbox group: tick the chosen option's box AND explicitly turn the
+    // siblings OFF, so a Yes/No · Sex · Marital group can never show two ticks. An
+    // option with no pdf_field_name (e.g. "married=yes" on a lone "I am not married"
+    // box) simply ticks nothing.
+    if (hasOptionFields && optionFields) {
+      for (const o of optionFields) {
+        if (o?.pdf_field_name) fieldValues[o.pdf_field_name] = String(o.value) === String(resolved);
+      }
       continue;
     }
 
@@ -4733,8 +4815,11 @@ export async function generateFilledPdf(
         const pre = answersTranslated[q.id];
         if (typeof pre === "string" && pre.trim()) {
           str = pre; // client already translated this one on-device
-        } else if (translationStatus !== "done" && translateAnswer) {
-          str = await translateAnswer(str, questionLabel(q.question_i18n)); // fill the gap server-side
+        } else if (translateAnswer) {
+          // Translate the gap server-side. NOTE: do this even when translation_status
+          // is "done" — "done" only means the client finished their pass; a field they
+          // skipped must still not leak the source language into the filed PDF.
+          str = await translateAnswer(str, questionLabel(q.question_i18n));
         }
       } else if (q.field_type === "date") {
         // USCIS expects MM/DD/YYYY (or MM/YYYY for Mo/Yr fields); the wizard stores ISO.
@@ -4763,28 +4848,16 @@ export async function generateFilledPdf(
   const pdfBytes = new Uint8Array(pdfBuffer);
 
   // USCIS acceptance rule (8 CFR 1208.3(c)(3)): a blank field makes the form
-  // incomplete, but "N/A" is an allowed response. Backfill blank applicant text
-  // fields on this form's pages so the filed PDF is not rejected for blanks.
+  // incomplete, but "N/A" is an allowed response. Backfill ONLY the applicable,
+  // still-empty free-text fields collected above (naTargets) — never fields that
+  // belong to a hidden block, a do-not-fill section, a date, or a checkbox.
   const { fillAcroForm, backfillNaTextFields } = await import("@/backend/platform/pdf");
   const detectedForNa = (published.detected_fields ?? []) as Array<{
     pdf_field_name: string;
     field_type: string;
     page: number;
   }>;
-  // Seed the page-scope with BOTH top-level and per-option pdf field names, so a
-  // page whose questions are all checkbox-group SELECTs (null top-level field) is
-  // still recognised as in-scope for the N/A backfill.
-  const naFormFields = [
-    ...questions.map((q) => q.pdf_field_name).filter((n): n is string => !!n),
-    ...questions.flatMap((q) =>
-      Array.isArray(q.options)
-        ? (q.options as Array<{ pdf_field_name?: string | null }>)
-            .map((o) => o?.pdf_field_name)
-            .filter((n): n is string => !!n)
-        : [],
-    ),
-  ];
-  backfillNaTextFields(detectedForNa, fieldValues, naFormFields);
+  backfillNaTextFields(detectedForNa, fieldValues, naTargets);
   const filledBytes = await fillAcroForm(pdfBytes, {}, fieldValues);
 
   // Store in generated bucket

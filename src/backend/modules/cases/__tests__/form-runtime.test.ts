@@ -47,6 +47,7 @@ const {
   mockListQuestions,
   // pdf + ai-engine mocks
   mockFillAcroForm,
+  mockBackfillNa,
   mockTranslateText,
   mockInterpretDocumentFields,
   mockSynthesizeLetterFields,
@@ -76,6 +77,7 @@ const {
   mockListQuestionGroups: vi.fn().mockResolvedValue([]),
   mockListQuestions: vi.fn().mockResolvedValue([]),
   mockFillAcroForm: vi.fn().mockResolvedValue(new Uint8Array([37, 80, 68, 70])),
+  mockBackfillNa: vi.fn(() => 0),
   mockTranslateText: vi.fn(),
   mockInterpretDocumentFields: vi.fn().mockResolvedValue({}),
   mockSynthesizeLetterFields: vi.fn().mockResolvedValue({}),
@@ -176,7 +178,7 @@ vi.mock("@/backend/platform/storage", () => ({
 
 vi.mock("@/backend/platform/pdf", () => ({
   fillAcroForm: mockFillAcroForm,
-  backfillNaTextFields: () => 0,
+  backfillNaTextFields: mockBackfillNa,
 }));
 
 vi.mock("@/backend/modules/ai-engine", () => ({
@@ -953,6 +955,110 @@ describe("generateFilledPdf", () => {
     ).rejects.toThrow("FORM_PDF_REQUIRED_MISSING");
   });
 
+  // --- I-589 hardening (0065): do-not-fill, multiselect, sibling-off, targeted N/A ---
+
+  it("leaves a do_not_fill group ENTIRELY blank — no value, no N/A backfill", async () => {
+    mockFindFormResponseById.mockResolvedValue({ ...approvedResponse, answers: { qSig: "Karelis" } });
+    mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
+    mockGetPublishedAutomationVersion.mockResolvedValue({
+      ...publishedVersion,
+      detected_fields: [{ pdf_field_name: "SignName", field_type: "text", page: 10 }],
+    });
+    mockListQuestionGroups.mockResolvedValue([{ id: "grpF", do_not_fill: true }]);
+    mockListQuestions.mockResolvedValue([
+      { id: "qSig", source: "client_answer", source_ref: null, pdf_field_name: "SignName", is_required: false, field_type: "text" },
+    ]);
+
+    await generateFilledPdf(staffActor, { responseId: RESPONSE_ID });
+    // Even with an answer present, a do-not-fill section stays blank (no value, no "N/A").
+    expect(mockFillAcroForm).toHaveBeenCalledWith(expect.anything(), {}, {});
+  });
+
+  it("multiselect ticks every chosen box and explicitly turns the rest OFF", async () => {
+    mockFindFormResponseById.mockResolvedValue({ ...approvedResponse, answers: { qBasis: ["race", "religion"] } });
+    mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
+    mockListQuestionGroups.mockResolvedValue([{ id: "grpB" }]);
+    mockListQuestions.mockResolvedValue([
+      {
+        id: "qBasis", source: "client_answer", source_ref: null, pdf_field_name: null,
+        is_required: true, field_type: "multiselect", validation: { minSelected: 1 },
+        options: [
+          { value: "race", pdf_field_name: "Race" },
+          { value: "religion", pdf_field_name: "Religion" },
+          { value: "nationality", pdf_field_name: "Nationality" },
+        ],
+      },
+    ]);
+
+    await generateFilledPdf(staffActor, { responseId: RESPONSE_ID });
+    expect(mockFillAcroForm).toHaveBeenCalledWith(expect.anything(), {}, { Race: true, Religion: true, Nationality: false });
+  });
+
+  it("blocks generation when a min-selected multiselect is empty (asylum basis rule)", async () => {
+    mockFindFormResponseById.mockResolvedValue({ ...approvedResponse, answers: {} });
+    mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
+    mockListQuestionGroups.mockResolvedValue([{ id: "grpB" }]);
+    mockListQuestions.mockResolvedValue([
+      {
+        id: "qBasis", source: "client_answer", source_ref: null, pdf_field_name: null,
+        is_required: false, field_type: "multiselect", validation: { minSelected: 1 },
+        options: [{ value: "race", pdf_field_name: "Race" }],
+      },
+    ]);
+
+    await expect(
+      generateFilledPdf(staffActor, { responseId: RESPONSE_ID }),
+    ).rejects.toThrow("FORM_PDF_REQUIRED_MISSING");
+  });
+
+  it("a Yes/No select ticks the chosen box and clears the other — never both marked", async () => {
+    mockFindFormResponseById.mockResolvedValue({ ...approvedResponse, answers: { qMarried: "no" } });
+    mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
+    mockListQuestionGroups.mockResolvedValue([{ id: "grp1" }]);
+    mockListQuestions.mockResolvedValue([
+      {
+        id: "qMarried", source: "client_answer", source_ref: null, pdf_field_name: null,
+        is_required: true, field_type: "select",
+        options: [
+          { value: "si", pdf_field_name: "MarriedYes" },
+          { value: "no", pdf_field_name: "MarriedNo" },
+        ],
+      },
+    ]);
+
+    await generateFilledPdf(staffActor, { responseId: RESPONSE_ID });
+    expect(mockFillAcroForm).toHaveBeenCalledWith(expect.anything(), {}, { MarriedYes: false, MarriedNo: true });
+  });
+
+  it("back-fills N/A only on visible empty free-text — never dates, never hidden fields", async () => {
+    mockFindFormResponseById.mockResolvedValue({ ...approvedResponse, answers: {} });
+    mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
+    mockGetPublishedAutomationVersion.mockResolvedValue({
+      ...publishedVersion,
+      detected_fields: [
+        { pdf_field_name: "Occupation", field_type: "text", page: 3 },
+        { pdf_field_name: "SignDate", field_type: "text", page: 3 },
+        { pdf_field_name: "SpouseName", field_type: "text", page: 2 },
+      ],
+    });
+    mockListQuestionGroups.mockResolvedValue([{ id: "grp1" }]);
+    mockListQuestions.mockResolvedValue([
+      { id: "qOcc", source: "client_answer", source_ref: null, pdf_field_name: "Occupation", is_required: false, field_type: "text" },
+      { id: "qDate", source: "client_answer", source_ref: null, pdf_field_name: "SignDate", is_required: false, field_type: "date" },
+      {
+        id: "qSpouse", source: "client_answer", source_ref: null, pdf_field_name: "SpouseName",
+        is_required: false, field_type: "text",
+        condition: { when: { question: "qMarried", op: "equals", value: "si" }, action: "show" },
+      },
+    ]);
+
+    await generateFilledPdf(staffActor, { responseId: RESPONSE_ID });
+    // Only the visible, empty free-text field is offered for "N/A". The date field
+    // and the condition-hidden spouse field are NOT — they stay blank.
+    const naTargets = (mockBackfillNa.mock.calls[0] as unknown as unknown[])?.[2] as Iterable<string>;
+    expect([...naTargets]).toEqual(["Occupation"]);
+  });
+
   it("uses the client's override for an editable empty-profile field (regression #6)", async () => {
     // The question is source='profile' but the client's profile is empty, so the
     // client typed a value (it lives in answers). The fill must use the override —
@@ -1219,6 +1325,22 @@ describe("resolveBySource", () => {
       null,
     );
     expect(result).toBeNull();
+  });
+
+  it("splits a profile phone into area code / local number via the format transform", async () => {
+    mockFindCasePrimaryClient.mockResolvedValue("client-1");
+    mockFindUserContactFields.mockResolvedValue({ email: null, phone_e164: "+13055551234" });
+
+    const area = await resolveBySource(
+      { id: "qArea", source: "profile", source_ref: { profile_field: "phone_e164", format: "us_area_code" } },
+      {}, CASE_ID, null,
+    );
+    const number = await resolveBySource(
+      { id: "qNum", source: "profile", source_ref: { profile_field: "phone_e164", format: "us_local_number" } },
+      {}, CASE_ID, null,
+    );
+    expect(area).toBe("305");
+    expect(number).toBe("555-1234");
   });
 
   // --- ai_field (Etapa B) ---

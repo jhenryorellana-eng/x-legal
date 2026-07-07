@@ -98,7 +98,7 @@ export function StructureEditor({
     const r = await actions.upsertGroup({ automation_version_id: versionId, title_i18n: { es: "Nuevo grupo", en: "New group" }, position });
     if (!r.success) return toast.error(r.error?.code ?? "Error");
     const id = r.data!.id;
-    setGroups((g) => [...g, { id, automation_version_id: versionId, title_i18n: { es: "Nuevo grupo", en: "New group" }, position, questions: [] }]);
+    setGroups((g) => [...g, { id, automation_version_id: versionId, title_i18n: { es: "Nuevo grupo", en: "New group" }, position, do_not_fill: false, questions: [] }]);
     setOpenGroups((s) => new Set(s).add(id));
     flashSaved();
   }
@@ -106,6 +106,14 @@ export function StructureEditor({
   async function renameGroup(groupId: string, title_i18n: { es?: string; en?: string }) {
     setGroups((gs) => gs.map((g) => (g.id === groupId ? { ...g, title_i18n } : g)));
     const r = await actions.upsertGroup({ id: groupId, automation_version_id: versionId, title_i18n: title_i18n as Record<string, string> });
+    if (r.success) flashSaved();
+  }
+
+  // A "do not fill" section is left ENTIRELY blank in the generated PDF by legal
+  // design (I-589 Part D signature, Parts F/G — completed at the interview/hearing).
+  async function toggleDoNotFill(groupId: string, next: boolean) {
+    setGroups((gs) => gs.map((g) => (g.id === groupId ? { ...g, do_not_fill: next } : g)));
+    const r = await actions.upsertGroup({ id: groupId, automation_version_id: versionId, do_not_fill: next });
     if (r.success) flashSaved();
   }
 
@@ -293,6 +301,7 @@ export function StructureEditor({
               onDelete={() => deleteGroup(group.id)}
               onRepropose={() => reproposeGroup(group.id)}
               onAddQuestion={() => addQuestion(group.id)}
+              onToggleDoNotFill={(v) => toggleDoNotFill(group.id, v)}
             >
               {group.questions.map((q) => (
                 <QuestionCard
@@ -374,6 +383,7 @@ function GroupAccordion({
   onDelete,
   onRepropose,
   onAddQuestion,
+  onToggleDoNotFill,
   children,
 }: {
   group: QuestionGroupVM;
@@ -385,6 +395,7 @@ function GroupAccordion({
   onDelete: () => void;
   onRepropose: () => void;
   onAddQuestion: () => void;
+  onToggleDoNotFill: (v: boolean) => void;
   children: React.ReactNode;
 }) {
   const [menuOpen, setMenuOpen] = React.useState(false);
@@ -400,6 +411,14 @@ function GroupAccordion({
         <span style={{ flex: 1, fontSize: 14, fontWeight: 800, color: "var(--ink)" }}>
           {group.title_i18n.es || group.title_i18n.en || "Grupo"}
         </span>
+        {group.do_not_fill && (
+          <span
+            title={strings.doNotFillHint}
+            style={{ fontSize: 10.5, fontWeight: 800, color: "var(--gold-deep)", border: "1px solid var(--gold-deep)", borderRadius: 6, padding: "2px 6px", whiteSpace: "nowrap" }}
+          >
+            {strings.doNotFillBadge}
+          </span>
+        )}
         {!readOnly && (
           <div style={{ position: "relative" }}>
             <button type="button" onClick={() => setMenuOpen((o) => !o)} aria-label="Menú del grupo" style={{ border: "none", background: "none", cursor: "pointer", color: "var(--ink-2)", display: "inline-flex" }}>
@@ -408,6 +427,10 @@ function GroupAccordion({
             {menuOpen && (
               <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 25, background: "var(--card,#fff)", border: "1px solid var(--line)", borderRadius: 10, boxShadow: "var(--shadow-md, 0 8px 28px rgba(7,17,33,.16))", minWidth: 200, overflow: "hidden" }}>
                 <MenuItem label={strings.renameGroup} onClick={() => { setRenaming(true); setMenuOpen(false); }} />
+                <MenuItem
+                  label={group.do_not_fill ? strings.doNotFillOff : strings.doNotFillOn}
+                  onClick={() => { onToggleDoNotFill(!group.do_not_fill); setMenuOpen(false); }}
+                />
                 <MenuItem label={strings.reproposeGroup} onClick={() => { onRepropose(); setMenuOpen(false); }} />
                 <MenuItem label={strings.deleteGroup} onClick={() => { onDelete(); setMenuOpen(false); }} />
               </div>

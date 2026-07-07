@@ -82,6 +82,7 @@ export async function upsertGroupUi(input: {
   automation_version_id: string;
   title_i18n?: Record<string, string>;
   position?: number;
+  do_not_fill?: boolean;
 }): Promise<Res<{ id: string }>> {
   const r = await upsertQuestionGroupAction(input);
   return r.success

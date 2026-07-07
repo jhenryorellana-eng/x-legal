@@ -114,6 +114,7 @@ function makeGroup(overrides: Partial<QuestionGroup> = {}): QuestionGroup {
     automation_version_id: "ver-1",
     title_i18n: { es: "Información personal", en: "Personal information" },
     position: 0,
+    do_not_fill: false,
     ...overrides,
   };
 }

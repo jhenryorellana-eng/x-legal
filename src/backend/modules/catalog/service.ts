@@ -1477,7 +1477,7 @@ function sanitizeProposedQuestion(
  */
 export async function upsertQuestionGroup(
   actor: Actor,
-  input: { id?: string; automation_version_id: string; title_i18n?: Record<string, string>; position?: number },
+  input: { id?: string; automation_version_id: string; title_i18n?: Record<string, string>; position?: number; do_not_fill?: boolean },
 ): Promise<QuestionGroup> {
   can(actor, "catalog", "edit");
 
@@ -1604,19 +1604,27 @@ export async function generateTestPdf(
 
   const bytes = new Uint8Array(await fileData.arrayBuffer());
 
-  // Map question answers to PDF field names (same mapping as production)
-  // sample_answers: { [question_id]: value }
+  // Map question answers to PDF field names (SAME assembly as production
+  // generateFilledPdf, so the preview matches the filed PDF): do-not-fill sections
+  // stay blank; option groups tick the chosen box(es) and turn siblings OFF; only
+  // applicable, empty free-text fields are eligible for the "N/A" backfill.
   const valuesByPdfName: Record<string, string | boolean> = {};
   const gaps: Array<{ question_id: string; pdf_field_name: string }> = [];
+  const naTargets: string[] = [];
+
+  // Groups flagged do_not_fill (I-589 Part D signature, Parts F/G) stay entirely blank.
+  const doNotFillGroups = new Set(
+    tree.groups.filter((g) => (g as { do_not_fill?: boolean | null }).do_not_fill === true).map((g) => g.id),
+  );
 
   for (const q of tree.questions) {
-    // SELECT mapped to a checkbox group: each option carries its own pdf_field_name
-    // (Sex, Marital, a Yes/No pair); the chosen option's box is ticked. Same logic
-    // as production generateFilledPdf.
-    const optionFields =
-      q.field_type === "select" && Array.isArray(q.options)
-        ? (q.options as Array<{ value: string; pdf_field_name?: string | null }>)
-        : null;
+    if (doNotFillGroups.has(q.group_id)) continue; // do-not-fill section → blank
+
+    const isOptionGroup =
+      (q.field_type === "select" || q.field_type === "multiselect") && Array.isArray(q.options);
+    const optionFields = isOptionGroup
+      ? (q.options as Array<{ value: string; pdf_field_name?: string | null }>)
+      : null;
     const hasOptionFields = !!optionFields && optionFields.some((o) => o?.pdf_field_name);
     const fieldName = q.pdf_field_name;
     if (!fieldName && !hasOptionFields) continue; // intermediate field without AcroForm mapping
@@ -1627,41 +1635,44 @@ export async function generateTestPdf(
     if (!condState.visible) continue;
 
     const answerId = q.id;
-    if (answerId in input.sample_answers) {
-      const val = input.sample_answers[answerId];
-      if (hasOptionFields) {
-        const chosen = optionFields.find((o) => String(o.value) === String(val));
-        if (chosen?.pdf_field_name) valuesByPdfName[chosen.pdf_field_name] = true;
-      } else {
-        valuesByPdfName[fieldName!] = typeof val === "boolean" ? val : String(val ?? "");
+    const rawVal = input.sample_answers[answerId];
+    const hasAnswer = answerId in input.sample_answers && rawVal !== "" && rawVal != null;
+
+    if (hasAnswer) {
+      if (q.field_type === "multiselect" && optionFields) {
+        const selected = new Set((Array.isArray(rawVal) ? rawVal : [rawVal]).map((v) => String(v)));
+        for (const o of optionFields) {
+          if (o?.pdf_field_name) valuesByPdfName[o.pdf_field_name] = selected.has(String(o.value));
+        }
+      } else if (hasOptionFields && optionFields) {
+        // Tick the chosen option AND turn siblings OFF (mutual exclusion).
+        for (const o of optionFields) {
+          if (o?.pdf_field_name) valuesByPdfName[o.pdf_field_name] = String(o.value) === String(rawVal);
+        }
+      } else if (fieldName) {
+        valuesByPdfName[fieldName] = typeof rawVal === "boolean" ? rawVal : String(rawVal ?? "");
       }
-    } else if (condState.required) {
-      // Required field with no sample answer — record gap (non-blocking per RF-ADM-034 E1)
-      gaps.push({ question_id: q.id, pdf_field_name: fieldName ?? q.id });
+    } else {
+      if (condState.required) {
+        // Required field with no sample answer — record gap (non-blocking per RF-ADM-034 E1)
+        gaps.push({ question_id: q.id, pdf_field_name: fieldName ?? q.id });
+      }
+      // Applicable but unanswered free text → eligible for "N/A" (never dates/selects).
+      if ((q.field_type === "text" || q.field_type === "textarea") && fieldName) {
+        naTargets.push(fieldName);
+      }
     }
   }
 
   // USCIS acceptance rule (8 CFR 1208.3(c)(3)): a blank field makes the form
-  // incomplete, but "N/A" is an allowed response — backfill blank applicant text
-  // fields on this form's pages so the test PDF reflects an acceptable filing.
+  // incomplete, but "N/A" is an allowed response — backfill ONLY the applicable,
+  // still-empty free-text fields collected above (never hidden/do-not-fill fields).
   const detectedForNa = (tree.version.detected_fields ?? []) as Array<{
     pdf_field_name: string;
     field_type: string;
     page: number;
   }>;
-  // Seed the page-scope with both top-level and per-option pdf field names (a page
-  // of only checkbox-group SELECTs would otherwise be undercounted).
-  const naFormFields = [
-    ...tree.questions.map((q) => q.pdf_field_name).filter((n): n is string => !!n),
-    ...tree.questions.flatMap((q) =>
-      Array.isArray(q.options)
-        ? (q.options as Array<{ pdf_field_name?: string | null }>)
-            .map((o) => o?.pdf_field_name)
-            .filter((n): n is string => !!n)
-        : [],
-    ),
-  ];
-  backfillNaTextFields(detectedForNa, valuesByPdfName, naFormFields);
+  backfillNaTextFields(detectedForNa, valuesByPdfName, naTargets);
 
   // Fill AcroForm using mupdf (same engine as production)
   const pdfBytes = await fillAcroForm(bytes, {}, valuesByPdfName);
