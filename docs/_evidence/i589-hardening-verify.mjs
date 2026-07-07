@@ -13,9 +13,12 @@ const get = (k) => { const m = env.match(new RegExp("^" + k + "=(.*)$", "m")); r
 const supa = createClient(get("NEXT_PUBLIC_SUPABASE_URL"), get("SUPABASE_SERVICE_ROLE_KEY"), { auth: { persistSession: false } });
 const PDF_PATH = "case/559220ae-796b-4110-ab45-bfc7eea6a564/forms/i-589-parte-a-informacion-personal-8ba801ac-8897-406c-a159-63743861fef9.pdf";
 
-const { data, error } = await supa.storage.from("generated").download(PDF_PATH);
-if (error) { console.error("DOWNLOAD_FAIL", error.message); process.exit(2); }
-const bytes = new Uint8Array(await data.arrayBuffer());
+// Fetch via a fresh signed URL + cache-buster to bypass any storage/CDN caching.
+const { data: signed, error: sErr } = await supa.storage.from("generated").createSignedUrl(PDF_PATH, 120);
+if (sErr) { console.error("SIGN_FAIL", sErr.message); process.exit(2); }
+const resp = await fetch(signed.signedUrl + "&cb=" + Date.now(), { cache: "no-store" });
+if (!resp.ok) { console.error("FETCH_FAIL", resp.status); process.exit(2); }
+const bytes = new Uint8Array(await resp.arrayBuffer());
 fs.writeFileSync(path.join(__dirname, "karelis-i589-ola2.pdf"), bytes);
 
 const doc = mupdf.Document.openDocument(bytes, "application/pdf");

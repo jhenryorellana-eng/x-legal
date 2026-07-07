@@ -2171,6 +2171,109 @@ export async function synthesizeLetterFields(input: {
   }
 }
 
+/** One answer to translate: a stable id (question id) + its text + optional field label for context. */
+export interface TranslateAnswerItem {
+  id: string;
+  text: string;
+  fieldLabel?: string;
+}
+
+/**
+ * BATCH-translates many client answers in ONE Gemini call (structured output) so an
+ * English AcroForm never leaks Spanish free-text. Replaces N sequential per-field calls
+ * (2-4 min) with one call for N fields. Preserves proper nouns (names/places) and accents,
+ * masks incidental PII per item (DOC-74 §7.1), and — if a value is already in the target
+ * language — returns it unchanged. Chunks by cumulative text size to stay within the output
+ * budget. Best-effort: an item absent from the response is simply absent from the map (the
+ * caller keeps the original). Respects the AI stub (E2E/CI → passthrough).
+ */
+export async function translateAnswersBatch(input: {
+  items: TranslateAnswerItem[];
+  direction: "es-en" | "en-es";
+  preserveProperNouns?: boolean;
+}): Promise<Record<string, string>> {
+  const items = input.items.filter((i) => i.text?.trim());
+  if (items.length === 0) return {};
+  if (isAiStubEnabled()) {
+    return Object.fromEntries(items.map((i) => [i.id, i.text])); // stub: passthrough (no provider)
+  }
+
+  // Chunk by cumulative text length so one response stays within maxOutputTokens.
+  const CHUNK_CHARS = 6_000;
+  const chunks: TranslateAnswerItem[][] = [];
+  let cur: TranslateAnswerItem[] = [];
+  let curLen = 0;
+  for (const it of items) {
+    if (cur.length > 0 && curLen + it.text.length > CHUNK_CHARS) {
+      chunks.push(cur);
+      cur = [];
+      curLen = 0;
+    }
+    cur.push(it);
+    curLen += it.text.length;
+  }
+  if (cur.length > 0) chunks.push(cur);
+
+  const results = await Promise.all(
+    chunks.map((chunk) => translateAnswersChunk(chunk, input.direction, input.preserveProperNouns)),
+  );
+  return Object.assign({}, ...results);
+}
+
+async function translateAnswersChunk(
+  items: TranslateAnswerItem[],
+  direction: "es-en" | "en-es",
+  preserveProperNouns?: boolean,
+): Promise<Record<string, string>> {
+  const model = process.env.AI_GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL;
+  const langs = direction === "es-en" ? { from: "Spanish", to: "English" } : { from: "English", to: "Spanish" };
+  const properNounRule = preserveProperNouns
+    ? " Keep every proper noun exactly as written — the names of specific people, streets, cities, towns," +
+      " departments, provinces, states, countries, schools, employers and institutions must NOT be translated" +
+      " or transliterated. Do translate ordinary descriptive words normally (occupations, religions," +
+      " relationships and other common nouns). Preserve all accents and diacritics exactly as in the source."
+    : "";
+  const list = items
+    .map((it, i) => {
+      const label = it.fieldLabel?.trim() ? ` (form field: "${it.fieldLabel.trim()}")` : "";
+      return `${i + 1}. id="${it.id}"${label}:\n${maskPii(it.text)}`;
+    })
+    .join("\n\n");
+  const prompt =
+    `Translate EACH item's text from ${langs.from} to ${langs.to}, keyed by its id.${properNounRule}` +
+    ` If an item's text is already in ${langs.to}, return it unchanged. Return the full translated text for each id.` +
+    `\n\nItems:\n${list}\n\nRespond ONLY in JSON: {"answers":[{"id":"<id>","value":"<translated text>"}]}.`;
+  try {
+    const response = await getGeminiModels().generateContent({
+      model,
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      config: {
+        temperature: 0.2,
+        maxOutputTokens: 32_768,
+        responseMimeType: "application/json",
+        responseSchema: AI_FIELD_ANSWERS_SCHEMA,
+        // gemini-2.5-flash is a "thinking" model; its reasoning tokens count toward
+        // maxOutputTokens and, with many fields, can starve the JSON output (truncated
+        // → unparseable → nothing translated). Translation needs no chain-of-thought, so
+        // disable thinking to give every token to the answer.
+        thinkingConfig: { thinkingBudget: 0 },
+      },
+    });
+    const text = response.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    const out = parseFieldAnswers(text, items.map((i) => ({ id: i.id, instruction: "" })));
+    if (Object.keys(out).length === 0) {
+      logger.warn(
+        { finishReason: response.candidates?.[0]?.finishReason, textLen: text.length, items: items.length },
+        "translateAnswersBatch: chunk produced no usable translations",
+      );
+    }
+    return out;
+  } catch (err) {
+    logger.warn({ err, count: items.length }, "ai-engine: translateAnswersBatch chunk failed — leaving answers untranslated");
+    return {};
+  }
+}
+
 /**
  * Proposes the questions of a companion QUESTIONNAIRE (Etapa B) — the complementary
  * form whose answers feed a generated document. Unlike proposeFormSegmentation there

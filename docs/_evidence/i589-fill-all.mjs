@@ -24,7 +24,26 @@ const en = (q) => String(q.question_i18n?.en || "").trim();
 function genText(q) {
   const l = en(q).toLowerCase();
   const pick = (...pairs) => { for (const [re, v] of pairs) if (re.test(l)) return v; return null; };
+  // Per-child realistic data (Child N — <field>) so pages 2-3 fill with distinct names.
+  const childMatch = /(?:child|hijo)\s*(\d+)/i.exec(l);
+  if (childMatch) {
+    const idx = Number(childMatch[1]) - 1;
+    const firsts = ["Mateo", "Sofía", "Diego", "Valentina"];
+    if (/last name|apellido/.test(l)) return "Perez-Test";
+    if (/first name/.test(l)) return firsts[idx] ?? "Nino";
+    if (/middle name|segundo nombre/.test(l)) return "A.";
+    if (/nationality|citizenship|nacionalidad/.test(l)) return "Venezuelan";
+    if (/race|ethnic|raza|étnic/.test(l)) return "Hispanic/Latino";
+    if (/city|birth|nacimiento/.test(l)) return "Caracas, Venezuela";
+    if (/marital|estado civil/.test(l)) return "Single";
+    if (/status|estatus/.test(l)) return "Parole";
+    return ""; // A-number/passport/SSN optional → blank (engine writes N/A), never a token
+  }
   const v = pick(
+    [/mother|madre/, "María Perez-Test"],
+    [/father|padre/, "Juan Perez-Test"],
+    [/sibling|hermano|hermana/, "Ana Perez-Test"],
+    [/nationality|citizenship|nacionalidad/, "Venezuelan"],
     [/last name|apellido/, "Perez-Test"],
     [/first name/, "Karelis"],
     [/middle name/, "Andreina"],
@@ -50,8 +69,9 @@ function genText(q) {
     [/explain|describe|why|detail|narrativ|circumstanc/, "Por mi labor periodística denuncié corrupción; recibí amenazas de muerte y un allanamiento. Temo ser encarcelada o asesinada si regreso."],
   );
   if (v) return v;
-  // fallback trazable: la etiqueta del campo (para ver en qué casilla del PDF cae).
-  return "«" + en(q).slice(0, 38) + "»";
+  // Unmatched: required fields get "N/A" (so the demo generation never blocks on a required
+  // field); optional fields stay blank (the engine writes "N/A" for those anyway). Never a token.
+  return q.is_required ? "N/A" : "";
 }
 
 const answers = {};
@@ -63,14 +83,17 @@ for (const q of qs) {
   switch (q.field_type) {
     case "multiselect": answers[q.id] = opts ? opts.map((o) => o.value) : []; n.multiselect++; break;
     case "checkbox": answers[q.id] = true; n.checkbox++; break;
-    case "number": answers[q.id] = /child|hij|how many/.test(l) ? "6" : "2"; n.number++; break;
-    case "date":
+    case "number": answers[q.id] = /child|hij|how many/.test(l) ? "4" : "2"; n.number++; break;
+    case "date": {
+      const cm = /(?:child|hijo)\s*(\d+)/.exec(l);
       answers[q.id] = /sign|firma/.test(l) ? "" // firma en blanco por diseño
+        : cm ? (["2012-04-10", "2014-08-22", "2017-01-15", "2019-11-03"][Number(cm[1]) - 1] || "2015-06-10")
         : /birth|born|nacim/.test(l) ? "1988-05-14"
         : /marriage|matrim/.test(l) ? "2010-06-20"
         : /entry|arriv|admitted|last entry/.test(l) ? "2024-01-15"
         : "2015-03-10";
       n.date++; break;
+    }
     case "select":
       if (isYesNo) answers[q.id] = "si";
       else if (/marital/.test(l)) answers[q.id] = "married";
@@ -86,7 +109,7 @@ for (const q of qs) {
   const l = en(q).toLowerCase();
   if (/are you currently married/.test(l)) answers[q.id] = "si";
   if (/do you have.*children/.test(l)) answers[q.id] = "si";
-  if (/how many children/.test(l)) answers[q.id] = "6";
+  if (/how many children/.test(l)) answers[q.id] = "4";
   if (/legal marital status/.test(l)) answers[q.id] = "married";
 }
 

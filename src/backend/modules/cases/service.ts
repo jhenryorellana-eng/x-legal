@@ -4653,38 +4653,18 @@ export async function generateFilledPdf(
   const caseId = response.case_id;
   const partyId = response.party_id;
 
-  // Answer-translation context (Feature: client answer translation). When the
-  // official PDF language differs from the language the client answered in, the
-  // textual answers must be translated before filling the AcroForm. The client
-  // pre-translates on-device (answers_translated); anything missing is filled in
-  // here on-demand with the Gemini translator — so the PDF is always correct.
+  // Answer-translation context. The filed AcroForm must be in the PDF's source_language
+  // (English for USCIS). Free-text answers the client typed in Spanish are translated
+  // ES→EN — preserving proper nouns (names/places) — in ONE batched AI call BEFORE the
+  // fill loop (below), then cached in `answers_translated` so a regeneration re-uses it.
   const sourceLang: "en" | "es" = published.source_language === "es" ? "es" : "en";
-  const translationStatus = (response.translation_status ?? "none") as string;
-  const answersTranslated = (response.answers_translated ?? {}) as Record<string, unknown>;
-  const needsTranslation = translationStatus !== "none";
-  let translateAnswer: ((text: string, fieldLabel?: string) => Promise<string>) | null = null;
-  if (needsTranslation) {
-    // 2-language system: if translation is needed, answers are in the non-source language.
-    const answerLang: "en" | "es" = sourceLang === "en" ? "es" : "en";
-    const direction = `${answerLang}-${sourceLang}` as "es-en" | "en-es";
-    // translateAnswerText masks structured PII (SSN/A-number/passport) before the
-    // provider — structured PII for the form arrives via source='profile' (local).
-    const { translateAnswerText } = (await import("@/backend/modules/ai-engine")) as {
-      translateAnswerText: (i: {
-        text: string;
-        direction: "es-en" | "en-es";
-        fieldLabel?: string;
-      }) => Promise<{ text: string }>;
-    };
-    translateAnswer = async (text: string, fieldLabel?: string) => {
-      try {
-        const r = await translateAnswerText({ text, direction, fieldLabel });
-        return r.text?.trim() ? r.text : text;
-      } catch {
-        return text; // best-effort — never block PDF generation on translation
-      }
-    };
-  }
+  // Freshly translated free-text, keyed by question id. NOTE: we do NOT seed from the
+  // stored answers_translated cache — a cached translation can be stale (the client, or
+  // staff, changed the answer after it was translated), and the FILED PDF must always
+  // reflect the CURRENT answer. So the batch below re-translates every visible free-text
+  // field at generation (one AI call) and overwrites the cache.
+  const answersTranslated: Record<string, string> = {};
+  const needsTranslation = sourceLang === "en"; // English AcroForm ⇒ translate any Spanish free-text
 
   // Batch-resolve ai_field questions (one provider call per connected source) BEFORE
   // the fill loop, so the synchronous PDF fill stays fast even with many AI-written
@@ -4712,6 +4692,42 @@ export async function generateFilledPdf(
     });
   }
   const aiFieldValues = await resolveAiFields(caseId, partyId, aiFieldReqs);
+
+  // Batch-translate free-text answers ES→EN in ONE AI call (preserving names/places),
+  // BEFORE the fill loop, so the synchronous fill stays fast (no per-field await). Only
+  // VISIBLE, still-untranslated, non-empty text/textarea client answers are sent; the
+  // result is merged into `answersTranslated` and cached (write-back) for regenerations.
+  if (needsTranslation) {
+    const toTranslate: Array<{ id: string; text: string; fieldLabel?: string }> = [];
+    for (const q of questions) {
+      if (q.do_not_fill) continue;
+      if (q.field_type !== "text" && q.field_type !== "textarea") continue;
+      const cs = deriveFieldState(parseConditionOrNull(q.condition), q.is_required, answers);
+      if (!cs.visible) continue;
+      const own = answers[q.id];
+      const val = typeof own === "string" ? own.trim() : "";
+      if (!val) continue;
+      toTranslate.push({ id: q.id, text: val, fieldLabel: questionLabel(q.question_i18n) });
+    }
+    if (toTranslate.length > 0) {
+      try {
+        const { translateAnswersBatch } = (await import("@/backend/modules/ai-engine")) as {
+          translateAnswersBatch: (i: {
+            items: Array<{ id: string; text: string; fieldLabel?: string }>;
+            direction: "es-en" | "en-es";
+            preserveProperNouns?: boolean;
+          }) => Promise<Record<string, string>>;
+        };
+        const translated = await translateAnswersBatch({ items: toTranslate, direction: "es-en", preserveProperNouns: true });
+        if (Object.keys(translated).length > 0) {
+          Object.assign(answersTranslated, translated);
+          try {
+            await updateFormResponse(response.id, { answers_translated: answersTranslated });
+          } catch { /* cache write is best-effort */ }
+        }
+      } catch { /* best-effort — never block PDF generation on translation */ }
+    }
+  }
 
   // Resolve all field values
   const fieldValues: Record<string, string | boolean> = {};
@@ -4762,6 +4778,11 @@ export async function generateFilledPdf(
       );
     }
 
+    // Defensive: a value starting with « (guillemet) can only be a mis-seeded placeholder
+    // or prompt token — the real resolution never produces one. Treat it as empty so it
+    // never reaches a federal form (a single visible « would be an instant rejection).
+    if (typeof resolved === "string" && resolved.trimStart().startsWith("«")) resolved = null;
+
     // MULTISELECT (e.g. Part B.1 asylum bases): value is a list. Tick every chosen box,
     // turn the rest OFF, and enforce validation.minSelected / required (≥ N boxes).
     if (q.field_type === "multiselect") {
@@ -4810,17 +4831,11 @@ export async function generateFilledPdf(
       fieldValues[q.pdf_field_name!] = resolved;
     } else {
       let str = String(resolved);
-      // Translate only free-text fields (dates/numbers/selects map to codes).
+      // Free-text fields (text/textarea): use the batched/on-device translation if we have
+      // one (dates/numbers/selects map to codes and are never translated).
       if (needsTranslation && (q.field_type === "text" || q.field_type === "textarea")) {
         const pre = answersTranslated[q.id];
-        if (typeof pre === "string" && pre.trim()) {
-          str = pre; // client already translated this one on-device
-        } else if (translateAnswer) {
-          // Translate the gap server-side. NOTE: do this even when translation_status
-          // is "done" — "done" only means the client finished their pass; a field they
-          // skipped must still not leak the source language into the filed PDF.
-          str = await translateAnswer(str, questionLabel(q.question_i18n));
-        }
+        if (typeof pre === "string" && pre.trim()) str = pre;
       } else if (q.field_type === "date") {
         // USCIS expects MM/DD/YYYY (or MM/YYYY for Mo/Yr fields); the wizard stores ISO.
         str = formatPdfDate(str, isMonthYearDateQuestion(q.question_i18n));

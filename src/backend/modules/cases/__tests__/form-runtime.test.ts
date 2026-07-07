@@ -49,6 +49,7 @@ const {
   mockFillAcroForm,
   mockBackfillNa,
   mockTranslateText,
+  mockTranslateAnswersBatch,
   mockInterpretDocumentFields,
   mockSynthesizeLetterFields,
   // audit mocks
@@ -79,6 +80,7 @@ const {
   mockFillAcroForm: vi.fn().mockResolvedValue(new Uint8Array([37, 80, 68, 70])),
   mockBackfillNa: vi.fn(() => 0),
   mockTranslateText: vi.fn(),
+  mockTranslateAnswersBatch: vi.fn().mockResolvedValue({}),
   mockInterpretDocumentFields: vi.fn().mockResolvedValue({}),
   mockSynthesizeLetterFields: vi.fn().mockResolvedValue({}),
   mockWriteAudit: vi.fn().mockResolvedValue(undefined),
@@ -183,6 +185,7 @@ vi.mock("@/backend/platform/pdf", () => ({
 
 vi.mock("@/backend/modules/ai-engine", () => ({
   translateAnswerText: mockTranslateText,
+  translateAnswersBatch: mockTranslateAnswersBatch,
   interpretDocumentFields: mockInterpretDocumentFields,
   synthesizeLetterFields: mockSynthesizeLetterFields,
 }));
@@ -1076,7 +1079,7 @@ describe("generateFilledPdf", () => {
     expect(url).toBeDefined();
   });
 
-  it("translates free-text answers to the PDF source language on-demand (pending_server)", async () => {
+  it("batch-translates free-text answers ES→EN before filling, and caches the result", async () => {
     mockFindFormResponseById.mockResolvedValue({
       ...approvedResponse,
       answers: { q1: "hola mundo" },
@@ -1097,24 +1100,32 @@ describe("generateFilledPdf", () => {
         question_i18n: { es: "Cuente su historia", en: "Tell your story" },
       },
     ]);
-    mockTranslateText.mockResolvedValue({ text: "hello world" });
+    mockTranslateAnswersBatch.mockResolvedValue({ q1: "hello world" });
 
     await generateFilledPdf(staffActor, { responseId: RESPONSE_ID });
 
-    // The field label is forwarded as translation context (disambiguation).
-    expect(mockTranslateText).toHaveBeenCalledWith({
-      text: "hola mundo",
+    // ONE batched call (not per-field), with the field label as context + proper-noun preservation.
+    expect(mockTranslateAnswersBatch).toHaveBeenCalledWith({
+      items: [{ id: "q1", text: "hola mundo", fieldLabel: "Cuente su historia" }],
       direction: "es-en",
-      fieldLabel: "Cuente su historia",
+      preserveProperNouns: true,
     });
+    expect(mockTranslateText).not.toHaveBeenCalled();
+    // Write-back cache so a regeneration re-uses the translation.
+    expect(mockUpdateFormResponse).toHaveBeenCalledWith(
+      RESPONSE_ID,
+      expect.objectContaining({ answers_translated: { q1: "hello world" } }),
+    );
     expect(mockFillAcroForm).toHaveBeenCalledWith(expect.anything(), {}, { Story: "hello world" });
   });
 
-  it("prefers the client's on-device translation (answers_translated) without a server call", async () => {
+  it("re-translates fresh at generation, ignoring a STALE answers_translated cache", async () => {
+    // The answer changed after it was first translated; the cache is stale. The filed PDF
+    // must reflect the CURRENT answer, so generation re-translates instead of trusting it.
     mockFindFormResponseById.mockResolvedValue({
       ...approvedResponse,
       answers: { q1: "hola mundo" },
-      answers_translated: { q1: "hello world" },
+      answers_translated: { q1: "a stale translation of an old answer" },
       translation_status: "done",
     });
     mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
@@ -1123,14 +1134,15 @@ describe("generateFilledPdf", () => {
     mockListQuestions.mockResolvedValue([
       { id: "q1", source: "client_answer", source_ref: null, pdf_field_name: "Story", is_required: false, field_type: "textarea" },
     ]);
+    mockTranslateAnswersBatch.mockResolvedValue({ q1: "hello world" });
 
     await generateFilledPdf(staffActor, { responseId: RESPONSE_ID });
 
-    expect(mockTranslateText).not.toHaveBeenCalled();
+    expect(mockTranslateAnswersBatch).toHaveBeenCalled(); // does NOT trust the stale cache
     expect(mockFillAcroForm).toHaveBeenCalledWith(expect.anything(), {}, { Story: "hello world" });
   });
 
-  it("does not translate when the form language matches (translation_status none)", async () => {
+  it("keeps the answer unchanged when the batch returns no translation", async () => {
     mockFindFormResponseById.mockResolvedValue({
       ...approvedResponse,
       answers: { q1: "hello world" },
@@ -1142,11 +1154,33 @@ describe("generateFilledPdf", () => {
     mockListQuestions.mockResolvedValue([
       { id: "q1", source: "client_answer", source_ref: null, pdf_field_name: "Story", is_required: false, field_type: "textarea" },
     ]);
+    mockTranslateAnswersBatch.mockResolvedValue({}); // e.g. already-English text → nothing to change
 
     await generateFilledPdf(staffActor, { responseId: RESPONSE_ID });
 
-    expect(mockTranslateText).not.toHaveBeenCalled();
     expect(mockFillAcroForm).toHaveBeenCalledWith(expect.anything(), {}, { Story: "hello world" });
+  });
+
+  it("never writes a leaked « placeholder — treats it as empty (N/A target)", async () => {
+    mockFindFormResponseById.mockResolvedValue({ ...approvedResponse, answers: { q1: "«Child 1 — full name»" } });
+    mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
+    mockGetPublishedAutomationVersion.mockResolvedValue({
+      ...publishedVersion,
+      source_language: "en",
+      detected_fields: [{ pdf_field_name: "ChildLast1", field_type: "text", page: 2 }],
+    });
+    mockTranslateAnswersBatch.mockResolvedValue({});
+    mockListQuestionGroups.mockResolvedValue([{ id: "grp1" }]);
+    mockListQuestions.mockResolvedValue([
+      { id: "q1", source: "client_answer", source_ref: null, pdf_field_name: "ChildLast1", is_required: false, field_type: "text" },
+    ]);
+
+    await generateFilledPdf(staffActor, { responseId: RESPONSE_ID });
+
+    // The « value must NEVER reach the AcroForm; it is treated as empty → becomes an N/A target.
+    expect(mockFillAcroForm).toHaveBeenCalledWith(expect.anything(), {}, {});
+    const naTargets = (mockBackfillNa.mock.calls[0] as unknown as unknown[])?.[2] as Iterable<string>;
+    expect([...naTargets]).toEqual(["ChildLast1"]);
   });
 
   it("formats a full-date answer as MM/DD/YYYY for the official PDF", async () => {

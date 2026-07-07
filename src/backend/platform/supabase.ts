@@ -50,6 +50,14 @@ export function createServiceClient() {
         autoRefreshToken: false,
         persistSession: false,
       },
+      global: {
+        // Service-role reads back machine operations (jobs, webhooks, PDF generation)
+        // that MUST always see the latest data. Next.js can otherwise cache the
+        // underlying GET in its Data Cache and serve a stale row (e.g. a regenerated
+        // PDF filled from answers the client already changed) — force no-store.
+        fetch: (input: RequestInfo | URL, init?: RequestInit) =>
+          fetch(input, { ...init, cache: "no-store" }),
+      },
     },
   );
 }

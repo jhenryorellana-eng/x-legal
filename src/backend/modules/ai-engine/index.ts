@@ -23,6 +23,7 @@ export {
   getDocumentTranslationPdf,
   translateText,
   translateAnswerText,
+  translateAnswersBatch,
   // ai_field resolution (consumed by cases module — Etapa B)
   interpretDocumentFields,
   synthesizeLetterFields,

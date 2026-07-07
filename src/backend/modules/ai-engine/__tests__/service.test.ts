@@ -269,6 +269,7 @@ import {
   proposeFormSegmentation,
   proposeExpedienteAssembly,
   translateAnswerText,
+  translateAnswersBatch,
   assessDocumentLegibility,
   interpretDocumentFields,
   synthesizeLetterFields,
@@ -1138,6 +1139,53 @@ describe("translateAnswerText", () => {
     const sentPrompt = mocks.geminiModels.generateContent.mock.calls[0][0].contents[0].parts[0]
       .text as string;
     expect(sentPrompt).toContain("¿Cuál es su religión?");
+  });
+});
+
+describe("translateAnswersBatch", () => {
+  beforeEach(() => {
+    mocks.geminiModels.generateContent.mockReset();
+  });
+
+  it("translates N answers in ONE provider call and maps them back by id", async () => {
+    mocks.geminiModels.generateContent.mockResolvedValue({
+      candidates: [{ content: { parts: [{ text: JSON.stringify({ answers: [
+        { id: "q1", value: "In 2022 I was threatened." },
+        { id: "q2", value: "I fear being harmed in Caracas." },
+      ] }) }] } }],
+    });
+
+    const out = await translateAnswersBatch({
+      items: [
+        { id: "q1", text: "En 2022 fui amenazado.", fieldLabel: "Explique" },
+        { id: "q2", text: "Temo ser dañado en Caracas.", fieldLabel: "Explique" },
+      ],
+      direction: "es-en",
+      preserveProperNouns: true,
+    });
+
+    expect(mocks.geminiModels.generateContent).toHaveBeenCalledTimes(1); // ONE call for both
+    expect(out).toEqual({ q1: "In 2022 I was threatened.", q2: "I fear being harmed in Caracas." });
+    const prompt = mocks.geminiModels.generateContent.mock.calls[0][0].contents[0].parts[0].text as string;
+    expect(prompt).toMatch(/proper noun/i);
+    expect(prompt).toContain('id="q1"');
+    expect(prompt).toContain('id="q2"');
+  });
+
+  it("masks structured PII per item before the provider", async () => {
+    mocks.geminiModels.generateContent.mockResolvedValue({
+      candidates: [{ content: { parts: [{ text: JSON.stringify({ answers: [{ id: "q1", value: "ok" }] }) }] } }],
+    });
+    await translateAnswersBatch({ items: [{ id: "q1", text: "Mi SSN es 123-45-6789" }], direction: "es-en" });
+    const prompt = mocks.geminiModels.generateContent.mock.calls[0][0].contents[0].parts[0].text as string;
+    expect(prompt).toContain("•••-••-6789");
+    expect(prompt).not.toContain("123-45-6789");
+  });
+
+  it("is a no-op (no provider call) when there are no items", async () => {
+    const out = await translateAnswersBatch({ items: [], direction: "es-en" });
+    expect(out).toEqual({});
+    expect(mocks.geminiModels.generateContent).not.toHaveBeenCalled();
   });
 });
 
