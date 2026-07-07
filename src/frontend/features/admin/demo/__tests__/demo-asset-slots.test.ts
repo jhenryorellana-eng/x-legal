@@ -34,19 +34,31 @@ describe("demo asset slots ↔ scenario registry", () => {
   });
 
   it("every scenario wires its present micro-experiences to declared slot keys", () => {
-    // staff-view.tsx resolves each tab's PDF via staff.{automation,generation,
-    // expediente}.slotKey — those keys must be exactly the declared slots. The
-    // automation micro-experience is optional (e.g. Reforzar Asilo omits it), so
-    // the wiring is derived from whichever fixtures the scenario actually declares.
+    // staff-view.tsx resolves each tab's PDF via the active phase's
+    // {automation,generation}.slotKey plus the scenario-level expediente.slotKey —
+    // those keys must be exactly the declared slots. The automation micro-experience
+    // is optional per phase (e.g. Reforzar Asilo omits it), so the wiring is derived
+    // from whichever fixtures the scenario's phases actually declare.
     for (const [slug, scenario] of Object.entries(DEMO_SCENARIOS)) {
       const wired = [
-        scenario.staff.automation?.slotKey,
-        scenario.staff.generation.slotKey,
+        ...scenario.phases.flatMap((p) => [p.automation?.slotKey, p.generation.slotKey]),
         scenario.staff.expediente.slotKey,
       ].filter((k): k is string => Boolean(k));
       const declared = getDemoAssetSlots(slug).map((s) => s.key);
       expect(new Set(wired).size, `colliding slotKeys in "${slug}"`).toBe(wired.length);
       expect([...declared].sort(), `slots ↔ slotKeys drift in "${slug}"`).toEqual([...wired].sort());
+    }
+  });
+
+  it("every scenario has at least one phase with a unique slug and a generation", () => {
+    for (const [slug, scenario] of Object.entries(DEMO_SCENARIOS)) {
+      expect(scenario.phases.length, `"${slug}" declares no phases`).toBeGreaterThan(0);
+      const phaseSlugs = scenario.phases.map((p) => p.slug);
+      expect(new Set(phaseSlugs).size, `duplicate phase slugs in "${slug}"`).toBe(phaseSlugs.length);
+      for (const p of scenario.phases) {
+        expect(p.label.length, `empty phase label in "${slug}/${p.slug}"`).toBeGreaterThan(0);
+        expect(p.generation.slotKey.length, `phase "${slug}/${p.slug}" has no generation`).toBeGreaterThan(0);
+      }
     }
   });
 });

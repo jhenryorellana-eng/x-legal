@@ -23,7 +23,10 @@ export interface DemoExperienceProps {
 type Tab = "client" | "staff";
 
 function captionFor(scenario: DemoScenario, state: DemoFlowState): string {
-  if (state.reviewFormId) return scenario.captions.review;
+  // Onboarding captions are scenario-level; in-case captions come from the
+  // active phase.
+  const phase = scenario.phases[state.activePhaseIndex];
+  if (state.reviewFormId) return phase.captions.review;
   switch (state.stage) {
     case "cases":
       return scenario.captions.cases;
@@ -34,9 +37,9 @@ function captionFor(scenario: DemoScenario, state: DemoFlowState): string {
     case "disclaimer":
       return scenario.captions.disclaimer;
     case "caseDocs":
-      return scenario.captions.documentos;
+      return phase.captions.documentos;
     case "caseForms":
-      return scenario.captions.formularios;
+      return phase.captions.formularios;
     default:
       return "";
   }

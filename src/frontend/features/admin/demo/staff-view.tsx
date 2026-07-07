@@ -7,6 +7,7 @@ import { Chip, Icon, IconTile, type IconName } from "@/frontend/components/brand
 import { StaffStyles } from "./staff/staff-styles";
 import { useStaffFlow } from "./staff/use-staff-flow";
 import { serviceColorToken } from "./scenarios";
+import { PhaseSelector } from "./components/phase-selector";
 import type { DemoScenario } from "./scenarios/types";
 import type { DemoService } from "./flow/client-flow";
 import { ResumenTab } from "./staff/tabs/resumen-tab";
@@ -25,11 +26,13 @@ type TabId = "resumen" | "documentos" | "automatizacion" | "generaciones" | "exp
 
 /**
  * StaffView — "Vista staff": the team-panel view of the scenario's case. A case
- * header + subtabs (Resumen · Documentos · Automatización · Generaciones ·
- * Expediente) over a relative panel that hosts the AI micro-experience overlays
- * (translate / official-form assembly / AI generation / expediente) and their
- * success screens. All scenario copy comes from the fixture; i18n only carries
- * chrome. Owns its own local flow; the parent remounts it (via `key`) to reset.
+ * header + phase selector (for multi-phase demos) + subtabs (Resumen · Documentos ·
+ * Automatización · Generaciones · Expediente) over a relative panel that hosts the
+ * AI micro-experience overlays (translate / official-form assembly / AI generation
+ * / expediente) and their success screens. Documentos/Automatización/Generaciones
+ * follow the active phase; Resumen and Expediente are scenario-level. All scenario
+ * copy comes from the fixture; i18n only carries chrome. Owns its own local flow;
+ * the parent remounts it (via `key`) to reset.
  */
 export function StaffView({
   scenario,
@@ -44,16 +47,29 @@ export function StaffView({
   const t = useTranslations("staff.demo");
   const flow = useStaffFlow();
   const [tab, setTab] = React.useState<TabId>("resumen");
+  const [activePhaseIndex, setActivePhaseIndex] = React.useState(0);
   const staff = scenario.staff;
+  const phase = scenario.phases[activePhaseIndex];
   const color = serviceColorToken(service.colorKey);
 
-  // The "Automatización" tab exists only for scenarios that generate an official
-  // form (`staff.automation`). Reforzar Asilo omits it: the I-589 was filed by
-  // the client, so there is nothing to generate — the tab derives from the data.
+  // Switching phase: if the current tab is "Automatización" but the target phase
+  // does not generate an official form, fall back to "Documentos" (the tab is
+  // hidden for that phase). Per-phase flow status is preserved across switches.
+  const selectPhase = React.useCallback(
+    (i: number) => {
+      if (tab === "automatizacion" && !scenario.phases[i].automation) setTab("documentos");
+      setActivePhaseIndex(i);
+    },
+    [tab, scenario.phases],
+  );
+
+  // The "Automatización" tab exists only when the ACTIVE phase generates an
+  // official form (`phase.automation`). It derives from the data, so a phase
+  // without one (e.g. Reforzar Asilo) simply never shows the tab.
   const tabs: { id: TabId; label: string; icon: IconName }[] = [
     { id: "resumen", label: t("tabResumen"), icon: "grid" },
     { id: "documentos", label: t("tabDocumentos"), icon: "doc" },
-    ...(staff.automation
+    ...(phase.automation
       ? [{ id: "automatizacion" as const, label: t("tabAutomatizacion"), icon: "form" as IconName }]
       : []),
     { id: "generaciones", label: t("tabGeneraciones"), icon: "sparkle" },
@@ -79,6 +95,15 @@ export function StaffView({
           {staff.statusLabel}
         </Chip>
       </div>
+
+      {/* Phase selector (multi-phase demos only) */}
+      <PhaseSelector
+        phases={scenario.phases}
+        activeIndex={activePhaseIndex}
+        onSelect={selectPhase}
+        fallbackColor={color}
+        ariaLabel={t("phaseSelectorAria")}
+      />
 
       {/* Subtabs */}
       <div role="tablist" style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--line)", marginBottom: 20, overflowX: "auto" }}>
@@ -123,12 +148,12 @@ export function StaffView({
       {/* Panel (natural height — the page scrolls, the tab box does not) */}
       <div>
         {tab === "resumen" && <ResumenTab staff={staff} />}
-        {tab === "documentos" && <DocumentosTab scenario={scenario} flow={flow} />}
-        {tab === "automatizacion" && staff.automation && (
-          <AutomatizacionTab scenario={scenario} flow={flow} pdfBlobUrl={assetBlobs[staff.automation.slotKey] ?? null} />
+        {tab === "documentos" && <DocumentosTab phase={phase} flow={flow} />}
+        {tab === "automatizacion" && phase.automation && (
+          <AutomatizacionTab phase={phase} flow={flow} pdfBlobUrl={assetBlobs[phase.automation.slotKey] ?? null} />
         )}
         {tab === "generaciones" && (
-          <GeneracionesTab scenario={scenario} flow={flow} pdfBlobUrl={assetBlobs[staff.generation.slotKey] ?? null} />
+          <GeneracionesTab phase={phase} flow={flow} pdfBlobUrl={assetBlobs[phase.generation.slotKey] ?? null} />
         )}
         {tab === "expediente" && (
           <ExpedienteTab scenario={scenario} flow={flow} pdfBlobUrl={assetBlobs[staff.expediente.slotKey] ?? null} />
@@ -146,17 +171,20 @@ export function StaffView({
  * The single overlay layer: whichever loader is running, else the success splash.
  * Rendered in a `position: fixed` full-viewport layer so the loading screen fills
  * the whole screen and stays centered regardless of page scroll. The inner
- * loader/splash components fill this layer via their own `inset: 0`.
+ * loader/splash components fill this layer via their own `inset: 0`. The active
+ * loader/splash carry their phase, so the right fixture resolves regardless of
+ * which phase is currently selected.
  */
 function Overlays({ scenario, flow }: { scenario: DemoScenario; flow: ReturnType<typeof useStaffFlow> }) {
   const t = useTranslations("staff.demo");
   const staff = scenario.staff;
   const { loader, splash } = flow.state;
+  const phaseBySlug = (slug: string) => scenario.phases.find((p) => p.slug === slug);
 
   let content: React.ReactNode = null;
 
   if (loader?.kind === "translate") {
-    const doc = scenario.documents.find((d) => d.id === loader.docId);
+    const doc = phaseBySlug(loader.phase)?.documents.find((d) => d.id === loader.docId);
     content = (
       <SequenceLoader
         title={t("translateTitle")}
@@ -166,29 +194,35 @@ function Overlays({ scenario, flow }: { scenario: DemoScenario; flow: ReturnType
         onComplete={flow.actions.loadedTranslate}
       />
     );
-  } else if (loader?.kind === "automation" && staff.automation) {
-    content = (
-      <AssemblyAnimation
-        title={staff.automation.loaderTitle}
-        officialTitle={staff.automation.officialTitle}
-        fields={staff.automation.fields}
-        steps={staff.automation.steps}
-        naLabel={staff.automation.filledChipLabel}
-        leftPanelLabel={staff.automation.sourcePanelLabel}
-        rightPanelLabel={staff.automation.targetPanelLabel}
-        onComplete={flow.actions.loadedAutomation}
-      />
-    );
+  } else if (loader?.kind === "automation") {
+    const auto = phaseBySlug(loader.phase)?.automation;
+    if (auto) {
+      content = (
+        <AssemblyAnimation
+          title={auto.loaderTitle}
+          officialTitle={auto.officialTitle}
+          fields={auto.fields}
+          steps={auto.steps}
+          naLabel={auto.filledChipLabel}
+          leftPanelLabel={auto.sourcePanelLabel}
+          rightPanelLabel={auto.targetPanelLabel}
+          onComplete={flow.actions.loadedAutomation}
+        />
+      );
+    }
   } else if (loader?.kind === "generation") {
-    content = (
-      <SequenceLoader
-        title={staff.generation.loaderTitle}
-        steps={staff.generation.steps}
-        accent="var(--gold-deep)"
-        visual={<AiCoreVisual counters={staff.generation.loaderCounters} />}
-        onComplete={flow.actions.loadedGeneration}
-      />
-    );
+    const gen = phaseBySlug(loader.phase)?.generation;
+    if (gen) {
+      content = (
+        <SequenceLoader
+          title={gen.loaderTitle}
+          steps={gen.steps}
+          accent="var(--gold-deep)"
+          visual={<AiCoreVisual counters={gen.loaderCounters} />}
+          onComplete={flow.actions.loadedGeneration}
+        />
+      );
+    }
   } else if (loader?.kind === "expediente") {
     content = (
       <SequenceLoader
@@ -200,24 +234,25 @@ function Overlays({ scenario, flow }: { scenario: DemoScenario; flow: ReturnType
       />
     );
   } else if (splash) {
-    // Resolve lazily so we never dereference an absent micro-experience fixture
-    // (e.g. `staff.automation` for scenarios that omit the Automatización tab).
+    // Resolve lazily so we never dereference an absent micro-experience fixture.
     const c =
-      splash === "generation"
-        ? staff.generation.splash
-        : splash === "expediente"
+      splash.kind === "generation"
+        ? phaseBySlug(splash.phase)?.generation.splash
+        : splash.kind === "expediente"
           ? staff.expediente.splash
-          : splash === "automation" && staff.automation
-            ? staff.automation.splash
+          : splash.kind === "automation"
+            ? phaseBySlug(splash.phase)?.automation?.splash
             : { title: t("splashTranslateTitle"), body: t("splashTranslateBody") };
-    content = (
-      <SuccessOverlay
-        title={c.title}
-        body={c.body}
-        continueLabel={t("continue")}
-        onContinue={flow.actions.dismissSplash}
-      />
-    );
+    if (c) {
+      content = (
+        <SuccessOverlay
+          title={c.title}
+          body={c.body}
+          continueLabel={t("continue")}
+          onContinue={flow.actions.dismissSplash}
+        />
+      );
+    }
   }
 
   if (!content || typeof document === "undefined") return null;

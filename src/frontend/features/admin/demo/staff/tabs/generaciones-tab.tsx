@@ -6,27 +6,27 @@ import { Chip, Icon } from "@/frontend/components/brand";
 import { GenerationRow } from "../components/generation-row";
 import { TabIntro } from "../components/tab-intro";
 import { PdfReader } from "../components/pdf-reader";
-import type { DemoScenario } from "../../scenarios/types";
+import type { DemoPhase } from "../../scenarios/types";
 import type { StaffFlow } from "../use-staff-flow";
 
 /**
  * GeneracionesTab — the long-form AI letter (disruptive AI-core loader on
- * Generar), driven entirely by `scenario.staff.generation`. With a real PDF
+ * Generar) for the active phase, driven by `phase.generation`. With a real PDF
  * uploaded ("⋯ → Data" on the demo card) the done state opens the full-screen
  * PdfReader; without one it keeps the HTML preview (simulation fallback).
  */
 export function GeneracionesTab({
-  scenario,
+  phase,
   flow,
   pdfBlobUrl,
 }: {
-  scenario: DemoScenario;
+  phase: DemoPhase;
   flow: StaffFlow;
   pdfBlobUrl: string | null;
 }) {
   const t = useTranslations("staff.demo");
-  const gen = scenario.staff.generation;
-  const status = flow.state.generation;
+  const gen = phase.generation;
+  const status = flow.state.generation[phase.slug] ?? "idle";
   const done = status === "done";
   const [reader, setReader] = React.useState(false);
 
@@ -52,7 +52,7 @@ export function GeneracionesTab({
         doneMeta={gen.doneMeta}
         viewLabel={done && pdfBlobUrl ? t("viewPdf") : undefined}
         onView={pdfBlobUrl ? () => setReader(true) : undefined}
-        onGenerate={flow.actions.startGeneration}
+        onGenerate={() => flow.actions.startGeneration(phase.slug)}
       />
 
       {done && pdfBlobUrl && (

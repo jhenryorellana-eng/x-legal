@@ -4,17 +4,18 @@ import * as React from "react";
 import { useTranslations } from "next-intl";
 import { Chip, GradientBtn, IconTile, StatusPill } from "@/frontend/components/brand";
 import { TabIntro } from "../components/tab-intro";
-import type { DemoDocItem, DemoScenario } from "../../scenarios/types";
+import type { DemoDocItem, DemoPhase } from "../../scenarios/types";
 import type { GenStatus, StaffFlow } from "../use-staff-flow";
 
 /**
- * DocumentosTab — the same documents the client uploaded, shown to staff as
- * approved rows with a "Traducir" action that runs the AI extraction/translation
- * micro-experience. The loading + success overlays live at the staff-view level.
+ * DocumentosTab — the documents the client uploaded for the active phase, shown
+ * to staff as approved rows with a "Traducir" action that runs the AI extraction
+ * / translation micro-experience. The loading + success overlays live at the
+ * staff-view level.
  */
-export function DocumentosTab({ scenario, flow }: { scenario: DemoScenario; flow: StaffFlow }) {
+export function DocumentosTab({ phase, flow }: { phase: DemoPhase; flow: StaffFlow }) {
   const t = useTranslations("staff.demo");
-  const docs = scenario.documents;
+  const docs = phase.documents;
 
   const groups = React.useMemo(() => {
     const map = new Map<string, DemoDocItem[]>();
@@ -42,11 +43,11 @@ export function DocumentosTab({ scenario, flow }: { scenario: DemoScenario; flow
               <DocRow
                 key={d.id}
                 doc={d}
-                status={flow.state.translations[d.id] ?? "idle"}
+                status={flow.state.translations[`${phase.slug}:${d.id}`] ?? "idle"}
                 approvedLabel={t("docApproved")}
                 translateLabel={t("translate")}
                 translatedLabel={t("translated")}
-                onTranslate={() => flow.actions.startTranslate(d.id)}
+                onTranslate={() => flow.actions.startTranslate(d.id, phase.slug)}
               />
             ))}
           </div>

@@ -3,6 +3,7 @@ import { asiloPolitico } from "./asilo-politico";
 import { reforzarAsilo } from "./reforzar-asilo";
 import { apelacion } from "./apelacion";
 import { cambioDeCorte } from "./cambio-de-corte";
+import { visaJuvenil } from "./visa-juvenil";
 
 /**
  * Registry of demo scenarios, keyed by service slug. Adding a new service to the
@@ -11,6 +12,7 @@ import { cambioDeCorte } from "./cambio-de-corte";
  * enforces the pairing).
  */
 export const DEMO_SCENARIOS: Record<string, DemoScenario> = {
+  [visaJuvenil.slug]: visaJuvenil,
   [asiloPolitico.slug]: asiloPolitico,
   [reforzarAsilo.slug]: reforzarAsilo,
   [apelacion.slug]: apelacion,

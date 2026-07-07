@@ -67,7 +67,7 @@ export function CasesStage({ flow, service }: { flow: DemoFlow; service: DemoSer
           title={scenario.caseTitle}
           phaseLabel={scenario.phaseLabel}
           icon={service.icon}
-          docsLeft={t("documentsLeft", { n: scenario.documents.length })}
+          docsLeft={t("documentsLeft", { n: scenario.phases[0].documents.length })}
           openCase={t("openCase")}
           onOpen={actions.openCase}
         />

@@ -4,6 +4,8 @@ import * as React from "react";
 import { useTranslations } from "next-intl";
 import { Card, Icon, IconTile, ProgressRing, StatusPill } from "@/frontend/components/brand";
 import { ScreenHead } from "@/frontend/components/mobile/screen-head";
+import { PhaseSelector } from "../../components/phase-selector";
+import { serviceColorToken } from "../../scenarios";
 import type { DemoFlow } from "../use-demo-flow";
 import type { DemoDocItem } from "../../scenarios/types";
 import type { DocStatus } from "../use-demo-flow";
@@ -18,9 +20,11 @@ export function DocumentosStage({ flow }: { flow: DemoFlow }) {
   const t = useTranslations("cliente.documentos");
   const td = useTranslations("staff.demo");
   const { state, actions, scenario } = flow;
-  const docs = scenario.documents;
+  const phase = scenario.phases[state.activePhaseIndex];
+  const docs = phase.documents;
+  const docKey = (id: string) => `${phase.slug}:${id}`;
 
-  const done = docs.filter((d) => state.docStatus[d.id] === "subido").length;
+  const done = docs.filter((d) => state.docStatus[docKey(d.id)] === "subido").length;
   const total = docs.length;
   const pct = Math.round((done / total) * 100);
   const allDone = done === total;
@@ -37,14 +41,27 @@ export function DocumentosStage({ flow }: { flow: DemoFlow }) {
   }, [docs]);
 
   const [open, setOpen] = React.useState<string[]>(() => groups.map(([c]) => c));
+  // Switching phase swaps the document set (its categories differ per phase);
+  // re-open every group so the new phase's accordions are never left collapsed.
+  React.useEffect(() => {
+    setOpen(groups.map(([c]) => c));
+  }, [groups]);
   const toggle = (c: string) => setOpen((o) => (o.includes(c) ? o.filter((x) => x !== c) : [...o, c]));
 
   return (
     <div style={{ minHeight: "100%", padding: "16px 20px 130px" }}>
       <ScreenHead
         title={t("title")}
-        sub={t("subtitle", { phase: "preparación" })}
+        sub={t("subtitle", { phase: phase.label })}
         lexMood="señala"
+      />
+
+      <PhaseSelector
+        phases={scenario.phases}
+        activeIndex={state.activePhaseIndex}
+        onSelect={actions.selectPhase}
+        fallbackColor={serviceColorToken(scenario.service.color)}
+        ariaLabel={td("phaseSelectorAria")}
       />
 
       {/* Progress + tip */}
@@ -124,11 +141,11 @@ export function DocumentosStage({ flow }: { flow: DemoFlow }) {
                   <DocRow
                     key={d.id}
                     doc={d}
-                    status={state.docStatus[d.id]}
+                    status={state.docStatus[docKey(d.id)]}
                     uploadLabel={t("upload")}
                     uploadingLabel={td("uploading")}
                     uploadedLabel={td("uploaded")}
-                    onUpload={() => actions.uploadDoc(d.id)}
+                    onUpload={() => actions.uploadDoc(docKey(d.id))}
                   />
                 ))}
               </div>

@@ -3,13 +3,17 @@
 import * as React from "react";
 import { createPortal } from "react-dom";
 import { GradientBtn, GhostBtn, Icon } from "@/frontend/components/brand";
-import type { DemoStaffFixture } from "../../scenarios/types";
+import type {
+  DemoAutomationFixture,
+  DemoGenerationFixture,
+  DemoStaffFixture,
+} from "../../scenarios/types";
 
 /**
  * ExpedienteDocument — the compiled legal file, rendered as a realistic
  * multi-page document (cover, TOC, official form, AI generation, annexes,
  * chronology) with continuous "Página N de M" numbering. Every scenario string
- * comes from the fixture (`staff.automation/generation/expediente`); only
+ * comes from the fixture (`automation/generation/expediente`); only
  * layout chrome lives here. Colors are fixed hex (not theme tokens) so the
  * printed output looks identical in light or dark mode.
  *
@@ -88,12 +92,18 @@ export function ExpedienteDocument({
   open,
   onClose,
   staff,
+  automation,
+  generation,
   labels,
   onRegenerate,
 }: {
   open: boolean;
   onClose: () => void;
   staff: DemoStaffFixture;
+  /** Representative phase's official-form automation (last phase). Optional. */
+  automation?: DemoAutomationFixture;
+  /** Representative phase's AI generation (last phase). */
+  generation: DemoGenerationFixture;
   labels: ExpedienteDocLabels;
   onRegenerate: () => void;
 }) {
@@ -229,13 +239,13 @@ export function ExpedienteDocument({
 
         {/* PAGE 3 — Official form: the generated automation OR, for scenarios that
             do not generate it, the client's already-filed document annexed as-is. */}
-        {staff.automation ? (
+        {automation ? (
           <PrintPage header={labels.org} caseNo={staff.caseNumber} footer={labels.confidential} page={pageLabel(exp.samplePages.form)}>
-            <SectionKicker>{staff.automation.docKicker}</SectionKicker>
-            <SectionTitle>{staff.automation.docPageTitle}</SectionTitle>
-            <p style={{ fontSize: 12.5, color: INK_SOFT, margin: "6px 0 16px", fontWeight: 600 }}>{staff.automation.officialTitle}</p>
+            <SectionKicker>{automation.docKicker}</SectionKicker>
+            <SectionTitle>{automation.docPageTitle}</SectionTitle>
+            <p style={{ fontSize: 12.5, color: INK_SOFT, margin: "6px 0 16px", fontWeight: 600 }}>{automation.officialTitle}</p>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 22px" }}>
-              {staff.automation.fields.map((f) => {
+              {automation.fields.map((f) => {
                 const na = f.value == null;
                 return (
                   <div key={f.fieldName} style={{ borderBottom: `1px solid ${LINE}`, paddingBottom: 6 }}>
@@ -248,7 +258,7 @@ export function ExpedienteDocument({
               })}
             </div>
             <div style={{ marginTop: 18, fontSize: 11.5, color: INK_SOFT, fontStyle: "italic" }}>
-              {staff.automation.fillNote} · {labels.repNote}
+              {automation.fillNote} · {labels.repNote}
             </div>
           </PrintPage>
         ) : exp.filedDoc ? (
@@ -272,21 +282,21 @@ export function ExpedienteDocument({
 
         {/* PAGE 4 — AI generation */}
         <PrintPage header={labels.org} caseNo={staff.caseNumber} footer={labels.confidential} page={pageLabel(exp.samplePages.generation)}>
-          <SectionKicker>{staff.generation.docKicker}</SectionKicker>
-          <SectionTitle>{staff.generation.title}</SectionTitle>
+          <SectionKicker>{generation.docKicker}</SectionKicker>
+          <SectionTitle>{generation.title}</SectionTitle>
           <p style={{ fontSize: 13.5, color: INK, lineHeight: 1.7, margin: "10px 0 18px", textAlign: "justify" }}>
-            {staff.generation.longSummary}
+            {generation.longSummary}
           </p>
           <div style={{ background: GOLD_SOFT, borderRadius: 10, padding: "12px 16px", marginBottom: 16 }}>
-            <div style={{ fontSize: 11.5, color: GOLD, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.5 }}>{staff.generation.indexTitle}</div>
+            <div style={{ fontSize: 11.5, color: GOLD, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.5 }}>{generation.indexTitle}</div>
             <ol style={{ margin: "8px 0 0", paddingLeft: 20, color: INK, fontSize: 13, lineHeight: 1.8 }}>
-              {staff.generation.sections.map((s) => (
+              {generation.sections.map((s) => (
                 <li key={s} style={{ fontWeight: 600 }}>{s}</li>
               ))}
             </ol>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            {staff.generation.stats.map((s) => (
+            {generation.stats.map((s) => (
               <Stat key={s.label} n={s.value} label={s.label} />
             ))}
           </div>

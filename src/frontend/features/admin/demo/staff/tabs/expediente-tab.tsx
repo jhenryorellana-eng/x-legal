@@ -28,6 +28,9 @@ export function ExpedienteTab({
   const t = useTranslations("staff.demo");
   const status = flow.state.expediente;
   const exp = scenario.staff.expediente;
+  // The compiled file spans every phase; its representative "official form" and
+  // "generation" sample pages use the last phase (the culminating artifact).
+  const repPhase = scenario.phases[scenario.phases.length - 1];
   const [reader, setReader] = React.useState(false);
 
   // Reveal the reader as soon as the expediente is compiled (and on every return
@@ -110,6 +113,8 @@ export function ExpedienteTab({
             open={reader}
             onClose={() => setReader(false)}
             staff={scenario.staff}
+            automation={repPhase.automation}
+            generation={repPhase.generation}
             labels={labels}
             onRegenerate={regenerate}
           />

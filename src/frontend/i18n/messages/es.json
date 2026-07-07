@@ -767,6 +767,7 @@
       "comingSoonBody": "Aún no hay un demo para este servicio.",
       "tabClient": "Vista cliente",
       "tabStaff": "Vista staff",
+      "phaseSelectorAria": "Seleccionar fase del caso",
       "viewPdf": "Ver documento",
       "pdfDownload": "Descargar",
       "assets": {

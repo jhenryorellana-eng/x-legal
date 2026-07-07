@@ -97,8 +97,11 @@ export function ClientFlow({ flow, service }: { flow: DemoFlow; service: DemoSer
     return null;
   })();
 
+  // The reviewed form always belongs to the active phase (opening the review is
+  // a per-phase action, and switching phase clears `reviewFormId`).
+  const activePhase = scenario.phases[state.activePhaseIndex];
   const reviewForm = state.reviewFormId
-    ? scenario.forms.find((f) => f.id === state.reviewFormId) ?? null
+    ? activePhase.forms.find((f) => `${activePhase.slug}:${f.id}` === state.reviewFormId) ?? null
     : null;
 
   const overlay = (

@@ -45,6 +45,9 @@ export interface DemoFlowState {
   overlay: DemoOverlay;
   signed: boolean;
   paid: boolean;
+  /** Index of the active phase in `scenario.phases` (0 for single-phase demos). */
+  activePhaseIndex: number;
+  /** Keyed by `${phaseSlug}:${docId}` so each phase tracks its own upload progress. */
   docStatus: Record<string, DocStatus>;
   /** Doc currently uploading / target of the docSuccess overlay. */
   activeDocId: string | null;
@@ -58,6 +61,7 @@ export interface DemoFlowState {
 type Action =
   | { type: "reset"; scenario: DemoScenario }
   | { type: "go"; stage: DemoStage }
+  | { type: "selectPhase"; index: number }
   | { type: "signSuccess" }
   | { type: "confirmSign" }
   | { type: "payProcessing" }
@@ -78,12 +82,15 @@ type Action =
 
 function initialState(scenario: DemoScenario): DemoFlowState {
   const docStatus: Record<string, DocStatus> = {};
-  for (const d of scenario.documents) docStatus[d.id] = "pendiente";
+  for (const phase of scenario.phases) {
+    for (const d of phase.documents) docStatus[`${phase.slug}:${d.id}`] = "pendiente";
+  }
   return {
     stage: "cases",
     overlay: null,
     signed: false,
     paid: false,
+    activePhaseIndex: 0,
     docStatus,
     activeDocId: null,
     sentForms: [],
@@ -96,6 +103,10 @@ function reducer(state: DemoFlowState, action: Action): DemoFlowState {
   switch (action.type) {
     case "go":
       return { ...state, stage: action.stage, overlay: null };
+    case "selectPhase":
+      // Switch the active phase; close any open review. Success overlays in
+      // progress are left untouched.
+      return { ...state, activePhaseIndex: action.index, reviewFormId: null };
     case "signSuccess":
       return { ...state, overlay: "signSuccess" };
     case "confirmSign":
@@ -158,6 +169,7 @@ function reducer(state: DemoFlowState, action: Action): DemoFlowState {
 
 export interface DemoFlowActions {
   reset: () => void;
+  selectPhase: (index: number) => void;
   goCases: () => void;
   goSign: () => void;
   signContract: () => void;
@@ -210,6 +222,7 @@ export function useDemoFlow(scenario: DemoScenario): DemoFlow {
         clearTimers();
         dispatch({ type: "reset", scenario });
       },
+      selectPhase: (index) => dispatch({ type: "selectPhase", index }),
       goCases: () => dispatch({ type: "go", stage: "cases" }),
       goSign: () => dispatch({ type: "go", stage: "signing" }),
       signContract: () => dispatch({ type: "signSuccess" }),

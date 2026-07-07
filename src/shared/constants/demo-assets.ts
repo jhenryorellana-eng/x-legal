@@ -47,6 +47,19 @@ export const DEMO_ASSET_SLOTS: Record<string, readonly DemoAssetSlot[]> = {
     { key: "mocion", title: "Moción de Cambio de Corte", tabLabel: "Generaciones" },
     { key: "expediente", title: "Paquete de cambio de corte", tabLabel: "Expediente" },
   ],
+  // Visa Juvenil (SIJS) is multi-phase: keys are flat but namespaced by phase
+  // (custodia / i360 / i485) so they stay unique per scenario — the storage path
+  // `demo/{slug}/{key}.pdf` needs no phase segment and the backend is unchanged.
+  // The expediente is the single final compiled file (spans all three phases).
+  "visa-juvenil": [
+    { key: "custodia-form", title: "Formulario de custodia estatal", tabLabel: "Automatización · Custodia" },
+    { key: "custodia-peticion", title: "Petición de custodia (SIJS)", tabLabel: "Generaciones · Custodia" },
+    { key: "i360", title: "Formulario I-360", tabLabel: "Automatización · I-360" },
+    { key: "i360-peticion", title: "Petición I-360 (SIJS)", tabLabel: "Generaciones · I-360" },
+    { key: "i485", title: "Formulario I-485 (+ I-765/I-131)", tabLabel: "Automatización · I-485" },
+    { key: "i485-paquete", title: "Paquete de ajuste I-485", tabLabel: "Generaciones · I-485" },
+    { key: "expediente", title: "Expediente SIJS completo", tabLabel: "Expediente" },
+  ],
 };
 
 export function getDemoAssetSlots(slug: string): readonly DemoAssetSlot[] {

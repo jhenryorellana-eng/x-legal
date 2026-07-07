@@ -89,15 +89,51 @@ export interface DemoForm {
   sections: DemoFormSection[];
 }
 
-/** Didactic narration shown under the phone for each stage of the flow. */
-export interface DemoCaptions {
+/**
+ * Didactic narration for the onboarding stages (shown under the phone). These
+ * run once, before entering the case, so they live at scenario level.
+ */
+export interface DemoOnboardingCaptions {
   cases: string;
   signing: string;
   pagos: string;
   disclaimer: string;
+}
+
+/**
+ * Didactic narration for the in-case stages. These change with the active phase,
+ * so they live on `DemoPhase`.
+ */
+export interface DemoPhaseCaptions {
   documentos: string;
   formularios: string;
   review: string;
+}
+
+/**
+ * One navigable phase of a case (e.g. Custodia · I-360 · I-485 for Visa Juvenil).
+ * Everything that changes when the presenter switches phase lives here: documents,
+ * forms, in-case captions and the phase's own AI micro-experiences (official-form
+ * automation + long-form generation). A single-phase service (Asilo, Apelación, …)
+ * is simply a one-element `phases` array — same code path, no legacy branch.
+ */
+export interface DemoPhase {
+  /**
+   * Phase id — namespaces the ephemeral UI state (docStatus / translations) and
+   * the stepper. Unique within a scenario; never touches storage.
+   */
+  slug: string;
+  /** Stepper label, e.g. "Custodia" / "I-360" / "I-485". Authored content, not i18n. */
+  label: string;
+  /** Optional accent (SERVICE_COLOR key, e.g. "purple"); falls back to service.color. */
+  color?: string;
+  documents: DemoDocItem[];
+  forms: DemoForm[];
+  captions: DemoPhaseCaptions;
+  /** The official-form automation for THIS phase (optional: a phase may not generate one). */
+  automation?: DemoAutomationFixture;
+  /** The long-form AI generation for THIS phase. */
+  generation: DemoGenerationFixture;
 }
 
 export interface DemoScenario {
@@ -110,12 +146,13 @@ export interface DemoScenario {
   };
   /** Case title shown in cards/headers, e.g. "Asilo Político — Karelis". */
   caseTitle: string;
-  /** "Fase 1 de 2 · Preparación" — already localized. */
+  /** Decorative label on the pre-entry case card, e.g. "Fase 1 de 3 · Custodia". */
   phaseLabel: string;
   contract: DemoContract;
-  documents: DemoDocItem[];
-  forms: DemoForm[];
-  captions: DemoCaptions;
+  /** Onboarding narration (runs once, not per phase). */
+  captions: DemoOnboardingCaptions;
+  /** Ordered phases. Single-phase services have exactly one; Visa Juvenil has three. */
+  phases: DemoPhase[];
   /** Content that drives the "Vista staff" walkthrough (staff panel of the case). */
   staff: DemoStaffFixture;
 }
@@ -324,9 +361,10 @@ export interface DemoExpedienteFixture {
 }
 
 /**
- * Everything the "Vista staff" needs — case metadata, key facts, timeline, and
- * the fixtures behind the four AI micro-experiences (translate, official-form
- * automation, AI generation, expediente). Pure content: no PII, no backend.
+ * Case-level content for the "Vista staff" — metadata, key facts, timeline, the
+ * shared translate narration and the final compiled expediente. The per-phase AI
+ * micro-experiences (official-form automation + AI generation) live on `DemoPhase`.
+ * Pure content: no PII, no backend.
  */
 export interface DemoStaffFixture {
   caseNumber: string;
@@ -343,14 +381,11 @@ export interface DemoStaffFixture {
   docsTotal: number;
   formsDone: number;
   formsTotal: number;
-  /** Translate-flow narration, shared by every document row. */
+  /** Translate-flow narration, shared by every document row and every phase. */
   translateSteps: DemoLoaderStep[];
   /**
-   * The official-form automation. Optional: a scenario that does not generate an
-   * official form (e.g. Reforzar Asilo — the I-589 was already filed by the
-   * client) omits it, and the "Automatización" tab is not shown for that demo.
+   * The compiled, printable legal file — a single final artifact that spans all
+   * phases, so it stays at scenario level (not per phase).
    */
-  automation?: DemoAutomationFixture;
-  generation: DemoGenerationFixture;
   expediente: DemoExpedienteFixture;
 }

@@ -6,27 +6,27 @@ import { Chip, Icon } from "@/frontend/components/brand";
 import { GenerationRow } from "../components/generation-row";
 import { TabIntro } from "../components/tab-intro";
 import { PdfReader } from "../components/pdf-reader";
-import type { DemoScenario } from "../../scenarios/types";
+import type { DemoPhase } from "../../scenarios/types";
 import type { StaffFlow } from "../use-staff-flow";
 
 /**
  * AutomatizacionTab — the official-form AcroForm automation (assembly animation
- * on Generar), driven entirely by `scenario.staff.automation`. With a real PDF
+ * on Generar) for the active phase, driven by `phase.automation`. With a real PDF
  * uploaded ("⋯ → Data" on the demo card) the done state opens the full-screen
  * PdfReader; without one it keeps the HTML field preview (simulation fallback).
  */
 export function AutomatizacionTab({
-  scenario,
+  phase,
   flow,
   pdfBlobUrl,
 }: {
-  scenario: DemoScenario;
+  phase: DemoPhase;
   flow: StaffFlow;
   pdfBlobUrl: string | null;
 }) {
   const t = useTranslations("staff.demo");
-  const auto = scenario.staff.automation;
-  const status = flow.state.automation;
+  const auto = phase.automation;
+  const status = flow.state.automation[phase.slug] ?? "idle";
   const done = status === "done";
   const [reader, setReader] = React.useState(false);
 
@@ -58,7 +58,7 @@ export function AutomatizacionTab({
         doneMeta={auto.doneMeta}
         viewLabel={done && pdfBlobUrl ? t("viewPdf") : undefined}
         onView={pdfBlobUrl ? () => setReader(true) : undefined}
-        onGenerate={flow.actions.startAutomation}
+        onGenerate={() => flow.actions.startAutomation(phase.slug)}
       />
 
       {done && pdfBlobUrl && (

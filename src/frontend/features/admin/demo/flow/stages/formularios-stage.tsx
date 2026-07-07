@@ -4,6 +4,8 @@ import * as React from "react";
 import { useTranslations } from "next-intl";
 import { Chip, Icon, IconTile } from "@/frontend/components/brand";
 import { ScreenHead } from "@/frontend/components/mobile/screen-head";
+import { PhaseSelector } from "../../components/phase-selector";
+import { serviceColorToken } from "../../scenarios";
 import type { DemoFlow } from "../use-demo-flow";
 
 /**
@@ -15,6 +17,8 @@ export function FormulariosStage({ flow }: { flow: DemoFlow }) {
   const t = useTranslations("cliente.formularios");
   const td = useTranslations("staff.demo");
   const { state, actions, scenario } = flow;
+  const phase = scenario.phases[state.activePhaseIndex];
+  const formKey = (id: string) => `${phase.slug}:${id}`;
 
   return (
     <div style={{ minHeight: "100%", padding: "16px 20px 130px" }}>
@@ -25,9 +29,17 @@ export function FormulariosStage({ flow }: { flow: DemoFlow }) {
         lexMood="atento"
       />
 
+      <PhaseSelector
+        phases={scenario.phases}
+        activeIndex={state.activePhaseIndex}
+        onSelect={actions.selectPhase}
+        fallbackColor={serviceColorToken(scenario.service.color)}
+        ariaLabel={td("phaseSelectorAria")}
+      />
+
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        {scenario.forms.map((form) => {
-          const sent = state.sentForms.includes(form.id);
+        {phase.forms.map((form) => {
+          const sent = state.sentForms.includes(formKey(form.id));
           return (
             <div
               key={form.id}
@@ -81,7 +93,7 @@ export function FormulariosStage({ flow }: { flow: DemoFlow }) {
               ) : (
                 <button
                   type="button"
-                  onClick={() => actions.review(form.id)}
+                  onClick={() => actions.review(formKey(form.id))}
                   style={{
                     display: "inline-flex",
                     alignItems: "center",

@@ -767,6 +767,7 @@
       "comingSoonBody": "There's no demo for this service yet.",
       "tabClient": "Client view",
       "tabStaff": "Staff view",
+      "phaseSelectorAria": "Select case phase",
       "viewPdf": "View document",
       "pdfDownload": "Download",
       "assets": {
