@@ -77,5 +77,5 @@ export type { ClientAddressInput } from "./repository";
 
 // Auth / authorization helpers — re-exported here so app-layer files can
 // import them via module-pub boundary (app → module-pub is allowed per DOC-21).
-export { getActor, requireActor, can, systemActor, AuthzError } from "@/backend/platform/authz";
+export { getActor, requireActor, can, allows, systemActor, AuthzError } from "@/backend/platform/authz";
 export type { Actor, Action } from "@/backend/platform/authz";

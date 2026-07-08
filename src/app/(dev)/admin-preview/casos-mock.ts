@@ -173,14 +173,14 @@ export const caseWorkspaceVmMock: CaseWorkspaceVM = {
     { id: "t2", title: "Caso creado", occurredAt: new Date().toISOString(), actorKind: "team", icon: "file-plus" },
   ],
   forms: [
-    { id: "f1", fillFormDefinitionId: "f1", kind: "pdf_automation", label: "Datos del solicitante", status: "approved", partyId: "p1", partyName: "María González" },
-    { id: "f2", fillFormDefinitionId: "f2", kind: "ai_letter", label: "Relato de asilo", status: "draft", partyId: null, partyName: null },
+    { id: "f1", fillFormDefinitionId: "f1", kind: "pdf_automation", label: "Datos del solicitante", status: "approved", partyId: "p1", partyName: "María González", filledBy: "client", responseId: "r-f1", hasPdf: true },
+    { id: "f2", fillFormDefinitionId: "f2", kind: "ai_letter", label: "Relato de asilo", status: "draft", partyId: null, partyName: null, filledBy: "client", responseId: null, hasPdf: false },
   ],
   formsDone: 1,
   formsTotal: 2,
   generations: [
-    { id: "g1", formLabel: "Memorándum de asilo", status: "completed", version: 2, costUsd: 0.42, isCurrent: true, partyName: null, createdAt: new Date().toISOString() },
-    { id: "g2", formLabel: "Carta de testigo", status: "running", version: 1, costUsd: null, isCurrent: false, partyName: "María González", createdAt: new Date().toISOString() },
+    { id: "g1", formDefinitionId: "l1", formLabel: "Memorándum de asilo", status: "completed", version: 2, costUsd: 0.42, isCurrent: true, partyId: null, partyName: null, outputAvailable: true, createdAt: new Date().toISOString() },
+    { id: "g2", formDefinitionId: "l2", formLabel: "Carta de testigo", status: "running", version: 1, costUsd: null, isCurrent: false, partyId: "p1", partyName: "María González", outputAvailable: false, createdAt: new Date().toISOString() },
   ],
   validations: [
     { id: "v1", attemptNo: 1, status: "needs_corrections", semaforo: "amber", aiScore: 78, verdict: "needs_corrections", createdAt: new Date().toISOString() },

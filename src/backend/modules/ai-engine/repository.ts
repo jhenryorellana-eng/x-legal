@@ -986,14 +986,119 @@ export async function loadResolvedInputs(snapshot: ConfigSnapshot): Promise<{
       .maybeSingle();
 
     if (data) {
-      forms.push({
-        slug: formRef.slug,
-        answers: (data.answers as Record<string, unknown>) ?? {},
-      });
+      const rawAnswers = (data.answers as Record<string, unknown>) ?? {};
+      // Re-key by human-readable question text so the prompt reads
+      // "¿Pregunta?: respuesta" instead of "uuid: respuesta" (the AI needs wording).
+      const labels = await loadQuestionLabelsForResponse(formRef.response_id);
+      const answers: Record<string, unknown> = {};
+      for (const [questionId, value] of Object.entries(rawAnswers)) {
+        answers[labels.get(questionId) ?? questionId] = value;
+      }
+      forms.push({ slug: formRef.slug, answers });
     }
   }
 
   return { documents, forms };
+}
+
+/**
+ * Resolves a generation config's `input_form_slugs` / `input_document_slugs` to
+ * concrete case rows for THIS case+party, producing the `resolved_inputs` that
+ * `startGeneration` freezes into the run snapshot (DOC-42 §3.1). Until now this
+ * was left empty, so the companion-questionnaire answers (and document
+ * extractions) never reached the prompt — the bug behind "editing an answer
+ * doesn't change the letter".
+ *
+ * - forms: the client's `case_form_responses` for each `input_form_slug`, matched
+ *   by party (a per-party letter falls back to a case-level questionnaire).
+ * - documents: the latest active `case_document` for each requirement slug + its
+ *   completed extraction (mirrors cases.resolveBySource's document path).
+ *
+ * Degrades gracefully: an unmatched slug is simply omitted (letter generates with
+ * whatever resolved), never throws.
+ */
+export async function resolveGenerationInputs(
+  caseId: string,
+  partyId: string | null,
+  formSlugs: string[],
+  docSlugs: string[],
+): Promise<ConfigSnapshot["resolved_inputs"]> {
+  const client = createServiceClient();
+  const forms: ConfigSnapshot["resolved_inputs"]["forms"] = [];
+  const documents: ConfigSnapshot["resolved_inputs"]["documents"] = [];
+
+  // FORMS — case_form_responses ⋈ form_definitions by slug (this case).
+  if (formSlugs.length > 0) {
+    const { data } = await client
+      .from("case_form_responses")
+      .select("id, party_id, form_definitions!inner(slug)")
+      .eq("case_id", caseId)
+      .in("form_definitions.slug", formSlugs);
+    const rows = (data ?? []) as Array<{ id: string; party_id: string | null; form_definitions: { slug: string } | null }>;
+    for (const slug of formSlugs) {
+      const candidates = rows.filter((r) => r.form_definitions?.slug === slug);
+      // Prefer the party-specific response; fall back to a case-level (null-party) one.
+      const match =
+        partyId != null
+          ? (candidates.find((r) => r.party_id === partyId) ?? candidates.find((r) => r.party_id === null))
+          : candidates.find((r) => r.party_id === null);
+      if (match) forms.push({ slug, response_id: match.id });
+    }
+  }
+
+  // DOCUMENTS — latest active case_document by requirement slug + completed extraction.
+  for (const slug of docSlugs) {
+    let q = client
+      .from("case_documents")
+      .select("id, required_document_types!inner(slug)")
+      .eq("case_id", caseId)
+      .eq("required_document_types.slug", slug)
+      .in("status", ["uploaded", "approved"])
+      .order("created_at", { ascending: false })
+      .limit(1);
+    q = partyId ? q.eq("party_id", partyId) : q.is("party_id", null);
+    const { data: docs } = await q;
+    const caseDocumentId = (docs?.[0] as { id?: string } | undefined)?.id;
+    if (!caseDocumentId) continue;
+    const { data: ext } = await client
+      .from("document_extractions")
+      .select("id")
+      .eq("case_document_id", caseDocumentId)
+      .eq("status", "completed")
+      .order("created_at", { ascending: false })
+      .limit(1);
+    const extractionId = (ext?.[0] as { id?: string } | undefined)?.id;
+    if (extractionId) documents.push({ slug, case_document_id: caseDocumentId, extraction_id: extractionId });
+  }
+
+  return { documents, forms };
+}
+
+/**
+ * Loads the `{questionId → question text (es)}` map for a form response, so
+ * loadResolvedInputs can re-key the answers by human-readable question wording
+ * instead of raw UUIDs (the AI prompt needs the question, not the id).
+ */
+async function loadQuestionLabelsForResponse(responseId: string): Promise<Map<string, string>> {
+  const client = createServiceClient();
+  const { data: resp } = await client
+    .from("case_form_responses")
+    .select("automation_version_id")
+    .eq("id", responseId)
+    .maybeSingle();
+  const versionId = (resp as { automation_version_id?: string | null } | null)?.automation_version_id;
+  const labels = new Map<string, string>();
+  if (!versionId) return labels;
+  const { data } = await client
+    .from("form_questions")
+    .select("id, question_i18n, form_question_groups!inner(automation_version_id)")
+    .eq("form_question_groups.automation_version_id", versionId);
+  for (const row of (data ?? []) as Array<{ id: string; question_i18n: unknown }>) {
+    const q = row.question_i18n as { es?: string; en?: string } | null;
+    const text = q?.es || q?.en;
+    if (text) labels.set(row.id, text);
+  }
+  return labels;
 }
 
 // ---------------------------------------------------------------------------

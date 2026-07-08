@@ -33,6 +33,10 @@ export const MODULE_KEYS = [
   "referrals",
   "reviews",
   "retention",
+  // Capability permission (not a sidebar module): edit form/generation answers even
+  // once submitted/approved, from the staff review (admin + paralegal by default —
+  // Henry 2026-07-08). Only the `edit` toggle grants the capability; `view` is a no-op.
+  "formEdit",
 ] as const;
 
 export type ModuleKey = (typeof MODULE_KEYS)[number];

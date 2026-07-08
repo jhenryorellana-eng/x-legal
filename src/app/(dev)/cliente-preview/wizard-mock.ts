@@ -41,6 +41,8 @@ export const wizardLabelsMock: WizardLabels = {
   submittedPill: "Enviado",
   submittedTitle: "¡Listo! Lo recibimos",
   submittedBody: "Tu equipo lo está revisando.",
+  approvedPill: "Aprobado",
+  reviewClientBanner: "Este formulario lo responde el cliente. ¿Falta algo? Pídeselo por mensaje.",
 };
 
 /** Generic PDF form — "Datos del menor", 3 steps, all 6 field types + prefill. */

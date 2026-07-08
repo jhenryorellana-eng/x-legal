@@ -195,4 +195,7 @@ export interface WizardLabels {
   submittedPill: string; // "Enviado"
   submittedTitle: string; // "Esto ya está enviado"
   submittedBody: string; // "Tu equipo lo está revisando."
+  // Staff read-only review (audience="staff")
+  approvedPill: string; // "Aprobado" — pill for an approved response in the staff review
+  reviewClientBanner: string; // "Este formulario lo responde el cliente. ¿Falta algo? Pídeselo por mensaje."
 }

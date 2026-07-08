@@ -47,5 +47,7 @@ export function resolveWizardLabels(t: (key: string) => string): WizardLabels {
     submittedPill: t("submittedPill"),
     submittedTitle: t("submittedTitle"),
     submittedBody: t("submittedBody"),
+    approvedPill: t("approvedPill"),
+    reviewClientBanner: t("reviewClientBanner"),
   };
 }

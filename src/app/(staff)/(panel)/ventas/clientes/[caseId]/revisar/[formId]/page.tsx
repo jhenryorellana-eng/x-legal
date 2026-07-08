@@ -1,5 +1,5 @@
 /**
- * Revisión lado a lado (paralegal Diana) — `/legal/caso/[caseId]/revisar/[formId]`.
+ * Revisión lado a lado (asesora) — `/ventas/clientes/[caseId]/revisar/[formId]`.
  * Thin wrapper over the shared FormReviewLoader; back lands on the Formularios tab.
  */
 
@@ -7,7 +7,7 @@ import { FormReviewLoader } from "@/app/(staff)/(panel)/_form-review/loader";
 
 export const dynamic = "force-dynamic";
 
-export default async function LegalFormReviewPage({
+export default async function VentasFormReviewPage({
   params,
   searchParams,
 }: {
@@ -22,7 +22,7 @@ export default async function LegalFormReviewPage({
       formId={formId}
       party={party}
       name={name}
-      backHref={`/legal/caso/${caseId}?tab=formularios`}
+      backHref={`/ventas/clientes/${caseId}?tab=formularios`}
     />
   );
 }

@@ -34,7 +34,7 @@ import { getCaseExpedientes } from "@/backend/modules/expediente";
 import { getCaseRuta } from "@/backend/modules/scheduling";
 import { resolveI18n, type Locale } from "@/shared/i18n";
 import { SharedCaseView, buildCasosStrings } from "@/frontend/features/shared-case";
-import type { CaseWorkspaceVM } from "@/frontend/features/shared-case";
+import type { CaseWorkspaceVM, CaseTabId } from "@/frontend/features/shared-case";
 import {
   getCaseThreadAction,
   sendMessageAction,
@@ -65,19 +65,23 @@ import {
   setDocumentTranslationNotRequiredAction,
   runPreMortemAction,
 } from "../../../admin/casos/actions";
-import { getFormResponsePdfUrlAction } from "../../../admin/casos/[caseId]/formularios/actions";
+import { getFormResponsePdfUrlAction, generateFilledPdfAction } from "../../../admin/casos/form-actions";
+import { getGenerationOutputUrlAction, startLetterGenerationAction, getRunStatusAction } from "../../../admin/casos/generation-actions";
 
 export const dynamic = "force-dynamic";
 
 export default async function LegalCasoDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ caseId: string }>;
+  searchParams: Promise<{ tab?: string }>;
 }) {
   const actor = await getActor();
   if (!actor || actor.kind !== "staff") redirect("/login");
 
   const { caseId } = await params;
+  const { tab } = await searchParams;
   const locale = (await getLocale()) as Locale;
   const lc = locale === "en" ? "en" : "es";
   const strings = buildCasosStrings(lc);
@@ -163,6 +167,9 @@ export default async function LegalCasoDetailPage({
     status: f.status,
     partyId: f.partyId,
     partyName: f.partyName,
+    filledBy: f.filledBy,
+    responseId: f.responseId,
+    hasPdf: f.filledPdfPath !== null,
   }));
   const formsDone = formsVm.filter((f) => f.status === "submitted" || f.status === "approved").length;
 
@@ -171,12 +178,15 @@ export default async function LegalCasoDetailPage({
     .filter((r) => !r.is_test)
     .map((r) => ({
       id: r.id,
+      formDefinitionId: r.form_definition_id,
       formLabel: formLabelById.get(r.form_definition_id) ?? "—",
       status: r.status,
       version: r.version,
       costUsd: r.cost_usd,
       isCurrent: r.isCurrent,
+      partyId: r.party_id,
       partyName: null,
+      outputAvailable: r.status === "completed" && r.output_path !== null,
       createdAt: r.created_at,
     }));
 
@@ -282,6 +292,10 @@ export default async function LegalCasoDetailPage({
       actions={{
         reviewDocument: reviewDocumentAction,
         getFilledPdfUrl: getFormResponsePdfUrlAction,
+        generateFilledPdf: generateFilledPdfAction,
+        getGenerationOutputUrl: getGenerationOutputUrlAction,
+        startLetterGeneration: startLetterGenerationAction,
+        getRunStatus: getRunStatusAction,
         runPreMortem: runPreMortemAction,
         registerPayment: registerPaymentAction,
         resendSigningLink: resendSigningLinkAction,
@@ -305,6 +319,7 @@ export default async function LegalCasoDetailPage({
       backHref="/legal"
       isAdmin={false}
       tabAccessByRole={tabAccess.allowedByRole}
+      initialTab={tab as CaseTabId | undefined}
       chatRaw={{
         getCaseThread: getCaseThreadAction,
         send: sendMessageAction,

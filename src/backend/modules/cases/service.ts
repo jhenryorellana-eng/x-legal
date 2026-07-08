@@ -3950,6 +3950,12 @@ export interface ClientFormListItem {
   partyName: string | null;
   /** null (untouched) | 'draft' | 'submitted' | 'approved' | … */
   status: string | null;
+  /** 'client' | 'staff' | 'both' — who fills it (drives the staff read-only lock). */
+  filledBy: string;
+  /** The response row id (null when untouched) — needed by staff approve/generate. */
+  responseId: string | null;
+  /** Path to the generated official PDF (null = not generated yet). */
+  filledPdfPath: string | null;
   position: number;
 }
 
@@ -4025,6 +4031,9 @@ export async function getClientFormsForCase(
           partyId: p.id,
           partyName: await resolvePartyName(p),
           status: resp?.status ?? null,
+          filledBy: d.filled_by,
+          responseId: resp?.id ?? null,
+          filledPdfPath: resp?.filled_pdf_path ?? null,
           position: d.position,
         });
       }
@@ -4038,6 +4047,9 @@ export async function getClientFormsForCase(
         partyId: null,
         partyName: null,
         status: resp?.status ?? null,
+        filledBy: d.filled_by,
+        responseId: resp?.id ?? null,
+        filledPdfPath: resp?.filled_pdf_path ?? null,
         position: d.position,
       });
     }
@@ -4263,6 +4275,26 @@ export async function saveFormDraft(
 }
 
 /**
+ * Staff edit of a form response's answers, allowed in ANY status (draft /
+ * submitted / approved) — the divergence from RF-DIA-023 decided by Henry
+ * (2026-07-08): Diana / admin correct answers from the side-by-side review.
+ *
+ * Gated by the `formEdit` module permission (admin bypasses; paralegal has it by
+ * preset; e.g. sales does NOT even though it has cases:edit). Reuses the client
+ * autosave engine end-to-end (same merge + version-integrity), so the durable
+ * IndexedDB write-ahead / offline queue protect staff edits too. Status is never
+ * changed here (an approved form stays approved); the official PDF is refreshed
+ * separately via generateFilledPdf ("Actualizar PDF").
+ */
+export async function staffUpdateFormAnswers(
+  actor: Actor,
+  input: SaveFormDraftInput,
+): Promise<CaseFormResponseRow> {
+  can(actor, "formEdit", "edit"); // AuthzError('forbidden_module') if denied
+  return saveFormDraftImpl(actor, input, /* staffEdit */ true);
+}
+
+/**
  * Creates or updates a form draft with a partial patch of answers.
  * Merge per-key: only keys present in patch are updated (RF-DIA-023).
  * Freezes automation_version_id to the published version on first create.
@@ -4271,6 +4303,12 @@ export async function saveFormDraft(
 async function saveFormDraftImpl(
   actor: Actor,
   input: SaveFormDraftInput,
+  /**
+   * Staff edit path (staffUpdateFormAnswers): skips the draft-only gate so a
+   * privileged staff (formEdit) can correct answers of a submitted/approved form.
+   * The permission itself is enforced by the caller. Never set from the client path.
+   */
+  staffEdit = false,
 ): Promise<CaseFormResponseRow> {
   await requireCaseAccess(actor, input.caseId);
   const parsed = SaveFormDraftSchema.parse(input);
@@ -4307,8 +4345,10 @@ async function saveFormDraftImpl(
       service_phase_id: caseForPhase?.current_phase_id ?? null,
     });
   } else {
-    // Existing response: only draft can be edited
-    if (response.status !== "draft") {
+    // Existing response: the client autosave allows only `draft`. The staff edit
+    // path (formEdit) may correct answers of a submitted/approved form — the status
+    // is deliberately left unchanged (an approved form stays approved).
+    if (!staffEdit && response.status !== "draft") {
       throw new CaseError("FORM_NOT_SUBMITTABLE");
     }
   }

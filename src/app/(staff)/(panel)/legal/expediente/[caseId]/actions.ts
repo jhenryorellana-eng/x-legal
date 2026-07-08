@@ -5,7 +5,7 @@
  *
  * Each action wraps the corresponding use case from the expediente module-pub
  * boundary. Returns `{ ok: true, data }` or `{ ok: false, error: { code } }`.
- * Mirror pattern: admin/casos/[caseId]/formularios/actions.ts.
+ * Mirror pattern: admin/casos/form-actions.ts.
  */
 
 import { requireActor } from "@/backend/modules/identity";

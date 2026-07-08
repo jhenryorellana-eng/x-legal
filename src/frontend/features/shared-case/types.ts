@@ -124,7 +124,7 @@ export interface TimelineEventVM {
 export interface FormVM {
   /** Anchor form definition id (ai_letter id for a Memorándum card). */
   id: string;
-  /** The form the "Revisar"/"Llenar" action opens. For a Memorándum (ai_letter
+  /** The form the "Ver"/"Revisión" action opens. For a Memorándum (ai_letter
    *  with a companion questionnaire) this is the questionnaire id. */
   fillFormDefinitionId: string;
   /** 'ai_letter' | 'pdf_automation' | 'questionnaire'. */
@@ -134,10 +134,19 @@ export interface FormVM {
   status: string | null;
   partyId: string | null;
   partyName: string | null;
+  /** 'client' | 'staff' | 'both' — who fills it (gates staff "Generar PDF"). */
+  filledBy: string;
+  /** Response row id (null = untouched) — needed by staff generate/approve actions. */
+  responseId: string | null;
+  /** Whether the official filled PDF already exists (drives Generar vs Regenerar). */
+  hasPdf: boolean;
 }
 
 export interface GenerationVM {
+  /** The generation RUN id. */
   id: string;
+  /** The ai_letter form definition id (for regenerate + the review route). */
+  formDefinitionId: string;
   /** Resolved form label (or "—" when not in the client forms set). */
   formLabel: string;
   /** queued | running | completed | failed | cancelled. */
@@ -145,7 +154,10 @@ export interface GenerationVM {
   version: number;
   costUsd: number | null;
   isCurrent: boolean;
+  partyId: string | null;
   partyName: string | null;
+  /** The run produced a downloadable letter (completed + output_path). */
+  outputAvailable: boolean;
   createdAt: string;
 }
 
@@ -423,6 +435,29 @@ export interface CaseDetailActions {
   getFilledPdfUrl?: (input: {
     responseId: string;
   }) => Promise<{ ok: boolean; url?: string | null; error?: { code: string } }>;
+  /**
+   * Generate (or regenerate) the official filled PDF of a form response, returning
+   * a signed download URL (Información tab "Generar PDF"). Optional — only staff
+   * surfaces that authorize generation inject it (admin / paralegal).
+   */
+  generateFilledPdf?: (input: {
+    responseId: string;
+  }) => Promise<{ ok: boolean; downloadUrl?: string; error?: { code: string; details?: Record<string, unknown> } }>;
+  /**
+   * AI-letter generation actions (Generaciones tab — Ola 2). Optional; only staff
+   * surfaces that authorize generation inject them.
+   */
+  getGenerationOutputUrl?: (input: {
+    runId: string;
+  }) => Promise<{ ok: boolean; url?: string | null; error?: { code: string } }>;
+  startLetterGeneration?: (input: {
+    caseId: string;
+    formDefinitionId: string;
+    partyId: string | null;
+  }) => Promise<{ ok: boolean; runId?: string; budgetWarning?: string | null; error?: { code: string } }>;
+  getRunStatus?: (input: {
+    runId: string;
+  }) => Promise<{ ok: boolean; status?: string; outputAvailable?: boolean; error?: { code: string } }>;
   /**
    * Run a Pre-Mortem AI analysis on the case (Etapa D). Returns the new
    * assessment on success. Optional — only case-detail surfaces inject it.

@@ -18,6 +18,8 @@ export {
   regenerate,
   retryRunSameVersion,
   getRunsForCase,
+  getGenerationOutputUrl,
+  getRunStatus,
   translateDocument,
   getDocumentTranslation,
   getDocumentTranslationPdf,

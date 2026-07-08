@@ -133,19 +133,8 @@ export function SharedCaseView({
 
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             {isAdmin && (
-              <>
-                <HeaderLink href={`/admin/casos/${h.caseId}/formularios`} icon="form">
-                  {tb.formularios}
-                </HeaderLink>
-                <HeaderLink href="/admin/auditoria" icon="scale">
-                  {t.auditLink}
-                </HeaderLink>
-              </>
-            )}
-
-            {vm.role === "paralegal" && (
-              <HeaderLink href={`/legal/caso/${h.caseId}/formularios`} icon="form">
-                {tb.formularios}
+              <HeaderLink href="/admin/auditoria" icon="scale">
+                {t.auditLink}
               </HeaderLink>
             )}
 
@@ -323,12 +312,13 @@ export function SharedCaseView({
         {active === "formularios" && (
           <InformacionTab
             vm={vm}
+            actions={actions}
             strings={strings}
             onNavigateToGeneration={() => setActive(vm.isAdmin ? "generaciones" : "cartas")}
           />
         )}
-        {active === "cartas" && <GeneracionesTab vm={vm} strings={strings} locale={locale} title={tb.cartas} />}
-        {active === "generaciones" && <GeneracionesTab vm={vm} strings={strings} locale={locale} title={tb.generaciones} />}
+        {active === "cartas" && <GeneracionesTab vm={vm} actions={actions} strings={strings} locale={locale} title={tb.cartas} />}
+        {active === "generaciones" && <GeneracionesTab vm={vm} actions={actions} strings={strings} locale={locale} title={tb.generaciones} />}
         {active === "traspaso" && <TraspasoTab vm={vm} actions={actions} strings={strings} />}
         {active === "pagos" && <PagosTab vm={vm} actions={actions} strings={strings} locale={locale} />}
         {active === "expediente" && <ExpedienteTab vm={vm} strings={strings} title={tb.expediente} />}

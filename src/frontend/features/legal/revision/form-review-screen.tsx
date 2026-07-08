@@ -53,6 +53,10 @@ export interface FormReviewStrings {
   viewPdf: string;
   approveError: string;
   back: string;
+  /** "Actualizar PDF" — regenerate the official PDF after editing answers (no approval). */
+  updatePdf: string;
+  updatingPdf: string;
+  pdfUpdatedToast: string;
 }
 
 export interface FormReviewActions {
@@ -86,6 +90,7 @@ export function FormReviewScreen({
   documents,
   strings,
   actions,
+  editable = false,
   backHref,
 }: {
   caseId: string;
@@ -97,11 +102,14 @@ export function FormReviewScreen({
   documents: ReviewDocOption[];
   strings: FormReviewStrings;
   actions: FormReviewActions;
+  /** Staff may edit the answers here (formEdit permission) — enables the wizard. */
+  editable?: boolean;
   backHref: string;
 }) {
   const router = useRouter();
   const [responseId, setResponseId] = React.useState<string | null>(form.responseId);
   const [rightTab, setRightTab] = React.useState<"answers" | "docs">("answers");
+  const [updatingPdf, setUpdatingPdf] = React.useState(false);
 
   // LEFT — official filled PDF. The iframe needs a blob URL (CSP frame-src), but
   // "open externally" must use the remote signed URL: a blob: URL can't be opened
@@ -194,6 +202,21 @@ export function FormReviewScreen({
     setOfficialBump((n) => n + 1); // refresh the left PDF
   }
 
+  // "Actualizar PDF" — regenerate the official PDF from the current (edited) answers
+  // WITHOUT changing the approval state. The wizard has already autosaved the edits.
+  async function handleUpdatePdf() {
+    if (!responseId) return;
+    setUpdatingPdf(true);
+    const r = await actions.generatePdf({ responseId });
+    setUpdatingPdf(false);
+    if (!r.ok) {
+      toast.error(strings.approveError);
+      return;
+    }
+    toast.success(strings.pdfUpdatedToast);
+    setOfficialBump((n) => n + 1);
+  }
+
   const panel: React.CSSProperties = {
     display: "flex",
     flexDirection: "column",
@@ -269,6 +292,8 @@ export function FormReviewScreen({
                   form={form}
                   locale={locale}
                   labels={labels}
+                  audience="staff"
+                  editable={editable}
                   saveDraft={actions.saveDraft}
                   submitForm={async (input) => {
                     const r = await actions.submitForm(input);
@@ -329,6 +354,11 @@ export function FormReviewScreen({
       {(reviewed || responseId) && (
         <div style={{ flexShrink: 0, marginTop: 12, padding: "12px 16px", borderTop: "1px solid var(--line)", background: "var(--card,#fff)", borderRadius: 12, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <span style={{ fontSize: 13.5, fontWeight: 700, color: "var(--ink)" }}>{strings.approveTitle}</span>
+          {editable && (form.status === "submitted" || form.status === "approved") && (
+            <GhostBtn size="md" full={false} disabled={updatingPdf || approving || !responseId} onClick={handleUpdatePdf}>
+              {updatingPdf ? strings.updatingPdf : strings.updatePdf}
+            </GhostBtn>
+          )}
           <GradientBtn size="md" full={false} disabled={approving || !responseId} onClick={handleApprove}>
             {approving ? strings.approving : strings.approveBtn}
           </GradientBtn>

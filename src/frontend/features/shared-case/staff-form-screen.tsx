@@ -52,6 +52,7 @@ export function StaffFormScreen({
       form={form}
       locale={locale}
       labels={labels}
+      audience="staff"
       saveDraft={saveDraft}
       submitForm={submitForm}
       translateAnswers={translateAnswers}

@@ -71,7 +71,8 @@ import {
   setDocumentTranslationNotRequiredAction,
   runPreMortemAction,
 } from "../actions";
-import { getFormResponsePdfUrlAction } from "./formularios/actions";
+import { getFormResponsePdfUrlAction, generateFilledPdfAction } from "../form-actions";
+import { getGenerationOutputUrlAction, startLetterGenerationAction, getRunStatusAction } from "../generation-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -184,6 +185,9 @@ export default async function AdminCasoDetailPage({
     status: f.status,
     partyId: f.partyId,
     partyName: f.partyName,
+    filledBy: f.filledBy,
+    responseId: f.responseId,
+    hasPdf: f.filledPdfPath !== null,
   }));
   const formsDone = formsVm.filter((f) => f.status === "submitted" || f.status === "approved").length;
 
@@ -192,12 +196,15 @@ export default async function AdminCasoDetailPage({
     .filter((r) => !r.is_test)
     .map((r) => ({
       id: r.id,
+      formDefinitionId: r.form_definition_id,
       formLabel: formLabelById.get(r.form_definition_id) ?? "—",
       status: r.status,
       version: r.version,
       costUsd: r.cost_usd,
       isCurrent: r.isCurrent,
+      partyId: r.party_id,
       partyName: null,
+      outputAvailable: r.status === "completed" && r.output_path !== null,
       createdAt: r.created_at,
     }));
 
@@ -306,6 +313,10 @@ export default async function AdminCasoDetailPage({
       actions={{
         reviewDocument: reviewDocumentAction,
         getFilledPdfUrl: getFormResponsePdfUrlAction,
+        generateFilledPdf: generateFilledPdfAction,
+        getGenerationOutputUrl: getGenerationOutputUrlAction,
+        startLetterGeneration: startLetterGenerationAction,
+        getRunStatus: getRunStatusAction,
         runPreMortem: runPreMortemAction,
         setRequirementVisibility: canManageDocs ? setRequirementVisibilityAction : undefined,
         advanceCasePhase: canAdvancePhase ? advanceCasePhaseAction : undefined,

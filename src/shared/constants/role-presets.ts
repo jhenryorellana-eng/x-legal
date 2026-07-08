@@ -41,6 +41,9 @@ const MATRIX: Record<ModuleKey, { sales: Cell; paralegal: Cell; finance: Cell }>
   referrals: { sales: "-", paralegal: "-", finance: "E" },
   reviews: { sales: "-", paralegal: "-", finance: "E" },
   retention: { sales: "-", paralegal: "-", finance: "E" },
+  // Editar respuestas de formularios/generaciones enviados o aprobados (Diana por
+  // defecto; el admin puede concederlo a quien quiera). Solo el toggle Editar cuenta.
+  formEdit: { sales: "-", paralegal: "E", finance: "-" },
 };
 
 function presetFor(role: "sales" | "paralegal" | "finance"): RolePreset {

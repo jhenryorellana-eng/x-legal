@@ -434,7 +434,7 @@ describe("validateAnswerTypes", () => {
 // Service: saveFormDraft
 // ---------------------------------------------------------------------------
 
-import { saveFormDraft, submitFormResponse, approveFormResponse, generateFilledPdf, resolveBySource, getCaseExtractions } from "../service";
+import { saveFormDraft, staffUpdateFormAnswers, submitFormResponse, approveFormResponse, generateFilledPdf, resolveBySource, getCaseExtractions } from "../service";
 
 describe("saveFormDraft", () => {
   beforeEach(() => {
@@ -620,6 +620,84 @@ describe("saveFormDraft", () => {
       patch: {},
     });
     expect(result.id).toBe(RESPONSE_ID);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Service: staffUpdateFormAnswers (Henry 2026-07-08 — Diana/admin edit in review)
+// ---------------------------------------------------------------------------
+
+describe("staffUpdateFormAnswers", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCan.mockReturnValue(undefined); // formEdit granted
+    mockRequireCaseAccess.mockResolvedValue(undefined);
+    mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
+    mockGetPublishedAutomationVersion.mockResolvedValue(publishedVersion);
+    mockListQuestions.mockResolvedValue([]);
+    mockListQuestionGroups.mockResolvedValue([]);
+  });
+
+  it("is gated by the formEdit permission (not cases:edit)", async () => {
+    mockFindFormResponse.mockResolvedValue(approvedResponse);
+    mockFindFormResponseById.mockResolvedValue({ ...approvedResponse, answers: { q1: "x" } });
+
+    await staffUpdateFormAnswers(staffActor, {
+      caseId: CASE_ID, formDefinitionId: FORM_DEF_ID, partyId: null, patch: { q1: "x" },
+    });
+
+    expect(mockCan).toHaveBeenCalledWith(staffActor, "formEdit", "edit");
+  });
+
+  it("edits a SUBMITTED response (no FORM_NOT_SUBMITTABLE) and leaves the status unchanged", async () => {
+    mockFindFormResponse.mockResolvedValue(submittedResponse);
+    mockFindFormResponseById.mockResolvedValue({ ...submittedResponse, answers: { q1: "corrected" } });
+
+    const result = await staffUpdateFormAnswers(staffActor, {
+      caseId: CASE_ID, formDefinitionId: FORM_DEF_ID, partyId: null, patch: { q1: "corrected" },
+    });
+
+    expect(mockMergeFormAnswers).toHaveBeenCalledWith(RESPONSE_ID, { q1: "corrected" });
+    expect(result.status).toBe("submitted"); // status is NEVER changed here
+    expect(mockUpdateFormResponse).not.toHaveBeenCalled();
+  });
+
+  it("edits an APPROVED response (stays approved)", async () => {
+    mockFindFormResponse.mockResolvedValue(approvedResponse);
+    mockFindFormResponseById.mockResolvedValue({ ...approvedResponse, answers: { q1: "fix" } });
+
+    const result = await staffUpdateFormAnswers(staffActor, {
+      caseId: CASE_ID, formDefinitionId: FORM_DEF_ID, partyId: null, patch: { q1: "fix" },
+    });
+
+    expect(mockMergeFormAnswers).toHaveBeenCalledWith(RESPONSE_ID, { q1: "fix" });
+    expect(result.status).toBe("approved");
+  });
+
+  it("rejects when the actor lacks the formEdit permission — no mutation", async () => {
+    mockCan.mockImplementation(() => { throw new Error("forbidden_module"); });
+    mockFindFormResponse.mockResolvedValue(approvedResponse);
+
+    await expect(
+      staffUpdateFormAnswers(staffActor, {
+        caseId: CASE_ID, formDefinitionId: FORM_DEF_ID, partyId: null, patch: { q1: "x" },
+      }),
+    ).rejects.toThrow("forbidden_module");
+
+    expect(mockMergeFormAnswers).not.toHaveBeenCalled();
+  });
+
+  it("blocks cross-tenant edit (requireCaseAccess rejects → no mutation)", async () => {
+    mockFindFormResponse.mockResolvedValue(approvedResponse);
+    mockRequireCaseAccess.mockRejectedValue(new Error("forbidden_case"));
+
+    await expect(
+      staffUpdateFormAnswers(staffActor, {
+        caseId: CASE_ID, formDefinitionId: FORM_DEF_ID, partyId: null, patch: { q1: "x" },
+      }),
+    ).rejects.toThrow("forbidden_case");
+
+    expect(mockMergeFormAnswers).not.toHaveBeenCalled();
   });
 });
 

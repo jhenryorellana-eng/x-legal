@@ -643,7 +643,9 @@
       "dictateUnsupported": "Dictation isn't available here. You can type instead.",
       "submittedPill": "Submitted",
       "submittedTitle": "Done! We got it",
-      "submittedBody": "Your team is reviewing it."
+      "submittedBody": "Your team is reviewing it.",
+      "approvedPill": "Approved",
+      "reviewClientBanner": "This form is filled in by the client. Missing something? Ask them by message."
     },
     "formularios": {
       "eyebrow": "Your case",
@@ -1326,7 +1328,12 @@
           "validations": "Validations",
           "messaging": "Messaging",
           "community": "Community",
-          "audit": "Audit"
+          "audit": "Audit",
+          "promotions": "Promotions",
+          "referrals": "Referrals",
+          "reviews": "Reviews",
+          "retention": "Retention",
+          "formEdit": "Edit answers (submitted/approved)"
         }
       },
       "audit": {
@@ -1756,6 +1763,18 @@
         "formsEmpty": "No forms for this phase yet.",
         "reviewForm": "Review",
         "generateLetter": "Generate",
+        "viewForm": "View",
+        "openReview": "Review",
+        "generatePdf": "Generate PDF",
+        "regeneratePdf": "Regenerate PDF",
+        "generatingForm": "Generating…",
+        "toastPdfGenerated": "PDF generated",
+        "toastPdfBlockedApproval": "Approve the form before generating the PDF.",
+        "toastPdfError": "Couldn't generate the PDF. Please try again.",
+        "regenerateLetter": "Regenerate",
+        "toastLetterQueued": "Generation in progress — may take a few minutes",
+        "toastLetterDuplicate": "A generation is already in progress for this letter.",
+        "toastLetterError": "Couldn't start the generation.",
         "formStatusDraft": "In progress",
         "formStatusSubmitted": "Submitted",
         "formStatusApproved": "Approved",
@@ -1804,6 +1823,7 @@
         "genEmpty": "No generations for this case yet.",
         "genVersion": "v{n}",
         "genCurrent": "Current",
+        "genNotStarted": "Not generated",
         "genStatus": {
           "queued": "Queued",
           "running": "Running",
@@ -2774,6 +2794,15 @@
     "reviewApprovedToast": "Form approved and PDF generated",
     "reviewViewPdf": "View PDF",
     "reviewApproveError": "Could not approve the form.",
+    "reviewUpdatePdf": "Update PDF",
+    "reviewUpdatingPdf": "Updating…",
+    "reviewPdfUpdatedToast": "PDF updated with your changes",
+    "letterTitle": "Generated letter",
+    "letterEmpty": "The letter hasn't been generated yet. Edit the answers and click \"Regenerate letter\".",
+    "letterRegenerate": "Regenerate letter",
+    "letterRegenerating": "Generating… (may take a few minutes)",
+    "letterRegenError": "Couldn't regenerate the letter.",
+    "letterView": "View letter",
     "reviewTabDocs": "Client documents",
     "reviewTabAnswers": "Client answers",
     "reviewOfficialTitle": "Official auto-filled PDF",

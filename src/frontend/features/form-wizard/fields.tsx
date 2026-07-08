@@ -538,7 +538,7 @@ function LockNote({ message }: { message: string }) {
  *  is wrapped in a native `<fieldset disabled>` so every descendant control is
  *  inert, and the optional `lockMessage` explains why. */
 export function WizardField(
-  props: FieldProps & { showDictation?: boolean; disabled?: boolean; lockMessage?: string | null },
+  props: FieldProps & { showDictation?: boolean; disabled?: boolean; lockMessage?: string | null; hidePrefillChip?: boolean },
 ) {
   const { question } = props;
   const edited = question.isPrefilled && !props.showPrefill;
@@ -567,7 +567,7 @@ export function WizardField(
 
   return (
     <div>
-      <PrefillChip question={question} edited={edited} labels={props.labels} />
+      {!props.hidePrefillChip && <PrefillChip question={question} edited={edited} labels={props.labels} />}
       <fieldset
         disabled={props.disabled}
         aria-disabled={props.disabled || undefined}

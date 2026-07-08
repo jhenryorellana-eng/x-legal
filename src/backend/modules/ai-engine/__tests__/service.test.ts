@@ -49,6 +49,7 @@ const mocks = vi.hoisted(() => {
     getTranslationSource: vi.fn(),
     loadDatasetItems: vi.fn(),
     loadResolvedInputs: vi.fn(),
+    resolveGenerationInputs: vi.fn(),
   };
 
   // platform mock functions
@@ -359,6 +360,7 @@ beforeEach(() => {
   mocks.repo.sumMonthlyCosts.mockResolvedValue(0);
   mocks.repo.insertRun.mockResolvedValue(BASE_RUN);
   mocks.repo.loadDatasetItems.mockResolvedValue([]);
+  mocks.repo.resolveGenerationInputs.mockResolvedValue({ documents: [], forms: [] });
   mocks.qstash.enqueueJob.mockResolvedValue(undefined);
   mocks.audit.writeAudit.mockResolvedValue(undefined);
 });
@@ -457,6 +459,38 @@ describe("startGeneration", () => {
     });
     await expect(startGeneration(ADMIN_ACTOR, validInput)).rejects.toThrow("forbidden");
     expect(mocks.repo.insertRun).not.toHaveBeenCalled();
+  });
+
+  it("freezes the RESOLVED inputs into the snapshot (Ola 2 — answers reach the prompt)", async () => {
+    // The core Ola 2 fix: resolveGenerationInputs(config slugs → case rows) must be
+    // called with this case+party and its result stored in config_snapshot, so the
+    // companion-questionnaire answers actually feed the generation (was empty before).
+    mocks.repo.findGenerationConfig.mockResolvedValue({
+      system_prompt: "memo",
+      input_form_slugs: ["memo-cuestionario"],
+      input_document_slugs: ["declaracion-jurada"],
+      sections: [],
+    });
+    mocks.repo.resolveGenerationInputs.mockResolvedValue({
+      forms: [{ slug: "memo-cuestionario", response_id: "resp-1" }],
+      documents: [{ slug: "declaracion-jurada", case_document_id: "doc-1", extraction_id: "ext-1" }],
+    });
+
+    await startGeneration(ADMIN_ACTOR, validInput);
+
+    expect(mocks.repo.resolveGenerationInputs).toHaveBeenCalledWith(
+      validInput.caseId,
+      validInput.partyId ?? null,
+      ["memo-cuestionario"],
+      ["declaracion-jurada"],
+    );
+    const insertedRun = mocks.repo.insertRun.mock.calls[0][0] as {
+      config_snapshot: { resolved_inputs: { forms: unknown[]; documents: unknown[] } };
+    };
+    expect(insertedRun.config_snapshot.resolved_inputs.forms).toEqual([
+      { slug: "memo-cuestionario", response_id: "resp-1" },
+    ]);
+    expect(insertedRun.config_snapshot.resolved_inputs.documents).toHaveLength(1);
   });
 
   it("enqueues with dedupeId containing runId", async () => {

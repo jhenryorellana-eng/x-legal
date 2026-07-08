@@ -643,7 +643,9 @@
       "dictateUnsupported": "El dictado no está disponible aquí. Puedes escribir.",
       "submittedPill": "Enviado",
       "submittedTitle": "¡Listo! Lo recibimos",
-      "submittedBody": "Tu equipo lo está revisando."
+      "submittedBody": "Tu equipo lo está revisando.",
+      "approvedPill": "Aprobado",
+      "reviewClientBanner": "Este formulario lo responde el cliente. ¿Falta algo? Pídeselo por mensaje."
     },
     "formularios": {
       "eyebrow": "Tu caso",
@@ -1326,7 +1328,12 @@
           "validations": "Validaciones",
           "messaging": "Mensajería",
           "community": "Comunidad",
-          "audit": "Auditoría"
+          "audit": "Auditoría",
+          "promotions": "Promociones",
+          "referrals": "Referidos",
+          "reviews": "Reseñas",
+          "retention": "Retención",
+          "formEdit": "Editar respuestas (enviadas/aprobadas)"
         }
       },
       "audit": {
@@ -1756,6 +1763,18 @@
         "formsEmpty": "Aún no hay formularios para esta fase.",
         "reviewForm": "Revisar",
         "generateLetter": "Generar",
+        "viewForm": "Ver",
+        "openReview": "Revisión",
+        "generatePdf": "Generar PDF",
+        "regeneratePdf": "Regenerar PDF",
+        "generatingForm": "Generando…",
+        "toastPdfGenerated": "PDF generado",
+        "toastPdfBlockedApproval": "Aprueba el formulario antes de generar el PDF.",
+        "toastPdfError": "No se pudo generar el PDF. Inténtalo de nuevo.",
+        "regenerateLetter": "Regenerar",
+        "toastLetterQueued": "Generación en curso — puede tardar unos minutos",
+        "toastLetterDuplicate": "Ya hay una generación en curso para esta carta.",
+        "toastLetterError": "No se pudo iniciar la generación.",
         "formStatusDraft": "En progreso",
         "formStatusSubmitted": "Enviado",
         "formStatusApproved": "Aprobado",
@@ -1804,6 +1823,7 @@
         "genEmpty": "Aún no hay generaciones para este caso.",
         "genVersion": "v{n}",
         "genCurrent": "Actual",
+        "genNotStarted": "Sin generar",
         "genStatus": {
           "queued": "En cola",
           "running": "Generando",
@@ -2774,6 +2794,15 @@
     "reviewApprovedToast": "Formulario aprobado y PDF generado",
     "reviewViewPdf": "Ver PDF",
     "reviewApproveError": "No se pudo aprobar el formulario.",
+    "reviewUpdatePdf": "Actualizar PDF",
+    "reviewUpdatingPdf": "Actualizando…",
+    "reviewPdfUpdatedToast": "PDF actualizado con tus cambios",
+    "letterTitle": "Carta generada",
+    "letterEmpty": "Aún no se ha generado la carta. Edita las respuestas y pulsa «Regenerar carta».",
+    "letterRegenerate": "Regenerar carta",
+    "letterRegenerating": "Generando… (puede tardar unos minutos)",
+    "letterRegenError": "No se pudo regenerar la carta.",
+    "letterView": "Ver carta",
     "reviewTabDocs": "Documentos del cliente",
     "reviewTabAnswers": "Respuestas del cliente",
     "reviewOfficialTitle": "PDF oficial autorrellenado",

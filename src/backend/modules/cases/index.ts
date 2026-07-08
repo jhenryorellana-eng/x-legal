@@ -41,6 +41,7 @@ export {
   getFormForClient,
   getClientFormsForCase,
   saveFormDraft,
+  staffUpdateFormAnswers,
   submitFormResponse,
   approveFormResponse,
   generateFilledPdf,

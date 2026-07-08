@@ -1,11 +1,19 @@
 "use client";
 
 /**
- * Información / Formularios tab (DOC-52 §5.7 / DOC-53 §3.4.3) — the client forms
- * for the current phase with their real status (`.formcard` design). The form
- * wizard ("Revisar") is wired in a later wave.
+ * Información / Formularios tab (DOC-52 §5.7 / DOC-53 §3.4.3 / DOC-54 §2.4) — the
+ * case forms for the current phase with their real status (`.formcard` design).
+ *
+ * Each form exposes up to three staff actions (Henry 2026-07-07 consolidation —
+ * the standalone `/formularios` page was removed; everything lives here):
+ *  - "Ver": opens the questions + answers in read-only (the client's view).
+ *  - "Generar"/"Regenerar": autofills the official PDF (pdf_automation) or launches
+ *    the AI letter (ai_letter). Gated exactly like the old CaseFormsManager.
+ *  - "Revisión": Diana's side-by-side screen (official PDF | answers/documents +
+ *    Aprobar) at `{base}/revisar/{formId}`.
  */
 
+import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Card } from "@/frontend/components/brand/card";
 import { Chip } from "@/frontend/components/brand/chip";
@@ -13,7 +21,9 @@ import { GhostBtn } from "@/frontend/components/brand/ghost-btn";
 import { GradientBtn } from "@/frontend/components/brand/gradient-btn";
 import { ProgressRing } from "@/frontend/components/brand/progress-ring";
 import { EmptyState } from "@/frontend/components/desktop/empty-state";
-import type { CaseWorkspaceVM, FormVM } from "../types";
+import { toast } from "@/frontend/components/desktop";
+import { getBridge } from "@/frontend/platform-bridge";
+import type { CaseWorkspaceVM, CaseDetailActions, FormVM } from "../types";
 import type { CasosStrings } from "../strings";
 import { SectionLabel } from "../ui";
 
@@ -32,33 +42,60 @@ function formMeta(status: string | null, t: CasosStrings["detail"]): { pct: numb
 
 export function InformacionTab({
   vm,
+  actions,
   strings,
   onNavigateToGeneration,
 }: {
   vm: CaseWorkspaceVM;
+  actions: CaseDetailActions;
   strings: CasosStrings;
   /** Switches the workspace to the Cartas/Generaciones tab (staff "Generar"). */
   onNavigateToGeneration?: () => void;
 }) {
   const t = strings.detail;
   const router = useRouter();
+  const [busy, setBusy] = React.useState<string | null>(null);
+
   // The Información tab is shared across the admin / legal / ventas workspaces;
-  // route forms to the matching case-detail base so the wizard stays in-workspace.
+  // route forms to the matching case-detail base so the screens stay in-workspace.
+  const caseId = vm.header.caseId;
   const base =
     vm.role === "paralegal"
-      ? `/legal/caso/${vm.header.caseId}`
+      ? `/legal/caso/${caseId}`
       : vm.isAdmin
-        ? `/admin/casos/${vm.header.caseId}`
-        : `/ventas/clientes/${vm.header.caseId}`;
-  function formHref(f: FormVM): string {
+        ? `/admin/casos/${caseId}`
+        : `/ventas/clientes/${caseId}`;
+
+  function query(f: FormVM): string {
     const q = new URLSearchParams();
     if (f.partyId) q.set("party", f.partyId);
     if (f.partyName) q.set("name", f.partyName);
     const qs = q.toString();
-    // For an ai_letter with a companion questionnaire, fillFormDefinitionId is the
-    // questionnaire (the questions the client answers to give the AI context).
-    return `${base}/formulario/${f.fillFormDefinitionId}${qs ? `?${qs}` : ""}`;
+    return qs ? `?${qs}` : "";
   }
+  // For an ai_letter with a companion questionnaire, fillFormDefinitionId is the
+  // questionnaire (the questions the client answers to give the AI context).
+  const viewHref = (f: FormVM) => `${base}/formulario/${f.fillFormDefinitionId}${query(f)}`;
+  const reviewHref = (f: FormVM) => `${base}/revisar/${f.fillFormDefinitionId}${query(f)}`;
+
+  function pdfErrorMessage(err?: { code: string; details?: Record<string, unknown> }): string {
+    if (err?.code === "FORM_PDF_BLOCKED" && err.details?.reason === "requires_approval") return t.toastPdfBlockedApproval;
+    return t.toastPdfError;
+  }
+
+  async function generatePdf(f: FormVM) {
+    if (!actions.generateFilledPdf || !f.responseId) return;
+    setBusy(rowKey(f));
+    const r = await actions.generateFilledPdf({ responseId: f.responseId });
+    setBusy(null);
+    if (r.ok && r.downloadUrl) {
+      toast.success(t.toastPdfGenerated);
+      getBridge().share.openExternal(r.downloadUrl);
+    } else {
+      toast.error(pdfErrorMessage(r.error));
+    }
+  }
+
   return (
     <Card>
       <SectionLabel icon="form">{t.formsTitle}</SectionLabel>
@@ -72,8 +109,19 @@ export function InformacionTab({
         <div style={{ marginTop: 16 }}>
           {vm.forms.map((f: FormVM) => {
             const m = formMeta(f.status, t);
+            const isLetter = f.kind === "ai_letter";
+            const isBusy = busy === rowKey(f);
+            // Same gates the standalone CaseFormsManager used (DOC-53 §3.4.3):
+            // a client-filled PDF must be approved first; staff-filled can generate once submitted.
+            const canGeneratePdf =
+              !isLetter &&
+              !!actions.generateFilledPdf &&
+              !!f.responseId &&
+              (f.status === "approved" || (f.status === "submitted" && f.filledBy !== "client"));
+            const canGenerateLetter = isLetter && !!onNavigateToGeneration;
+            const canReview = f.kind === "pdf_automation";
             return (
-              <div key={`${f.id}-${f.partyName ?? ""}`} className="formcard">
+              <div key={rowKey(f)} className="formcard">
                 <ProgressRing pct={m.pct} size={46} stroke={6} aria-label={f.label} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <p style={{ margin: 0, fontSize: 14, fontWeight: 800, color: "var(--ink)" }}>{f.label}</p>
@@ -84,17 +132,31 @@ export function InformacionTab({
                 <Chip tone={m.tone} dot>
                   {m.label}
                 </Chip>
-                <GhostBtn size="md" full={false} icon="chevR" onClick={() => router.push(formHref(f))}>
-                  {t.reviewForm}
-                </GhostBtn>
-                {/* The Memorándum (ai_letter) card adds a "Generar" action that
-                    jumps to the Cartas/Generaciones tab (the AI letter is a
-                    generation, not a fill-in form). */}
-                {f.kind === "ai_letter" && onNavigateToGeneration && (
-                  <GradientBtn size="md" full={false} icon="sparkle" onClick={onNavigateToGeneration}>
-                    {t.generateLetter}
-                  </GradientBtn>
-                )}
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  {/* Ver — the questions + answers in the client's read-only view. */}
+                  <GhostBtn size="md" full={false} icon="doc" onClick={() => router.push(viewHref(f))}>
+                    {t.viewForm}
+                  </GhostBtn>
+
+                  {/* Generar / Regenerar — official PDF (pdf_automation) or AI letter. */}
+                  {canGeneratePdf && (
+                    <GhostBtn size="md" full={false} icon="sparkle" disabled={isBusy} onClick={() => generatePdf(f)}>
+                      {isBusy ? t.generatingForm : f.hasPdf ? t.regeneratePdf : t.generatePdf}
+                    </GhostBtn>
+                  )}
+                  {canGenerateLetter && (
+                    <GradientBtn size="md" full={false} icon="sparkle" onClick={onNavigateToGeneration}>
+                      {t.generateLetter}
+                    </GradientBtn>
+                  )}
+
+                  {/* Revisión — Diana's side-by-side (official PDF | answers/docs + Aprobar). */}
+                  {canReview && (
+                    <GradientBtn size="md" full={false} icon="chevR" onClick={() => router.push(reviewHref(f))}>
+                      {t.openReview}
+                    </GradientBtn>
+                  )}
+                </div>
               </div>
             );
           })}
@@ -102,4 +164,9 @@ export function InformacionTab({
       )}
     </Card>
   );
+}
+
+/** Stable per-row key (a form can appear once per party). */
+function rowKey(f: FormVM): string {
+  return `${f.id}-${f.partyId ?? ""}`;
 }

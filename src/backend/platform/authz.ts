@@ -114,6 +114,22 @@ export function can(actor: Actor, moduleKey: ModuleKey, action: Action): void {
   throw new AuthzError("forbidden_module");
 }
 
+/**
+ * Non-throwing variant of `can()` — returns a boolean instead of throwing.
+ *
+ * For server components that need to branch on a permission (e.g. compute whether
+ * the form review should render editable) rather than enforce it. Enforcement must
+ * still go through `can()` at the write boundary (defense in depth).
+ */
+export function allows(actor: Actor, moduleKey: ModuleKey, action: Action): boolean {
+  try {
+    can(actor, moduleKey, action);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers for getActor
 // ---------------------------------------------------------------------------

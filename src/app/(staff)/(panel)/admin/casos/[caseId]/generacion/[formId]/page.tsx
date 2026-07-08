@@ -1,13 +1,13 @@
 /**
- * Revisión lado a lado (paralegal Diana) — `/legal/caso/[caseId]/revisar/[formId]`.
- * Thin wrapper over the shared FormReviewLoader; back lands on the Formularios tab.
+ * Revisión de carta IA (admin) — `/admin/casos/[caseId]/generacion/[formId]`.
+ * Thin wrapper over the shared LetterReviewLoader; back → Generaciones tab.
  */
 
-import { FormReviewLoader } from "@/app/(staff)/(panel)/_form-review/loader";
+import { LetterReviewLoader } from "@/app/(staff)/(panel)/_letter-review/loader";
 
 export const dynamic = "force-dynamic";
 
-export default async function LegalFormReviewPage({
+export default async function AdminLetterReviewPage({
   params,
   searchParams,
 }: {
@@ -17,12 +17,12 @@ export default async function LegalFormReviewPage({
   const { caseId, formId } = await params;
   const { party, name } = await searchParams;
   return (
-    <FormReviewLoader
+    <LetterReviewLoader
       caseId={caseId}
       formId={formId}
       party={party}
       name={name}
-      backHref={`/legal/caso/${caseId}?tab=formularios`}
+      backHref={`/admin/casos/${caseId}?tab=generaciones`}
     />
   );
 }

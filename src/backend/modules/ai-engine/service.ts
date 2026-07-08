@@ -35,7 +35,7 @@ import { getAnthropicClient } from "@/backend/platform/anthropic";
 import { getGeminiModels, DEFAULT_GEMINI_MODEL } from "@/backend/platform/gemini";
 import { isAiStubEnabled } from "@/backend/platform/ai-stub";
 import {
-  createSignedDownloadUrl as _createSignedDownloadUrl,
+  createSignedDownloadUrl,
   uploadBytesToStorage,
   downloadBytesFromStorage,
 } from "@/backend/platform/storage";
@@ -131,6 +131,7 @@ import {
   getTranslationSource,
   loadDatasetItems,
   loadResolvedInputs,
+  resolveGenerationInputs,
   findGenerationConfig,
   matchDatasetItems,
   insertPreMortemAssessment,
@@ -298,6 +299,15 @@ export async function startGeneration(
   // Freeze the real generation config into the run's snapshot (catalog owns
   // editing; ai-engine reads it here). Each run is reproducible from its snapshot.
   const cfg = await findGenerationConfig(p.formDefinitionId);
+  // Resolve the config's input form/document slugs to concrete case rows for this
+  // case+party, so the companion-questionnaire answers + document extractions
+  // actually reach the prompt (DOC-42 §3.1 — was left empty, the core Ola 2 bug).
+  const resolvedInputs = await resolveGenerationInputs(
+    p.caseId,
+    p.partyId ?? null,
+    cfg?.input_form_slugs ?? [],
+    cfg?.input_document_slugs ?? [],
+  );
   const configSnapshot: ConfigSnapshot = {
     system_prompt: cfg?.system_prompt ?? "",
     input_document_slugs: cfg?.input_document_slugs ?? [],
@@ -315,7 +325,7 @@ export async function startGeneration(
     rules_enabled: cfg?.rules_enabled ?? true,
     rules_text: cfg?.rules_text ?? null,
     assembly: (cfg?.assembly as ConfigSnapshot["assembly"]) ?? null,
-    resolved_inputs: { documents: [], forms: [] },
+    resolved_inputs: resolvedInputs,
     dataset_injection: null,
   };
 
@@ -3096,6 +3106,40 @@ export async function getRunsForCase(
     const key = `${run.form_definition_id}:${run.party_id ?? "null"}`;
     return { ...run, isCurrent: currentMap.get(key) === run.id };
   });
+}
+
+// ---------------------------------------------------------------------------
+// Generated-letter accessors (Ola 2 — Generaciones review)
+// ---------------------------------------------------------------------------
+
+/**
+ * Short-lived signed URL of a completed run's generated letter (bucket `generated`,
+ * `output_path`). null when the run hasn't produced a file yet. Cross-tenant safe.
+ */
+export async function getGenerationOutputUrl(actor: Actor, runId: string): Promise<string | null> {
+  const run = await findRunById(runId);
+  if (!run) throw new AiEngineError("AI_RUN_NOT_FOUND");
+  await requireCaseAccess(actor, run.case_id);
+  if (!run.output_path) return null;
+  return createSignedDownloadUrl("generated", run.output_path);
+}
+
+/**
+ * Lightweight run status for client-side polling after a regeneration (async job).
+ */
+export async function getRunStatus(
+  actor: Actor,
+  runId: string,
+): Promise<{ id: string; status: string; version: number; outputAvailable: boolean }> {
+  const run = await findRunById(runId);
+  if (!run) throw new AiEngineError("AI_RUN_NOT_FOUND");
+  await requireCaseAccess(actor, run.case_id);
+  return {
+    id: run.id,
+    status: run.status,
+    version: run.version,
+    outputAvailable: run.status === "completed" && !!run.output_path,
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -140,7 +140,7 @@ export default async function LegalMiDiaPage() {
         id: `${c.id}-form`,
         icon: "edit_document",
         title: form === "draft" ? t("pendForm") : t("pendFormApprove"),
-        href: `/legal/caso/${c.id}/formularios`,
+        href: `/legal/caso/${c.id}?tab=formularios`,
         tone: "warn",
       });
     }

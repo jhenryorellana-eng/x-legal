@@ -45,6 +45,23 @@ export interface FormWizardProps {
   form: WizardForm;
   locale: Locale;
   labels: WizardLabels;
+  /**
+   * Who is looking at the wizard. Drives what a locked (submitted/approved) form
+   * shows: the client sees the "¡Listo! Lo recibimos" confirmation; staff sees the
+   * answers in read-only (never the client confirmation). A staff viewer also
+   * treats a `filled_by='client'` form as read-only regardless of status
+   * (RF-DIA-023 — staff never edits a client form; if info is missing they ask by
+   * message). Default "client" keeps the client surface untouched.
+   */
+  audience?: "client" | "staff";
+  /**
+   * Staff-only: make the review answers EDITABLE (the "Revisión" split-screen, when
+   * the actor has the `formEdit` permission). Default false → the staff view is
+   * read-only ("Ver"). Ignored for the client. When true, the flat staff view
+   * enables its fields and autosaves through the injected `saveDraft` (the staff
+   * update action) using the same durable autosave engine as the client.
+   */
+  editable?: boolean;
   /** Show Lex "atento" + listening chip at the top (Mi Historia). */
   withLex?: boolean;
   lexChip?: string;
@@ -88,6 +105,8 @@ export function FormWizard({
   form,
   locale,
   labels,
+  audience = "client",
+  editable = false,
   withLex = false,
   lexChip,
   partyName,
@@ -98,7 +117,15 @@ export function FormWizard({
   onExit,
 }: FormWizardProps) {
   const groups = form.groups;
-  const readOnly = isReadOnly(form.status);
+  // Staff review surface: a form the staff opens that is already submitted/approved,
+  // or that the client fills. It's rendered FLAT (all groups) — read-only ("Ver") or
+  // editable ("Revisión" with formEdit). The client never lands here.
+  const staffReview = audience === "staff" && (isReadOnly(form.status) || form.filledBy === "client");
+  // Client read-only confirmation ("¡Listo! Lo recibimos") — client audience only.
+  const clientLocked = audience === "client" && isReadOnly(form.status);
+  // Autosave is active for the stepped wizard (client / staff-fillable draft) and for
+  // the editable staff review; never for a read-only view.
+  const autosaveEnabled = staffReview ? editable : !clientLocked;
 
   // Initial answers (saved wins, prefill seeds, else empty) + prefilled set.
   const initial = React.useMemo(() => buildInitialAnswers(groups), [groups]);
@@ -107,7 +134,7 @@ export function FormWizard({
 
   // Resume at the first incomplete group (DOC-50 §6.3 — "primer paso incompleto").
   const [step, setStep] = React.useState<number>(() => {
-    if (readOnly) return 0;
+    if (staffReview || clientLocked) return 0;
     const idx = firstInvalidGroupIndex(groups, initial.answers);
     return idx === -1 ? 0 : idx;
   });
@@ -125,7 +152,7 @@ export function FormWizard({
     formDefinitionId: form.formDefinitionId,
     partyId,
     saveDraft,
-    enabled: !readOnly && !done,
+    enabled: autosaveEnabled && !done,
     // Offline-reload rehydration: merge unsynced edits recovered from IndexedDB
     // over the server answers so the user sees exactly what they last typed.
     onHydrate: (recovered) => {
@@ -260,8 +287,188 @@ export function FormWizard({
     }
   };
 
-  // --- read-only (submitted / approved) -------------------------------------
-  if (readOnly) {
+  // --- staff review — the ANSWERS, never the client confirmation -------------
+  // A staff opening a submitted/approved (or any client-filled) form sees every
+  // answer flattened. Read-only by default ("Ver"); when `editable` (the "Revisión"
+  // split-screen with formEdit) the fields are enabled and autosave through the
+  // injected staff action. No submit/next. The "¡Listo!" screen below is client-only.
+  if (staffReview) {
+    const isClientForm = form.filledBy === "client";
+    const pillLabel = form.status === "approved" ? labels.approvedPill : labels.submittedPill;
+    const saveText = editable ? saveLabel(autosave.saveState, autosave.blockedCode, labels) : null;
+    return (
+      <div style={{ minHeight: "100dvh", padding: "26px 20px var(--screen-pb)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>
+          <button
+            type="button"
+            onClick={onExit}
+            aria-label={labels.back}
+            style={{
+              width: 44,
+              height: 44,
+              flexShrink: 0,
+              borderRadius: 999,
+              border: "1px solid var(--line)",
+              background: "var(--card)",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              boxShadow: "0 4px 12px rgba(11,27,51,0.06)",
+            }}
+          >
+            <Icon name="arrowL" size={20} color="var(--ink)" />
+          </button>
+          <h1 style={{ fontFamily: "var(--font-title)", fontWeight: 800, fontSize: 21, color: "var(--navy)", margin: 0, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {pickI18n(form.labelI18n, locale)}
+          </h1>
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              height: 28,
+              padding: "0 12px",
+              background: "var(--green-soft)",
+              color: "var(--green)",
+              borderRadius: 999,
+              fontFamily: "var(--font-title)",
+              fontWeight: 800,
+              fontSize: 12.5,
+              whiteSpace: "nowrap",
+            }}
+          >
+            <Icon name="check" size={13} color="var(--green)" stroke={3} />
+            {pillLabel}
+          </span>
+        </div>
+
+        {partyName && (
+          <div style={{ fontSize: 13.5, color: "var(--ink-3)", fontWeight: 700, marginBottom: 12 }}>{partyName}</div>
+        )}
+
+        {isClientForm && (
+          <div
+            role="note"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "10px 14px",
+              marginBottom: 18,
+              background: "var(--blue-soft)",
+              color: "var(--accent)",
+              borderRadius: 12,
+              fontSize: 13,
+              fontWeight: 700,
+              lineHeight: 1.4,
+            }}
+          >
+            <Icon name="info" size={16} color="var(--accent)" />
+            <span>{labels.reviewClientBanner}</span>
+          </div>
+        )}
+
+        {/* Autosave indicator (edit mode) — the client's durable engine reused. */}
+        {editable && (
+          <div style={{ minHeight: 20, display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
+            {saveText && (
+              <span
+                className="anim-fade-in"
+                role={autosave.saveState === "blocked" ? "alert" : undefined}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 5,
+                  fontSize: 12.5,
+                  fontWeight: 700,
+                  color:
+                    autosave.saveState === "saved"
+                      ? "var(--green)"
+                      : autosave.saveState === "blocked"
+                        ? "var(--gold-deep)"
+                        : "var(--ink-3)",
+                }}
+              >
+                {autosave.saveState === "saved" && <Icon name="check" size={13} color="var(--green)" stroke={3} />}
+                {autosave.saveState === "queued" && <Icon name="clock" size={13} color="var(--ink-3)" />}
+                {autosave.saveState === "blocked" && <Icon name="info" size={13} color="var(--gold-deep)" />}
+                {saveText}
+              </span>
+            )}
+          </div>
+        )}
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+          {groups.map((g) => {
+            const groupTitle = pickI18n(g.titleI18n, locale);
+            const visible = g.questions.filter(
+              (q) => deriveFieldState(q.condition, q.isRequired, answers).visible,
+            );
+            if (visible.length === 0) return null;
+            return (
+              <div key={g.id}>
+                {groupTitle && (
+                  <div
+                    style={{
+                      fontFamily: "var(--font-title)",
+                      fontWeight: 800,
+                      fontSize: 13,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.06em",
+                      color: "var(--ink-3)",
+                      marginBottom: 14,
+                    }}
+                  >
+                    {groupTitle}
+                  </div>
+                )}
+                <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+                  {visible.map((q) => {
+                    const showHeading = q.fieldType !== "checkbox";
+                    return (
+                      <div key={q.id}>
+                        {showHeading && (
+                          <h2
+                            style={{
+                              fontFamily: "var(--font-title)",
+                              fontWeight: 800,
+                              fontSize: 17,
+                              lineHeight: 1.3,
+                              color: "var(--navy)",
+                              margin: "0 0 8px",
+                            }}
+                          >
+                            {pickI18n(q.questionI18n, locale)}
+                          </h2>
+                        )}
+                        <WizardField
+                          question={q}
+                          value={answers[q.id]}
+                          error={null}
+                          showPrefill={false}
+                          locale={locale}
+                          labels={labels}
+                          onChange={editable ? (v) => setAnswer(q.id, v) : () => {}}
+                          onBlur={editable ? () => autosave.flush() : () => {}}
+                          showDictation={false}
+                          disabled={!editable}
+                          hidePrefillChip
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // --- read-only client confirmation (submitted / approved) -----------------
+  if (clientLocked) {
     return (
       <div style={{ minHeight: "100dvh", padding: "26px 20px var(--screen-pb)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>

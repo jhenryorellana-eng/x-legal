@@ -70,6 +70,11 @@ function previewLabels(lang: "es" | "en"): WizardLabels {
     submittedPill: t("Enviado", "Submitted"),
     submittedTitle: t("¡Listo! Lo recibimos", "Done! We got it"),
     submittedBody: t("Tu equipo lo está revisando.", "Your team is reviewing it."),
+    approvedPill: t("Aprobado", "Approved"),
+    reviewClientBanner: t(
+      "Este formulario lo responde el cliente. ¿Falta algo? Pídeselo por mensaje.",
+      "This form is filled in by the client. Missing something? Ask them by message.",
+    ),
   };
 }
 

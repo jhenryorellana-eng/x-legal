@@ -64,7 +64,7 @@ import {
   translateDocumentAction,
   getDocumentTranslationAction,
 } from "../../../admin/casos/actions";
-import { getFormResponsePdfUrlAction } from "../../../admin/casos/[caseId]/formularios/actions";
+import { getFormResponsePdfUrlAction } from "../../../admin/casos/form-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -162,6 +162,9 @@ export default async function VentasCasoDetailPage({
     status: f.status,
     partyId: f.partyId,
     partyName: f.partyName,
+    filledBy: f.filledBy,
+    responseId: f.responseId,
+    hasPdf: f.filledPdfPath !== null,
   }));
   const formsDone = formsVm.filter((f) => f.status === "submitted" || f.status === "approved").length;
 
@@ -170,12 +173,15 @@ export default async function VentasCasoDetailPage({
     .filter((r) => !r.is_test)
     .map((r) => ({
       id: r.id,
+      formDefinitionId: r.form_definition_id,
       formLabel: formLabelById.get(r.form_definition_id) ?? "—",
       status: r.status,
       version: r.version,
       costUsd: r.cost_usd,
       isCurrent: r.isCurrent,
+      partyId: r.party_id,
       partyName: null,
+      outputAvailable: r.status === "completed" && r.output_path !== null,
       createdAt: r.created_at,
     }));
 
