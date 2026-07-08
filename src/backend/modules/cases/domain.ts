@@ -542,11 +542,12 @@ export function addWeeksToAnchorIso(anchorIso: string | null, weeks: number): st
 // FormResponse state machine
 // ---------------------------------------------------------------------------
 
-export type FormResponseStatus = "draft" | "submitted" | "approved";
+export type FormResponseStatus = "draft" | "submitted" | "approved" | "rejected";
 
 const FORM_RESPONSE_TRANSITIONS: Map<FormResponseStatus, FormResponseStatus[]> = new Map([
   ["draft", ["submitted"]],
-  ["submitted", ["approved"]],
+  ["submitted", ["approved", "rejected"]],
+  ["rejected", ["submitted"]], // client corrects and resubmits
   // "approved" is terminal
 ]);
 

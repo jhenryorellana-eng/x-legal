@@ -190,6 +190,52 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
       deepLinkTemplate: "/caso/{caseId}/corregir?docId={documentId}",
     },
   ],
+  // document.uploaded → the case's asesora (Vanessa). ①② in-app + push (no email).
+  // Fires ONLY for client uploads (staff uploads must not alert sales).
+  "document.uploaded": [
+    {
+      type: "document.uploaded",
+      recipients: [{ resolverKey: "sales_of_case" }],
+      channels: { push: true, email: false },
+      category: "case_updates",
+      when: (p) => p.uploadedByKind === "client",
+      deepLinkTemplate: "/ventas/clientes/{caseId}?tab=documentos",
+    },
+  ],
+  // form_response.submitted → the case's asesora. ①② in-app + push (no email).
+  // Fires ONLY for client submissions (staff filling a form must not alert sales).
+  "form_response.submitted": [
+    {
+      type: "form_response.submitted",
+      recipients: [{ resolverKey: "sales_of_case" }],
+      channels: { push: true, email: false },
+      category: "case_updates",
+      when: (p) => p.submittedByKind === "client",
+      deepLinkTemplate: "/ventas/clientes/{caseId}/revisar/{formDefinitionId}",
+    },
+  ],
+  // form_response.approved → client. ①②③ in-app + push + email (positive/green).
+  "form_response.approved": [
+    {
+      type: "form_response.approved",
+      recipients: [{ resolverKey: "clients_of_case" }],
+      channels: { push: true, email: true },
+      category: "case_updates",
+      emailTemplateKey: "form-approved",
+      deepLinkTemplate: "/caso/{caseId}/formulario/{formDefinitionId}",
+    },
+  ],
+  // form_response.rejected → client. ①②③ in-app + push + email (amber, never red).
+  "form_response.rejected": [
+    {
+      type: "form_response.rejected",
+      recipients: [{ resolverKey: "clients_of_case" }],
+      channels: { push: true, email: true },
+      category: "case_updates",
+      emailTemplateKey: "form-rejected",
+      deepLinkTemplate: "/caso/{caseId}/formulario/{formDefinitionId}",
+    },
+  ],
   "downpayment.confirmed": [
     {
       type: "downpayment.confirmed",
@@ -602,6 +648,34 @@ function renderContent(
       bodyI18n: { en: "Please review and re-upload your document.", es: "Por favor revisa y vuelve a subir tu documento." },
       icon: "alert-circle",
       color: "amber", // never red (RF-TRX-022)
+    },
+    // Staff-facing (asesora): a client uploaded a document to review.
+    "document.uploaded": {
+      titleI18n: { en: "New document to review", es: "Nuevo documento por revisar" },
+      bodyI18n: { en: "A client uploaded a document to their case.", es: "Un cliente subió un documento a su caso." },
+      icon: "upload",
+      color: "accent",
+    },
+    // Staff-facing (asesora): a client submitted a form for review.
+    "form_response.submitted": {
+      titleI18n: { en: "Form submitted for review", es: "Formulario enviado para revisión" },
+      bodyI18n: { en: "A client completed and submitted a form.", es: "Un cliente completó y envió un formulario." },
+      icon: "clipboard-check",
+      color: "accent",
+    },
+    // Client-facing: the form was reviewed and approved.
+    "form_response.approved": {
+      titleI18n: { en: "Form approved", es: "Formulario aprobado" },
+      bodyI18n: { en: "Your form was reviewed and approved.", es: "Tu formulario fue revisado y aprobado." },
+      icon: "check-circle",
+      color: "green",
+    },
+    // Client-facing: the form needs correction (amber, never red — RF-TRX-022).
+    "form_response.rejected": {
+      titleI18n: { en: "Your form needs correction", es: "Tu formulario necesita corrección" },
+      bodyI18n: { en: "Please review the notes and submit it again.", es: "Revisa las observaciones y vuelve a enviarlo." },
+      icon: "alert-circle",
+      color: "amber",
     },
     "downpayment.confirmed": {
       titleI18n: { en: "Down payment confirmed", es: "Pago inicial confirmado" },

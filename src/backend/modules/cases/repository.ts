@@ -596,6 +596,10 @@ export async function updateFormResponse(
     filled_pdf_path: string;
     answers_translated: Record<string, string>;
     translation_status: string;
+    reviewed_by: string;
+    reviewed_at: string;
+    correction_due_at: string | null;
+    rejection_reason_i18n: import("@/shared/database.types").Json;
   }>,
 ): Promise<void> {
   const supabase = createServiceClient();

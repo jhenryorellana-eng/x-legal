@@ -67,9 +67,13 @@ export interface WizardForm {
   kind: string;
   isPerParty: boolean;
   versionId: string | null;
-  /** null | 'draft' | 'submitted' | 'approved' | 'in_validation' | … */
+  /** null | 'draft' | 'submitted' | 'approved' | 'rejected' | … */
   status: string | null;
   submittedAt: string | null;
+  /** Bilingual staff reason when status='rejected' (client correction banner). */
+  rejectionReasonI18n?: I18nValue | null;
+  /** Optional correction deadline (ISO) when status='rejected'. */
+  correctionDueAt?: string | null;
   filledPdfPath: string | null;
   filledBy: string;
   /** Language of the official PDF (pdf_automation). Drives answer translation. */
@@ -198,4 +202,7 @@ export interface WizardLabels {
   // Staff read-only review (audience="staff")
   approvedPill: string; // "Aprobado" — pill for an approved response in the staff review
   reviewClientBanner: string; // "Este formulario lo responde el cliente. ¿Falta algo? Pídeselo por mensaje."
+  // Rejection / correction (client, status='rejected' — amber, never red)
+  rejectionTitle: string; // "Necesita una corrección"
+  rejectionDueLabel: string; // "Fecha límite: {date}"
 }

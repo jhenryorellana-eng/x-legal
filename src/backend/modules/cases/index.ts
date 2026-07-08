@@ -44,6 +44,7 @@ export {
   staffUpdateFormAnswers,
   submitFormResponse,
   approveFormResponse,
+  rejectFormResponse,
   generateFilledPdf,
   getFormResponsePdfUrl,
   resolveBySource,

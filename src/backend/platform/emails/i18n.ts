@@ -61,6 +61,14 @@ export const SUBJECTS: Record<string, { es: string; en: string }> = {
     es: "Tu documento necesita una corrección",
     en: "Your document needs a correction",
   },
+  "form-approved": {
+    es: "Tu formulario fue aprobado",
+    en: "Your form was approved",
+  },
+  "form-rejected": {
+    es: "Tu formulario necesita una corrección",
+    en: "Your form needs a correction",
+  },
   "downpayment-confirmed-sales": {
     es: "Pago inicial recibido — caso activo",
     en: "Down payment received — case is active",

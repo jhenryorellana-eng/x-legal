@@ -188,6 +188,7 @@ export class CaseError extends Error {
       | "FORM_PDF_BLOCKED"
       | "FORM_PDF_REQUIRED_MISSING"
       | "FORM_RESPONSE_NOT_FOUND"
+      | "FORM_REJECTION_REASON_REQUIRED"
       | "FORM_PROFILE_FIELD_FORBIDDEN"
       // Stage / ownership (responsable interno)
       | "STAGE_TERMINAL"
@@ -1544,9 +1545,15 @@ export async function confirmDocumentUpload(
     }
   }
 
-  appEvents.emit({
+  // emitAndWait (not emit): the notification insert + push enqueue must complete
+  // before the serverless request freezes (same pattern as reviewDocument).
+  await appEvents.emitAndWait({
     type: "document.uploaded",
-    payload: { caseId: parsed.caseId, documentId: doc.id },
+    payload: {
+      caseId: parsed.caseId,
+      documentId: doc.id,
+      uploadedByKind: actor.kind === "client" ? "client" : "staff",
+    },
     occurredAt: new Date(),
   });
 
@@ -3785,6 +3792,10 @@ export interface FormForClientDto {
   versionId: string | null;
   status: string | null;
   submittedAt: string | null;
+  /** Bilingual staff reason when status='rejected' (shown to the client, amber). */
+  rejectionReasonI18n: I18nValue | null;
+  /** Optional correction deadline (ISO) when status='rejected'. */
+  correctionDueAt: string | null;
   filledPdfPath: string | null;
   filledBy: string;
   /** Language of the official PDF/AcroForm (pdf_automation). Drives answer
@@ -3920,6 +3931,8 @@ export async function getFormForClient(
     versionId,
     status: existingResponse?.status ?? null,
     submittedAt: existingResponse?.submitted_at ?? null,
+    rejectionReasonI18n: asI18n(existingResponse?.rejection_reason_i18n) ?? null,
+    correctionDueAt: existingResponse?.correction_due_at ?? null,
     filledPdfPath: existingResponse?.filled_pdf_path ?? null,
     filledBy: formDef.filled_by,
     sourceLanguage: (published?.source_language === "es" ? "es" : "en"),
@@ -4415,7 +4428,9 @@ export async function submitFormResponse(
   const partyId = parsed.partyId ?? null;
 
   const response = await findFormResponse(parsed.caseId, parsed.formDefinitionId, partyId);
-  if (!response || response.status !== "draft") {
+  // A rejected form is editable again → the client corrects and resubmits it
+  // (rejected → submitted). Only 'draft' and 'rejected' are submittable states.
+  if (!response || (response.status !== "draft" && response.status !== "rejected")) {
     throw new CaseError("FORM_NOT_SUBMITTABLE");
   }
 
@@ -4479,9 +4494,18 @@ export async function submitFormResponse(
     }
   }
 
-  appEvents.emit({
+  // emitAndWait (not emit): the sales notification insert + push enqueue must
+  // complete before the serverless request freezes. The matrix rule only fires
+  // when submittedByKind === "client" (staff filling a form doesn't alert sales).
+  await appEvents.emitAndWait({
     type: "form_response.submitted",
-    payload: { caseId: parsed.caseId, responseId: response.id },
+    payload: {
+      caseId: parsed.caseId,
+      responseId: response.id,
+      formDefinitionId: parsed.formDefinitionId,
+      partyId,
+      submittedByKind: actor.kind === "client" ? "client" : "staff",
+    },
     occurredAt: new Date(),
   });
 
@@ -4536,7 +4560,34 @@ export async function approveFormResponse(
     throw new CaseError("FORM_NOT_SUBMITTABLE");
   }
 
-  await updateFormResponse(response.id, { status: "approved" });
+  await updateFormResponse(response.id, {
+    status: "approved",
+    reviewed_by: actor.userId,
+    reviewed_at: new Date().toISOString(),
+  });
+
+  await appEvents.emitAndWait({
+    type: "form_response.approved",
+    payload: {
+      caseId: response.case_id,
+      responseId: response.id,
+      formDefinitionId: response.form_definition_id,
+      partyId: response.party_id,
+    },
+    occurredAt: new Date(),
+  });
+
+  await writeTimeline({
+    caseId: response.case_id,
+    eventType: "form_response.approved",
+    actorKind: "team",
+    actorUserId: actor.userId,
+    visibleToClient: true,
+    titleI18n: {
+      en: "Form approved",
+      es: "Formulario aprobado",
+    },
+  });
 
   await writeAudit(
     actor,
@@ -4544,6 +4595,92 @@ export async function approveFormResponse(
     "case_form_responses",
     response.id,
     { after: { status: "approved" } },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// API-CASE-18b: rejectFormResponse (staff only)
+// ---------------------------------------------------------------------------
+
+const RejectFormResponseSchema = z.object({
+  responseId: zUuid,
+  reason: z
+    .object({
+      en: z.string().trim().optional(),
+      es: z.string().trim().optional(),
+    })
+    .optional(),
+  /** Optional correction deadline (ISO). Null/absent = no hard deadline. */
+  correctionDueAt: z.string().nullable().optional(),
+});
+
+export type RejectFormResponseInput = z.infer<typeof RejectFormResponseSchema>;
+
+/**
+ * Staff returns a submitted form response to the client for correction:
+ * submitted → rejected. Mirror of reviewDocument's reject branch (RF-DIA-014).
+ * A bilingual reason is required; the client edits the same response and
+ * resubmits it (rejected → submitted).
+ *
+ * @api-id API-CASE-18b
+ */
+export async function rejectFormResponse(
+  actor: Actor,
+  input: RejectFormResponseInput,
+): Promise<void> {
+  can(actor, "cases", "edit");
+  const parsed = RejectFormResponseSchema.parse(input);
+
+  const response = await findFormResponseById(parsed.responseId);
+  if (!response) throw new CaseError("FORM_RESPONSE_NOT_FOUND");
+  // Cross-tenant guard (same as approveFormResponse): findFormResponseById uses
+  // the service client (RLS bypass), so verify the actor's case membership.
+  await requireCaseAccess(actor, response.case_id);
+
+  if (response.status !== "submitted") {
+    throw new CaseError("FORM_NOT_SUBMITTABLE");
+  }
+  if (!parsed.reason?.en && !parsed.reason?.es) {
+    throw new CaseError("FORM_REJECTION_REASON_REQUIRED");
+  }
+
+  await updateFormResponse(response.id, {
+    status: "rejected",
+    reviewed_by: actor.userId,
+    reviewed_at: new Date().toISOString(),
+    rejection_reason_i18n: (parsed.reason ?? null) as unknown as import("@/shared/database.types").Json,
+    correction_due_at: parsed.correctionDueAt ?? null,
+  });
+
+  await appEvents.emitAndWait({
+    type: "form_response.rejected",
+    payload: {
+      caseId: response.case_id,
+      responseId: response.id,
+      formDefinitionId: response.form_definition_id,
+      partyId: response.party_id,
+    },
+    occurredAt: new Date(),
+  });
+
+  await writeTimeline({
+    caseId: response.case_id,
+    eventType: "form_response.rejected",
+    actorKind: "team",
+    actorUserId: actor.userId,
+    visibleToClient: true,
+    titleI18n: {
+      en: "Form returned for correction",
+      es: "Formulario devuelto para corrección",
+    },
+  });
+
+  await writeAudit(
+    actor,
+    "case.form_response.rejected",
+    "case_form_responses",
+    response.id,
+    { after: { status: "rejected" } },
   );
 }
 

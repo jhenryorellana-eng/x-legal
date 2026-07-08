@@ -16,6 +16,7 @@
 import { requireActor, AuthzError } from "@/backend/modules/identity";
 import {
   approveFormResponse,
+  rejectFormResponse,
   generateFilledPdf,
   getFormResponsePdfUrl,
   getCaseExtractions,
@@ -42,6 +43,38 @@ export async function approveFormResponseAction(input: {
   try {
     const actor = await requireActor();
     await approveFormResponse(actor, { responseId: input.responseId });
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof CaseError) {
+      return { ok: false, error: { code: err.code } };
+    }
+    return { ok: false, error: { code: "UNEXPECTED" } };
+  }
+}
+
+export interface RejectFormResult {
+  ok: boolean;
+  error?: { code: string };
+}
+
+/**
+ * Staff returns a submitted form response for correction (submitted → rejected)
+ * with a bilingual reason. The client edits the same response and resubmits.
+ *
+ * @api-id API-CASE-18b
+ */
+export async function rejectFormResponseAction(input: {
+  responseId: string;
+  reason: { en?: string; es?: string };
+  correctionDueAt?: string | null;
+}): Promise<RejectFormResult> {
+  try {
+    const actor = await requireActor();
+    await rejectFormResponse(actor, {
+      responseId: input.responseId,
+      reason: input.reason,
+      correctionDueAt: input.correctionDueAt ?? null,
+    });
     return { ok: true };
   } catch (err) {
     if (err instanceof CaseError) {

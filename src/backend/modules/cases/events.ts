@@ -2,9 +2,12 @@
  * Cases module domain events.
  *
  * F2 events emitted by cases/service.ts:
- * - document.uploaded    (case_id, document_id)
- * - document.approved    (case_id, document_id)
- * - document.rejected    (case_id, document_id)
+ * - document.uploaded       (caseId, documentId, uploadedByKind)
+ * - document.approved       (caseId, documentId)
+ * - document.rejected       (caseId, documentId)
+ * - form_response.submitted (caseId, responseId, formDefinitionId, partyId, submittedByKind)
+ * - form_response.approved  (caseId, responseId, formDefinitionId, partyId)
+ * - form_response.rejected  (caseId, responseId, formDefinitionId, partyId)
  *
  * F2 events consumed by cases:
  * - downpayment.confirmed → onDownpaymentConfirmed (activates case)
@@ -22,6 +25,8 @@ export interface DocumentUploadedEvent {
   payload: {
     caseId: string;
     documentId: string;
+    /** Who uploaded it — the sales notification only fires for client uploads. */
+    uploadedByKind: "client" | "staff";
   };
   occurredAt: Date;
 }
@@ -40,6 +45,46 @@ export interface DocumentRejectedEvent {
   payload: {
     caseId: string;
     documentId: string;
+  };
+  occurredAt: Date;
+}
+
+/**
+ * A client (or staff) finished and submitted a form response. The notifications
+ * matrix fires the sales alert only when `submittedByKind === "client"`.
+ */
+export interface FormResponseSubmittedEvent {
+  type: "form_response.submitted";
+  payload: {
+    caseId: string;
+    responseId: string;
+    formDefinitionId: string;
+    partyId: string | null;
+    submittedByKind: "client" | "staff";
+  };
+  occurredAt: Date;
+}
+
+/** Staff approved a submitted form response (submitted → approved). */
+export interface FormResponseApprovedEvent {
+  type: "form_response.approved";
+  payload: {
+    caseId: string;
+    responseId: string;
+    formDefinitionId: string;
+    partyId: string | null;
+  };
+  occurredAt: Date;
+}
+
+/** Staff returned a submitted form response for correction (submitted → rejected). */
+export interface FormResponseRejectedEvent {
+  type: "form_response.rejected";
+  payload: {
+    caseId: string;
+    responseId: string;
+    formDefinitionId: string;
+    partyId: string | null;
   };
   occurredAt: Date;
 }
@@ -82,6 +127,9 @@ export type CaseEvent =
   | DocumentUploadedEvent
   | DocumentApprovedEvent
   | DocumentRejectedEvent
+  | FormResponseSubmittedEvent
+  | FormResponseApprovedEvent
+  | FormResponseRejectedEvent
   | CaseCreatedEvent
   | CaseOwnerChangedEvent;
 

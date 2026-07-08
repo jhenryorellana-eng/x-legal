@@ -645,7 +645,9 @@
       "submittedTitle": "¡Listo! Lo recibimos",
       "submittedBody": "Tu equipo lo está revisando.",
       "approvedPill": "Aprobado",
-      "reviewClientBanner": "Este formulario lo responde el cliente. ¿Falta algo? Pídeselo por mensaje."
+      "reviewClientBanner": "Este formulario lo responde el cliente. ¿Falta algo? Pídeselo por mensaje.",
+      "rejectionTitle": "Necesita una corrección",
+      "rejectionDueLabel": "Fecha límite: {date}"
     },
     "formularios": {
       "eyebrow": "Tu caso",
@@ -2797,6 +2799,16 @@
     "reviewUpdatePdf": "Actualizar PDF",
     "reviewUpdatingPdf": "Actualizando…",
     "reviewPdfUpdatedToast": "PDF actualizado con tus cambios",
+    "reviewRejectBtn": "Rechazar",
+    "reviewRejectTitle": "Devolver para corrección",
+    "reviewRejectReasonLabel": "Motivo (lo verá el cliente)",
+    "reviewRejectReasonPlaceholder": "Explica al cliente qué debe corregir…",
+    "reviewRejectConfirm": "Enviar corrección",
+    "reviewRejectCancel": "Cancelar",
+    "reviewRejecting": "Enviando…",
+    "reviewRejectedToast": "Formulario devuelto al cliente para corrección",
+    "reviewRejectReasonRequired": "Escribe un motivo para el cliente.",
+    "reviewRejectError": "No se pudo rechazar el formulario.",
     "letterTitle": "Carta generada",
     "letterEmpty": "Aún no se ha generado la carta. Edita las respuestas y pulsa «Regenerar carta».",
     "letterRegenerate": "Regenerar carta",

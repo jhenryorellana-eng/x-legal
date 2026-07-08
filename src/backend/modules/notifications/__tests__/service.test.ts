@@ -684,3 +684,104 @@ describe("notifyFromEvent('payment.proof_submitted')", () => {
     expect(financeCalls).toHaveLength(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Docs + forms: client uploads/submissions → the case's asesora (sales, ①②);
+// staff approvals/rejections of forms → the client (①②③). Client-only guard.
+// ---------------------------------------------------------------------------
+
+describe("notifyFromEvent — document.uploaded / form_response.*", () => {
+  const FORM_DEF_ID = "00000000-0000-0000-0000-000000000021";
+  const RESPONSE_ID = "00000000-0000-0000-0000-000000000022";
+
+  it("document.uploaded by a client → sales only, push + in-app, no email", async () => {
+    await notifyFromEvent({
+      type: "document.uploaded",
+      payload: { caseId: CASE_ID, documentId: DOC_ID, uploadedByKind: "client" },
+      occurredAt: new Date(),
+    });
+    expect(mockInsertNotificationIdempotent).toHaveBeenCalledTimes(1);
+    const [input] = mockInsertNotificationIdempotent.mock.calls[0];
+    expect(input.userId).toBe(SALES_USER_ID);
+    expect(input.type).toBe("document.uploaded");
+    expect(input.actionUrl).toBe(`/ventas/clientes/${CASE_ID}?tab=documentos`);
+    expect(mockEnqueueJob.mock.calls.filter(([p]) => p.channel === "push")).toHaveLength(1);
+    expect(mockEnqueueJob.mock.calls.filter(([p]) => p.channel === "email")).toHaveLength(0);
+  });
+
+  it("document.uploaded by staff → no notification (when-guard: client uploads only)", async () => {
+    await notifyFromEvent({
+      type: "document.uploaded",
+      payload: { caseId: CASE_ID, documentId: DOC_ID, uploadedByKind: "staff" },
+      occurredAt: new Date(),
+    });
+    expect(mockInsertNotificationIdempotent).not.toHaveBeenCalled();
+  });
+
+  it("form_response.submitted by a client → sales, review deep link with formDefinitionId, no email", async () => {
+    await notifyFromEvent({
+      type: "form_response.submitted",
+      payload: {
+        caseId: CASE_ID,
+        responseId: RESPONSE_ID,
+        formDefinitionId: FORM_DEF_ID,
+        partyId: null,
+        submittedByKind: "client",
+      },
+      occurredAt: new Date(),
+    });
+    expect(mockInsertNotificationIdempotent).toHaveBeenCalledTimes(1);
+    const [input] = mockInsertNotificationIdempotent.mock.calls[0];
+    expect(input.userId).toBe(SALES_USER_ID);
+    expect(input.type).toBe("form_response.submitted");
+    expect(input.actionUrl).toBe(`/ventas/clientes/${CASE_ID}/revisar/${FORM_DEF_ID}`);
+    expect(mockEnqueueJob.mock.calls.filter(([p]) => p.channel === "email")).toHaveLength(0);
+  });
+
+  it("form_response.submitted by staff → no notification (when-guard: client submits only)", async () => {
+    await notifyFromEvent({
+      type: "form_response.submitted",
+      payload: {
+        caseId: CASE_ID,
+        responseId: RESPONSE_ID,
+        formDefinitionId: FORM_DEF_ID,
+        partyId: null,
+        submittedByKind: "staff",
+      },
+      occurredAt: new Date(),
+    });
+    expect(mockInsertNotificationIdempotent).not.toHaveBeenCalled();
+  });
+
+  it("form_response.approved → client, green, form-approved email", async () => {
+    await notifyFromEvent({
+      type: "form_response.approved",
+      payload: { caseId: CASE_ID, responseId: RESPONSE_ID, formDefinitionId: FORM_DEF_ID, partyId: null },
+      occurredAt: new Date(),
+    });
+    const [input] = mockInsertNotificationIdempotent.mock.calls[0];
+    expect(input.userId).toBe(CLIENT_USER_ID);
+    expect(input.type).toBe("form_response.approved");
+    expect(input.color).toBe("green");
+    const emailJob = mockEnqueueJob.mock.calls.find(
+      ([p]) => p.channel === "email" && p.templateKey === "form-approved",
+    );
+    expect(emailJob).toBeDefined();
+    expect(input.actionUrl).toBe(`/caso/${CASE_ID}/formulario/${FORM_DEF_ID}`);
+  });
+
+  it("form_response.rejected → client, amber (never red), form-rejected email", async () => {
+    await notifyFromEvent({
+      type: "form_response.rejected",
+      payload: { caseId: CASE_ID, responseId: RESPONSE_ID, formDefinitionId: FORM_DEF_ID, partyId: null },
+      occurredAt: new Date(),
+    });
+    const [input] = mockInsertNotificationIdempotent.mock.calls[0];
+    expect(input.userId).toBe(CLIENT_USER_ID);
+    expect(input.color).toBe("amber");
+    const emailJob = mockEnqueueJob.mock.calls.find(
+      ([p]) => p.channel === "email" && p.templateKey === "form-rejected",
+    );
+    expect(emailJob).toBeDefined();
+  });
+});

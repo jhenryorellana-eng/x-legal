@@ -1221,11 +1221,15 @@ export type Database = {
           answers_translated: Json
           automation_version_id: string | null
           case_id: string
+          correction_due_at: string | null
           created_at: string
           filled_pdf_path: string | null
           form_definition_id: string
           id: string
           party_id: string | null
+          rejection_reason_i18n: Json | null
+          reviewed_at: string | null
+          reviewed_by: string | null
           service_phase_id: string | null
           status: string
           submitted_at: string | null
@@ -1237,11 +1241,15 @@ export type Database = {
           answers_translated?: Json
           automation_version_id?: string | null
           case_id: string
+          correction_due_at?: string | null
           created_at?: string
           filled_pdf_path?: string | null
           form_definition_id: string
           id?: string
           party_id?: string | null
+          rejection_reason_i18n?: Json | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
           service_phase_id?: string | null
           status?: string
           submitted_at?: string | null
@@ -1253,11 +1261,15 @@ export type Database = {
           answers_translated?: Json
           automation_version_id?: string | null
           case_id?: string
+          correction_due_at?: string | null
           created_at?: string
           filled_pdf_path?: string | null
           form_definition_id?: string
           id?: string
           party_id?: string | null
+          rejection_reason_i18n?: Json | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
           service_phase_id?: string | null
           status?: string
           submitted_at?: string | null

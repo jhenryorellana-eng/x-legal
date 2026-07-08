@@ -92,6 +92,11 @@ export function registerConsumers(): void {
     await notifyFromEvent(event);
   });
 
+  // document.uploaded → notify the case's asesora (sales), client uploads only
+  appEvents.on("document.uploaded", async (event) => {
+    await notifyFromEvent(event);
+  });
+
   // document.approved → notify client
   appEvents.on("document.approved", async (event) => {
     await notifyFromEvent(event);
@@ -99,6 +104,21 @@ export function registerConsumers(): void {
 
   // document.rejected → notify client
   appEvents.on("document.rejected", async (event) => {
+    await notifyFromEvent(event);
+  });
+
+  // form_response.submitted → notify the case's asesora (sales), client submits only
+  appEvents.on("form_response.submitted", async (event) => {
+    await notifyFromEvent(event);
+  });
+
+  // form_response.approved → notify client (in-app + push + email)
+  appEvents.on("form_response.approved", async (event) => {
+    await notifyFromEvent(event);
+  });
+
+  // form_response.rejected → notify client (in-app + push + email, amber)
+  appEvents.on("form_response.rejected", async (event) => {
     await notifyFromEvent(event);
   });
 

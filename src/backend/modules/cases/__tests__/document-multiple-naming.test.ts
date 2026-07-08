@@ -51,7 +51,7 @@ vi.mock("@/backend/platform/authz", () => ({
   systemActor: { userId: "system", orgId: "org-1", kind: "staff", role: "admin", permissions: new Map() },
 }));
 
-vi.mock("@/backend/platform/events", () => ({ appEvents: { emit: vi.fn(), on: vi.fn() } }));
+vi.mock("@/backend/platform/events", () => ({ appEvents: { emit: vi.fn(), emitAndWait: vi.fn().mockResolvedValue(undefined), on: vi.fn() } }));
 vi.mock("@/backend/platform/logger", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));

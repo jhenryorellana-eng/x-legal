@@ -103,7 +103,7 @@ vi.mock("@/backend/platform/authz", () => ({
 }));
 
 vi.mock("@/backend/platform/events", () => ({
-  appEvents: { emit: mockEmit, on: vi.fn() },
+  appEvents: { emit: mockEmit, emitAndWait: mockEmit, on: vi.fn() },
 }));
 
 vi.mock("@/backend/platform/logger", () => ({

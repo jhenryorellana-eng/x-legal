@@ -57,6 +57,17 @@ export interface FormReviewStrings {
   updatePdf: string;
   updatingPdf: string;
   pdfUpdatedToast: string;
+  // Reject → return to client for correction (amber, never red — RF-TRX-022)
+  rejectBtn: string;
+  rejectTitle: string;
+  rejectReasonLabel: string;
+  rejectReasonPlaceholder: string;
+  rejectConfirm: string;
+  rejectCancel: string;
+  rejecting: string;
+  rejectedToast: string;
+  rejectReasonRequired: string;
+  rejectError: string;
 }
 
 export interface FormReviewActions {
@@ -66,6 +77,7 @@ export interface FormReviewActions {
   getDocumentUrl: (input: { documentId: string }) => Promise<{ ok: boolean; url?: string; error?: { code: string } }>;
   getFilledPdfUrl: (input: { responseId: string }) => Promise<{ ok: boolean; url?: string | null; error?: { code: string } }>;
   approve: (input: { responseId: string }) => Promise<{ ok: boolean; error?: { code: string } }>;
+  reject: (input: { responseId: string; reason: { en?: string; es?: string } }) => Promise<{ ok: boolean; error?: { code: string } }>;
   generatePdf: (input: { responseId: string }) => Promise<{ ok: boolean; downloadUrl?: string; error?: { code: string } }>;
 }
 
@@ -127,6 +139,11 @@ export function FormReviewScreen({
 
   const [reviewed, setReviewed] = React.useState(false);
   const [approving, setApproving] = React.useState(false);
+
+  // Reject → return to client for correction (modal captures the bilingual reason).
+  const [rejectOpen, setRejectOpen] = React.useState(false);
+  const [rejectReason, setRejectReason] = React.useState("");
+  const [rejecting, setRejecting] = React.useState(false);
 
   // Load the official filled PDF.
   React.useEffect(() => {
@@ -200,6 +217,28 @@ export function FormReviewScreen({
     setApproving(false);
     toast.success(strings.approvedToast);
     setOfficialBump((n) => n + 1); // refresh the left PDF
+  }
+
+  async function handleReject() {
+    if (!responseId) return;
+    const reasonText = rejectReason.trim();
+    if (!reasonText) {
+      toast.error(strings.rejectReasonRequired);
+      return;
+    }
+    setRejecting(true);
+    // The staff writes the reason in their locale; the client sees it in the same
+    // field (the notification/DTO resolves {en,es} with fallback to the other).
+    const reason = locale === "es" ? { es: reasonText } : { en: reasonText };
+    const r = await actions.reject({ responseId, reason });
+    setRejecting(false);
+    if (!r.ok) {
+      toast.error(strings.rejectError);
+      return;
+    }
+    setRejectOpen(false);
+    toast.success(strings.rejectedToast);
+    router.push(backHref);
   }
 
   // "Actualizar PDF" — regenerate the official PDF from the current (edited) answers
@@ -359,14 +398,83 @@ export function FormReviewScreen({
               {updatingPdf ? strings.updatingPdf : strings.updatePdf}
             </GhostBtn>
           )}
-          <GradientBtn size="md" full={false} disabled={approving || !responseId} onClick={handleApprove}>
+          <GradientBtn size="md" full={false} disabled={approving || rejecting || !responseId} onClick={handleApprove}>
             {approving ? strings.approving : strings.approveBtn}
           </GradientBtn>
+          {form.status === "submitted" && (
+            <GhostBtn size="md" full={false} disabled={approving || rejecting || !responseId} onClick={() => setRejectOpen(true)}>
+              {strings.rejectBtn}
+            </GhostBtn>
+          )}
           {officialUrl && officialRemoteUrl && (
             <GhostBtn size="md" full={false} onClick={() => getBridge().share.openExternal(officialRemoteUrl)}>
               {strings.viewPdf}
             </GhostBtn>
           )}
+        </div>
+      )}
+
+      {/* Reject modal — capture the bilingual reason the client will see (amber). */}
+      {rejectOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => !rejecting && setRejectOpen(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(11,27,51,0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 20,
+            zIndex: 1000,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "min(520px, 100%)",
+              background: "var(--card,#fff)",
+              borderRadius: 16,
+              border: "1px solid var(--line)",
+              padding: 20,
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+              boxShadow: "0 24px 60px rgba(11,27,51,0.28)",
+            }}
+          >
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: "var(--ink)" }}>{strings.rejectTitle}</h2>
+            <label style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-2)" }}>{strings.rejectReasonLabel}</label>
+            <textarea
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder={strings.rejectReasonPlaceholder}
+              rows={4}
+              autoFocus
+              disabled={rejecting}
+              style={{
+                width: "100%",
+                resize: "vertical",
+                border: "1px solid var(--line)",
+                borderRadius: 10,
+                padding: "10px 12px",
+                fontSize: 14,
+                fontFamily: "inherit",
+                color: "var(--ink)",
+                background: "var(--bg,#fff)",
+              }}
+            />
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 4 }}>
+              <GhostBtn size="md" full={false} disabled={rejecting} onClick={() => setRejectOpen(false)}>
+                {strings.rejectCancel}
+              </GhostBtn>
+              <GradientBtn size="md" full={false} disabled={rejecting || !rejectReason.trim()} onClick={handleReject}>
+                {rejecting ? strings.rejecting : strings.rejectConfirm}
+              </GradientBtn>
+            </div>
+          </div>
         </div>
       )}
     </div>

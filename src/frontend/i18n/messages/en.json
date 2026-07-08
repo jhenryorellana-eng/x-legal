@@ -645,7 +645,9 @@
       "submittedTitle": "Done! We got it",
       "submittedBody": "Your team is reviewing it.",
       "approvedPill": "Approved",
-      "reviewClientBanner": "This form is filled in by the client. Missing something? Ask them by message."
+      "reviewClientBanner": "This form is filled in by the client. Missing something? Ask them by message.",
+      "rejectionTitle": "A correction is needed",
+      "rejectionDueLabel": "Due by: {date}"
     },
     "formularios": {
       "eyebrow": "Your case",
@@ -2797,6 +2799,16 @@
     "reviewUpdatePdf": "Update PDF",
     "reviewUpdatingPdf": "Updating…",
     "reviewPdfUpdatedToast": "PDF updated with your changes",
+    "reviewRejectBtn": "Reject",
+    "reviewRejectTitle": "Return for correction",
+    "reviewRejectReasonLabel": "Reason (the client will see it)",
+    "reviewRejectReasonPlaceholder": "Explain to the client what to fix…",
+    "reviewRejectConfirm": "Send correction",
+    "reviewRejectCancel": "Cancel",
+    "reviewRejecting": "Sending…",
+    "reviewRejectedToast": "Form returned to the client for correction",
+    "reviewRejectReasonRequired": "Write a reason for the client.",
+    "reviewRejectError": "Could not reject the form.",
     "letterTitle": "Generated letter",
     "letterEmpty": "The letter hasn't been generated yet. Edit the answers and click \"Regenerate letter\".",
     "letterRegenerate": "Regenerate letter",

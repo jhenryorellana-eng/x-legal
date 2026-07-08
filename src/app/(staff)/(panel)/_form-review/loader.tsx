@@ -27,6 +27,7 @@ import {
 } from "@/app/(staff)/(panel)/admin/casos/actions";
 import {
   approveFormResponseAction,
+  rejectFormResponseAction,
   generateFilledPdfAction,
   getFormResponsePdfUrlAction,
   staffUpdateFormAnswersAction,
@@ -112,6 +113,16 @@ export async function FormReviewLoader({
     updatePdf: t("reviewUpdatePdf"),
     updatingPdf: t("reviewUpdatingPdf"),
     pdfUpdatedToast: t("reviewPdfUpdatedToast"),
+    rejectBtn: t("reviewRejectBtn"),
+    rejectTitle: t("reviewRejectTitle"),
+    rejectReasonLabel: t("reviewRejectReasonLabel"),
+    rejectReasonPlaceholder: t("reviewRejectReasonPlaceholder"),
+    rejectConfirm: t("reviewRejectConfirm"),
+    rejectCancel: t("reviewRejectCancel"),
+    rejecting: t("reviewRejecting"),
+    rejectedToast: t("reviewRejectedToast"),
+    rejectReasonRequired: t("reviewRejectReasonRequired"),
+    rejectError: t("reviewRejectError"),
   };
 
   return (
@@ -132,6 +143,7 @@ export async function FormReviewLoader({
         getDocumentUrl: getDocumentUrlAction,
         getFilledPdfUrl: getFormResponsePdfUrlAction,
         approve: approveFormResponseAction,
+        reject: rejectFormResponseAction,
         generatePdf: generateFilledPdfAction,
       }}
       backHref={backHref}

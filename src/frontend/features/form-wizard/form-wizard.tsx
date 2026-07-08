@@ -662,6 +662,48 @@ export function FormWizard({
         </div>
       )}
 
+      {/* Correction banner — the staff returned this form for correction. Amber,
+          never red (RF-TRX-022). Shown on the first step where the client lands. */}
+      {form.status === "rejected" && step === 0 && (
+        <div
+          role="alert"
+          className="anim-fade-in"
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 10,
+            padding: "12px 14px",
+            marginBottom: 12,
+            background: "var(--gold-soft)",
+            border: "1px solid var(--gold)",
+            borderRadius: 12,
+            lineHeight: 1.4,
+          }}
+        >
+          <Icon name="info" size={16} color="var(--gold-deep)" />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 800, color: "var(--ink)" }}>{labels.rejectionTitle}</div>
+            {pickI18n(form.rejectionReasonI18n ?? null, locale) && (
+              <div style={{ fontSize: 13, color: "var(--ink-2)", marginTop: 3 }}>
+                {pickI18n(form.rejectionReasonI18n ?? null, locale)}
+              </div>
+            )}
+            {form.correctionDueAt && (
+              <div style={{ fontSize: 12.5, color: "var(--gold-deep)", fontWeight: 700, marginTop: 4 }}>
+                {labels.rejectionDueLabel.replace(
+                  "{date}",
+                  new Date(form.correctionDueAt).toLocaleDateString(locale === "es" ? "es-ES" : "en-US", {
+                    day: "numeric",
+                    month: "long",
+                    year: "numeric",
+                  }),
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Autosave indicator */}
       <div style={{ minHeight: 20, display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
         {saveLabel(autosave.saveState, autosave.blockedCode, labels) && (
