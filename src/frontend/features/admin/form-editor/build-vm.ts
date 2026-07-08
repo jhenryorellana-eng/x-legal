@@ -28,9 +28,9 @@ function i18n(v: unknown): I18nValue {
 export interface RawFormEditorData {
   form: { id: string; slug: string; kind: string; label_i18n: RawI18n; service_phase_id: string; companion_questionnaire_id?: string | null };
   service: { id: string; slug: string; label_i18n: RawI18n };
-  versions: Array<{ id: string; version: number; status: string; detected_fields: unknown[]; source_pdf_path: string | null; published_at: string | null }>;
+  versions: Array<{ id: string; version: number; status: string; detected_fields: unknown[]; source_pdf_path: string | null; published_at: string | null; default_empty_policy?: string | null }>;
   openVersion: {
-    version: { id: string; version: number; status: string; detected_fields: unknown[]; source_pdf_path: string | null; published_at: string | null };
+    version: { id: string; version: number; status: string; detected_fields: unknown[]; source_pdf_path: string | null; published_at: string | null; default_empty_policy?: string | null };
     groups: Array<{
       id: string;
       automation_version_id: string;
@@ -59,6 +59,8 @@ export function buildFormEditorVM(data: RawFormEditorData, datasets: RawDataset[
     detected_fields: (v.detected_fields ?? []) as VersionVM["detected_fields"],
     source_pdf_path: v.source_pdf_path,
     published_at: v.published_at,
+    default_empty_policy:
+      v.default_empty_policy === "na" || v.default_empty_policy === "blank" ? v.default_empty_policy : "auto",
   });
 
   const toQuestion = (q: Record<string, unknown>): QuestionVM => ({
@@ -75,6 +77,9 @@ export function buildFormEditorVM(data: RawFormEditorData, datasets: RawDataset[
     position: (q.position as number) ?? 0,
     validation: (q.validation as Record<string, unknown> | null) ?? null,
     condition: parseConditionOrNull(q.condition),
+    empty_policy: (q.empty_policy as QuestionVM["empty_policy"]) ?? "inherit",
+    empty_placeholder: (q.empty_placeholder as string | null) ?? null,
+    no_translate: (q.no_translate as boolean) ?? false,
   });
 
   const groups: QuestionGroupVM[] = (data.openVersion?.groups ?? []).map((g) => ({

@@ -421,21 +421,22 @@ const PDF_OFFICE_USE_RE =
  * fields that belong to hidden blocks (spouse when single, unused child slots, Parts
  * F/G, the signature line), which is exactly what we must avoid.
  *
- * @param naTargets pdf_field_names of visible, applicable, empty text/textarea questions.
+ * @param naTargets map of pdf_field_name → placeholder for visible, applicable, empty
+ *   text-backed questions. The placeholder is per-field (version default `na` → "N/A";
+ *   a `custom` field carries its own string). See src/shared/form-logic/empty-policy.ts.
  * @returns how many fields were back-filled.
  */
 export function backfillNaTextFields(
   detectedFields: Array<{ pdf_field_name: string; field_type: string; page: number }>,
   filled: Record<string, string | boolean>,
-  naTargets: Iterable<string>,
-  placeholder = "N/A",
+  naTargets: ReadonlyMap<string, string>,
 ): number {
   const typeByName = new Map(detectedFields.map((f) => [f.pdf_field_name, f.field_type]));
   let n = 0;
-  for (const name of naTargets) {
+  for (const [name, placeholder] of naTargets) {
     if (name in filled) continue; // already has a value (answer or a SELECT's ticked box)
     const detectedType = typeByName.get(name);
-    if (detectedType !== undefined && detectedType !== "text") continue; // only text widgets hold "N/A"
+    if (detectedType !== undefined && detectedType !== "text") continue; // only text widgets hold a placeholder
     if (PDF_OFFICE_USE_RE.test(name)) continue;
     filled[name] = placeholder;
     n++;

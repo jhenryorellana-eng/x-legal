@@ -5,11 +5,14 @@ import { backfillNaTextFields } from "@/backend/platform/pdf";
  * backfillNaTextFields — USCIS "no blank box" acceptance rule (8 CFR 1208.3(c)(3)).
  * Pure function (no mupdf), so it is unit-testable in isolation.
  *
- * New (targeted) contract: the caller passes the EXPLICIT set of applicable,
- * still-empty text questions to back-fill. The helper only enforces the two hard
- * rules — never a non-text widget, never an office-use/signature field. Fields the
- * caller does NOT list (hidden by a condition, in a do-not-fill section) stay blank.
+ * Targeted contract: the caller passes a Map of pdf_field_name → placeholder for the
+ * EXPLICIT set of applicable, still-empty text questions to back-fill (the placeholder
+ * is per-field — "N/A" by default, or a custom string). The helper only enforces the
+ * two hard rules — never a non-text widget, never an office-use/signature field. Fields
+ * the caller does NOT list (hidden by a condition, in a do-not-fill section) stay blank.
  */
+const na = (...names: string[]) => new Map(names.map((n) => [n, "N/A"]));
+
 describe("backfillNaTextFields", () => {
   const detected = [
     { pdf_field_name: "p1.name", field_type: "text", page: 1 },
@@ -22,7 +25,7 @@ describe("backfillNaTextFields", () => {
 
   it("back-fills only the applicable, blank text targets it is given", () => {
     const filled: Record<string, string | boolean> = { "p1.name": "Juan" };
-    const n = backfillNaTextFields(detected, filled, ["p1.name", "p1.ssn", "p4.background"]);
+    const n = backfillNaTextFields(detected, filled, na("p1.name", "p1.ssn", "p4.background"));
     expect(filled["p1.name"]).toBe("Juan"); // already answered, untouched
     expect(filled["p1.ssn"]).toBe("N/A"); // blank applicable text → N/A
     expect(filled["p4.background"]).toBe("N/A");
@@ -31,7 +34,7 @@ describe("backfillNaTextFields", () => {
 
   it("never fills checkboxes or office-use/signature fields even if passed as targets", () => {
     const filled: Record<string, string | boolean> = {};
-    backfillNaTextFields(detected, filled, ["p1.sex", "p1.PreparerSignature"]);
+    backfillNaTextFields(detected, filled, na("p1.sex", "p1.PreparerSignature"));
     expect(filled["p1.sex"]).toBeUndefined();
     expect(filled["p1.PreparerSignature"]).toBeUndefined();
   });
@@ -39,7 +42,7 @@ describe("backfillNaTextFields", () => {
   it("leaves fields blank when they are NOT in the target set (hidden/do-not-fill blocks)", () => {
     const filled: Record<string, string | boolean> = {};
     // The spouse block is hidden (single applicant) → the caller does not list it.
-    backfillNaTextFields(detected, filled, ["p1.name"]);
+    backfillNaTextFields(detected, filled, na("p1.name"));
     expect(filled["p2.spouseName"]).toBeUndefined(); // stays blank — the core fix
     expect(filled["p4.background"]).toBeUndefined();
     expect(filled["p1.name"]).toBe("N/A");
@@ -47,19 +50,19 @@ describe("backfillNaTextFields", () => {
 
   it("tolerates a target with no detected entry (still fills it as text)", () => {
     const filled: Record<string, string | boolean> = {};
-    backfillNaTextFields(detected, filled, ["unknown.field"]);
+    backfillNaTextFields(detected, filled, na("unknown.field"));
     expect(filled["unknown.field"]).toBe("N/A");
   });
 
   it("is a no-op when there are no targets", () => {
     const filled: Record<string, string | boolean> = {};
-    expect(backfillNaTextFields(detected, filled, [])).toBe(0);
+    expect(backfillNaTextFields(detected, filled, new Map())).toBe(0);
     expect(Object.keys(filled)).toHaveLength(0);
   });
 
-  it("honours a custom placeholder", () => {
+  it("honours a per-field custom placeholder", () => {
     const filled: Record<string, string | boolean> = {};
-    backfillNaTextFields(detected, filled, ["p1.ssn"], "None");
+    backfillNaTextFields(detected, filled, new Map([["p1.ssn", "None"]]));
     expect(filled["p1.ssn"]).toBe("None");
   });
 });

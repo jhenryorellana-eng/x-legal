@@ -19,6 +19,7 @@ import { PROFILE_SOURCE_FIELDS } from "@/shared/constants/profile-fields";
 import { isPartyRoleKey } from "@/shared/constants/party-roles";
 import { GENERATION_MODELS } from "@/shared/constants/ai-models";
 import { deriveFieldState, parseConditionOrNull, type QuestionCondition } from "@/shared/form-logic/conditions";
+import { resolveEmptyPolicy, type VersionEmptyPolicy, type FieldEmptyPolicy } from "@/shared/form-logic/empty-policy";
 import type { ProposedQuestion } from "@/backend/modules/ai-engine";
 import { detectAcroFields as platformDetectAcroFields, fillAcroForm, extractPdfText, backfillNaTextFields } from "@/backend/platform/pdf";
 import { createServiceClient } from "@/backend/platform/supabase";
@@ -928,7 +929,9 @@ export async function duplicateVersionAsDraft(actor: Actor, versionId: string): 
     detected_fields: source.detected_fields,
     status: "draft",
     created_by: actor.userId,
-  });
+    // Carry the empty-fill default so a duplicate→edit→publish round-trip keeps it.
+    default_empty_policy: (source as { default_empty_policy?: string | null }).default_empty_policy ?? "auto",
+  } as Parameters<typeof repo.insertAutomationVersion>[0]);
 
   // Copy groups + questions. Pass 1: create (without conditions) recording old→new
   // question ids; Pass 2: remap each condition's controlling id + persist.
@@ -940,8 +943,15 @@ export async function duplicateVersionAsDraft(actor: Actor, versionId: string): 
         automation_version_id: draft.id,
         title_i18n: g.title_i18n,
         position: g.position,
-      });
+        // Carry the "leave whole section blank" flag (Parts F/G, Part D signature).
+        do_not_fill: (g as { do_not_fill?: boolean | null }).do_not_fill ?? false,
+      } as Parameters<typeof repo.upsertQuestionGroup>[0]);
       for (const q of g.questions) {
+        const qRow = q as {
+          empty_policy?: string | null;
+          empty_placeholder?: string | null;
+          no_translate?: boolean | null;
+        };
         const newQ = await repo.upsertQuestion({
           group_id: newGroup.id,
           question_i18n: q.question_i18n,
@@ -954,7 +964,11 @@ export async function duplicateVersionAsDraft(actor: Actor, versionId: string): 
           is_required: q.is_required,
           position: q.position,
           validation: q.validation,
-        });
+          // Carry the empty-fill policy + verbatim flag so the config survives a duplicate.
+          empty_policy: qRow.empty_policy ?? "inherit",
+          empty_placeholder: qRow.empty_placeholder ?? null,
+          no_translate: qRow.no_translate ?? false,
+        } as Parameters<typeof repo.upsertQuestion>[0]);
         oldToNewQ.set(q.id, newQ.id);
       }
     }
@@ -1610,7 +1624,13 @@ export async function generateTestPdf(
   // applicable, empty free-text fields are eligible for the "N/A" backfill.
   const valuesByPdfName: Record<string, string | boolean> = {};
   const gaps: Array<{ question_id: string; pdf_field_name: string }> = [];
-  const naTargets: string[] = [];
+  const naTargets = new Map<string, string>(); // pdf_field_name → placeholder
+
+  // Form-wide empty-fill default (blank / N/A / custom), read defensively (db:types is
+  // blocked with the current token). Matches production generateFilledPdf.
+  const versionDefaultRaw = (tree.version as { default_empty_policy?: string | null }).default_empty_policy;
+  const versionEmptyDefault: VersionEmptyPolicy =
+    versionDefaultRaw === "na" || versionDefaultRaw === "blank" ? versionDefaultRaw : "auto";
 
   // Groups flagged do_not_fill (I-589 Part D signature, Parts F/G) stay entirely blank.
   const doNotFillGroups = new Set(
@@ -1657,9 +1677,18 @@ export async function generateTestPdf(
         // Required field with no sample answer — record gap (non-blocking per RF-ADM-034 E1)
         gaps.push({ question_id: q.id, pdf_field_name: fieldName ?? q.id });
       }
-      // Applicable but unanswered free text → eligible for "N/A" (never dates/selects).
-      if ((q.field_type === "text" || q.field_type === "textarea") && fieldName) {
-        naTargets.push(fieldName);
+      // Applicable but unanswered → the empty policy decides blank vs a placeholder
+      // (same resolution as production generateFilledPdf).
+      if (fieldName) {
+        const res = resolveEmptyPolicy(
+          {
+            fieldType: q.field_type,
+            emptyPolicy: (q as { empty_policy?: string | null }).empty_policy as FieldEmptyPolicy | undefined,
+            emptyPlaceholder: (q as { empty_placeholder?: string | null }).empty_placeholder ?? undefined,
+          },
+          versionEmptyDefault,
+        );
+        if (res.mode === "fill") naTargets.set(fieldName, res.placeholder);
       }
     }
   }
@@ -2354,6 +2383,36 @@ export async function getPublishedAutomationVersion(formDefinitionId: string) {
 
 export async function getAutomationVersionById(versionId: string) {
   return repo.getAutomationVersionById(versionId);
+}
+
+/**
+ * Updates a version's form-wide empty-field policy (`auto` / `na` / `blank`) — the
+ * default for how APPLICABLE-but-EMPTY fields render (blank vs an "N/A" placeholder),
+ * overridable per question. This is a pure RENDERING setting: it does not change the
+ * field mapping nor which cases belong to which version, so it is editable on ANY
+ * status (a published form can be switched to render "N/A" without a re-publish).
+ * See src/shared/form-logic/empty-policy.ts and migration 0070.
+ *
+ * @api-id API-CAT-46
+ */
+export async function updateVersionEmptyPolicy(
+  actor: Actor,
+  versionId: string,
+  defaultEmptyPolicy: VersionEmptyPolicy,
+): Promise<AutomationVersion> {
+  can(actor, "catalog", "edit");
+  const updated = await repo.updateVersion(
+    versionId,
+    { default_empty_policy: defaultEmptyPolicy } as Parameters<typeof repo.updateVersion>[1],
+  );
+  await writeAudit(
+    actor,
+    "catalog.form_automation_versions.updated",
+    "form_automation_versions",
+    versionId,
+    { default_empty_policy: defaultEmptyPolicy },
+  );
+  return updated as unknown as AutomationVersion;
 }
 
 /**

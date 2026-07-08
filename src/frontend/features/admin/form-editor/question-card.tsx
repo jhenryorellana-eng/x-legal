@@ -179,6 +179,50 @@ export function QuestionCard({
             </label>
           </div>
 
+          {/* Empty-field policy + verbatim (PDF forms only — questionnaires don't render a PDF) */}
+          {!noPdf && (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 14, alignItems: "end" }}>
+                <div>
+                  <FieldLabel>{strings.emptyPolicy}</FieldLabel>
+                  <SelectInput
+                    value={q.empty_policy ?? "inherit"}
+                    disabled={readOnly}
+                    onChange={(e) => onChange({ empty_policy: e.target.value as QuestionVM["empty_policy"] })}
+                    aria-label={strings.emptyPolicy}
+                  >
+                    <option value="inherit">{strings.emptyPolicyInherit}</option>
+                    <option value="na">{strings.emptyPolicyNa}</option>
+                    <option value="blank">{strings.emptyPolicyBlank}</option>
+                    <option value="custom">{strings.emptyPolicyCustom}</option>
+                  </SelectInput>
+                </div>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 8, paddingBottom: 9 }}>
+                  <Switch
+                    checked={q.no_translate ?? false}
+                    onCheckedChange={(c) => onChange({ no_translate: c })}
+                    disabled={readOnly}
+                    aria-label={strings.noTranslate}
+                  />
+                  <span style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>{strings.noTranslate}</span>
+                </label>
+              </div>
+              {q.empty_policy === "custom" && (
+                <div>
+                  <FieldLabel>{strings.emptyPlaceholder}</FieldLabel>
+                  <TextInput
+                    value={q.empty_placeholder ?? ""}
+                    disabled={readOnly}
+                    placeholder="N/A"
+                    onChange={(e) => onChange({ empty_placeholder: e.target.value || null })}
+                    aria-label={strings.emptyPlaceholder}
+                  />
+                </div>
+              )}
+              <p style={{ margin: "-4px 0 0", fontSize: 11.5, color: "var(--ink-3)" }}>{strings.emptyPolicyHint}</p>
+            </>
+          )}
+
           {/* Options editor (select + multiselect map a group of checkboxes) */}
           {(q.field_type === "select" || q.field_type === "multiselect") && (
             <OptionsEditor question={q} strings={strings} readOnly={readOnly} onChange={onChange} />

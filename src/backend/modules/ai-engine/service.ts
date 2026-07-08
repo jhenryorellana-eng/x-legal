@@ -51,6 +51,7 @@ import {
   type DenialReasonCode,
 } from "@/shared/constants/denial-reasons";
 import { resolvePeriodRange, type Period } from "@/shared/period";
+import { isVerbatimValue } from "@/shared/form-logic/empty-policy";
 
 import {
   canTransitionRun,
@@ -2192,10 +2193,24 @@ export async function translateAnswersBatch(input: {
   direction: "es-en" | "en-es";
   preserveProperNouns?: boolean;
 }): Promise<Record<string, string>> {
-  const items = input.items.filter((i) => i.text?.trim());
-  if (items.length === 0) return {};
+  const all = input.items.filter((i) => i.text?.trim());
+  if (all.length === 0) return {};
+  // Defence in depth: a structured/PII value (A-Number, SSN, passport, date, code) is
+  // returned RAW — never masked, never sent to the translator. This guarantees a masked
+  // token (e.g. "A-•••-•••") can never leave this function even if a caller forgot to
+  // pre-filter. Natural-language text (incl. names/cities) still goes through, preserved
+  // by the proper-noun rule. Callers that must keep proper nouns literal use no_translate.
+  const verbatim: Record<string, string> = {};
+  const items = all.filter((i) => {
+    if (isVerbatimValue(i.text)) {
+      verbatim[i.id] = i.text;
+      return false;
+    }
+    return true;
+  });
+  if (items.length === 0) return verbatim;
   if (isAiStubEnabled()) {
-    return Object.fromEntries(items.map((i) => [i.id, i.text])); // stub: passthrough (no provider)
+    return { ...verbatim, ...Object.fromEntries(items.map((i) => [i.id, i.text])) }; // stub: passthrough
   }
 
   // Chunk by cumulative text length so one response stays within maxOutputTokens.
@@ -2217,7 +2232,7 @@ export async function translateAnswersBatch(input: {
   const results = await Promise.all(
     chunks.map((chunk) => translateAnswersChunk(chunk, input.direction, input.preserveProperNouns)),
   );
-  return Object.assign({}, ...results);
+  return Object.assign({ ...verbatim }, ...results);
 }
 
 async function translateAnswersChunk(

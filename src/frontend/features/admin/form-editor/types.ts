@@ -9,6 +9,7 @@
 
 import type { I18nValue } from "../shared/i18n-field";
 import type { QuestionCondition } from "@/shared/form-logic/conditions";
+import type { FieldEmptyPolicy, VersionEmptyPolicy } from "@/shared/form-logic/empty-policy";
 
 export type QuestionSource =
   | "client_answer"
@@ -46,6 +47,12 @@ export interface QuestionVM {
   validation: Record<string, unknown> | null;
   /** Conditional visibility (show/lock/require depending on another answer). */
   condition?: QuestionCondition | null;
+  /** How this field renders when applicable but empty. `inherit` = use the version default. */
+  empty_policy?: FieldEmptyPolicy;
+  /** Placeholder when empty_policy = custom (defaults to "N/A"). */
+  empty_placeholder?: string | null;
+  /** Write the answer to the PDF verbatim — never machine-translated nor PII-masked. */
+  no_translate?: boolean;
   /** True while the question came from an AI proposal and has not been confirmed/edited. */
   proposed?: boolean;
 }
@@ -70,6 +77,8 @@ export interface VersionVM {
   /** NULL for a questionnaire version (no PDF). */
   source_pdf_path: string | null;
   published_at: string | null;
+  /** Form-wide default for how empty applicable fields render (auto|na|blank). */
+  default_empty_policy?: VersionEmptyPolicy;
 }
 
 export interface SourceDocumentVM {
@@ -166,6 +175,8 @@ export interface FormEditorActions {
   unpublish: (versionId: string) => Promise<Res<unknown>>;
   /** Duplicate an immutable version into a fresh editable draft (copies questions). */
   duplicateVersion: (versionId: string) => Promise<Res<{ id: string }>>;
+  /** Set the version-wide default for how empty applicable fields render (auto|na|blank). */
+  setVersionEmptyPolicy: (input: { version_id: string; default_empty_policy: VersionEmptyPolicy }) => Promise<Res<unknown>>;
   saveGenerationConfig: (input: Record<string, unknown>) => Promise<Res<unknown>>;
   testGeneration: (input: { form_definition_id: string; case_id: string; party_id?: string }) => Promise<Res<{ run_id: string }>>;
   /** Ensure (create if missing) an ai_letter's companion questionnaire; returns its id. */

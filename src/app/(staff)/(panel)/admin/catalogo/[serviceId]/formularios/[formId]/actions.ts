@@ -25,6 +25,7 @@ import {
   publishVersionAction,
   unpublishVersionAction,
   duplicateVersionAsDraftAction,
+  updateVersionEmptyPolicyAction,
   updateGenerationConfigAction,
   testGenerationAction,
 } from "@/backend/modules/catalog/actions";
@@ -132,6 +133,13 @@ export async function unpublishVersionUi(versionId: string): Promise<Res<unknown
 
 export async function duplicateVersionUi(versionId: string): Promise<Res<{ id: string }>> {
   return envelope(await duplicateVersionAsDraftAction(versionId)) as Res<{ id: string }>;
+}
+
+export async function setVersionEmptyPolicyUi(input: {
+  version_id: string;
+  default_empty_policy: "auto" | "na" | "blank";
+}): Promise<Res<unknown>> {
+  return envelope(await updateVersionEmptyPolicyAction(input));
 }
 
 // --- ai_letter mode --------------------------------------------------------

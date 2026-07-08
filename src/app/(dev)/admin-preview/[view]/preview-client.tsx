@@ -259,6 +259,7 @@ const formEditorNoopActions: FormEditorActions = {
   publish: async () => ({ success: true, data: { ok: false, issues: [{ code: "CATALOG_PDF_FIELD_UNMAPPED", severity: "warning", detail: "Pt3Line1_Signature · pág. 3 sin pregunta" }] } }),
   unpublish: async () => ({ success: true }),
   duplicateVersion: async () => ({ success: true, data: { id: "ver-draft-new" } }),
+  setVersionEmptyPolicy: async () => ({ success: true }),
   saveGenerationConfig: async () => ({ success: true }),
   testGeneration: async () => ({ success: true, data: { run_id: "run-demo-001" } }),
   ensureCompanionQuestionnaire: async () => ({ success: true, data: { id: "form-q-demo", slug: "demo-cuestionario", created: true } }),

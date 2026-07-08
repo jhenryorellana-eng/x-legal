@@ -618,6 +618,18 @@ export async function duplicateVersionAsDraftAction(
   }
 }
 
+/** @api-id API-CAT-46 */
+export async function updateVersionEmptyPolicyAction(
+  input: { version_id: string; default_empty_policy: "auto" | "na" | "blank" },
+): Promise<ActionResult<Awaited<ReturnType<typeof svc.updateVersionEmptyPolicy>>>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.updateVersionEmptyPolicy(actor, input.version_id, input.default_empty_policy));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 /** @api-id API-CAT-45 */
 export async function setFormActiveAction(
   formDefinitionId: string,

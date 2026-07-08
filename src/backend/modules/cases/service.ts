@@ -32,6 +32,12 @@ import { writeAudit, appendCaseTimeline } from "@/backend/modules/audit";
 import type { TablesUpdate } from "@/shared/database.types";
 import { PRINCIPAL_ROLE_KEY } from "@/shared/constants/party-roles";
 import { parseConditionOrNull, deriveFieldState, type QuestionCondition } from "@/shared/form-logic/conditions";
+import {
+  resolveEmptyPolicy,
+  isVerbatimValue,
+  type VersionEmptyPolicy,
+  type FieldEmptyPolicy,
+} from "@/shared/form-logic/empty-policy";
 
 import {
   canTransitionCase,
@@ -4596,7 +4602,7 @@ export async function generateFilledPdf(
 
   // Gate: FORM_VERSION_MISMATCH — only fill against the currently published version
   const catalog = await import("@/backend/modules/catalog" as string) as {
-    getPublishedAutomationVersion: (id: string) => Promise<{ id: string; source_pdf_path: string; detected_fields: unknown; source_language?: string } | null>;
+    getPublishedAutomationVersion: (id: string) => Promise<{ id: string; source_pdf_path: string; detected_fields: unknown; source_language?: string; default_empty_policy?: string | null } | null>;
     listQuestionGroups: (versionId: string) => Promise<Array<{ id: string; do_not_fill?: boolean | null }>>;
     listQuestions: (groupId: string) => Promise<Array<{
       id: string;
@@ -4609,6 +4615,9 @@ export async function generateFilledPdf(
       options: unknown;
       validation?: unknown;
       question_i18n?: unknown;
+      empty_policy?: string | null;
+      empty_placeholder?: string | null;
+      no_translate?: boolean | null;
     }>>;
   };
 
@@ -4638,6 +4647,9 @@ export async function generateFilledPdf(
     validation?: unknown;
     question_i18n?: unknown;
     do_not_fill?: boolean;
+    empty_policy?: string | null;
+    empty_placeholder?: string | null;
+    no_translate?: boolean | null;
   }> = [];
 
   if (catalog.listQuestionGroups && catalog.listQuestions) {
@@ -4658,6 +4670,13 @@ export async function generateFilledPdf(
   // ES→EN — preserving proper nouns (names/places) — in ONE batched AI call BEFORE the
   // fill loop (below), then cached in `answers_translated` so a regeneration re-uses it.
   const sourceLang: "en" | "es" = published.source_language === "es" ? "es" : "en";
+  // Form-wide policy for how APPLICABLE-but-EMPTY fields render (blank / N/A / custom).
+  // Read defensively (db:types is blocked with the current token) — falls back to the
+  // legacy `auto` behaviour when the column is absent. A per-question override wins.
+  const versionEmptyDefault: VersionEmptyPolicy =
+    published.default_empty_policy === "na" || published.default_empty_policy === "blank"
+      ? published.default_empty_policy
+      : "auto";
   // Freshly translated free-text, keyed by question id. NOTE: we do NOT seed from the
   // stored answers_translated cache — a cached translation can be stale (the client, or
   // staff, changed the answer after it was translated), and the FILED PDF must always
@@ -4707,6 +4726,11 @@ export async function generateFilledPdf(
       const own = answers[q.id];
       const val = typeof own === "string" ? own.trim() : "";
       if (!val) continue;
+      // VERBATIM: an A-Number/SSN/passport/name/city/code is written to the PDF exactly
+      // as stored — never sent to the translator (which masks PII → an "A-•••-•••" token
+      // would otherwise land on a federal form). Explicit `no_translate` flag OR the
+      // structured-value safety net. Such fields keep their raw answer.
+      if (q.no_translate === true || isVerbatimValue(val)) continue;
       toTranslate.push({ id: q.id, text: val, fieldLabel: questionLabel(q.question_i18n) });
     }
     if (toTranslate.length > 0) {
@@ -4732,10 +4756,11 @@ export async function generateFilledPdf(
   // Resolve all field values
   const fieldValues: Record<string, string | boolean> = {};
   const missingRequired: string[] = [];
-  // pdf_field_names of VISIBLE, applicable, still-empty free-text questions — the only
-  // fields that get an "N/A" placeholder (8 CFR 1208.3(c)(3)). Hidden blocks, do-not-fill
-  // sections, dates and checkboxes are deliberately absent, so they stay blank.
-  const naTargets: string[] = [];
+  // pdf_field_name → placeholder for VISIBLE, applicable, still-empty fields whose empty
+  // policy stamps a value (8 CFR 1208.3(c)(3)). Hidden blocks, do-not-fill sections, and
+  // fields under a `blank` policy are deliberately absent, so they stay blank. The
+  // placeholder is per-field (version default `na` → "N/A"; a `custom` field → its string).
+  const naTargets = new Map<string, string>();
 
   for (const q of questions) {
     // Do-not-fill section (I-589 Part D signature, Parts F/G): left ENTIRELY blank by
@@ -4809,9 +4834,19 @@ export async function generateFilledPdf(
       continue;
     }
     if (isEmpty) {
-      // Applicable but unanswered free text → eligible for "N/A" (never dates/selects).
-      if ((q.field_type === "text" || q.field_type === "textarea") && q.pdf_field_name) {
-        naTargets.push(q.pdf_field_name);
+      // Applicable but unanswered → the empty policy decides blank vs a placeholder.
+      // `auto` keeps the legacy "free-text only → N/A"; `na`/`custom` also cover dates;
+      // `blank` leaves it empty. Selects/checkboxes can't hold text → always blank.
+      if (q.pdf_field_name) {
+        const res = resolveEmptyPolicy(
+          {
+            fieldType: q.field_type,
+            emptyPolicy: (q.empty_policy ?? undefined) as FieldEmptyPolicy | undefined,
+            emptyPlaceholder: q.empty_placeholder ?? undefined,
+          },
+          versionEmptyDefault,
+        );
+        if (res.mode === "fill") naTargets.set(q.pdf_field_name, res.placeholder);
       }
       continue;
     }
@@ -4832,8 +4867,11 @@ export async function generateFilledPdf(
     } else {
       let str = String(resolved);
       // Free-text fields (text/textarea): use the batched/on-device translation if we have
-      // one (dates/numbers/selects map to codes and are never translated).
-      if (needsTranslation && (q.field_type === "text" || q.field_type === "textarea")) {
+      // one (dates/numbers/selects map to codes and are never translated). A verbatim field
+      // (no_translate / structured value) is never in `answersTranslated` — guard anyway so
+      // a masked token can never reach the PDF, whatever populated the cache.
+      const verbatim = q.no_translate === true || isVerbatimValue(str);
+      if (!verbatim && needsTranslation && (q.field_type === "text" || q.field_type === "textarea")) {
         const pre = answersTranslated[q.id];
         if (typeof pre === "string" && pre.trim()) str = pre;
       } else if (q.field_type === "date") {
@@ -4864,8 +4902,8 @@ export async function generateFilledPdf(
 
   // USCIS acceptance rule (8 CFR 1208.3(c)(3)): a blank field makes the form
   // incomplete, but "N/A" is an allowed response. Backfill ONLY the applicable,
-  // still-empty free-text fields collected above (naTargets) — never fields that
-  // belong to a hidden block, a do-not-fill section, a date, or a checkbox.
+  // still-empty fields collected above (naTargets → per-field placeholder) — never
+  // fields that belong to a hidden block, a do-not-fill section, or a checkbox.
   const { fillAcroForm, backfillNaTextFields } = await import("@/backend/platform/pdf");
   const detectedForNa = (published.detected_fields ?? []) as Array<{
     pdf_field_name: string;

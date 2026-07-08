@@ -75,6 +75,25 @@ export const FORM_EDITOR_STRINGS_ES: FormEditorStrings = {
   required: "Obligatoria",
   validation: "Validación avanzada",
   minSelected: "Mínimo a marcar (multi-selección)",
+  // empty-field policy (blank vs N/A vs custom) + verbatim
+  emptyPolicy: "Cuando está vacío",
+  emptyPolicyInherit: "Según el formulario",
+  emptyPolicyNa: "Poner N/A",
+  emptyPolicyBlank: "Dejar en blanco",
+  emptyPolicyCustom: "Texto personalizado",
+  emptyPolicyHint:
+    "Qué se escribe si el campo aplica pero el cliente no lo respondió. \"Según el formulario\" usa el valor por defecto de la versión.",
+  emptyPlaceholder: "Texto por defecto",
+  noTranslate: "No traducir",
+  noTranslateHint:
+    "Escribe la respuesta tal cual (sin traducir ni enmascarar). Úsalo para A-Number, SSN, pasaporte, nombres y ciudades.",
+  // version-wide default (structure header)
+  versionEmptyPolicy: "Campos vacíos (por defecto)",
+  versionEmptyPolicyAuto: "Automático (solo texto → N/A)",
+  versionEmptyPolicyNa: "N/A en todos los aplicables",
+  versionEmptyPolicyBlank: "Dejar en blanco",
+  versionEmptyPolicyHint:
+    "Valor por defecto de toda la versión cuando un campo aplica pero está vacío. Cada pregunta puede sobreescribirlo.",
   // condition (dynamic/conditional fields)
   condition: "Mostrar según otra respuesta",
   condNone: "Siempre visible",

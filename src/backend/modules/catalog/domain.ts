@@ -10,6 +10,7 @@
 import { z } from "zod";
 import { GENERATION_MODELS } from "@/shared/constants/ai-models";
 import { ConditionSchema } from "@/shared/form-logic/conditions";
+import { FIELD_EMPTY_POLICIES, VERSION_EMPTY_POLICIES } from "@/shared/form-logic/empty-policy";
 import {
   PARTY_ROLE_KEYS,
   PARTY_ROLE_CARDINALITIES,
@@ -417,6 +418,11 @@ export const AutomationVersionSchema = z.object({
   status: VersionStatusSchema.default("draft"),
   published_at: z.string().datetime().nullable(),
   created_by: z.string().uuid().nullable(),
+  // Form-wide default for how APPLICABLE-but-EMPTY fields render in the PDF:
+  // `auto` (legacy: only free-text → N/A), `na` (every text-backed empty → N/A),
+  // or `blank`. A per-question `empty_policy` overrides this. See migration 0070
+  // and src/shared/form-logic/empty-policy.ts.
+  default_empty_policy: z.enum(VERSION_EMPTY_POLICIES).default("auto"),
 });
 export type AutomationVersion = z.infer<typeof AutomationVersionSchema>;
 
@@ -491,6 +497,15 @@ export const QuestionSchema = z.object({
   // Conditional/dynamic visibility (show/lock/require depending on another
   // answer). NULL = unconditional. See src/shared/form-logic/conditions.ts.
   condition: ConditionSchema.nullable().default(null),
+  // Per-field empty-fill policy: `inherit` (use the version default), `na`,
+  // `blank`, or `custom` (`empty_placeholder`). See migration 0070 and
+  // src/shared/form-logic/empty-policy.ts.
+  empty_policy: z.enum(FIELD_EMPTY_POLICIES).default("inherit"),
+  empty_placeholder: z.string().nullable().default(null),
+  // Write the answer to the PDF VERBATIM — never machine-translated nor PII-masked
+  // (A-Numbers, SSNs, passports, names, cities). Keeps `maskPii` output off the
+  // federal form. Default false. See migration 0070.
+  no_translate: z.boolean().default(false),
 });
 export type Question = z.infer<typeof QuestionSchema>;
 

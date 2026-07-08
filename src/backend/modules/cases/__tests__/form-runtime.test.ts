@@ -1058,8 +1058,8 @@ describe("generateFilledPdf", () => {
     await generateFilledPdf(staffActor, { responseId: RESPONSE_ID });
     // Only the visible, empty free-text field is offered for "N/A". The date field
     // and the condition-hidden spouse field are NOT — they stay blank.
-    const naTargets = (mockBackfillNa.mock.calls[0] as unknown as unknown[])?.[2] as Iterable<string>;
-    expect([...naTargets]).toEqual(["Occupation"]);
+    const naTargets = (mockBackfillNa.mock.calls[0] as unknown as unknown[])?.[2] as Map<string, string>;
+    expect([...naTargets.keys()]).toEqual(["Occupation"]);
   });
 
   it("uses the client's override for an editable empty-profile field (regression #6)", async () => {
@@ -1179,8 +1179,114 @@ describe("generateFilledPdf", () => {
 
     // The « value must NEVER reach the AcroForm; it is treated as empty → becomes an N/A target.
     expect(mockFillAcroForm).toHaveBeenCalledWith(expect.anything(), {}, {});
-    const naTargets = (mockBackfillNa.mock.calls[0] as unknown as unknown[])?.[2] as Iterable<string>;
-    expect([...naTargets]).toEqual(["ChildLast1"]);
+    const naTargets = (mockBackfillNa.mock.calls[0] as unknown as unknown[])?.[2] as Map<string, string>;
+    expect([...naTargets.keys()]).toEqual(["ChildLast1"]);
+  });
+
+  it("writes an A-Number VERBATIM — never sends it to the translator (no PII mask on the PDF)", async () => {
+    // The exact Karelis bug: a text A-Number the client typed. It must reach the AcroForm
+    // as "A123456789", NOT the masked "A-•••-•••" the translator (maskPii) would return.
+    mockFindFormResponseById.mockResolvedValue({
+      ...approvedResponse,
+      answers: { qA: "A123456789" },
+      translation_status: "none",
+    });
+    mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
+    mockGetPublishedAutomationVersion.mockResolvedValue({ ...publishedVersion, source_language: "en" });
+    mockListQuestionGroups.mockResolvedValue([{ id: "grp1" }]);
+    mockListQuestions.mockResolvedValue([
+      { id: "qA", source: "client_answer", source_ref: null, pdf_field_name: "ANumber", is_required: false, field_type: "text" },
+    ]);
+
+    await generateFilledPdf(staffActor, { responseId: RESPONSE_ID });
+
+    // A structured value is excluded from the batch entirely (here it was the only field).
+    expect(mockTranslateAnswersBatch).not.toHaveBeenCalled();
+    expect(mockFillAcroForm).toHaveBeenCalledWith(expect.anything(), {}, { ANumber: "A123456789" });
+  });
+
+  it("honours no_translate — a proper noun is written literally, only the narrative is translated", async () => {
+    mockFindFormResponseById.mockResolvedValue({
+      ...approvedResponse,
+      answers: { qName: "María González", qStory: "hola mundo" },
+      translation_status: "none",
+    });
+    mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
+    mockGetPublishedAutomationVersion.mockResolvedValue({ ...publishedVersion, source_language: "en" });
+    mockListQuestionGroups.mockResolvedValue([{ id: "grp1" }]);
+    mockListQuestions.mockResolvedValue([
+      { id: "qName", source: "client_answer", source_ref: null, pdf_field_name: "Name", is_required: false, field_type: "text", no_translate: true },
+      { id: "qStory", source: "client_answer", source_ref: null, pdf_field_name: "Story", is_required: false, field_type: "textarea" },
+    ]);
+    mockTranslateAnswersBatch.mockResolvedValue({ qStory: "hello world" });
+
+    await generateFilledPdf(staffActor, { responseId: RESPONSE_ID });
+
+    // The no_translate field is NOT in the batch; only the narrative is.
+    const batchArg = mockTranslateAnswersBatch.mock.calls[0][0] as { items: Array<{ id: string }> };
+    expect(batchArg.items.map((i) => i.id)).toEqual(["qStory"]);
+    expect(mockFillAcroForm).toHaveBeenCalledWith(expect.anything(), {}, { Name: "María González", Story: "hello world" });
+  });
+
+  it("empty policy `na` (version default) fills an empty DATE with N/A (legacy `auto` skipped dates)", async () => {
+    mockFindFormResponseById.mockResolvedValue({ ...approvedResponse, answers: {} });
+    mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
+    mockGetPublishedAutomationVersion.mockResolvedValue({
+      ...publishedVersion,
+      source_language: "en",
+      default_empty_policy: "na",
+      detected_fields: [
+        { pdf_field_name: "Occupation", field_type: "text", page: 3 },
+        { pdf_field_name: "DOB", field_type: "text", page: 3 },
+      ],
+    });
+    mockListQuestionGroups.mockResolvedValue([{ id: "grp1" }]);
+    mockListQuestions.mockResolvedValue([
+      { id: "qOcc", source: "client_answer", source_ref: null, pdf_field_name: "Occupation", is_required: false, field_type: "text" },
+      { id: "qDob", source: "client_answer", source_ref: null, pdf_field_name: "DOB", is_required: false, field_type: "date" },
+    ]);
+
+    await generateFilledPdf(staffActor, { responseId: RESPONSE_ID });
+    const naTargets = (mockBackfillNa.mock.calls[0] as unknown as unknown[])?.[2] as Map<string, string>;
+    expect(naTargets.get("Occupation")).toBe("N/A");
+    expect(naTargets.get("DOB")).toBe("N/A");
+  });
+
+  it("empty policy `blank` (version default) leaves empty free-text blank", async () => {
+    mockFindFormResponseById.mockResolvedValue({ ...approvedResponse, answers: {} });
+    mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
+    mockGetPublishedAutomationVersion.mockResolvedValue({
+      ...publishedVersion,
+      default_empty_policy: "blank",
+      detected_fields: [{ pdf_field_name: "Occupation", field_type: "text", page: 3 }],
+    });
+    mockListQuestionGroups.mockResolvedValue([{ id: "grp1" }]);
+    mockListQuestions.mockResolvedValue([
+      { id: "qOcc", source: "client_answer", source_ref: null, pdf_field_name: "Occupation", is_required: false, field_type: "text" },
+    ]);
+
+    await generateFilledPdf(staffActor, { responseId: RESPONSE_ID });
+    const naTargets = (mockBackfillNa.mock.calls[0] as unknown as unknown[])?.[2] as Map<string, string>;
+    expect(naTargets.size).toBe(0);
+  });
+
+  it("per-field `custom` empty policy overrides the version default with its own placeholder", async () => {
+    mockFindFormResponseById.mockResolvedValue({ ...approvedResponse, answers: {} });
+    mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
+    mockGetPublishedAutomationVersion.mockResolvedValue({
+      ...publishedVersion,
+      default_empty_policy: "blank", // version-wide: blank...
+      detected_fields: [{ pdf_field_name: "Occupation", field_type: "text", page: 3 }],
+    });
+    mockListQuestionGroups.mockResolvedValue([{ id: "grp1" }]);
+    mockListQuestions.mockResolvedValue([
+      // ...but this field forces a custom "None"
+      { id: "qOcc", source: "client_answer", source_ref: null, pdf_field_name: "Occupation", is_required: false, field_type: "text", empty_policy: "custom", empty_placeholder: "None" },
+    ]);
+
+    await generateFilledPdf(staffActor, { responseId: RESPONSE_ID });
+    const naTargets = (mockBackfillNa.mock.calls[0] as unknown as unknown[])?.[2] as Map<string, string>;
+    expect(naTargets.get("Occupation")).toBe("None");
   });
 
   it("formats a full-date answer as MM/DD/YYYY for the official PDF", async () => {

@@ -1182,6 +1182,20 @@ describe("translateAnswersBatch", () => {
     expect(prompt).not.toContain("123-45-6789");
   });
 
+  it("returns standalone structured/PII values VERBATIM — no provider call, no mask", async () => {
+    // Defence in depth: an A-Number/SSN on its own carries no language to translate and must
+    // never be masked into the PDF. It is returned raw without ever reaching the provider.
+    const out = await translateAnswersBatch({
+      items: [
+        { id: "qA", text: "A123456789" },
+        { id: "qSsn", text: "123-45-6789" },
+      ],
+      direction: "es-en",
+    });
+    expect(out).toEqual({ qA: "A123456789", qSsn: "123-45-6789" });
+    expect(mocks.geminiModels.generateContent).not.toHaveBeenCalled();
+  });
+
   it("is a no-op (no provider call) when there are no items", async () => {
     const out = await translateAnswersBatch({ items: [], direction: "es-en" });
     expect(out).toEqual({});

@@ -8,6 +8,7 @@ import { QuestionCard } from "./question-card";
 import { PdfViewer } from "./pdf-viewer";
 import type { FormEditorVM, QuestionGroupVM, QuestionVM, FormEditorActions } from "./types";
 import type { FormEditorStrings } from "./strings";
+import type { VersionEmptyPolicy } from "@/shared/form-logic/empty-policy";
 
 /**
  * StructureEditor — the two-panel "Estructurar" stage (DOC-53 §5.1.2).
@@ -50,6 +51,9 @@ export function StructureEditor({
   const [pageFrom, setPageFrom] = React.useState("");
   const [pageTo, setPageTo] = React.useState("");
   const [openGroups, setOpenGroups] = React.useState<Set<string>>(() => new Set(groups.map((g) => g.id)));
+  const [emptyDefault, setEmptyDefault] = React.useState<VersionEmptyPolicy>(
+    vm.openVersion?.version.default_empty_policy ?? "auto",
+  );
 
   const detectedFields = vm.openVersion?.version.detected_fields ?? [];
   const allQuestions = groups.flatMap((g) => g.questions);
@@ -107,6 +111,15 @@ export function StructureEditor({
     setGroups((gs) => gs.map((g) => (g.id === groupId ? { ...g, title_i18n } : g)));
     const r = await actions.upsertGroup({ id: groupId, automation_version_id: versionId, title_i18n: title_i18n as Record<string, string> });
     if (r.success) flashSaved();
+  }
+
+  // Version-wide default for how empty applicable fields render (blank / N/A / custom).
+  // A pure rendering setting — each question can still override it.
+  async function changeVersionEmptyPolicy(next: VersionEmptyPolicy) {
+    setEmptyDefault(next);
+    const r = await actions.setVersionEmptyPolicy({ version_id: versionId, default_empty_policy: next });
+    if (r.success) flashSaved();
+    else if (r.error) toast.error(r.error.code);
   }
 
   // A "do not fill" section is left ENTIRELY blank in the generated PDF by legal
@@ -181,6 +194,11 @@ export function StructureEditor({
       // Only persist a fully-formed condition (a controlling question is set);
       // a half-configured one would fail server validation and block the save.
       condition: next.condition && next.condition.when?.question ? next.condition : null,
+      // Empty-fill policy + verbatim flag (must be sent every save — the upsert
+      // replaces the row, so omitting them would reset to defaults).
+      empty_policy: next.empty_policy ?? "inherit",
+      empty_placeholder: next.empty_policy === "custom" ? (next.empty_placeholder ?? null) : null,
+      no_translate: next.no_translate ?? false,
     });
     if (r.success) flashSaved();
     else if (r.error) toast.error(r.error.code);
@@ -259,6 +277,24 @@ export function StructureEditor({
           </div>
         )}
         {!readOnly && <GhostBtn size="md" full={false} onClick={addGroup}>{strings.addGroup}</GhostBtn>}
+        {!noPdf && !readOnly && (
+          <label
+            style={{ display: "inline-flex", alignItems: "center", gap: 7 }}
+            title={strings.versionEmptyPolicyHint}
+          >
+            <span style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-2)" }}>{strings.versionEmptyPolicy}</span>
+            <select
+              value={emptyDefault}
+              onChange={(e) => changeVersionEmptyPolicy(e.target.value as VersionEmptyPolicy)}
+              aria-label={strings.versionEmptyPolicy}
+              style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13, background: "var(--card,#fff)", color: "var(--ink)" }}
+            >
+              <option value="auto">{strings.versionEmptyPolicyAuto}</option>
+              <option value="na">{strings.versionEmptyPolicyNa}</option>
+              <option value="blank">{strings.versionEmptyPolicyBlank}</option>
+            </select>
+          </label>
+        )}
         <div style={{ flex: 1 }} />
         {savingFlash && (
           <span style={{ fontSize: 12, color: "var(--ink-3)", display: "inline-flex", alignItems: "center", gap: 5 }}>

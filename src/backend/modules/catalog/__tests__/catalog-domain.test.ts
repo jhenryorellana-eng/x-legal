@@ -104,6 +104,7 @@ function makeVersion(overrides: Partial<AutomationVersion> = {}): AutomationVers
     status: "draft",
     published_at: null,
     created_by: "user-1",
+    default_empty_policy: "auto",
     ...overrides,
   };
 }
@@ -134,6 +135,9 @@ function makeQuestion(overrides: Partial<Question> = {}): Question {
     position: 0,
     validation: null,
     condition: null,
+    empty_policy: "inherit",
+    empty_placeholder: null,
+    no_translate: false,
     ...overrides,
   };
 }
