@@ -323,7 +323,7 @@ export function SharedCaseView({
         {active === "generaciones" && <GeneracionesTab vm={vm} actions={actions} strings={strings} locale={locale} title={tb.generaciones} />}
         {active === "traspaso" && <TraspasoTab vm={vm} actions={actions} strings={strings} />}
         {active === "pagos" && <PagosTab vm={vm} actions={actions} strings={strings} locale={locale} />}
-        {active === "expediente" && <ExpedienteTab vm={vm} actions={actions} strings={strings} title={tb.expediente} />}
+        {active === "expediente" && <ExpedienteTab vm={vm} strings={strings} title={tb.expediente} />}
         {active === "validacion" && <ValidacionTab vm={vm} strings={strings} title={tb.validacion} />}
         {active === "fasesAnteriores" && <FasesAnterioresTab vm={vm} actions={actions} strings={strings} />}
         {active === "preMortem" && <PreMortemTab vm={vm} actions={actions} strings={strings} />}

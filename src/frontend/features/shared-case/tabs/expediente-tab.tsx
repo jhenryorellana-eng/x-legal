@@ -3,20 +3,16 @@
 /**
  * Expediente tab (DOC-53 §3.4 — legal file) — expediente assembly attempts for
  * the case (real data via getCaseExpedientes). Per attempt: status + page count,
- * plus a "Ver expediente" button that opens the compiled PDF directly (so Diana
- * doesn't have to detour through the sidebar → assembler → "Ver PDF"). The
- * "Abrir ensamblador" CTA opens the drag&drop assembler to build/edit.
+ * plus a "Ver expediente" button that opens the assembler at
+ * /legal/expediente/[caseId] (so Diana doesn't detour through the sidebar). The
+ * top "Abrir ensamblador" CTA opens the same assembler to build/edit.
  */
 
-import * as React from "react";
 import { Card } from "@/frontend/components/brand/card";
 import { StatusPill, type StatusKind } from "@/frontend/components/brand/status-pill";
 import { EmptyState } from "@/frontend/components/desktop/empty-state";
-import { GhostBtn } from "@/frontend/components/brand/ghost-btn";
-import { toast } from "@/frontend/components/desktop";
 import { Icon } from "@/frontend/components/brand/icon";
-import { getBridge } from "@/frontend/platform-bridge";
-import type { CaseWorkspaceVM, CaseDetailActions, ExpedienteVM } from "../types";
+import type { CaseWorkspaceVM, ExpedienteVM } from "../types";
 import type { CasosStrings } from "../strings";
 import { interp } from "../strings";
 
@@ -33,40 +29,21 @@ const EXP_PILL: Record<string, StatusKind> = {
   printed: "hecho",
 };
 
-/** Statuses whose attempt has a compiled PDF → "Ver expediente" applies. */
-const HAS_PDF = new Set([
-  "compiled",
-  "ready",
-  "sent_to_lawyer",
-  "corrections_needed",
-  "approved",
-  "sent_to_finance",
-  "printed",
-]);
-
 export function ExpedienteTab({
   vm,
-  actions,
   strings,
   title,
 }: {
   vm: CaseWorkspaceVM;
-  actions: CaseDetailActions;
   strings: CasosStrings;
   title: string;
 }) {
   const t = strings.detail;
   const statusLabels = t.expStatus as Record<string, string>;
-  const [busy, setBusy] = React.useState<string | null>(null);
-
-  async function viewPdf(expedienteId: string) {
-    if (!actions.getExpedientePdfUrl) return;
-    setBusy(expedienteId);
-    const r = await actions.getExpedientePdfUrl({ expedienteId });
-    setBusy(null);
-    if (r.ok && r.data) getBridge().share.openExternal(r.data);
-    else toast.error(t.expViewError);
-  }
+  // Native <a> (not next/link) on purpose: the client-side <Link> nav did NOT fire
+  // from inside the shared-case-view tab tree (worked from the sidebar) — a plain
+  // anchor navigates reliably. The assembler route is force-dynamic anyway.
+  const assemblerHref = `/legal/expediente/${vm.header.caseId}`;
 
   return (
     <Card>
@@ -77,14 +54,8 @@ export function ExpedienteTab({
           </h2>
           <p style={{ margin: "4px 0 0", fontSize: 13.5, color: "var(--ink-2)" }}>{t.expSub}</p>
         </div>
-        {/*
-          Native <a> (not next/link) on purpose: the client-side <Link> nav did NOT
-          fire from inside the shared-case-view tab tree (worked from the sidebar) —
-          a plain anchor lets the browser navigate reliably. The assembler route is
-          force-dynamic, so a full navigation is expected anyway.
-        */}
         <a
-          href={`/legal/expediente/${vm.header.caseId}`}
+          href={assemblerHref}
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -110,31 +81,44 @@ export function ExpedienteTab({
         </div>
       ) : (
         <div style={{ marginTop: 16 }}>
-          {vm.expedientes.map((e: ExpedienteVM) => {
-            const canView = HAS_PDF.has(e.status) && !!actions.getExpedientePdfUrl;
-            return (
-              <div key={e.id} className="formcard">
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{ margin: 0, fontSize: 14, fontWeight: 800, color: "var(--ink)" }}>
-                    {interp(t.expAttempt, { n: String(e.attemptNo) })}
+          {vm.expedientes.map((e: ExpedienteVM) => (
+            <div key={e.id} className="formcard">
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ margin: 0, fontSize: 14, fontWeight: 800, color: "var(--ink)" }}>
+                  {interp(t.expAttempt, { n: String(e.attemptNo) })}
+                </p>
+                {e.pageCount != null && (
+                  <p style={{ margin: "2px 0 0", fontSize: 12.5, color: "var(--ink-3)", fontWeight: 700 }}>
+                    {interp(t.expPages, { n: String(e.pageCount) })}
                   </p>
-                  {e.pageCount != null && (
-                    <p style={{ margin: "2px 0 0", fontSize: 12.5, color: "var(--ink-3)", fontWeight: 700 }}>
-                      {interp(t.expPages, { n: String(e.pageCount) })}
-                    </p>
-                  )}
-                </div>
-                <StatusPill kind={EXP_PILL[e.status] ?? "pendiente"}>
-                  {statusLabels[e.status] ?? e.status}
-                </StatusPill>
-                {canView && (
-                  <GhostBtn size="md" full={false} icon="doc" disabled={busy === e.id} onClick={() => viewPdf(e.id)}>
-                    {busy === e.id ? t.expViewBusy : t.expViewBtn}
-                  </GhostBtn>
                 )}
               </div>
-            );
-          })}
+              <StatusPill kind={EXP_PILL[e.status] ?? "pendiente"}>
+                {statusLabels[e.status] ?? e.status}
+              </StatusPill>
+              {/* "Ver expediente" → opens the assembler/compiler for this case. */}
+              <a
+                href={assemblerHref}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: "var(--accent)",
+                  textDecoration: "none",
+                  borderRadius: 10,
+                  padding: "7px 14px",
+                  border: "1px solid var(--line)",
+                  background: "var(--card, #fff)",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <Icon name="doc" size={15} color="var(--accent)" />
+                {t.expViewBtn}
+              </a>
+            </div>
+          ))}
         </div>
       )}
     </Card>

@@ -1866,8 +1866,6 @@
         },
         "expOpenAssembler": "Open assembler",
         "expViewBtn": "View case file",
-        "expViewBusy": "Opening…",
-        "expViewError": "Couldn't open the case file.",
         "uploadDoc": "Upload PDF",
         "uploading": "Uploading…",
         "uploadDone": "Document uploaded",

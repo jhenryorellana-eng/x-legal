@@ -73,7 +73,7 @@ import {
   runPreMortemAction,
 } from "../actions";
 import { getFormResponsePdfUrlAction, generateFilledPdfAction } from "../form-actions";
-import { getGenerationOutputUrlAction, startLetterGenerationAction, getRunStatusAction, getExpedientePdfUrlAction } from "../generation-actions";
+import { getGenerationOutputUrlAction, startLetterGenerationAction, getRunStatusAction } from "../generation-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -316,7 +316,6 @@ export default async function AdminCasoDetailPage({
         getFilledPdfUrl: getFormResponsePdfUrlAction,
         generateFilledPdf: generateFilledPdfAction,
         getGenerationOutputUrl: getGenerationOutputUrlAction,
-        getExpedientePdfUrl: getExpedientePdfUrlAction,
         startLetterGeneration: startLetterGenerationAction,
         getRunStatus: getRunStatusAction,
         runPreMortem: runPreMortemAction,

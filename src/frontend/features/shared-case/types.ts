@@ -449,13 +449,6 @@ export interface CaseDetailActions {
     responseId: string;
   }) => Promise<{ ok: boolean; downloadUrl?: string; error?: { code: string; details?: Record<string, unknown> } }>;
   /**
-   * Open the compiled PDF of an expediente attempt (Expediente tab — "Ver
-   * expediente"). Optional; only staff case surfaces inject it.
-   */
-  getExpedientePdfUrl?: (input: {
-    expedienteId: string;
-  }) => Promise<{ ok: boolean; data?: string; error?: { code: string } }>;
-  /**
    * AI-letter generation actions (Generaciones tab — Ola 2). Optional; only staff
    * surfaces that authorize generation inject them.
    */
