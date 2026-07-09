@@ -3600,37 +3600,37 @@ export async function assessPreMortemRisk(
     .join("\n");
 
   const systemPrompt =
-    "You are a meticulous quality-assurance reviewer for U.S. immigration filings. " +
-    "Given a filling guide (the rubric), a generated document (an AI letter OR an autofilled official form), and the case context, " +
-    "find every error, discrepancy, formatting problem, bad field-filling, unresolved placeholder, missing field, and internal inconsistency, " +
-    "and judge whether the document is high enough quality to be APPROVED. " +
-    "Use web_search to consult official examples/instructions and calibrate quality. " +
-    "Be precise and cite the exact field or section in each finding. " +
-    "IMPORTANT: write the free-text fields — `summary`, and each finding's `description` and `correction` — in SPANISH (the legal staff reads Spanish). " +
-    "Keep the enum fields (`severity`, `category`, `semaforo`, `verdict`) EXACTLY as the codes given (do not translate them); `location` may keep the official English field/section name. " +
-    "You MUST respond with valid JSON only, no prose before or after.";
+    "RESPONDE EXCLUSIVAMENTE EN ESPAÑOL. Todo el texto libre que generes — `summary` y, en cada hallazgo, `description` y `correction` — DEBE estar redactado en español de España/Latinoamérica (el personal legal lee español). Aunque el documento, la guía y los nombres de campo estén en inglés, tu redacción va en español. " +
+    "Eres un revisor de control de calidad (QA) meticuloso de expedientes migratorios de EE. UU. " +
+    "A partir de una guía de llenado (la rúbrica), un documento generado (una carta de IA o un formulario oficial autollenado) y el contexto del caso, " +
+    "encuentra cada error, discordancia, problema de formato, mal llenado de campos, marcador sin resolver, campo faltante e incoherencia interna, " +
+    "y juzga si el documento tiene calidad suficiente para ser APROBADO. " +
+    "Usa web_search para consultar ejemplos/instrucciones oficiales y calibrar la calidad. " +
+    "Sé preciso y cita el campo o la sección exacta en cada hallazgo. " +
+    "Mantén los campos de enumeración (`severity`, `category`, `semaforo`, `verdict`) EXACTAMENTE con los códigos dados (no los traduzcas); `location` puede conservar el nombre oficial del campo/sección en inglés. " +
+    "DEBES responder únicamente con JSON válido, sin texto antes ni después.";
 
   const userMessage =
     "## FILLING GUIDE (the rubric — validate strictly against it)\n\n" + guide.guide_markdown +
     "\n\n---\n" + documentBlock +
     "\n\n---\n## CASE CONTEXT (source data — PII masked; use to detect discrepancies)\n\n" + contextBlock +
     "\n\n---\n## FINDING CATEGORIES (use ONLY these category codes)\n\n" + categoriesBlock +
-    "\n\n---\n## TASK\n\n" +
-    "Validate the document against the guide and the case context. Assign an overall quality score (0-100), a semáforo, and a verdict on whether it would be approved. List every issue as a finding. " +
-    "Write `summary`, `description` and `correction` in SPANISH; keep `severity`/`category`/`semaforo`/`verdict` as the exact codes.\n\n" +
-    "Respond ONLY with this JSON (no prose, no markdown fences):\n" +
+    "\n\n---\n## TAREA\n\n" +
+    "Valida el documento contra la guía y el contexto del caso. Asigna un puntaje de calidad general (0-100), un semáforo y un veredicto sobre si sería aprobado. Enumera cada problema como un hallazgo. " +
+    "Recuerda: `summary`, `description` y `correction` van EN ESPAÑOL; `severity`/`category`/`semaforo`/`verdict` van con los códigos exactos.\n\n" +
+    "Responde SOLO con este JSON (sin prosa, sin fences de markdown):\n" +
     "{\n" +
     '  "score": 0,\n' +
     '  "semaforo": "green" | "amber" | "red",\n' +
     '  "verdict": "would_approve" | "needs_corrections" | "would_reject",\n' +
-    '  "summary": "<2-3 sentence overall assessment>",\n' +
+    '  "summary": "<evaluación general en 2-3 frases, EN ESPAÑOL>",\n' +
     '  "findings": [\n' +
     "    {\n" +
     '      "severity": "critico" | "moderado" | "sugerencia",\n' +
-    '      "category": "<one of the category codes above>",\n' +
-    '      "location": "<field name or section>",\n' +
-    '      "description": "<what is wrong>",\n' +
-    '      "correction": "<how to fix it>"\n' +
+    '      "category": "<uno de los códigos de categoría de arriba>",\n' +
+    '      "location": "<nombre del campo o sección>",\n' +
+    '      "description": "<qué está mal — EN ESPAÑOL>",\n' +
+    '      "correction": "<cómo corregirlo — EN ESPAÑOL>"\n' +
     "    }\n" +
     "  ]\n" +
     "}";
