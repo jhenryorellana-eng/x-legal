@@ -102,9 +102,12 @@ export function SharedCaseView({
     hasPreMortem: vm.preMortem?.enabled ?? false,
     allowedTabIds: tabAccessByRole?.[isAdmin ? "admin" : vm.role] ?? null,
   });
+  // Old deep links used ?tab=cartas for what is now the unified "generaciones" tab.
+  const normalizedInitialTab: CaseTabId | undefined =
+    (initialTab as string | undefined) === "cartas" ? "generaciones" : initialTab;
   const [active, setActive] = React.useState<CaseTabId>(() =>
-    initialTab && tabs.some((tab) => tab.id === initialTab && !tab.locked)
-      ? initialTab
+    normalizedInitialTab && tabs.some((tab) => tab.id === normalizedInitialTab && !tab.locked)
+      ? normalizedInitialTab
       : "resumen",
   );
   // Shown when a locked tab is clicked before the case is active.
@@ -314,10 +317,9 @@ export function SharedCaseView({
             vm={vm}
             actions={actions}
             strings={strings}
-            onNavigateToGeneration={() => setActive(vm.isAdmin ? "generaciones" : "cartas")}
+            onNavigateToGeneration={() => setActive("generaciones")}
           />
         )}
-        {active === "cartas" && <GeneracionesTab vm={vm} actions={actions} strings={strings} locale={locale} title={tb.cartas} />}
         {active === "generaciones" && <GeneracionesTab vm={vm} actions={actions} strings={strings} locale={locale} title={tb.generaciones} />}
         {active === "traspaso" && <TraspasoTab vm={vm} actions={actions} strings={strings} />}
         {active === "pagos" && <PagosTab vm={vm} actions={actions} strings={strings} locale={locale} />}

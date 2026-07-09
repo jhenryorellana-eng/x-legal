@@ -78,7 +78,6 @@ const TAB_META: Record<CaseTabId, TabMeta> = {
     badge: (input) => input.documentsToReview,
   },
   formularios: { label: (tb, isAdmin) => (isAdmin ? tb.formularios : tb.informacion) },
-  cartas: { label: (tb) => tb.cartas },
   generaciones: { label: (tb) => tb.generaciones },
   traspaso: { label: (tb) => tb.traspaso },
   historial: { label: (tb) => tb.historial },

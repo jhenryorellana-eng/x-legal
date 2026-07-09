@@ -22,7 +22,6 @@ export const CASE_TAB_IDS = [
   "pagos",
   "documentos",
   "formularios",
-  "cartas",
   "generaciones",
   "citas",
   "expediente",
@@ -53,7 +52,6 @@ export const CANONICAL_TAB_ORDER: readonly CaseTabId[] = [
   "pagos",
   "documentos",
   "formularios",
-  "cartas",
   "generaciones",
   "citas",
   "expediente",
@@ -66,8 +64,9 @@ export const CANONICAL_TAB_ORDER: readonly CaseTabId[] = [
 
 /**
  * Per-role default tab set AND canonical order (DOC-52 §5 / DOC-53 §3 / DOC-54 §2).
- * `pagos` is admin + sales + finance; `cartas` is paralegal/asesora; messaging is
- * a header button, not a tab. Admin sees the full set.
+ * `pagos` is admin + sales + finance; `generaciones` (canonical "Generaciones",
+ * formerly "Cartas") is the AI-letters tab for paralegal + admin; messaging is a
+ * header button, not a tab. Admin sees the full set.
  */
 export const ROLE_DEFAULT_TAB_ORDER: Record<StaffRole, CaseTabId[]> = {
   sales: [
@@ -100,7 +99,7 @@ export const ROLE_DEFAULT_TAB_ORDER: Record<StaffRole, CaseTabId[]> = {
     "resumen",
     "documentos",
     "formularios",
-    "cartas",
+    "generaciones",
     "expediente",
     "validacion",
     "fasesAnteriores",

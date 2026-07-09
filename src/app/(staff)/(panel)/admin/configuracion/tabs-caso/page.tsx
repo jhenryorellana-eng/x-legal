@@ -29,7 +29,6 @@ const TAB_LABEL_KEY: Record<CaseTabId, string> = {
   pagos: "pagos",
   documentos: "documentos",
   formularios: "formularios",
-  cartas: "cartas",
   generaciones: "generaciones",
   citas: "citasRoute",
   expediente: "expediente",

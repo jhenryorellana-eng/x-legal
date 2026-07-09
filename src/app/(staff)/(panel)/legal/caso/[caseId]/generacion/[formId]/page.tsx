@@ -22,7 +22,7 @@ export default async function LegalLetterReviewPage({
       formId={formId}
       party={party}
       name={name}
-      backHref={`/legal/caso/${caseId}?tab=cartas`}
+      backHref={`/legal/caso/${caseId}?tab=generaciones`}
     />
   );
 }

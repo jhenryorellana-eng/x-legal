@@ -22,7 +22,7 @@ export default async function VentasLetterReviewPage({
       formId={formId}
       party={party}
       name={name}
-      backHref={`/ventas/clientes/${caseId}?tab=cartas`}
+      backHref={`/ventas/clientes/${caseId}?tab=generaciones`}
     />
   );
 }
