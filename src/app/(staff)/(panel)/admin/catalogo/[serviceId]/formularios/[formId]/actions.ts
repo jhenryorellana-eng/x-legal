@@ -27,6 +27,7 @@ import {
   duplicateVersionAsDraftAction,
   updateVersionEmptyPolicyAction,
   updateGenerationConfigAction,
+  saveFormFillGuideAction,
   testGenerationAction,
 } from "@/backend/modules/catalog/actions";
 
@@ -160,4 +161,15 @@ export async function testGenerationUi(input: {
   party_id?: string;
 }): Promise<Res<{ run_id: string }>> {
   return envelope(await testGenerationAction(input));
+}
+
+// --- Pre-Mortem validation guide (both kinds) ------------------------------
+
+export async function savePreMortemGuideUi(input: {
+  form_definition_id: string;
+  enabled: boolean;
+  guide_markdown: string;
+  source_file_path?: string | null;
+}): Promise<Res<unknown>> {
+  return envelope(await saveFormFillGuideAction(input));
 }

@@ -108,6 +108,7 @@ export const formEditorPdfMock: FormEditorVM = {
     { id: "ds1", name: "Casos ganadores EOIR 2023–2025", tokens: 96000, active: true },
     { id: "ds2", name: "Memorándums Reforzar Asilo", tokens: 41000, active: true },
   ],
+  preMortemGuide: { enabled: false, guideText: null },
 };
 
 export const formEditorAiMock: FormEditorVM = {

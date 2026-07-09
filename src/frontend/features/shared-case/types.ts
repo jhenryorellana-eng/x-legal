@@ -214,27 +214,60 @@ export interface PriorPhaseGroupVM {
 }
 
 /**
- * Pre-Mortem (Etapa D) — AI risk analysis of a case: predicted asylum denial
- * reasons + corrections. Codes resolved to a locale label by the RSC page.
+ * Pre-Mortem — quality validation of a specific generation (ai_letter) or
+ * automation (pdf_automation): score + semáforo + verdict + findings, validated
+ * against the admin filling guide, the case context, and web examples. Category /
+ * verdict labels are resolved to the active locale by the RSC page.
  */
-export interface PreMortemReasonVM {
-  /** Stable taxonomy code (DenialReasonCode). */
-  code: string;
-  /** Locale-resolved label for the code. */
-  label: string;
-  /** 0..1. */
-  probability: number;
-  rationale: string;
+export type PreMortemSeverity = "critico" | "moderado" | "sugerencia";
+export type PreMortemSemaforo = "green" | "amber" | "red";
+export type PreMortemTargetKind = "ai_letter" | "pdf_automation";
+
+export interface PreMortemFindingVM {
+  severity: PreMortemSeverity;
+  /** Locale-resolved category label. */
+  category: string;
+  location: string;
+  description: string;
   correction: string;
 }
-export interface PreMortemAssessmentVM {
+
+/** A document that can be validated (feeds the tab selector + per-item deep-link). */
+export interface PreMortemTargetVM {
+  /** `${kind}:${formDefinitionId}[:${partyId}]` — selector id + deep-link key. */
+  key: string;
+  kind: PreMortemTargetKind;
+  formDefinitionId: string;
+  /** run id (ai_letter) or responseId (pdf_automation) that produced the artifact. */
+  refId: string | null;
+  partyId: string | null;
+  label: string;
+  status: string | null;
+}
+
+export interface PreMortemReportVM {
   id: string;
-  overallRisk: "low" | "medium" | "high" | null;
+  /** Matches a PreMortemTargetVM.key (or a bare `${kind}:${formDefinitionId}`). */
+  targetKey: string;
+  targetKind: PreMortemTargetKind;
+  /** 0..100. */
+  score: number;
+  semaforo: PreMortemSemaforo;
+  /** Verdict resolved to a boolean + locale label ("¿se aprobaría?"). */
+  approved: boolean;
+  verdictLabel: string;
   summary: string | null;
-  reasons: PreMortemReasonVM[];
+  findings: PreMortemFindingVM[];
   model: string | null;
   costUsd: number | null;
   createdAt: string;
+}
+
+export interface PreMortemVM {
+  enabled: boolean;
+  targets: PreMortemTargetVM[];
+  /** History (newest first); the tab filters by the selected target. */
+  reports: PreMortemReportVM[];
 }
 
 /** A single objective inside a cita of the appointment route (locale-resolved). */
@@ -359,8 +392,8 @@ export interface CaseWorkspaceVM {
   expedientes: ExpedienteVM[];
   /** Read-only docs + forms from already-passed phases (Fases anteriores tab). */
   priorPhases?: PriorPhaseGroupVM[];
-  /** Pre-Mortem risk analyses (Etapa D). `enabled` gates the tab; assessments = history (newest first). */
-  preMortem?: { enabled: boolean; assessments: PreMortemAssessmentVM[] };
+  /** Pre-Mortem quality validations. `enabled` gates the tab; targets = validable docs; reports = history. */
+  preMortem?: PreMortemVM;
 }
 
 /** Client-facing view of a document translation (status + result). */
@@ -464,13 +497,13 @@ export interface CaseDetailActions {
     runId: string;
   }) => Promise<{ ok: boolean; status?: string; outputAvailable?: boolean; error?: { code: string } }>;
   /**
-   * Run a Pre-Mortem AI analysis on the case (Etapa D). Returns the new
-   * assessment on success. Optional — only case-detail surfaces inject it.
+   * Validate a specific generation/automation with the Pre-Mortem. Returns the new
+   * quality report on success. Optional — only case-detail surfaces inject it.
    */
   runPreMortem?: (input: {
     caseId: string;
-    runId?: string;
-  }) => Promise<{ ok: boolean; assessment?: PreMortemAssessmentVM; error?: { code: string } }>;
+    target: { kind: PreMortemTargetKind; formDefinitionId: string; refId?: string | null };
+  }) => Promise<{ ok: boolean; report?: PreMortemReportVM; error?: { code: string } }>;
   /**
    * Request a translation (ES→EN by default) of an uploaded document into a
    * court-ready English PDF. Enqueues a QStash job; poll with getTranslation.

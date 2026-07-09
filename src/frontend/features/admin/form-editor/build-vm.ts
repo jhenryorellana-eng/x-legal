@@ -42,6 +42,7 @@ export interface RawFormEditorData {
   } | null;
   sources: { documents: Array<{ slug: string; paths?: string[] }>; forms: string[]; profileFields: string[] };
   generationConfig: Record<string, unknown> | null;
+  preMortemGuide?: { enabled: boolean; guideText: string | null; sourceFilePath?: string | null };
 }
 
 export interface RawDataset {
@@ -138,5 +139,9 @@ export function buildFormEditorVM(data: RawFormEditorData, datasets: RawDataset[
         }
       : null,
     datasets: datasets.map((d) => ({ id: d.id, name: d.name, tokens: d.total_tokens, active: d.is_active })),
+    preMortemGuide: {
+      enabled: data.preMortemGuide?.enabled ?? false,
+      guideText: data.preMortemGuide?.guideText ?? null,
+    },
   };
 }

@@ -1,39 +1,37 @@
 /**
- * ai-engine Pre-Mortem critic — unit tests.
+ * ai-engine Pre-Mortem quality validator — unit tests.
  *
  * Covers:
- *   1. retrieveDatasetItemsWithFallback: semantic OK path
- *   2. retrieveDatasetItemsWithFallback: fallback to lexical when matchDatasetItems empty
- *   3. retrieveDatasetItemsWithFallback: fallback to lexical when embedText throws
- *   4. assessPreMortemRisk: happy path (persists assessment, returns PreMortemAssessment)
- *   5. assessPreMortemRisk: tolerant JSON parsing (noisy output with markdown fences)
- *   6. assessPreMortemRisk: filters out invalid denial reason codes
- *   7. assessPreMortemRisk: throws PREMORTEM_NO_ELIGIBLE_RUN when no eligible run
- *   8. assessPreMortemRisk: explicit runId not found → PREMORTEM_NO_ELIGIBLE_RUN
- *   9. getPreMortemAssessmentsForCase: maps rows to typed PreMortemAssessment[]
- *  10. isPreMortemEnabledForCase: delegates to findPreMortemEnabledConfigForCase
+ *   1-4. retrieveDatasetItemsWithFallback (semantic / lexical fallback / null)
+ *   5. assessPreMortemRisk: ai_letter happy path (persists validation, new shape)
+ *   6. assessPreMortemRisk: pdf_automation happy path (resolveFormResponseFieldValues)
+ *   7. assessPreMortemRisk: tolerant JSON parsing (markdown fences)
+ *   8. assessPreMortemRisk: filters invalid categories/severities, clamps score
+ *   9. assessPreMortemRisk: PREMORTEM_NO_TARGET when no eligible ai_letter run
+ *  10. assessPreMortemRisk: PREMORTEM_NO_GUIDE when the form has no enabled guide
+ *  11. assessPreMortemRisk: IDOR guard (run/response of a different case)
+ *  12. assessPreMortemRisk: non-staff actor rejected (staff-only)
+ *  13. getPreMortemAssessmentsForCase: maps rows to the new shape
+ *  14. isPreMortemEnabledForCase: delegates to findGuideEnabledFormForCase
  *
- * Mock strategy: vi.hoisted() for all variables used inside vi.mock() factories.
- * All I/O (repository, platform, authz) is mocked. No real Anthropic/Gemini calls.
+ * All I/O (repository, platform, authz, the cases module) is mocked.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// ---------------------------------------------------------------------------
-// vi.hoisted — declare mock variables BEFORE vi.mock() runs
-// ---------------------------------------------------------------------------
-
 const mocks = vi.hoisted(() => {
-  // repository
   const repo = {
     findRunById: vi.fn(),
     findGenerationConfig: vi.fn().mockResolvedValue(null),
     matchDatasetItems: vi.fn(),
     insertPreMortemAssessment: vi.fn(),
     listPreMortemAssessmentsForCase: vi.fn(),
-    findPreMortemEnabledConfigForCase: vi.fn(),
+    findGuideEnabledFormForCase: vi.fn(),
+    listGuideEnabledFormsForCase: vi.fn().mockResolvedValue([]),
+    listCompletedRunsForForms: vi.fn().mockResolvedValue([]),
+    listFormResponsesForForms: vi.fn().mockResolvedValue([]),
+    findFormFillGuide: vi.fn(),
     findLatestEligibleRunForPreMortem: vi.fn(),
-    // pass-throughs for other repo functions imported by service.ts
     findActiveRun: vi.fn(),
     maxVersion: vi.fn(),
     insertRun: vi.fn(),
@@ -72,52 +70,29 @@ const mocks = vi.hoisted(() => {
     toVectorLiteral: vi.fn((v: number[]) => `[${v.join(",")}]`),
   };
 
+  const cases = {
+    getCaseExtractions: vi.fn().mockResolvedValue([]),
+    resolveFormResponseFieldValues: vi.fn(),
+  };
+
   const anthropicClient = {
     messages: {
-      stream: vi.fn(() => ({
-        finalMessage: vi.fn().mockResolvedValue({
-          content: [{ type: "text", text: '{"overallRisk":"medium","summary":"Test summary.","reasons":[]}' }],
-          usage: { input_tokens: 100, output_tokens: 50 },
-          stop_reason: "end_turn",
-          model: "claude-opus-4-7",
-        }),
-      })),
+      stream: vi.fn(),
       create: vi.fn(),
     },
   };
 
   const getAnthropicClient = vi.fn(() => anthropicClient);
-
-  const logger = {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  };
-
+  const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
   const audit = { writeAudit: vi.fn() };
-
   const events = {
     emitGenerationCompleted: vi.fn(),
     emitGenerationFailed: vi.fn(),
     emitExtractionCompleted: vi.fn(),
   };
 
-  return {
-    repo,
-    authz,
-    embeddings,
-    anthropicClient,
-    getAnthropicClient,
-    logger,
-    audit,
-    events,
-  };
+  return { repo, authz, embeddings, cases, anthropicClient, getAnthropicClient, logger, audit, events };
 });
-
-// ---------------------------------------------------------------------------
-// vi.mock() — module-level intercepts
-// ---------------------------------------------------------------------------
 
 vi.mock("../repository", () => mocks.repo);
 
@@ -130,6 +105,11 @@ vi.mock("@/backend/platform/authz", () => ({
       this.name = "AuthzError";
     }
   },
+}));
+
+vi.mock("@/backend/modules/cases", () => ({
+  getCaseExtractions: mocks.cases.getCaseExtractions,
+  resolveFormResponseFieldValues: mocks.cases.resolveFormResponseFieldValues,
 }));
 
 vi.mock("@/backend/platform/embeddings", () => ({
@@ -148,9 +128,7 @@ vi.mock("@/backend/platform/gemini", () => ({
   DEFAULT_GEMINI_MODEL: "gemini-2.5-flash",
 }));
 
-vi.mock("@/backend/platform/ai-stub", () => ({
-  isAiStubEnabled: () => false,
-}));
+vi.mock("@/backend/platform/ai-stub", () => ({ isAiStubEnabled: () => false }));
 
 vi.mock("@/backend/platform/storage", () => ({
   createSignedDownloadUrl: vi.fn(),
@@ -158,9 +136,7 @@ vi.mock("@/backend/platform/storage", () => ({
   downloadBytesFromStorage: vi.fn(),
 }));
 
-vi.mock("@/backend/platform/logger", () => ({
-  logger: mocks.logger,
-}));
+vi.mock("@/backend/platform/logger", () => ({ logger: mocks.logger }));
 
 vi.mock("@/backend/platform/pdf", () => ({
   renderMarkdownToPdf: vi.fn(),
@@ -173,13 +149,9 @@ vi.mock("@/backend/platform/url-utils", () => ({
   isLikelyUrl: () => true,
 }));
 
-vi.mock("@/backend/platform/qstash", () => ({
-  enqueueJob: vi.fn(),
-}));
+vi.mock("@/backend/platform/qstash", () => ({ enqueueJob: vi.fn() }));
 
-vi.mock("@/backend/modules/audit", () => ({
-  writeAudit: mocks.audit.writeAudit,
-}));
+vi.mock("@/backend/modules/audit", () => ({ writeAudit: mocks.audit.writeAudit }));
 
 vi.mock("../events", () => ({
   emitGenerationCompleted: mocks.events.emitGenerationCompleted,
@@ -196,25 +168,12 @@ vi.mock("@/shared/constants/ai-models", () => ({
 vi.mock("@/backend/platform/supabase", () => {
   const mockClient = {
     from: vi.fn(() => ({
-      update: vi.fn(() => ({
-        eq: vi.fn(() => ({
-          in: vi.fn(() => Promise.resolve({ data: null, error: null })),
-        })),
-      })),
-      select: vi.fn(() => ({
-        eq: vi.fn(() => Promise.resolve({ data: [], error: null })),
-      })),
+      update: vi.fn(() => ({ eq: vi.fn(() => ({ in: vi.fn(() => Promise.resolve({ data: null, error: null })) })) })),
+      select: vi.fn(() => ({ eq: vi.fn(() => Promise.resolve({ data: [], error: null })) })),
     })),
   };
-  return {
-    createServiceClient: vi.fn(() => mockClient),
-    createServerClient: vi.fn(() => mockClient),
-  };
+  return { createServiceClient: vi.fn(() => mockClient), createServerClient: vi.fn(() => mockClient) };
 });
-
-// ---------------------------------------------------------------------------
-// Import subject AFTER mocks are set up
-// ---------------------------------------------------------------------------
 
 import {
   assessPreMortemRisk,
@@ -225,10 +184,6 @@ import {
 } from "../service";
 
 import type { Actor } from "@/backend/platform/authz";
-
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
 
 const ACTOR: Actor = {
   userId: "11111111-1111-4111-8111-111111111111",
@@ -243,6 +198,7 @@ const RUN_ID = "44444444-4444-4444-8444-444444444444";
 const FORM_DEF_ID = "55555555-5555-4555-8555-555555555555";
 const DATASET_ID = "66666666-6666-4666-8666-666666666666";
 const ASSESSMENT_ID = "77777777-7777-4777-8777-777777777777";
+const RESPONSE_ID = "88888888-8888-4888-8888-888888888888";
 
 const BASE_RUN = {
   id: RUN_ID,
@@ -274,7 +230,7 @@ const BASE_RUN = {
 const DATASET_ITEM = {
   id: "item-1",
   title: "Matter of XYZ — Granted",
-  content: "Applicant from Honduras granted asylum based on political opinion nexus.",
+  content: "Applicant granted asylum based on political opinion nexus.",
   tags: ["NEXUS_FAIL", "CREDIBILITY"],
   outcome: "granted",
   jurisdiction: "BIA",
@@ -283,6 +239,9 @@ const DATASET_ITEM = {
   meta: { kind: "precedent" as const, citation: "Matter of XYZ, 27 I&N Dec. 1" },
   similarity: 0.92,
 };
+
+const VALID_REPORT_JSON =
+  '{"score":72,"semaforo":"amber","verdict":"needs_corrections","summary":"Two fields need fixing.","findings":[{"severity":"critico","category":"mal_llenado","location":"Item 8","description":"Foreign address in a US-only field.","correction":"Use the US residence."}]}';
 
 function buildAnthropicFinalMessage(text: string) {
   return {
@@ -293,332 +252,227 @@ function buildAnthropicFinalMessage(text: string) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// beforeEach — reset mocks
-// ---------------------------------------------------------------------------
+function mockAnthropic(text: string) {
+  mocks.anthropicClient.messages.stream.mockImplementation(() => ({
+    finalMessage: vi.fn().mockResolvedValue(buildAnthropicFinalMessage(text)),
+  }));
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.authz.requireCaseAccess.mockResolvedValue(undefined);
   mocks.authz.can.mockReturnValue(undefined);
-  mocks.repo.findGenerationConfig.mockResolvedValue({
-    dataset_id: DATASET_ID,
-    model: "claude-opus-4-7",
-    pre_mortem_enabled: true,
-    // other fields not needed
+  mocks.repo.findGenerationConfig.mockResolvedValue({ dataset_id: DATASET_ID, model: "claude-opus-4-7" });
+  mocks.repo.findFormFillGuide.mockResolvedValue({
+    guide_markdown: "# I-589 guide\n- Item 8: US residence only.",
+    enabled: true,
+    source_file_path: null,
   });
   mocks.repo.loadDatasetItems.mockResolvedValue([]);
   mocks.repo.matchDatasetItems.mockResolvedValue([]);
   mocks.embeddings.embedText.mockResolvedValue(new Array(768).fill(0.1));
-
-  // Default Anthropic response: valid JSON
-  mocks.anthropicClient.messages.stream.mockImplementation(() => ({
-    finalMessage: vi.fn().mockResolvedValue(
-      buildAnthropicFinalMessage(
-        '{"overallRisk":"medium","summary":"The memo has moderate risk.","reasons":[{"code":"NEXUS_FAIL","probability":0.7,"rationale":"Nexus not clearly established.","correction":"Add explicit nexus argument."}]}'
-      )
-    ),
-  }));
-
-  mocks.repo.insertPreMortemAssessment.mockResolvedValue({
-    id: ASSESSMENT_ID,
-    created_at: "2026-06-29T10:10:00.000Z",
-  });
+  mocks.cases.getCaseExtractions.mockResolvedValue([]);
+  mockAnthropic(VALID_REPORT_JSON);
+  mocks.repo.insertPreMortemAssessment.mockResolvedValue({ id: ASSESSMENT_ID, created_at: "2026-06-29T10:10:00.000Z" });
 });
 
 // ---------------------------------------------------------------------------
-// 1. retrieveDatasetItemsWithFallback — semantic OK path
+// retrieveDatasetItemsWithFallback (kept from the prior RAG helper)
 // ---------------------------------------------------------------------------
 
 describe("retrieveDatasetItemsWithFallback", () => {
   it("returns semantic hits when matchDatasetItems returns results", async () => {
     mocks.repo.matchDatasetItems.mockResolvedValue([DATASET_ITEM]);
-    mocks.embeddings.embedText.mockResolvedValue(new Array(768).fill(0.5));
-
     const result = await retrieveDatasetItemsWithFallback(DATASET_ID, "test query");
-
-    expect(mocks.embeddings.embedText).toHaveBeenCalledOnce();
-    expect(mocks.repo.matchDatasetItems).toHaveBeenCalledOnce();
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe(DATASET_ITEM.id);
-    expect(result[0].title).toBe(DATASET_ITEM.title);
-    // loadDatasetItems should NOT have been called (semantic path succeeded)
     expect(mocks.repo.loadDatasetItems).not.toHaveBeenCalled();
   });
 
-  // -------------------------------------------------------------------------
-  // 2. Fallback to lexical when matchDatasetItems returns empty
-  // -------------------------------------------------------------------------
-
-  it("falls back to lexical selectDatasetItems when matchDatasetItems returns []", async () => {
-    mocks.repo.matchDatasetItems.mockResolvedValue([]); // no embeddings backfilled
+  it("falls back to lexical when matchDatasetItems returns []", async () => {
+    mocks.repo.matchDatasetItems.mockResolvedValue([]);
     mocks.repo.loadDatasetItems.mockResolvedValue([
-      {
-        id: "lex-1",
-        title: "Lexical item",
-        content: "Content found by lexical search.",
-        tags: ["CREDIBILITY"],
-        outcome: "denied",
-        jurisdiction: "9th Cir.",
-        token_count: 80,
-        created_at: "2026-01-01T00:00:00.000Z",
-        meta: {},
-      },
+      { id: "lex-1", title: "Lexical", content: "x", tags: [], outcome: null, jurisdiction: null, token_count: 80, created_at: "2026-01-01T00:00:00.000Z", meta: {} },
     ]);
-
     const result = await retrieveDatasetItemsWithFallback(DATASET_ID, "test query");
-
     expect(mocks.repo.loadDatasetItems).toHaveBeenCalledWith(DATASET_ID);
-    // Result comes from lexical path
     expect(result.length).toBeGreaterThanOrEqual(1);
   });
-
-  // -------------------------------------------------------------------------
-  // 3. Fallback to lexical when embedText throws
-  // -------------------------------------------------------------------------
 
   it("falls back to lexical when embedText throws", async () => {
     mocks.embeddings.embedText.mockRejectedValue(new Error("Gemini unavailable"));
     mocks.repo.loadDatasetItems.mockResolvedValue([
-      {
-        id: "lex-fallback",
-        title: "Fallback item",
-        content: "Fallback content.",
-        tags: [],
-        outcome: null,
-        jurisdiction: null,
-        token_count: 60,
-        created_at: "2026-01-01T00:00:00.000Z",
-        meta: {},
-      },
+      { id: "lex-fallback", title: "Fallback", content: "x", tags: [], outcome: null, jurisdiction: null, token_count: 60, created_at: "2026-01-01T00:00:00.000Z", meta: {} },
     ]);
-
     const result = await retrieveDatasetItemsWithFallback(DATASET_ID, "test query");
-
-    expect(mocks.logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ datasetId: DATASET_ID }),
-      expect.stringContaining("semantic retrieval failed"),
-    );
     expect(mocks.repo.loadDatasetItems).toHaveBeenCalledWith(DATASET_ID);
-    expect(result.length).toBeGreaterThanOrEqual(1);
     expect(result[0].id).toBe("lex-fallback");
   });
 
   it("returns [] when datasetId is null", async () => {
     const result = await retrieveDatasetItemsWithFallback(null, "query");
     expect(result).toEqual([]);
-    expect(mocks.embeddings.embedText).not.toHaveBeenCalled();
   });
 });
 
 // ---------------------------------------------------------------------------
-// 4. assessPreMortemRisk — happy path
+// assessPreMortemRisk
 // ---------------------------------------------------------------------------
 
 describe("assessPreMortemRisk", () => {
-  it("resolves the latest eligible run, calls Anthropic, persists assessment", async () => {
+  it("ai_letter: auto-selects the latest eligible run, validates, persists (new shape)", async () => {
     mocks.repo.findLatestEligibleRunForPreMortem.mockResolvedValue({
       runId: RUN_ID,
       outputText: BASE_RUN.output_text,
+      outputPath: null,
       formDefinitionId: FORM_DEF_ID,
       model: "claude-opus-4-7",
     });
-    mocks.repo.matchDatasetItems.mockResolvedValue([DATASET_ITEM]);
-    mocks.embeddings.embedText.mockResolvedValue(new Array(768).fill(0.2));
 
-    const result = await assessPreMortemRisk(ACTOR, { caseId: CASE_ID });
+    const result = await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter" } });
 
-    // Auth
     expect(mocks.authz.requireCaseAccess).toHaveBeenCalledWith(ACTOR, CASE_ID);
-
-    // Anthropic was called
     expect(mocks.anthropicClient.messages.stream).toHaveBeenCalledOnce();
 
-    // Assessment persisted
     expect(mocks.repo.insertPreMortemAssessment).toHaveBeenCalledOnce();
     const insertArg = mocks.repo.insertPreMortemAssessment.mock.calls[0][0] as Record<string, unknown>;
-    expect(insertArg["case_id"]).toBe(CASE_ID);
-    expect(insertArg["run_id"]).toBe(RUN_ID);
-    expect(insertArg["created_by"]).toBe(ACTOR.userId);
-    expect(insertArg["overall_risk"]).toBe("medium");
+    expect(insertArg.case_id).toBe(CASE_ID);
+    expect(insertArg.target_kind).toBe("ai_letter");
+    expect(insertArg.run_id).toBe(RUN_ID);
+    expect(insertArg.response_id).toBe(null);
+    expect(insertArg.score).toBe(72);
+    expect(insertArg.semaforo).toBe("amber");
+    expect(insertArg.verdict).toBe("needs_corrections");
 
-    // Returned shape
-    expect(result.id).toBe(ASSESSMENT_ID);
-    expect(result.caseId).toBe(CASE_ID);
+    expect(result.targetKind).toBe("ai_letter");
     expect(result.runId).toBe(RUN_ID);
-    expect(result.overallRisk).toBe("medium");
-    expect(result.summary).toBe("The memo has moderate risk.");
-    expect(result.reasons).toHaveLength(1);
-    expect(result.reasons[0].code).toBe("NEXUS_FAIL");
-    expect(result.reasons[0].probability).toBe(0.7);
+    expect(result.score).toBe(72);
+    expect(result.semaforo).toBe("amber");
+    expect(result.verdict).toBe("needs_corrections");
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].category).toBe("mal_llenado");
     expect(result.createdBy).toBe(ACTOR.userId);
   });
 
-  // -------------------------------------------------------------------------
-  // 5. Tolerant JSON parsing — noisy output with markdown fences
-  // -------------------------------------------------------------------------
-
-  it("parses JSON correctly even when Anthropic wraps output in markdown fences", async () => {
-    const noisyOutput =
-      "Here is my analysis:\n" +
-      "```json\n" +
-      '{"overallRisk":"high","summary":"High risk case.","reasons":[{"code":"CREDIBILITY","probability":0.85,"rationale":"Timeline inconsistencies.","correction":"Provide sworn affidavit."}]}\n' +
-      "```\n" +
-      "Please review the above.";
-
-    mocks.anthropicClient.messages.stream.mockImplementation(() => ({
-      finalMessage: vi.fn().mockResolvedValue(buildAnthropicFinalMessage(noisyOutput)),
-    }));
-    mocks.repo.findLatestEligibleRunForPreMortem.mockResolvedValue({
-      runId: RUN_ID,
-      outputText: BASE_RUN.output_text,
+  it("pdf_automation: resolves field values, validates, persists with response_id", async () => {
+    mocks.cases.resolveFormResponseFieldValues.mockResolvedValue({
+      caseId: CASE_ID,
       formDefinitionId: FORM_DEF_ID,
-      model: "claude-opus-4-7",
+      fields: [
+        { pdfFieldName: "Res8", label: "Item 8", fieldType: "text", source: "client_answer", value: "Caracas, Venezuela", visible: true, required: true, empty: false, doNotFill: false },
+      ],
+      missingRequired: [],
     });
 
-    const result = await assessPreMortemRisk(ACTOR, { caseId: CASE_ID });
+    const result = await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "pdf_automation", responseId: RESPONSE_ID } });
 
-    expect(result.overallRisk).toBe("high");
-    expect(result.summary).toBe("High risk case.");
-    expect(result.reasons).toHaveLength(1);
-    expect(result.reasons[0].code).toBe("CREDIBILITY");
-    expect(result.reasons[0].probability).toBe(0.85);
+    expect(mocks.cases.resolveFormResponseFieldValues).toHaveBeenCalledWith(ACTOR, RESPONSE_ID);
+    const insertArg = mocks.repo.insertPreMortemAssessment.mock.calls[0][0] as Record<string, unknown>;
+    expect(insertArg.target_kind).toBe("pdf_automation");
+    expect(insertArg.response_id).toBe(RESPONSE_ID);
+    expect(insertArg.run_id).toBe(null);
+    expect(result.responseId).toBe(RESPONSE_ID);
+    expect(result.targetKind).toBe("pdf_automation");
   });
 
-  // -------------------------------------------------------------------------
-  // 6. Filter invalid denial reason codes
-  // -------------------------------------------------------------------------
+  it("parses JSON even when Anthropic wraps it in markdown fences", async () => {
+    mocks.repo.findLatestEligibleRunForPreMortem.mockResolvedValue({ runId: RUN_ID, outputText: BASE_RUN.output_text, outputPath: null, formDefinitionId: FORM_DEF_ID, model: "claude-opus-4-7" });
+    mockAnthropic(
+      "Here is my review:\n```json\n" +
+        '{"score":40,"semaforo":"red","verdict":"would_reject","summary":"Serious issues.","findings":[{"severity":"critico","category":"placeholder_sin_resolver","location":"Part B","description":"Unreplaced token.","correction":"Fill it."}]}\n' +
+        "```\n",
+    );
 
-  it("filters out reasons with invalid denial reason codes", async () => {
-    const outputWithInvalidCodes =
-      '{"overallRisk":"low","summary":"Low risk.","reasons":[' +
-      '{"code":"NEXUS_FAIL","probability":0.3,"rationale":"Minor.","correction":"Clarify."},' +
-      '{"code":"INVENTED_CODE","probability":0.9,"rationale":"Invalid.","correction":"N/A"},' +
-      '{"code":"CREDIBILITY","probability":0.2,"rationale":"OK.","correction":"Document."}' +
-      "]}";
-
-    mocks.anthropicClient.messages.stream.mockImplementation(() => ({
-      finalMessage: vi.fn().mockResolvedValue(buildAnthropicFinalMessage(outputWithInvalidCodes)),
-    }));
-    mocks.repo.findLatestEligibleRunForPreMortem.mockResolvedValue({
-      runId: RUN_ID,
-      outputText: BASE_RUN.output_text,
-      formDefinitionId: FORM_DEF_ID,
-      model: "claude-opus-4-7",
-    });
-
-    const result = await assessPreMortemRisk(ACTOR, { caseId: CASE_ID });
-
-    // Only valid codes (NEXUS_FAIL, CREDIBILITY); INVENTED_CODE filtered out
-    const codes = result.reasons.map((r) => r.code);
-    expect(codes).not.toContain("INVENTED_CODE");
-    expect(codes).toContain("NEXUS_FAIL");
-    expect(codes).toContain("CREDIBILITY");
-    // Sorted by probability descending
-    expect(result.reasons[0].probability).toBeGreaterThanOrEqual(result.reasons[1].probability);
+    const result = await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter" } });
+    expect(result.score).toBe(40);
+    expect(result.semaforo).toBe("red");
+    expect(result.verdict).toBe("would_reject");
+    expect(result.findings[0].category).toBe("placeholder_sin_resolver");
   });
 
-  // -------------------------------------------------------------------------
-  // 7. throws PREMORTEM_NO_ELIGIBLE_RUN when no eligible run (auto-select path)
-  // -------------------------------------------------------------------------
+  it("filters invalid categories/severities and clamps the score", async () => {
+    mocks.repo.findLatestEligibleRunForPreMortem.mockResolvedValue({ runId: RUN_ID, outputText: BASE_RUN.output_text, outputPath: null, formDefinitionId: FORM_DEF_ID, model: "claude-opus-4-7" });
+    mockAnthropic(
+      '{"score":150,"semaforo":"amber","verdict":"needs_corrections","summary":"x","findings":[' +
+        '{"severity":"critico","category":"mal_llenado","location":"A","description":"d","correction":"c"},' +
+        '{"severity":"BOGUS","category":"mal_llenado","location":"B","description":"d","correction":"c"},' +
+        '{"severity":"moderado","category":"INVENTED","location":"C","description":"d","correction":"c"}' +
+        "]}",
+    );
 
-  it("throws PREMORTEM_NO_ELIGIBLE_RUN when no eligible run exists", async () => {
+    const result = await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter" } });
+    expect(result.score).toBe(100); // clamped
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].category).toBe("mal_llenado");
+  });
+
+  it("throws PREMORTEM_NO_TARGET when no eligible ai_letter run exists", async () => {
     mocks.repo.findLatestEligibleRunForPreMortem.mockResolvedValue(null);
-
-    await expect(assessPreMortemRisk(ACTOR, { caseId: CASE_ID })).rejects.toMatchObject({
+    await expect(assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter" } })).rejects.toMatchObject({
       name: "AiEngineError",
-      code: "PREMORTEM_NO_ELIGIBLE_RUN",
+      code: "PREMORTEM_NO_TARGET",
     });
+    expect(mocks.repo.insertPreMortemAssessment).not.toHaveBeenCalled();
+  });
 
+  it("throws PREMORTEM_NO_GUIDE when the form has no enabled guide", async () => {
+    mocks.repo.findRunById.mockResolvedValue({ ...BASE_RUN });
+    mocks.repo.findFormFillGuide.mockResolvedValue({ guide_markdown: "", enabled: false, source_file_path: null });
+    await expect(
+      assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter", runId: RUN_ID } }),
+    ).rejects.toMatchObject({ name: "AiEngineError", code: "PREMORTEM_NO_GUIDE" });
     expect(mocks.anthropicClient.messages.stream).not.toHaveBeenCalled();
     expect(mocks.repo.insertPreMortemAssessment).not.toHaveBeenCalled();
   });
 
-  // -------------------------------------------------------------------------
-  // 8. Explicit runId not found → PREMORTEM_NO_ELIGIBLE_RUN
-  // -------------------------------------------------------------------------
-
-  it("throws PREMORTEM_NO_ELIGIBLE_RUN when explicit runId has no output_text", async () => {
-    mocks.repo.findRunById.mockResolvedValue({
-      ...BASE_RUN,
-      id: RUN_ID,
-      output_text: null, // no output
-    });
-
+  it("uses an explicit runId and rejects one from a different case (IDOR)", async () => {
+    mocks.repo.findRunById.mockResolvedValue({ ...BASE_RUN, case_id: "99999999-9999-4999-8999-999999999999" });
     await expect(
-      assessPreMortemRisk(ACTOR, { caseId: CASE_ID, runId: RUN_ID }),
-    ).rejects.toMatchObject({
-      name: "AiEngineError",
-      code: "PREMORTEM_NO_ELIGIBLE_RUN",
-    });
-  });
-
-  it("uses explicit runId when provided and run has output_text", async () => {
-    mocks.repo.findRunById.mockResolvedValue({ ...BASE_RUN, orgId: ACTOR.orgId });
-
-    const result = await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, runId: RUN_ID });
-
-    expect(mocks.repo.findRunById).toHaveBeenCalledWith(RUN_ID);
-    expect(mocks.repo.findLatestEligibleRunForPreMortem).not.toHaveBeenCalled();
-    expect(result.runId).toBe(RUN_ID);
-  });
-
-  // -------------------------------------------------------------------------
-  // SECURITY CRIT-1: explicit runId from a DIFFERENT case → IDOR guard rejects
-  // -------------------------------------------------------------------------
-
-  it("rejects an explicit runId that belongs to a different case (cross-case/org IDOR)", async () => {
-    mocks.repo.findRunById.mockResolvedValue({
-      ...BASE_RUN,
-      case_id: "99999999-9999-4999-8999-999999999999", // a different case (e.g. another org)
-    });
-
-    await expect(
-      assessPreMortemRisk(ACTOR, { caseId: CASE_ID, runId: RUN_ID }),
+      assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter", runId: RUN_ID } }),
     ).rejects.toMatchObject({ name: "AuthzError", message: "forbidden_case" });
-
-    expect(mocks.anthropicClient.messages.stream).not.toHaveBeenCalled();
     expect(mocks.repo.insertPreMortemAssessment).not.toHaveBeenCalled();
   });
 
-  // -------------------------------------------------------------------------
-  // SECURITY HIGH-1: non-staff (client) actor → staff-only work product
-  // -------------------------------------------------------------------------
+  it("rejects a pdf_automation response from a different case (IDOR)", async () => {
+    mocks.cases.resolveFormResponseFieldValues.mockResolvedValue({
+      caseId: "99999999-9999-4999-8999-999999999999",
+      formDefinitionId: FORM_DEF_ID,
+      fields: [],
+      missingRequired: [],
+    });
+    await expect(
+      assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "pdf_automation", responseId: RESPONSE_ID } }),
+    ).rejects.toMatchObject({ name: "AuthzError", message: "forbidden_case" });
+    expect(mocks.repo.insertPreMortemAssessment).not.toHaveBeenCalled();
+  });
 
   it("rejects a non-staff (client) actor — Pre-Mortem is staff-only", async () => {
     const clientActor: Actor = { ...ACTOR, kind: "client", role: null };
-    mocks.repo.findLatestEligibleRunForPreMortem.mockResolvedValue({
-      runId: RUN_ID,
-      outputText: BASE_RUN.output_text,
-      formDefinitionId: FORM_DEF_ID,
-      model: "claude-opus-4-7",
-    });
-
     await expect(
-      assessPreMortemRisk(clientActor, { caseId: CASE_ID }),
+      assessPreMortemRisk(clientActor, { caseId: CASE_ID, target: { kind: "ai_letter" } }),
     ).rejects.toMatchObject({ name: "AuthzError", message: "wrong_kind" });
-
-    expect(mocks.anthropicClient.messages.stream).not.toHaveBeenCalled();
     expect(mocks.repo.insertPreMortemAssessment).not.toHaveBeenCalled();
   });
 });
 
 // ---------------------------------------------------------------------------
-// 9. getPreMortemAssessmentsForCase — maps rows to typed PreMortemAssessment[]
+// getPreMortemAssessmentsForCase
 // ---------------------------------------------------------------------------
 
 describe("getPreMortemAssessmentsForCase", () => {
-  it("returns mapped assessments for the case", async () => {
+  it("maps rows to the new report shape", async () => {
     const row = {
       id: ASSESSMENT_ID,
       case_id: CASE_ID,
-      run_id: RUN_ID,
+      target_kind: "pdf_automation",
+      run_id: null,
+      response_id: RESPONSE_ID,
       form_definition_id: FORM_DEF_ID,
-      overall_risk: "medium",
-      summary: "Moderate risk.",
-      reasons: [
-        { code: "NEXUS_FAIL", probability: 0.6, rationale: "Weak nexus.", correction: "Strengthen nexus." },
-      ],
+      score: 88,
+      semaforo: "green",
+      verdict: "would_approve",
+      summary: "Looks good.",
+      findings: [{ severity: "sugerencia", category: "calidad", location: "Part B", description: "d", correction: "c" }],
       model: "claude-opus-4-7",
       input_tokens: 200,
       output_tokens: 80,
@@ -626,75 +480,52 @@ describe("getPreMortemAssessmentsForCase", () => {
       created_by: ACTOR.userId,
       created_at: "2026-06-29T10:10:00.000Z",
     };
-
     mocks.repo.listPreMortemAssessmentsForCase.mockResolvedValue([row]);
 
     const results = await getPreMortemAssessmentsForCase(ACTOR, CASE_ID);
-
-    expect(mocks.authz.requireCaseAccess).toHaveBeenCalledWith(ACTOR, CASE_ID);
     expect(results).toHaveLength(1);
     const a = results[0];
-    expect(a.id).toBe(ASSESSMENT_ID);
-    expect(a.caseId).toBe(CASE_ID);
-    expect(a.overallRisk).toBe("medium");
-    expect(a.summary).toBe("Moderate risk.");
-    expect(a.reasons).toHaveLength(1);
-    expect(a.reasons[0].code).toBe("NEXUS_FAIL");
-    expect(a.model).toBe("claude-opus-4-7");
-    expect(a.costUsd).toBe(0.02);
-    expect(a.createdBy).toBe(ACTOR.userId);
+    expect(a.targetKind).toBe("pdf_automation");
+    expect(a.responseId).toBe(RESPONSE_ID);
+    expect(a.score).toBe(88);
+    expect(a.semaforo).toBe("green");
+    expect(a.verdict).toBe("would_approve");
+    expect(a.findings).toHaveLength(1);
+    expect(a.findings[0].category).toBe("calidad");
   });
 
   it("returns [] when no assessments exist", async () => {
     mocks.repo.listPreMortemAssessmentsForCase.mockResolvedValue([]);
-
-    const results = await getPreMortemAssessmentsForCase(ACTOR, CASE_ID);
-    expect(results).toEqual([]);
+    expect(await getPreMortemAssessmentsForCase(ACTOR, CASE_ID)).toEqual([]);
   });
 });
 
 // ---------------------------------------------------------------------------
-// 10. isPreMortemEnabledForCase — delegates to findPreMortemEnabledConfigForCase
+// isPreMortemEnabledForCase
 // ---------------------------------------------------------------------------
 
 describe("isPreMortemEnabledForCase", () => {
-  it("returns true when findPreMortemEnabledConfigForCase resolves true", async () => {
-    mocks.repo.findPreMortemEnabledConfigForCase.mockResolvedValue(true);
-
-    const result = await isPreMortemEnabledForCase(ACTOR, CASE_ID);
-
-    expect(mocks.authz.requireCaseAccess).toHaveBeenCalledWith(ACTOR, CASE_ID);
-    expect(result).toBe(true);
+  it("returns true when findGuideEnabledFormForCase resolves true", async () => {
+    mocks.repo.findGuideEnabledFormForCase.mockResolvedValue(true);
+    expect(await isPreMortemEnabledForCase(ACTOR, CASE_ID)).toBe(true);
   });
 
-  it("returns false when no pre_mortem_enabled config exists", async () => {
-    mocks.repo.findPreMortemEnabledConfigForCase.mockResolvedValue(false);
-
-    const result = await isPreMortemEnabledForCase(ACTOR, CASE_ID);
-
-    expect(result).toBe(false);
+  it("returns false when no form has an enabled guide", async () => {
+    mocks.repo.findGuideEnabledFormForCase.mockResolvedValue(false);
+    expect(await isPreMortemEnabledForCase(ACTOR, CASE_ID)).toBe(false);
   });
 
-  it("returns false for a non-staff actor without querying config (no tab for clients)", async () => {
-    mocks.repo.findPreMortemEnabledConfigForCase.mockResolvedValue(true);
+  it("returns false for a non-staff actor without querying (no tab for clients)", async () => {
+    mocks.repo.findGuideEnabledFormForCase.mockResolvedValue(true);
     const clientActor: Actor = { ...ACTOR, kind: "client", role: null };
-
-    const result = await isPreMortemEnabledForCase(clientActor, CASE_ID);
-
-    expect(result).toBe(false);
-    expect(mocks.repo.findPreMortemEnabledConfigForCase).not.toHaveBeenCalled();
+    expect(await isPreMortemEnabledForCase(clientActor, CASE_ID)).toBe(false);
+    expect(mocks.repo.findGuideEnabledFormForCase).not.toHaveBeenCalled();
   });
 });
 
-// ---------------------------------------------------------------------------
-// AiEngineError — verify the new code is in the union
-// ---------------------------------------------------------------------------
-
 describe("AiEngineError", () => {
-  it("can be constructed with PREMORTEM_NO_ELIGIBLE_RUN code", () => {
-    const err = new AiEngineError("PREMORTEM_NO_ELIGIBLE_RUN");
-    expect(err.code).toBe("PREMORTEM_NO_ELIGIBLE_RUN");
-    expect(err.name).toBe("AiEngineError");
-    expect(err instanceof Error).toBe(true);
+  it("constructs the new Pre-Mortem codes", () => {
+    expect(new AiEngineError("PREMORTEM_NO_GUIDE").code).toBe("PREMORTEM_NO_GUIDE");
+    expect(new AiEngineError("PREMORTEM_NO_TARGET").code).toBe("PREMORTEM_NO_TARGET");
   });
 });

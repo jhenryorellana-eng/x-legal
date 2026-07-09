@@ -45,12 +45,17 @@ export function InformacionTab({
   actions,
   strings,
   onNavigateToGeneration,
+  onOpenPreMortem,
+  preMortemEnabled,
 }: {
   vm: CaseWorkspaceVM;
   actions: CaseDetailActions;
   strings: CasosStrings;
   /** Switches the workspace to the Cartas/Generaciones tab (staff "Generar"). */
   onNavigateToGeneration?: () => void;
+  /** Opens the Pre-Mortem tab focused on this automation (deep-link). */
+  onOpenPreMortem?: (key: string) => void;
+  preMortemEnabled?: boolean;
 }) {
   const t = strings.detail;
   const router = useRouter();
@@ -120,6 +125,12 @@ export function InformacionTab({
               (f.status === "approved" || (f.status === "submitted" && f.filledBy !== "client"));
             const canGenerateLetter = isLetter && !!onNavigateToGeneration;
             const canReview = f.kind === "pdf_automation";
+            const canPreMortem =
+              !isLetter &&
+              !!preMortemEnabled &&
+              !!onOpenPreMortem &&
+              !!f.responseId &&
+              (f.hasPdf || f.status === "submitted" || f.status === "approved");
             return (
               <div key={rowKey(f)} className="formcard">
                 <ProgressRing pct={m.pct} size={46} stroke={6} aria-label={f.label} />
@@ -148,6 +159,13 @@ export function InformacionTab({
                     <GradientBtn size="md" full={false} icon="sparkle" onClick={onNavigateToGeneration}>
                       {t.generateLetter}
                     </GradientBtn>
+                  )}
+
+                  {/* Pre-Mortem — validate this autofilled form's quality. */}
+                  {canPreMortem && (
+                    <GhostBtn size="md" full={false} icon="shield" onClick={() => onOpenPreMortem!(`pdf_automation:${f.id}:${f.partyId ?? ""}`)}>
+                      {t.preMortem.title}
+                    </GhostBtn>
                   )}
 
                   {/* Revisión — Diana's side-by-side (official PDF | answers/docs + Aprobar). */}

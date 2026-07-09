@@ -4744,45 +4744,86 @@ function questionLabel(questionI18n: unknown): string {
 }
 
 /**
- * Generates a filled PDF for an approved (or submitted-by-staff) form response.
- *
- * Gates:
- * - FORM_PDF_BLOCKED: response not in submitted/approved; or filled_by='client' and not approved.
- * - FORM_VERSION_MISMATCH: response was saved against a different version than the current published.
- *
- * Resolves all question values via resolveBySource, fills AcroForm via mupdf,
- * stores in bucket 'generated', updates filled_pdf_path.
- * Returns signed download URL.
- *
- * @api-id API-CASE-19
+ * A resolved form question — the value that WOULD be stamped on the official PDF
+ * (post ES→EN translation + date formatting + empty policy), plus the metadata the
+ * Pre-Mortem quality validator needs to check it against the filling guide.
  */
-export async function generateFilledPdf(
-  actor: Actor,
-  input: GenerateFilledPdfInput,
-): Promise<string> {
-  can(actor, "cases", "edit");
-  const parsed = GenerateFilledPdfSchema.parse(input);
+export interface ResolvedFormField {
+  questionId: string;
+  pdfFieldName: string | null;
+  label: string;
+  fieldType: string;
+  source: string;
+  /** The value that would be filed: string / list (multiselect) / boolean (checkbox) / null. */
+  value: string | string[] | boolean | null;
+  visible: boolean;
+  required: boolean;
+  empty: boolean;
+  /** Section left blank by legal design (I-589 Part D signature, Parts F/G). */
+  doNotFill: boolean;
+}
 
-  const response = await findFormResponseById(parsed.responseId);
+export interface ResolvedFormResponse {
+  caseId: string;
+  formDefinitionId: string;
+  fields: ResolvedFormField[];
+  missingRequired: string[];
+  naTargets: Array<{ pdfFieldName: string; placeholder: string }>;
+  versionId: string;
+  sourceLanguage: "en" | "es";
+}
+
+interface FieldsCoreResult {
+  response: NonNullable<Awaited<ReturnType<typeof findFormResponseById>>>;
+  formDef: NonNullable<Awaited<ReturnType<typeof findFormDefinitionById>>>;
+  published: { id: string; source_pdf_path: string; detected_fields: unknown; source_language?: string; default_empty_policy?: string | null };
+  fields: ResolvedFormField[];
+  fieldValues: Record<string, string | boolean>;
+  naTargets: Map<string, string>;
+  missingRequired: string[];
+  sourceLanguage: "en" | "es";
+}
+
+/**
+ * Shared resolution core for a form response: loads the published version + its
+ * questions, batch-resolves `ai_field` + ES→EN translation, and produces both (a)
+ * the `fieldValues` map stamped on the AcroForm AND (b) a structured `fields[]`
+ * view. generateFilledPdf and resolveFormResponseFieldValues both go through here,
+ * so the Pre-Mortem validator sees EXACTLY what would be filed (no drift).
+ *
+ * `enforceFileable` applies the filing status gate (FORM_PDF_BLOCKED); the validator
+ * omits it so a draft can be validated. Never throws on missingRequired — the caller
+ * decides (generateFilledPdf blocks; the validator reports it as a finding).
+ */
+async function resolveFormResponseFieldsCore(
+  actor: Actor,
+  responseId: string,
+  opts?: { enforceFileable?: boolean },
+): Promise<FieldsCoreResult> {
+  can(actor, "cases", "edit");
+
+  const response = await findFormResponseById(responseId);
   if (!response) throw new CaseError("FORM_RESPONSE_NOT_FOUND");
-  // Cross-tenant guard (CRITICAL): the filled PDF contains decrypted PII (SSN,
-  // A-number, passport) resolved from the case's client. findFormResponseById
-  // bypasses RLS — verify the actor owns this response's case before filling.
+  // Cross-tenant guard (CRITICAL): the resolved values contain decrypted PII (SSN,
+  // A-number, passport) from the case's client. findFormResponseById bypasses RLS —
+  // verify the actor owns this response's case before resolving.
   await requireCaseAccess(actor, response.case_id);
 
   const formDef = await findFormDefinitionById(response.form_definition_id);
   if (!formDef) throw new CaseError("FORM_NOT_FOUND");
 
-  // Gate: FORM_PDF_BLOCKED — status not in {submitted, approved}, OR client-filled not yet approved
-  const validStatuses: FormResponseStatus[] = ["submitted", "approved"];
-  if (!validStatuses.includes(response.status as FormResponseStatus)) {
-    throw new CaseError("FORM_PDF_BLOCKED", { reason: "status", status: response.status });
-  }
-  if (formDef.filled_by === "client" && response.status !== "approved") {
-    throw new CaseError("FORM_PDF_BLOCKED", { reason: "requires_approval", filledBy: formDef.filled_by });
+  if (opts?.enforceFileable) {
+    // Gate: FORM_PDF_BLOCKED — status not in {submitted, approved}, OR client-filled not yet approved.
+    const validStatuses: FormResponseStatus[] = ["submitted", "approved"];
+    if (!validStatuses.includes(response.status as FormResponseStatus)) {
+      throw new CaseError("FORM_PDF_BLOCKED", { reason: "status", status: response.status });
+    }
+    if (formDef.filled_by === "client" && response.status !== "approved") {
+      throw new CaseError("FORM_PDF_BLOCKED", { reason: "requires_approval", filledBy: formDef.filled_by });
+    }
   }
 
-  // Gate: FORM_VERSION_MISMATCH — only fill against the currently published version
+  // Gate: FORM_VERSION_MISMATCH — only resolve against the currently published version
   const catalog = await import("@/backend/modules/catalog" as string) as {
     getPublishedAutomationVersion: (id: string) => Promise<{ id: string; source_pdf_path: string; detected_fields: unknown; source_language?: string; default_empty_policy?: string | null } | null>;
     listQuestionGroups: (versionId: string) => Promise<Array<{ id: string; do_not_fill?: boolean | null }>>;
@@ -4931,11 +4972,11 @@ export async function generateFilledPdf(
             await updateFormResponse(response.id, { answers_translated: answersTranslated });
           } catch { /* cache write is best-effort */ }
         }
-      } catch { /* best-effort — never block PDF generation on translation */ }
+      } catch { /* best-effort — never block on translation */ }
     }
   }
 
-  // Resolve all field values
+  // Resolve all field values (and the structured `fields[]` view in the same pass).
   const fieldValues: Record<string, string | boolean> = {};
   const missingRequired: string[] = [];
   // pdf_field_name → placeholder for VISIBLE, applicable, still-empty fields whose empty
@@ -4943,11 +4984,11 @@ export async function generateFilledPdf(
   // fields under a `blank` policy are deliberately absent, so they stay blank. The
   // placeholder is per-field (version default `na` → "N/A"; a `custom` field → its string).
   const naTargets = new Map<string, string>();
+  const fields: ResolvedFormField[] = [];
 
   for (const q of questions) {
-    // Do-not-fill section (I-589 Part D signature, Parts F/G): left ENTIRELY blank by
-    // legal design — no value AND no "N/A" backfill.
-    if (q.do_not_fill) continue;
+    const label = questionLabel(q.question_i18n) || q.id;
+    const doNotFill = q.do_not_fill === true;
 
     // A SELECT/MULTISELECT may map a GROUP of checkboxes (Sex, Marital, a Yes/No pair,
     // the Part B.1 asylum bases): each option carries its own pdf_field_name. select →
@@ -4959,12 +5000,23 @@ export async function generateFilledPdf(
       ? (q.options as Array<{ value: string; pdf_field_name?: string | null }>)
       : null;
     const hasOptionFields = !!optionFields && optionFields.some((o) => o?.pdf_field_name);
+
+    // Do-not-fill section (I-589 Part D signature, Parts F/G): left ENTIRELY blank by
+    // legal design — recorded for validation context, never filled.
+    if (doNotFill) {
+      fields.push({ questionId: q.id, pdfFieldName: q.pdf_field_name, label, fieldType: q.field_type, source: q.source, value: null, visible: true, required: false, empty: true, doNotFill: true });
+      continue;
+    }
+
     if (!q.pdf_field_name && !hasOptionFields) continue; // intermediate — no AcroField mapping
 
     // Conditional/dynamic: a field hidden by its condition is left blank in the
     // PDF (v1 parity: "NO ⇒ blank"); a locked-off field is likewise not required.
     const condState = deriveFieldState(parseConditionOrNull(q.condition), q.is_required, answers);
-    if (!condState.visible) continue;
+    if (!condState.visible) {
+      fields.push({ questionId: q.id, pdfFieldName: q.pdf_field_name, label, fieldType: q.field_type, source: q.source, value: null, visible: false, required: false, empty: true, doNotFill: false });
+      continue;
+    }
 
     // Prefer an explicit client answer: an editable prefill (e.g. a profile field
     // the client had to fill because their profile was empty) is overridden by what
@@ -4999,6 +5051,7 @@ export async function generateFilledPdf(
       const need = Math.max(readMinSelected(q.validation), condState.required ? 1 : 0);
       if (selected.length < need) {
         missingRequired.push(q.pdf_field_name ?? q.id);
+        fields.push({ questionId: q.id, pdfFieldName: q.pdf_field_name, label, fieldType: q.field_type, source: q.source, value: selected, visible: true, required: true, empty: selected.length === 0, doNotFill: false });
         continue;
       }
       if (optionFields) {
@@ -5007,12 +5060,14 @@ export async function generateFilledPdf(
           if (o?.pdf_field_name) fieldValues[o.pdf_field_name] = chosen.has(String(o.value));
         }
       }
+      fields.push({ questionId: q.id, pdfFieldName: q.pdf_field_name, label, fieldType: q.field_type, source: q.source, value: selected, visible: true, required: condState.required, empty: selected.length === 0, doNotFill: false });
       continue;
     }
 
     const isEmpty = resolved === null || resolved === undefined || resolved === "";
     if (isEmpty && condState.required) {
       missingRequired.push(q.pdf_field_name ?? q.id);
+      fields.push({ questionId: q.id, pdfFieldName: q.pdf_field_name, label, fieldType: q.field_type, source: q.source, value: null, visible: true, required: true, empty: true, doNotFill: false });
       continue;
     }
     if (isEmpty) {
@@ -5030,6 +5085,7 @@ export async function generateFilledPdf(
         );
         if (res.mode === "fill") naTargets.set(q.pdf_field_name, res.placeholder);
       }
+      fields.push({ questionId: q.id, pdfFieldName: q.pdf_field_name, label, fieldType: q.field_type, source: q.source, value: null, visible: true, required: false, empty: true, doNotFill: false });
       continue;
     }
 
@@ -5041,11 +5097,13 @@ export async function generateFilledPdf(
       for (const o of optionFields) {
         if (o?.pdf_field_name) fieldValues[o.pdf_field_name] = String(o.value) === String(resolved);
       }
+      fields.push({ questionId: q.id, pdfFieldName: q.pdf_field_name, label, fieldType: q.field_type, source: q.source, value: String(resolved), visible: true, required: condState.required, empty: false, doNotFill: false });
       continue;
     }
 
     if (typeof resolved === "boolean") {
       fieldValues[q.pdf_field_name!] = resolved;
+      fields.push({ questionId: q.id, pdfFieldName: q.pdf_field_name, label, fieldType: q.field_type, source: q.source, value: resolved, visible: true, required: condState.required, empty: false, doNotFill: false });
     } else {
       let str = String(resolved);
       // Free-text fields (text/textarea): use the batched/on-device translation if we have
@@ -5061,12 +5119,62 @@ export async function generateFilledPdf(
         str = formatPdfDate(str, isMonthYearDateQuestion(q.question_i18n));
       }
       fieldValues[q.pdf_field_name!] = str;
+      fields.push({ questionId: q.id, pdfFieldName: q.pdf_field_name, label, fieldType: q.field_type, source: q.source, value: str, visible: true, required: condState.required, empty: false, doNotFill: false });
     }
   }
 
+  return { response, formDef, published, fields, fieldValues, naTargets, missingRequired, sourceLanguage: sourceLang };
+}
+
+/**
+ * Structured view of the field values that WOULD be stamped on a form response's
+ * official PDF — for the Pre-Mortem validator (does NOT require a fileable status,
+ * so a draft can be validated). Reuses the exact resolution generateFilledPdf runs.
+ */
+export async function resolveFormResponseFieldValues(
+  actor: Actor,
+  responseId: string,
+): Promise<ResolvedFormResponse> {
+  const core = await resolveFormResponseFieldsCore(actor, responseId);
+  return {
+    caseId: core.response.case_id,
+    formDefinitionId: core.response.form_definition_id,
+    fields: core.fields,
+    missingRequired: core.missingRequired,
+    naTargets: [...core.naTargets.entries()].map(([pdfFieldName, placeholder]) => ({ pdfFieldName, placeholder })),
+    versionId: core.published.id,
+    sourceLanguage: core.sourceLanguage,
+  };
+}
+
+/**
+ * Generates a filled PDF for an approved (or submitted-by-staff) form response.
+ *
+ * Gates:
+ * - FORM_PDF_BLOCKED: response not in submitted/approved; or filled_by='client' and not approved.
+ * - FORM_VERSION_MISMATCH: response was saved against a different version than the current published.
+ *
+ * Resolves all question values via resolveBySource, fills AcroForm via mupdf,
+ * stores in bucket 'generated', updates filled_pdf_path.
+ * Returns signed download URL.
+ *
+ * @api-id API-CASE-19
+ */
+export async function generateFilledPdf(
+  actor: Actor,
+  input: GenerateFilledPdfInput,
+): Promise<string> {
+  const parsed = GenerateFilledPdfSchema.parse(input);
+
+  // Resolve every field value (incl. ES→EN translation + N/A policy) via the shared
+  // core — the SAME resolution the Pre-Mortem validator sees. enforceFileable applies
+  // the filing status gate; missingRequired blocks generation here.
+  const core = await resolveFormResponseFieldsCore(actor, parsed.responseId, { enforceFileable: true });
+  const { response, formDef, published, fieldValues, naTargets, missingRequired } = core;
   if (missingRequired.length > 0) {
     throw new CaseError("FORM_PDF_REQUIRED_MISSING", { missing: missingRequired });
   }
+  const caseId = response.case_id;
 
   // Download source PDF from catalog-assets bucket
   const { createSignedDownloadUrl: getDownloadUrl, uploadBytesToStorage } = await import(

@@ -7,6 +7,7 @@ import { UploadStage } from "./upload-stage";
 import { StructureEditor } from "./structure-editor";
 import { PreviewStage } from "./preview-stage";
 import { PublishStage } from "./publish-stage";
+import { PreMortemGuideCard } from "./pre-mortem-guide-card";
 import type { FormEditorVM, FormEditorActions, QuestionGroupVM, VersionVM } from "./types";
 import type { FormEditorStrings } from "./strings";
 
@@ -182,6 +183,14 @@ export function PdfMode({ vm, strings, actions, activeVersionId, onSelectVersion
           actions={actions}
         />
       )}
+
+      {/* Validación (Pre-Mortem) — guide + enablement, independent of the stages. */}
+      <div style={{ marginTop: 26 }}>
+        <h3 style={{ margin: "0 0 10px", fontFamily: "var(--font-title)", fontWeight: 800, fontSize: 16, color: "var(--ink)" }}>
+          Validación (Pre-Mortem)
+        </h3>
+        <PreMortemGuideCard formId={vm.form.id} initial={vm.preMortemGuide} onSave={actions.savePreMortemGuide} />
+      </div>
     </div>
   );
 }

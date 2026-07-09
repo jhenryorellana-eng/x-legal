@@ -46,10 +46,18 @@ import { checkUrlReachable, keepReachable } from "@/backend/platform/url-utils";
 import { embedText } from "@/backend/platform/embeddings";
 import { DEFAULT_GENERATION_MODEL } from "@/shared/constants/ai-models";
 import {
-  isDenialReasonCode,
-  DENIAL_REASONS,
-  type DenialReasonCode,
-} from "@/shared/constants/denial-reasons";
+  isFindingCategory,
+  isFindingSeverity,
+  isSemaforo,
+  isVerdict,
+  compareFindingSeverity,
+  semaforoFromScore,
+  FINDING_CATEGORIES_META,
+  type FindingCategory,
+  type FindingSeverity,
+  type Semaforo,
+  type Verdict,
+} from "@/shared/constants/finding-categories";
 import { resolvePeriodRange, type Period } from "@/shared/period";
 import { isVerbatimValue } from "@/shared/form-logic/empty-policy";
 
@@ -136,7 +144,11 @@ import {
   matchDatasetItems,
   insertPreMortemAssessment,
   listPreMortemAssessmentsForCase,
-  findPreMortemEnabledConfigForCase,
+  findGuideEnabledFormForCase,
+  listGuideEnabledFormsForCase,
+  listCompletedRunsForForms,
+  listFormResponsesForForms,
+  findFormFillGuide,
   findLatestEligibleRunForPreMortem,
   type GenerationRunRow,
   type DocumentExtractionRow as _DocumentExtractionRow,
@@ -165,7 +177,9 @@ export class AiEngineError extends Error {
       | "AI_PROVIDER_UNAVAILABLE"
       | "AI_OUTPUT_INVALID"
       | "AI_DOCUMENT_TOO_LARGE"
-      | "PREMORTEM_NO_ELIGIBLE_RUN",
+      | "PREMORTEM_NO_ELIGIBLE_RUN"
+      | "PREMORTEM_NO_TARGET"
+      | "PREMORTEM_NO_GUIDE",
     public readonly details?: unknown,
   ) {
     super(code);
@@ -3319,34 +3333,56 @@ export async function getAiCostsReport(
 // ---------------------------------------------------------------------------
 
 /**
- * One predicted denial reason from the Pre-Mortem critic.
- * `code` is a stable `DenialReasonCode` — the UI resolves labels via DENIAL_REASONS.
+ * One quality finding from the Pre-Mortem validator (an error / discrepancy /
+ * formatting / filling issue in the generated artifact).
  */
-export interface PreMortemReason {
-  code: DenialReasonCode;
-  probability: number; // 0..1
-  rationale: string;
+export interface PreMortemFinding {
+  severity: FindingSeverity;   // critico | moderado | sugerencia
+  category: FindingCategory;
+  location: string;            // field / section / page
+  description: string;
   correction: string;
 }
 
+/** What the Pre-Mortem validates: an ai_letter run or a pdf_automation response. */
+export type PreMortemTarget =
+  | { kind: "ai_letter"; runId?: string }         // runId omitted → latest eligible
+  | { kind: "pdf_automation"; responseId: string };
+
 /**
- * A persisted Pre-Mortem assessment (returned from assessPreMortemRisk and listed
- * by getPreMortemAssessmentsForCase).
+ * A persisted Pre-Mortem quality validation (returned from assessPreMortemRisk and
+ * listed by getPreMortemAssessmentsForCase).
  */
 export interface PreMortemAssessment {
   id: string;
   caseId: string;
+  targetKind: "ai_letter" | "pdf_automation";
   runId: string | null;
+  responseId: string | null;
   formDefinitionId: string | null;
-  overallRisk: "low" | "medium" | "high";
-  summary: string;
-  reasons: PreMortemReason[];
+  score: number;               // 0..100
+  semaforo: Semaforo;          // green | amber | red
+  verdict: Verdict;            // would_approve | needs_corrections | would_reject
+  summary: string | null;
+  findings: PreMortemFinding[];
   model: string | null;
   inputTokens: number | null;
   outputTokens: number | null;
   costUsd: number | null;
   createdBy: string;
   createdAt: string;
+}
+
+/** A document that can be validated (feeds the tab selector). */
+export interface ValidableTarget {
+  kind: "ai_letter" | "pdf_automation";
+  formDefinitionId: string;
+  labelI18n: unknown;          // resolved to locale in the VM layer
+  runId?: string;
+  responseId?: string;
+  partyId?: string | null;
+  status?: string;
+  createdAt?: string;
 }
 
 /** Token budget for embedding query: truncate the memo to avoid Gemini limits. */
@@ -3359,6 +3395,12 @@ const PREMORTEM_FALLBACK_MODEL = DEFAULT_GENERATION_MODEL; // claude-sonnet-4-6
 const PREMORTEM_RETRIEVAL_K = 8;
 /** Token budget for dataset injection into the critic prompt. */
 const PREMORTEM_DATASET_BUDGET = 30_000;
+/** Chars of masked case context (extractions) injected into the validator prompt. */
+const PREMORTEM_CONTEXT_BUDGET = 30_000;
+/** web_search server-tool call cap for the validator (official examples). */
+const PREMORTEM_WEB_SEARCH_MAX_USES = 5;
+/** Output token budget — I-589 has 460 fields → reports can be long. */
+const PREMORTEM_MAX_OUTPUT_TOKENS = 8_192;
 
 /**
  * Retrieves similar dataset items using semantic search (embedText + matchDatasetItems).
@@ -3423,143 +3465,176 @@ async function resolveMemoText(outputText: string | null, outputPath: string | n
   });
 }
 
+/** Renders resolved pdf_automation fields as a compact table for the validator. */
+function renderFieldsForValidation(
+  fields: Array<{ pdfFieldName: string | null; label: string; fieldType: string; value: string | string[] | boolean | null; visible: boolean; required: boolean; empty: boolean; doNotFill: boolean }>,
+  missingRequired: string[],
+): string {
+  const rows = fields
+    .map((f) => {
+      const val = f.doNotFill
+        ? "(left blank — do-not-fill section)"
+        : !f.visible
+          ? "(hidden — not applicable)"
+          : f.value === null || f.value === ""
+            ? "(empty)"
+            : typeof f.value === "boolean"
+              ? f.value ? "[x]" : "[ ]"
+              : Array.isArray(f.value)
+                ? f.value.join(", ")
+                : String(f.value);
+      const flags = [f.required ? "required" : "", f.doNotFill ? "do-not-fill" : ""].filter(Boolean).join(",");
+      return `- [${f.pdfFieldName ?? "—"}] ${f.label}${flags ? ` (${flags})` : ""}: ${val}`;
+    })
+    .join("\n");
+  const missing =
+    missingRequired.length > 0 ? `\n\nMISSING REQUIRED FIELDS: ${missingRequired.join(", ")}` : "";
+  return (
+    "## AUTOFILLED OFFICIAL FORM — resolved field values (exactly what would be filed; PII masked)\n\n" +
+    rows +
+    missing
+  );
+}
+
 /**
- * Runs the Pre-Mortem critic for a case and persists the assessment.
+ * Validates the QUALITY of a specific generated artifact (an ai_letter run or a
+ * pdf_automation response) against (a) the admin-uploaded filling guide (rubric),
+ * (b) the masked case context, and (c) web-searched official examples. Produces a
+ * report — score 0-100 + semáforo + verdict + findings — and persists it.
  *
- * Flow:
- *  a. Resolve run (explicit runId or the latest eligible completed run).
- *  b. Load output_text (the legal memo).
- *  c. Retrieve similar precedents (semantic → lexical fallback).
- *  d. Call Anthropic critic (masked PII, structured JSON output).
- *  e. Persist to case_pre_mortem_assessments.
- *  f. Return the typed PreMortemAssessment.
- *
- * @throws AiEngineError("PREMORTEM_NO_ELIGIBLE_RUN") if no completed eligible run found.
+ * @throws AiEngineError("PREMORTEM_NO_TARGET") when the run/response is missing/ineligible.
+ * @throws AiEngineError("PREMORTEM_NO_GUIDE") when the form has no enabled guide.
  * @throws AiEngineError("AI_PROVIDER_UNAVAILABLE") on Anthropic failure.
  */
 export async function assessPreMortemRisk(
   actor: Actor,
-  input: { caseId: string; runId?: string },
+  input: { caseId: string; target: PreMortemTarget },
 ): Promise<PreMortemAssessment> {
   await requireCaseAccess(actor, input.caseId);
-  // Staff-only work product (internal denial-risk strategy) — never exposed to
-  // clients, even case members. Server actions are POST endpoints, so the
-  // staff-only UI is not an authorization boundary on its own.
+  // Staff-only work product — never exposed to clients, even case members.
   if (actor.kind !== "staff") throw new AuthzError("wrong_kind");
 
-  // --- Step a/b: Resolve run + output_text ---
-  let outputText: string;
-  let resolvedRunId: string;
-  let formDefinitionId: string | null = null;
-  let configModel: string | null = null;
-  let datasetId: string | null = null;
+  const target = input.target;
 
-  if (input.runId) {
-    // Explicit run provided — look it up
-    const run = await findRunById(input.runId);
-    if (!run) {
-      throw new AiEngineError("PREMORTEM_NO_ELIGIBLE_RUN", {
-        reason: "Provided run not found",
-        runId: input.runId,
-      });
+  // --- Resolve the target artifact + its form_definition ---
+  let targetKind: "ai_letter" | "pdf_automation";
+  let runId: string | null = null;
+  let responseId: string | null = null;
+  let formDefinitionId = "";
+  let configModel: string | null = null;
+  let documentBlock: string; // the artifact rendered (masked) for the prompt
+
+  if (target.kind === "ai_letter") {
+    targetKind = "ai_letter";
+    let outputText: string;
+    if (target.runId) {
+      const run = await findRunById(target.runId);
+      if (!run) throw new AiEngineError("PREMORTEM_NO_TARGET", { reason: "Provided run not found", runId: target.runId });
+      // IDOR: the run MUST belong to the already-authorized case.
+      if (run.case_id !== input.caseId) throw new AuthzError("forbidden_case");
+      outputText = await resolveMemoText(run.output_text, run.output_path);
+      runId = run.id;
+      formDefinitionId = run.form_definition_id ?? "";
+      if (formDefinitionId) {
+        const cfg = await findGenerationConfig(formDefinitionId);
+        configModel = cfg?.model ?? null;
+      }
+    } else {
+      const eligible = await findLatestEligibleRunForPreMortem(input.caseId);
+      if (!eligible) throw new AiEngineError("PREMORTEM_NO_TARGET", { reason: "No completed ai_letter run with an enabled guide", caseId: input.caseId });
+      outputText = await resolveMemoText(eligible.outputText, eligible.outputPath);
+      runId = eligible.runId;
+      formDefinitionId = eligible.formDefinitionId;
+      configModel = eligible.model;
     }
-    // The run MUST belong to the already-authorized case. findRunById takes a
-    // GLOBAL runId; without this an actor could pass their own caseId + another
-    // org's runId and exfiltrate that memo's PII (IDOR). Mirrors cancelGeneration.
-    if (run.case_id !== input.caseId) {
-      throw new AuthzError("forbidden_case");
-    }
-    outputText = await resolveMemoText(run.output_text, run.output_path);
-    resolvedRunId = run.id;
-    formDefinitionId = run.form_definition_id ?? null;
-    // Load config for model + dataset_id
-    if (formDefinitionId) {
-      const cfg = await findGenerationConfig(formDefinitionId);
-      configModel = cfg?.model ?? null;
-      datasetId = cfg?.dataset_id ?? null;
-    }
+    documentBlock = "## GENERATED LETTER (sensitive — identifiers masked)\n\n" + maskPii(outputText);
   } else {
-    // Auto-select: find the latest completed run whose form_definition has pre_mortem_enabled=true
-    const eligible = await findLatestEligibleRunForPreMortem(input.caseId);
-    if (!eligible) {
-      throw new AiEngineError("PREMORTEM_NO_ELIGIBLE_RUN", {
-        reason: "No completed run with pre_mortem_enabled=true found for this case",
-        caseId: input.caseId,
-      });
-    }
-    outputText = await resolveMemoText(eligible.outputText, eligible.outputPath);
-    resolvedRunId = eligible.runId;
-    formDefinitionId = eligible.formDefinitionId;
-    configModel = eligible.model;
-    // Load dataset_id from config
-    const cfg = await findGenerationConfig(formDefinitionId);
-    datasetId = cfg?.dataset_id ?? null;
+    targetKind = "pdf_automation";
+    responseId = target.responseId;
+    // resolveFormResponseFieldValues runs the SAME resolution generateFilledPdf does
+    // (incl. ES→EN translation + N/A policy) → validate exactly what would be filed.
+    const cases = (await import("@/backend/modules/cases")) as {
+      resolveFormResponseFieldValues: (actor: Actor, responseId: string) => Promise<{
+        caseId: string;
+        formDefinitionId: string;
+        fields: Array<{ pdfFieldName: string | null; label: string; fieldType: string; source: string; value: string | string[] | boolean | null; visible: boolean; required: boolean; empty: boolean; doNotFill: boolean }>;
+        missingRequired: string[];
+      }>;
+    };
+    const resolved = await cases.resolveFormResponseFieldValues(actor, responseId);
+    // IDOR: the response MUST belong to the already-authorized case.
+    if (resolved.caseId !== input.caseId) throw new AuthzError("forbidden_case");
+    formDefinitionId = resolved.formDefinitionId;
+    documentBlock = maskPii(renderFieldsForValidation(resolved.fields, resolved.missingRequired));
   }
 
-  // --- Step c: Retrieve similar precedents ---
-  const precedentItems = await retrieveDatasetItemsWithFallback(
-    datasetId,
-    outputText.slice(0, PREMORTEM_EMBED_MAX_CHARS),
-  );
+  if (!formDefinitionId) {
+    throw new AiEngineError("PREMORTEM_NO_TARGET", { reason: "Target has no form_definition" });
+  }
 
-  // Build precedent context block for the prompt
-  const precedentBlock = precedentItems.length > 0
-    ? precedentItems
-        .map((item) => {
-          const outcome = item.outcome ? ` [${item.outcome}]` : "";
-          const jurisdiction = item.jurisdiction ? ` (${item.jurisdiction})` : "";
-          return `<precedent title="${item.title}"${outcome}${jurisdiction}>\n${item.content ?? "(sin contenido)"}\n</precedent>`;
-        })
-        .join("\n\n")
-    : "(No se encontraron precedentes similares en el dataset.)";
+  // --- Load the guide (rubric) ---
+  const guide = await findFormFillGuide(formDefinitionId);
+  if (!guide || !guide.enabled || !guide.guide_markdown.trim()) {
+    throw new AiEngineError("PREMORTEM_NO_GUIDE", { formDefinitionId });
+  }
 
-  // Build the denial reason taxonomy block
-  const taxonomyBlock = Object.values(DENIAL_REASONS)
-    .map((r) => `- ${r.code}: ${r.label.en} — ${r.help.en}`)
+  // --- Load case context (masked, bounded) so the validator can catch discordances
+  // against the source documents (e.g. DOB in the form vs the passport extraction). ---
+  let contextBlock = "(No case context available.)";
+  try {
+    const cases = (await import("@/backend/modules/cases")) as {
+      getCaseExtractions: (actor: Actor, caseId: string) => Promise<unknown[]>;
+    };
+    const extractions = await cases.getCaseExtractions(actor, input.caseId);
+    if (Array.isArray(extractions) && extractions.length > 0) {
+      contextBlock = maskPii(JSON.stringify(extractions)).slice(0, PREMORTEM_CONTEXT_BUDGET);
+    }
+  } catch (err) {
+    logger.warn({ err, caseId: input.caseId }, "ai-engine: pre-mortem case-context load failed (non-fatal)");
+  }
+
+  // --- Build validator prompt ---
+  const model = configModel ?? PREMORTEM_DEFAULT_MODEL;
+  const categoriesBlock = Object.values(FINDING_CATEGORIES_META)
+    .map((c) => `- ${c.category}: ${c.label.en} — ${c.help.en}`)
     .join("\n");
 
-  // --- Step d: Call Anthropic critic ---
-  const maskedMemo = maskPii(outputText);
-  const model = configModel ?? PREMORTEM_DEFAULT_MODEL;
-
   const systemPrompt =
-    "You are a senior U.S. immigration attorney playing the role of a skeptical asylum adjudicator. " +
-    "Your task is to read a legal memorandum prepared for an asylum case and predict the most likely " +
-    "grounds on which an immigration judge or asylum officer would DENY the claim. " +
-    "You also have access to similar precedent cases (won and lost) for reference. " +
-    "Be critical and precise. Your goal is to surface real weaknesses so the legal team can fix them " +
-    "before filing — not to validate the memo. " +
+    "You are a meticulous quality-assurance reviewer for U.S. immigration filings. " +
+    "Given a filling guide (the rubric), a generated document (an AI letter OR an autofilled official form), and the case context, " +
+    "find every error, discrepancy, formatting problem, bad field-filling, unresolved placeholder, missing field, and internal inconsistency, " +
+    "and judge whether the document is high enough quality to be APPROVED. " +
+    "Use web_search to consult official examples/instructions and calibrate quality. " +
+    "Be precise and cite the exact field or section in each finding. " +
     "You MUST respond with valid JSON only, no prose before or after.";
 
   const userMessage =
-    "## LEGAL MEMORANDUM (sensitive — identifiers masked)\n\n" +
-    maskedMemo +
-    "\n\n---\n## SIMILAR PRECEDENTS\n\n" +
-    precedentBlock +
-    "\n\n---\n## DENIAL REASON TAXONOMY (use ONLY these codes)\n\n" +
-    taxonomyBlock +
-    '\n\n---\n## TASK\n\n' +
-    'Analyze the memorandum and predict the most likely denial grounds. ' +
-    'For each ground, assign a probability (0.0–1.0) and provide:\n' +
-    '  - rationale: why this ground is a risk based on the memo\n' +
-    '  - correction: what the legal team should add/fix to address it\n\n' +
-    'Respond ONLY with this JSON (no prose, no markdown fences):\n' +
-    '{\n' +
-    '  "overallRisk": "low" | "medium" | "high",\n' +
+    "## FILLING GUIDE (the rubric — validate strictly against it)\n\n" + guide.guide_markdown +
+    "\n\n---\n" + documentBlock +
+    "\n\n---\n## CASE CONTEXT (source data — PII masked; use to detect discrepancies)\n\n" + contextBlock +
+    "\n\n---\n## FINDING CATEGORIES (use ONLY these category codes)\n\n" + categoriesBlock +
+    "\n\n---\n## TASK\n\n" +
+    "Validate the document against the guide and the case context. Assign an overall quality score (0-100), a semáforo, and a verdict on whether it would be approved. List every issue as a finding.\n\n" +
+    "Respond ONLY with this JSON (no prose, no markdown fences):\n" +
+    "{\n" +
+    '  "score": 0,\n' +
+    '  "semaforo": "green" | "amber" | "red",\n' +
+    '  "verdict": "would_approve" | "needs_corrections" | "would_reject",\n' +
     '  "summary": "<2-3 sentence overall assessment>",\n' +
-    '  "reasons": [\n' +
-    '    {\n' +
-    '      "code": "<DenialReasonCode from the taxonomy above>",\n' +
-    '      "probability": 0.0,\n' +
-    '      "rationale": "<why this is a risk>",\n' +
-    '      "correction": "<what to fix>"\n' +
-    '    }\n' +
-    '  ]\n' +
-    '}\n\n' +
-    'Include only reasons with probability > 0.10. Sort reasons by probability descending.';
+    '  "findings": [\n' +
+    "    {\n" +
+    '      "severity": "critico" | "moderado" | "sugerencia",\n' +
+    '      "category": "<one of the category codes above>",\n' +
+    '      "location": "<field name or section>",\n' +
+    '      "description": "<what is wrong>",\n' +
+    '      "correction": "<how to fix it>"\n' +
+    "    }\n" +
+    "  ]\n" +
+    "}";
 
+  // --- Call Anthropic (with web_search) ---
   const client = getAnthropicClient();
-  let criticText: string;
+  let validatorText: string;
   let usage: AnthropicUsage;
   let modelUsed: string;
 
@@ -3568,30 +3643,31 @@ export async function assessPreMortemRisk(
       model,
       system: systemPrompt,
       user: userMessage,
-      maxTokens: 4096,
-      timeoutMs: 180_000,
+      maxTokens: PREMORTEM_MAX_OUTPUT_TOKENS,
+      tools: [buildWebSearchTool(PREMORTEM_WEB_SEARCH_MAX_USES, model)],
+      timeoutMs: 240_000,
     });
-    criticText = result.text;
+    validatorText = result.text;
     usage = result.usage;
     modelUsed = result.model;
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    logger.error({ err: errMsg, caseId: input.caseId, model }, "ai-engine: pre-mortem critic call failed");
-    // Retry once with fallback model if the primary model was rejected
+    logger.error({ err: errMsg, caseId: input.caseId, model }, "ai-engine: pre-mortem validator call failed");
     if (model !== PREMORTEM_FALLBACK_MODEL && (errMsg.includes("400") || errMsg.includes("model"))) {
       try {
-        const fallback = await callAnthropic(client, {
+        const fb = await callAnthropic(client, {
           model: PREMORTEM_FALLBACK_MODEL,
           system: systemPrompt,
           user: userMessage,
-          maxTokens: 4096,
-          timeoutMs: 180_000,
+          maxTokens: PREMORTEM_MAX_OUTPUT_TOKENS,
+          tools: [buildWebSearchTool(PREMORTEM_WEB_SEARCH_MAX_USES, PREMORTEM_FALLBACK_MODEL)],
+          timeoutMs: 240_000,
         });
-        criticText = fallback.text;
-        usage = fallback.usage;
-        modelUsed = fallback.model;
-      } catch (fallbackErr) {
-        throw new AiEngineError("AI_PROVIDER_UNAVAILABLE", fallbackErr);
+        validatorText = fb.text;
+        usage = fb.usage;
+        modelUsed = fb.model;
+      } catch (fbErr) {
+        throw new AiEngineError("AI_PROVIDER_UNAVAILABLE", fbErr);
       }
     } else {
       throw new AiEngineError("AI_PROVIDER_UNAVAILABLE", err);
@@ -3600,55 +3676,58 @@ export async function assessPreMortemRisk(
 
   const costUsd = computeAnthropicCost(usage, modelUsed);
 
-  // --- Parse critic JSON (tolerant) ---
-  type CriticOutput = {
-    overallRisk?: string;
-    summary?: string;
-    reasons?: Array<{
-      code?: unknown;
-      probability?: unknown;
-      rationale?: unknown;
-      correction?: unknown;
-    }>;
+  // --- Parse + validate ---
+  type ValidatorOutput = {
+    score?: unknown;
+    semaforo?: unknown;
+    verdict?: unknown;
+    summary?: unknown;
+    findings?: Array<{ severity?: unknown; category?: unknown; location?: unknown; description?: unknown; correction?: unknown }>;
   };
-
-  let parsed: CriticOutput | null = null;
+  let parsed: ValidatorOutput | null = null;
   try {
-    parsed = stripFencesAndParse<CriticOutput>(criticText);
+    parsed = stripFencesAndParse<ValidatorOutput>(validatorText);
   } catch {
-    // strip failed — leave as null, we'll use an empty result
+    // leave null → safe defaults
   }
 
-  // Validate overallRisk
-  const rawRisk = parsed?.overallRisk ?? "medium";
-  const overallRisk: "low" | "medium" | "high" =
-    rawRisk === "low" || rawRisk === "high" ? rawRisk : "medium";
+  const score =
+    typeof parsed?.score === "number" && Number.isFinite(parsed.score)
+      ? Math.min(100, Math.max(0, Math.round(parsed.score)))
+      : 50;
+  const semaforo: Semaforo = isSemaforo(parsed?.semaforo) ? (parsed!.semaforo as Semaforo) : semaforoFromScore(score);
+  const verdict: Verdict = isVerdict(parsed?.verdict)
+    ? (parsed!.verdict as Verdict)
+    : score >= 80
+      ? "would_approve"
+      : score >= 50
+        ? "needs_corrections"
+        : "would_reject";
+  const summary = typeof parsed?.summary === "string" && parsed.summary.trim() ? parsed.summary.trim() : null;
 
-  const summary = typeof parsed?.summary === "string" && parsed.summary.trim()
-    ? parsed.summary.trim()
-    : "Pre-mortem analysis completed.";
-
-  // Filter + validate reasons
-  const reasons: PreMortemReason[] = (parsed?.reasons ?? [])
-    .filter((r): r is NonNullable<typeof r> => r != null && isDenialReasonCode(r.code))
-    .map((r) => ({
-      code: r.code as DenialReasonCode,
-      probability: typeof r.probability === "number"
-        ? Math.min(1, Math.max(0, r.probability))
-        : 0,
-      rationale: typeof r.rationale === "string" ? r.rationale : "",
-      correction: typeof r.correction === "string" ? r.correction : "",
+  const findings: PreMortemFinding[] = (parsed?.findings ?? [])
+    .filter((f): f is NonNullable<typeof f> => f != null && isFindingSeverity(f.severity) && isFindingCategory(f.category))
+    .map((f) => ({
+      severity: f.severity as FindingSeverity,
+      category: f.category as FindingCategory,
+      location: typeof f.location === "string" ? f.location : "",
+      description: typeof f.description === "string" ? f.description : "",
+      correction: typeof f.correction === "string" ? f.correction : "",
     }))
-    .sort((a, b) => b.probability - a.probability);
+    .sort((a, b) => compareFindingSeverity(a.severity, b.severity));
 
-  // --- Step e: Persist ---
+  // --- Persist ---
   const { id: assessmentId, created_at } = await insertPreMortemAssessment({
     case_id: input.caseId,
-    run_id: resolvedRunId,
+    target_kind: targetKind,
+    run_id: runId,
+    response_id: responseId,
     form_definition_id: formDefinitionId,
-    overall_risk: overallRisk,
+    score,
+    semaforo,
+    verdict,
     summary,
-    reasons: reasons as unknown as import("@/shared/database.types").Json,
+    findings: findings as unknown as import("@/shared/database.types").Json,
     model: modelUsed,
     input_tokens: usage.inputTokens,
     output_tokens: usage.outputTokens,
@@ -3657,28 +3736,22 @@ export async function assessPreMortemRisk(
   });
 
   logger.info(
-    {
-      job: "assessPreMortemRisk",
-      caseId: input.caseId,
-      runId: resolvedRunId,
-      overallRisk,
-      reasonCount: reasons.length,
-      model: modelUsed,
-      inputTokens: usage.inputTokens,
-      outputTokens: usage.outputTokens,
-      costUsd,
-    },
-    "ai-engine: pre-mortem assessment completed",
+    { job: "assessPreMortemRisk", caseId: input.caseId, targetKind, runId, responseId, score, semaforo, verdict, findingCount: findings.length, model: modelUsed, costUsd },
+    "ai-engine: pre-mortem validation completed",
   );
 
   return {
     id: assessmentId,
     caseId: input.caseId,
-    runId: resolvedRunId,
+    targetKind,
+    runId,
+    responseId,
     formDefinitionId,
-    overallRisk,
+    score,
+    semaforo,
+    verdict,
     summary,
-    reasons,
+    findings,
     model: modelUsed,
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
@@ -3704,11 +3777,15 @@ export async function getPreMortemAssessmentsForCase(
   return rows.map((row) => ({
     id: row.id,
     caseId: row.case_id,
+    targetKind: (row.target_kind as "ai_letter" | "pdf_automation") ?? "ai_letter",
     runId: row.run_id,
+    responseId: row.response_id,
     formDefinitionId: row.form_definition_id,
-    overallRisk: (row.overall_risk as "low" | "medium" | "high") ?? "medium",
+    score: row.score ?? 0,
+    semaforo: isSemaforo(row.semaforo) ? (row.semaforo as Semaforo) : semaforoFromScore(row.score ?? 0),
+    verdict: isVerdict(row.verdict) ? (row.verdict as Verdict) : "needs_corrections",
     summary: row.summary,
-    reasons: (Array.isArray(row.reasons) ? row.reasons : []) as unknown as PreMortemReason[],
+    findings: (Array.isArray(row.findings) ? row.findings : []) as unknown as PreMortemFinding[],
     model: row.model,
     inputTokens: row.input_tokens,
     outputTokens: row.output_tokens,
@@ -3720,7 +3797,8 @@ export async function getPreMortemAssessmentsForCase(
 
 /**
  * Returns true if the Pre-Mortem tab should be enabled for the given case —
- * i.e. if any form_definition for the case's service has pre_mortem_enabled=true.
+ * i.e. if any form_definition for the case's service has a Pre-Mortem guide with
+ * enabled=true (covers both ai_letter and pdf_automation).
  */
 export async function isPreMortemEnabledForCase(
   actor: Actor,
@@ -3728,7 +3806,61 @@ export async function isPreMortemEnabledForCase(
 ): Promise<boolean> {
   await requireCaseAccess(actor, caseId);
   if (actor.kind !== "staff") return false; // staff-only feature → no tab for clients
-  return findPreMortemEnabledConfigForCase(caseId);
+  return findGuideEnabledFormForCase(caseId);
+}
+
+/**
+ * Lists the documents that can be validated in the Pre-Mortem tab: for each form of
+ * the case's service with an enabled guide, the completed ai_letter runs and the
+ * pdf_automation responses that have an artifact. Newest first.
+ */
+export async function listValidableTargetsForCase(
+  actor: Actor,
+  caseId: string,
+): Promise<ValidableTarget[]> {
+  await requireCaseAccess(actor, caseId);
+  if (actor.kind !== "staff") return [];
+
+  const guided = await listGuideEnabledFormsForCase(caseId);
+  if (guided.length === 0) return [];
+
+  const letterForms = guided.filter((f) => f.kind === "ai_letter");
+  const automationForms = guided.filter((f) => f.kind === "pdf_automation");
+  const labelByForm = new Map(guided.map((f) => [f.id, f.label_i18n]));
+
+  const targets: ValidableTarget[] = [];
+
+  // ai_letter → completed runs with a usable memo.
+  const runs = await listCompletedRunsForForms(caseId, letterForms.map((f) => f.id));
+  for (const run of runs) {
+    if (!run.output_text && !run.output_path) continue;
+    targets.push({
+      kind: "ai_letter",
+      formDefinitionId: run.form_definition_id,
+      labelI18n: labelByForm.get(run.form_definition_id) ?? null,
+      runId: run.id,
+      partyId: run.party_id,
+      createdAt: run.created_at,
+    });
+  }
+
+  // pdf_automation → responses that have a generated artifact (or are submitted/approved).
+  const responses = await listFormResponsesForForms(caseId, automationForms.map((f) => f.id));
+  for (const r of responses) {
+    const hasArtifact = !!r.filled_pdf_path || r.status === "submitted" || r.status === "approved";
+    if (!hasArtifact) continue;
+    targets.push({
+      kind: "pdf_automation",
+      formDefinitionId: r.form_definition_id,
+      labelI18n: labelByForm.get(r.form_definition_id) ?? null,
+      responseId: r.id,
+      partyId: r.party_id,
+      status: r.status,
+      createdAt: r.created_at,
+    });
+  }
+
+  return targets;
 }
 
 // ---------------------------------------------------------------------------

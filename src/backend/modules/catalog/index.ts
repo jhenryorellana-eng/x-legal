@@ -54,6 +54,7 @@ export type {
   FormEditorData,
   EditorVersionTree,
   FormEditorSourceOption,
+  FormFillGuideView,
   DatasetSummary,
   DatasetDetail,
 } from "./service";

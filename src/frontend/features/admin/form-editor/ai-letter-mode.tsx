@@ -3,6 +3,7 @@
 import * as React from "react";
 import { GradientBtn, Icon, Chip } from "@/frontend/components/brand";
 import { Switch, toast } from "@/frontend/components/desktop";
+import { PreMortemGuideCard } from "./pre-mortem-guide-card";
 import { FieldLabel, SelectInput, TextInput } from "../shared/chrome";
 import { GENERATION_MODELS, DEFAULT_GENERATION_MODEL } from "@/shared/constants/ai-models";
 import type { FormEditorVM, FormEditorActions, GenerationConfigVM, GenerationSectionVM, AssemblyBlockType } from "./types";
@@ -409,14 +410,8 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
             )}
           </div>
 
-          {/* Pre-Mortem (risk analysis) */}
-          <div>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-              <Switch checked={cfg.pre_mortem_enabled} onCheckedChange={(c) => setCfg({ ...cfg, pre_mortem_enabled: c })} aria-label="Pre-Mortem (análisis de riesgo)" />
-              <span style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>Pre-Mortem (análisis de riesgo)</span>
-            </label>
-            <p style={{ margin: "4px 0 0 34px", fontSize: 12, color: "var(--ink-3)" }}>Habilita el análisis de IA de motivos de denegación para este documento.</p>
-          </div>
+          {/* Pre-Mortem (quality validation) — guide + enablement */}
+          <PreMortemGuideCard formId={vm.form.id} initial={vm.preMortemGuide} onSave={actions.savePreMortemGuide} />
 
           {/* Anti-invention rules */}
           <div>

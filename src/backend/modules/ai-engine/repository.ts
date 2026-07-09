@@ -1195,66 +1195,108 @@ export async function listPreMortemAssessmentsForCase(
   return data ?? [];
 }
 
+/** The Pre-Mortem filling guide (rubric) + enablement for a form_definition. */
+export async function findFormFillGuide(
+  formDefinitionId: string,
+): Promise<{ guide_markdown: string; enabled: boolean; source_file_path: string | null } | null> {
+  const client = createServiceClient();
+  const { data } = await client
+    .from("form_fill_guides")
+    .select("guide_markdown, enabled, source_file_path")
+    .eq("form_definition_id", formDefinitionId)
+    .maybeSingle();
+  return data ?? null;
+}
+
 /**
- * Returns true if any ai_generation_config with pre_mortem_enabled=true exists
- * for a form_definition associated with the case (via the case's service).
+ * Lists the form_definitions of the case's service that have a Pre-Mortem guide
+ * with enabled=true (both kinds). Join path:
+ *   cases.service_id → service_phases → form_definitions → form_fill_guides(enabled).
  *
- * Join path: cases.service_id → service_phases.service_id → form_definitions.service_phase_id
- *            → ai_generation_configs.form_definition_id (pre_mortem_enabled=true)
- *
- * Used by the UI gating tab (isPreMortemEnabledForCase in service layer).
+ * Feeds the gating (isPreMortemEnabledForCase) and the validable-target selector.
  */
-export async function findPreMortemEnabledConfigForCase(
+export async function listGuideEnabledFormsForCase(
   caseId: string,
-): Promise<boolean> {
+): Promise<Array<{ id: string; kind: string; label_i18n: unknown }>> {
   const client = createServiceClient();
 
-  // Step 1: get the service_id for the case
-  const { data: caseRow, error: caseErr } = await client
+  const { data: caseRow } = await client
     .from("cases")
     .select("service_id")
     .eq("id", caseId)
     .maybeSingle();
+  if (!caseRow) return [];
 
-  if (caseErr || !caseRow) return false;
-
-  // Step 2: get service_phases for that service
-  const { data: phases, error: phaseErr } = await client
+  const { data: phases } = await client
     .from("service_phases")
     .select("id")
     .eq("service_id", caseRow.service_id);
-
-  if (phaseErr || !phases || phases.length === 0) return false;
+  if (!phases || phases.length === 0) return [];
 
   const phaseIds = phases.map((p) => p.id);
 
-  // Step 3: get form_definitions for those phases
-  const { data: formDefs, error: fdErr } = await client
+  const { data: formDefs } = await client
     .from("form_definitions")
-    .select("id")
+    .select("id, kind, label_i18n")
     .in("service_phase_id", phaseIds);
+  if (!formDefs || formDefs.length === 0) return [];
 
-  if (fdErr || !formDefs || formDefs.length === 0) return false;
+  const formIds = formDefs.map((f) => f.id);
 
-  const formDefIds = formDefs.map((f) => f.id);
-
-  // Step 4: check if any of those form_definitions has pre_mortem_enabled=true
-  const { data: configs, error: cfgErr } = await client
-    .from("ai_generation_configs")
+  const { data: guides } = await client
+    .from("form_fill_guides")
     .select("form_definition_id")
-    .in("form_definition_id", formDefIds)
-    .eq("pre_mortem_enabled", true)
-    .limit(1);
+    .in("form_definition_id", formIds)
+    .eq("enabled", true);
 
-  if (cfgErr) return false;
-  return (configs ?? []).length > 0;
+  const enabled = new Set((guides ?? []).map((g) => g.form_definition_id));
+  return formDefs
+    .filter((f) => enabled.has(f.id))
+    .map((f) => ({ id: f.id, kind: f.kind, label_i18n: f.label_i18n }));
+}
+
+/** Gating boolean: does the case have any form with the Pre-Mortem guide enabled? */
+export async function findGuideEnabledFormForCase(caseId: string): Promise<boolean> {
+  return (await listGuideEnabledFormsForCase(caseId)).length > 0;
+}
+
+/** Completed ai_letter runs for the given forms (newest first). */
+export async function listCompletedRunsForForms(
+  caseId: string,
+  formDefIds: string[],
+): Promise<Array<{ id: string; form_definition_id: string; created_at: string; output_text: string | null; output_path: string | null; model: string | null; party_id: string | null }>> {
+  if (formDefIds.length === 0) return [];
+  const client = createServiceClient();
+  const { data } = await client
+    .from("ai_generation_runs")
+    .select("id, form_definition_id, created_at, output_text, output_path, model, party_id")
+    .eq("case_id", caseId)
+    .eq("status", "completed")
+    .in("form_definition_id", formDefIds)
+    .order("created_at", { ascending: false });
+  return data ?? [];
+}
+
+/** Form responses for the given pdf_automation forms (newest first). */
+export async function listFormResponsesForForms(
+  caseId: string,
+  formDefIds: string[],
+): Promise<Array<{ id: string; form_definition_id: string; status: string; filled_pdf_path: string | null; created_at: string; party_id: string | null }>> {
+  if (formDefIds.length === 0) return [];
+  const client = createServiceClient();
+  const { data } = await client
+    .from("case_form_responses")
+    .select("id, form_definition_id, status, filled_pdf_path, created_at, party_id")
+    .eq("case_id", caseId)
+    .in("form_definition_id", formDefIds)
+    .order("created_at", { ascending: false });
+  return data ?? [];
 }
 
 /**
- * Finds the most recent completed run for a case whose form_definition has
- * pre_mortem_enabled=true in ai_generation_configs.
- *
- * Returns null if no such run exists.
+ * Finds the most recent completed ai_letter run for a case whose form_definition
+ * has a Pre-Mortem guide enabled. A run is eligible if it has the memo as text OR
+ * as a stored PDF (output_path). Returns null if no such run exists.
  */
 export async function findLatestEligibleRunForPreMortem(
   caseId: string,
@@ -1265,30 +1307,13 @@ export async function findLatestEligibleRunForPreMortem(
   formDefinitionId: string;
   model: string | null;
 } | null> {
-  const client = createServiceClient();
+  const guided = await listGuideEnabledFormsForCase(caseId);
+  const guidedIds = guided.map((f) => f.id);
+  if (guidedIds.length === 0) return null;
 
-  // Get all completed runs for this case (newest first)
-  const { data: runs, error: runErr } = await client
-    .from("ai_generation_runs")
-    .select("id, form_definition_id, output_text, output_path, model")
-    .eq("case_id", caseId)
-    .eq("status", "completed")
-    .order("created_at", { ascending: false });
-
-  if (runErr || !runs || runs.length === 0) return null;
-
-  // For each run check if its form_definition has pre_mortem_enabled=true. A run
-  // is eligible if it has the memo as text OR as a stored PDF (output_path) —
-  // the credible-fear engine stores the memo as a PDF, so text is extracted on
-  // demand (assessPreMortemRisk) when output_text is absent.
+  const runs = await listCompletedRunsForForms(caseId, guidedIds);
   for (const run of runs) {
-    const { data: cfg } = await client
-      .from("ai_generation_configs")
-      .select("pre_mortem_enabled")
-      .eq("form_definition_id", run.form_definition_id)
-      .maybeSingle();
-
-    if (cfg?.pre_mortem_enabled && (run.output_text || run.output_path)) {
+    if (run.output_text || run.output_path) {
       return {
         runId: run.id,
         outputText: run.output_text,
@@ -1298,6 +1323,5 @@ export async function findLatestEligibleRunForPreMortem(
       };
     }
   }
-
   return null;
 }

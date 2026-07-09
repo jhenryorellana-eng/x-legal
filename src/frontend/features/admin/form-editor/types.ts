@@ -98,6 +98,8 @@ export interface FormEditorVM {
   };
   generationConfig: GenerationConfigVM | null;
   datasets: { id: string; name: string; tokens: number; active: boolean }[];
+  /** Pre-Mortem validation guide (rubric) + enablement — for BOTH kinds. */
+  preMortemGuide: { enabled: boolean; guideText: string | null };
 }
 
 export interface GenerationSectionVM {
@@ -178,6 +180,8 @@ export interface FormEditorActions {
   /** Set the version-wide default for how empty applicable fields render (auto|na|blank). */
   setVersionEmptyPolicy: (input: { version_id: string; default_empty_policy: VersionEmptyPolicy }) => Promise<Res<unknown>>;
   saveGenerationConfig: (input: Record<string, unknown>) => Promise<Res<unknown>>;
+  /** Upsert the Pre-Mortem validation guide (rubric) + enablement for this form (both kinds). */
+  savePreMortemGuide: (input: { form_definition_id: string; enabled: boolean; guide_markdown: string; source_file_path?: string | null }) => Promise<Res<unknown>>;
   testGeneration: (input: { form_definition_id: string; case_id: string; party_id?: string }) => Promise<Res<{ run_id: string }>>;
   /** Ensure (create if missing) an ai_letter's companion questionnaire; returns its id. */
   ensureCompanionQuestionnaire: (aiLetterFormId: string) => Promise<Res<{ id: string; slug: string; created: boolean }>>;

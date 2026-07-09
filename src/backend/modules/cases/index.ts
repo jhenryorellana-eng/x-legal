@@ -46,6 +46,7 @@ export {
   approveFormResponse,
   rejectFormResponse,
   generateFilledPdf,
+  resolveFormResponseFieldValues,
   getFormResponsePdfUrl,
   resolveBySource,
   // Staff reads
@@ -96,6 +97,9 @@ export type {
   SubmitFormResponseInput,
   ApproveFormResponseInput,
   GenerateFilledPdfInput,
+  // Pre-Mortem validator — structured field values that would be filed
+  ResolvedFormField,
+  ResolvedFormResponse,
   FormForClientDto,
   FormGroupDto,
   FormQuestionDto,

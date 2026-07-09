@@ -51,10 +51,11 @@ export {
   markTranslationFailed,
   // Budget (consumed by ai-budget-aggregation cron)
   sumMonthlyCosts,
-  // Pre-Mortem critic (Etapa D)
+  // Pre-Mortem validator (quality validation of generations/automations)
   assessPreMortemRisk,
   getPreMortemAssessmentsForCase,
   isPreMortemEnabledForCase,
+  listValidableTargetsForCase,
   // Error class
   AiEngineError,
 } from "./service";
@@ -82,9 +83,11 @@ export type {
   // AI cost report (consumed by /admin/ai-costs page + export route)
   AiCostsReport,
   AiCostsReportQuery,
-  // Pre-Mortem critic (Etapa D)
+  // Pre-Mortem validator (quality validation of generations/automations)
   PreMortemAssessment,
-  PreMortemReason,
+  PreMortemFinding,
+  PreMortemTarget,
+  ValidableTarget,
 } from "./service";
 
 // ---------------------------------------------------------------------------

@@ -7,9 +7,21 @@ import type { StatusKind } from "@/frontend/components/brand/status-pill";
 import { resolveI18n, type Locale } from "@/shared/i18n";
 import type { CaseRutaResult } from "@/backend/modules/scheduling";
 import type { AccountStatementDto } from "@/backend/modules/billing";
-import type { CaseRutaVM, InstallmentVM, PreMortemAssessmentVM } from "@/frontend/features/shared-case";
-import type { PreMortemAssessment } from "@/backend/modules/ai-engine";
-import { DENIAL_REASONS, isDenialReasonCode } from "@/shared/constants/denial-reasons";
+import type {
+  CaseRutaVM,
+  InstallmentVM,
+  PreMortemReportVM,
+  PreMortemTargetVM,
+  PreMortemSemaforo,
+  PreMortemSeverity,
+} from "@/frontend/features/shared-case";
+import type { PreMortemAssessment, ValidableTarget } from "@/backend/modules/ai-engine";
+import {
+  FINDING_CATEGORIES_META,
+  VERDICT_META,
+  isFindingCategory,
+  isVerdict,
+} from "@/shared/constants/finding-categories";
 
 /**
  * Maps the billing account statement into the shared-case InstallmentVM list
@@ -91,29 +103,73 @@ export function buildRutaVM(ruta: CaseRutaResult | null, locale: Locale): CaseRu
 }
 
 /**
- * Maps ai-engine Pre-Mortem assessments into the locale-resolved VM the
- * "Pre-Mortem" tab renders. Resolves each denial-reason code to its label via
- * the taxonomy (DENIAL_REASONS) for the active locale.
+ * Builds the Pre-Mortem tab selector entries from the backend's validable targets
+ * (deduped to one per kind+form+party, newest artifact wins). The `key` doubles as
+ * the deep-link id (`?tab=preMortem&target=<key>`).
  */
-export function buildPreMortemVM(
-  assessments: PreMortemAssessment[],
+export function buildPreMortemTargets(
+  targets: ValidableTarget[],
   locale: Locale,
-): PreMortemAssessmentVM[] {
-  return assessments.map((a) => ({
-    id: a.id,
-    overallRisk: a.overallRisk,
-    summary: a.summary,
-    reasons: a.reasons.map((r) => ({
-      code: r.code,
-      label: isDenialReasonCode(r.code) ? DENIAL_REASONS[r.code].label[locale] : r.code,
-      probability: r.probability,
-      rationale: r.rationale,
-      correction: r.correction,
-    })),
-    model: a.model,
-    costUsd: a.costUsd,
-    createdAt: a.createdAt,
-  }));
+): PreMortemTargetVM[] {
+  const seen = new Set<string>();
+  const out: PreMortemTargetVM[] = [];
+  for (const t of targets) {
+    const partyId = t.partyId ?? null;
+    const key = `${t.kind}:${t.formDefinitionId}:${partyId ?? ""}`;
+    if (seen.has(key)) continue; // input is newest-first → first wins
+    seen.add(key);
+    const label = resolveI18n(t.labelI18n as Parameters<typeof resolveI18n>[0], locale) || t.formDefinitionId;
+    out.push({
+      key,
+      kind: t.kind,
+      formDefinitionId: t.formDefinitionId,
+      refId: t.runId ?? t.responseId ?? null,
+      partyId,
+      label,
+      status: t.status ?? null,
+    });
+  }
+  return out;
+}
+
+/**
+ * Maps ai-engine Pre-Mortem assessments into the locale-resolved report VM. Each
+ * report's `targetKey` is resolved via the artifact id (run/response) against the
+ * current targets so the tab can show the history of the selected document; codes
+ * (category, verdict) are localized.
+ */
+export function mapPreMortemReports(
+  assessments: PreMortemAssessment[],
+  targets: PreMortemTargetVM[],
+  locale: Locale,
+): PreMortemReportVM[] {
+  const refToKey = new Map<string, string>();
+  for (const t of targets) if (t.refId) refToKey.set(t.refId, t.key);
+
+  return assessments.map((a) => {
+    const refId = a.runId ?? a.responseId;
+    const targetKey = (refId && refToKey.get(refId)) ?? `${a.targetKind}:${a.formDefinitionId}:`;
+    return {
+      id: a.id,
+      targetKey,
+      targetKind: a.targetKind,
+      score: a.score,
+      semaforo: a.semaforo as PreMortemSemaforo,
+      approved: isVerdict(a.verdict) ? VERDICT_META[a.verdict].approved : false,
+      verdictLabel: isVerdict(a.verdict) ? VERDICT_META[a.verdict].label[locale] : a.verdict,
+      summary: a.summary,
+      findings: a.findings.map((f) => ({
+        severity: f.severity as PreMortemSeverity,
+        category: isFindingCategory(f.category) ? FINDING_CATEGORIES_META[f.category].label[locale] : String(f.category),
+        location: f.location,
+        description: f.description,
+        correction: f.correction,
+      })),
+      model: a.model,
+      costUsd: a.costUsd,
+      createdAt: a.createdAt,
+    };
+  });
 }
 
 /** Coarse relative time ("hace 4 meses" / "4 months ago"). */

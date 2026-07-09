@@ -48,12 +48,17 @@ export function GeneracionesTab({
   strings,
   locale,
   title,
+  onOpenPreMortem,
+  preMortemEnabled,
 }: {
   vm: CaseWorkspaceVM;
   actions: CaseDetailActions;
   strings: CasosStrings;
   locale: "es" | "en";
   title: string;
+  /** Opens the Pre-Mortem tab focused on this letter (deep-link). */
+  onOpenPreMortem?: (key: string) => void;
+  preMortemEnabled?: boolean;
 }) {
   const t = strings.detail;
   const statusLabels = t.genStatus as Record<string, string>;
@@ -143,6 +148,12 @@ export function GeneracionesTab({
                   {actions.startLetterGeneration && (
                     <GhostBtn size="md" full={false} icon="sparkle" disabled={isBusy} onClick={() => regenerate(f, key)}>
                       {isBusy ? t.generatingForm : run ? t.regenerateLetter : t.generateLetter}
+                    </GhostBtn>
+                  )}
+                  {/* Pre-Mortem — validate this generated letter's quality. */}
+                  {preMortemEnabled && onOpenPreMortem && run?.outputAvailable && (
+                    <GhostBtn size="md" full={false} icon="shield" onClick={() => onOpenPreMortem(`ai_letter:${f.id}:${f.partyId ?? ""}`)}>
+                      {t.preMortem.title}
                     </GhostBtn>
                   )}
                   {/* Revisión — side-by-side letter ↔ editable questionnaire answers. */}

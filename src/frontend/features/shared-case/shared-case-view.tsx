@@ -56,6 +56,8 @@ export interface SharedCaseViewProps {
    * notification opens Pagos directly). Ignored when not visible/unlocked.
    */
   initialTab?: CaseTabId;
+  /** Deep-link: preselect a Pre-Mortem target (`?tab=preMortem&target=<key>`). */
+  initialTarget?: string;
 }
 
 export function SharedCaseView({
@@ -68,6 +70,7 @@ export function SharedCaseView({
   chatRaw,
   tabAccessByRole,
   initialTab,
+  initialTarget,
 }: SharedCaseViewProps) {
   const t = strings.detail;
   const tb = t.tabs;
@@ -112,6 +115,14 @@ export function SharedCaseView({
   );
   // Shown when a locked tab is clicked before the case is active.
   const [lockedHint, setLockedHint] = React.useState(false);
+  // Pre-Mortem: which document is selected in the tab (seeded by the deep-link and
+  // by the per-item "Pre-Mortem" buttons in Generaciones / Información).
+  const [preMortemTarget, setPreMortemTarget] = React.useState<string | null>(initialTarget ?? null);
+  const openPreMortem = React.useCallback((key: string) => {
+    setPreMortemTarget(key);
+    setActive("preMortem");
+    setLockedHint(false);
+  }, []);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
@@ -314,19 +325,21 @@ export function SharedCaseView({
         {active === "documentos" && <DocumentosTab vm={vm} actions={actions} strings={strings} />}
         {active === "formularios" && (
           <InformacionTab
+            onOpenPreMortem={openPreMortem}
+            preMortemEnabled={vm.preMortem?.enabled ?? false}
             vm={vm}
             actions={actions}
             strings={strings}
             onNavigateToGeneration={() => setActive("generaciones")}
           />
         )}
-        {active === "generaciones" && <GeneracionesTab vm={vm} actions={actions} strings={strings} locale={locale} title={tb.generaciones} />}
+        {active === "generaciones" && <GeneracionesTab vm={vm} actions={actions} strings={strings} locale={locale} title={tb.generaciones} onOpenPreMortem={openPreMortem} preMortemEnabled={vm.preMortem?.enabled ?? false} />}
         {active === "traspaso" && <TraspasoTab vm={vm} actions={actions} strings={strings} />}
         {active === "pagos" && <PagosTab vm={vm} actions={actions} strings={strings} locale={locale} />}
         {active === "expediente" && <ExpedienteTab vm={vm} strings={strings} title={tb.expediente} />}
         {active === "validacion" && <ValidacionTab vm={vm} strings={strings} title={tb.validacion} />}
         {active === "fasesAnteriores" && <FasesAnterioresTab vm={vm} actions={actions} strings={strings} />}
-        {active === "preMortem" && <PreMortemTab vm={vm} actions={actions} strings={strings} />}
+        {active === "preMortem" && <PreMortemTab vm={vm} actions={actions} strings={strings} selectedTargetKey={preMortemTarget} onSelectTarget={setPreMortemTarget} />}
         {active === "historial" && <HistorialTab vm={vm} strings={strings} locale={locale} />}
       </div>
     </div>

@@ -1032,45 +1032,57 @@ export type Database = {
           cost_usd: number | null
           created_at: string
           created_by: string
+          findings: Json
           form_definition_id: string | null
           id: string
           input_tokens: number | null
           model: string | null
           output_tokens: number | null
-          overall_risk: string
-          reasons: Json
+          response_id: string | null
           run_id: string | null
-          summary: string
+          score: number | null
+          semaforo: string | null
+          summary: string | null
+          target_kind: string
+          verdict: string | null
         }
         Insert: {
           case_id: string
           cost_usd?: number | null
           created_at?: string
           created_by: string
+          findings?: Json
           form_definition_id?: string | null
           id?: string
           input_tokens?: number | null
           model?: string | null
           output_tokens?: number | null
-          overall_risk: string
-          reasons?: Json
+          response_id?: string | null
           run_id?: string | null
-          summary: string
+          score?: number | null
+          semaforo?: string | null
+          summary?: string | null
+          target_kind: string
+          verdict?: string | null
         }
         Update: {
           case_id?: string
           cost_usd?: number | null
           created_at?: string
           created_by?: string
+          findings?: Json
           form_definition_id?: string | null
           id?: string
           input_tokens?: number | null
           model?: string | null
           output_tokens?: number | null
-          overall_risk?: string
-          reasons?: Json
+          response_id?: string | null
           run_id?: string | null
-          summary?: string
+          score?: number | null
+          semaforo?: string | null
+          summary?: string | null
+          target_kind?: string
+          verdict?: string | null
         }
         Relationships: [
           {
@@ -1095,10 +1107,62 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "case_pre_mortem_assessments_response_id_fkey"
+            columns: ["response_id"]
+            isOneToOne: false
+            referencedRelation: "case_form_responses"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "case_pre_mortem_assessments_run_id_fkey"
             columns: ["run_id"]
             isOneToOne: false
             referencedRelation: "ai_generation_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      form_fill_guides: {
+        Row: {
+          created_at: string
+          enabled: boolean
+          form_definition_id: string
+          guide_markdown: string
+          source_file_path: string | null
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          enabled?: boolean
+          form_definition_id: string
+          guide_markdown?: string
+          source_file_path?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          enabled?: boolean
+          form_definition_id?: string
+          guide_markdown?: string
+          source_file_path?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "form_fill_guides_form_definition_id_fkey"
+            columns: ["form_definition_id"]
+            isOneToOne: true
+            referencedRelation: "form_definitions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "form_fill_guides_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "users"
             referencedColumns: ["id"]
           },
         ]

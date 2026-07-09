@@ -79,7 +79,7 @@ import { linkLeadToCase } from "@/backend/modules/kanban";
 import { classifySaveError } from "@/frontend/features/form-wizard/classify-save-error";
 import { getLocale } from "next-intl/server";
 import { resolveI18n, type Locale } from "@/shared/i18n";
-import { buildPreMortemVM } from "./view-helpers";
+import { mapPreMortemReports } from "./view-helpers";
 
 type Ok<T> = { ok: true } & T;
 type Err = { ok: false; error: { code: string; message?: string } };
@@ -105,16 +105,26 @@ function mapErr(err: unknown): Err {
 }
 
 // ---------------------------------------------------------------------------
-// runPreMortemAction — Etapa D: run an AI Pre-Mortem risk analysis on the case
+// runPreMortemAction — validate a specific generation/automation (Pre-Mortem)
 // ---------------------------------------------------------------------------
 
-export async function runPreMortemAction(input: { caseId: string; runId?: string }) {
+export async function runPreMortemAction(input: {
+  caseId: string;
+  target: { kind: "ai_letter" | "pdf_automation"; formDefinitionId: string; refId?: string | null };
+}) {
   try {
     const actor = await requireActor();
-    const assessment = await assessPreMortemRisk(actor, { caseId: input.caseId, runId: input.runId });
+    const t = input.target;
+    const backendTarget =
+      t.kind === "ai_letter"
+        ? ({ kind: "ai_letter", runId: t.refId ?? undefined } as const)
+        : ({ kind: "pdf_automation", responseId: t.refId ?? "" } as const);
+    const assessment = await assessPreMortemRisk(actor, { caseId: input.caseId, target: backendTarget });
     const locale = (await getLocale()) as Locale;
-    const [vm] = buildPreMortemVM([assessment], locale === "en" ? "en" : "es");
-    return { ok: true as const, assessment: vm };
+    // The page revalidates after this (router.refresh), rebuilding reports with the
+    // full target list; the returned report is a transient confirmation.
+    const [report] = mapPreMortemReports([assessment], [], locale === "en" ? "en" : "es");
+    return { ok: true as const, report };
   } catch (err) {
     return mapErr(err);
   }

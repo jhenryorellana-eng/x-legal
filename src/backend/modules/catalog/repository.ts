@@ -795,6 +795,34 @@ export async function upsertGenerationConfig(
 }
 
 // ---------------------------------------------------------------------------
+// Form fill guides (Pre-Mortem rubric — one per form_definition, both kinds)
+// ---------------------------------------------------------------------------
+
+export type FormFillGuideRow = Tables<"form_fill_guides">;
+
+export async function findFormFillGuide(
+  formDefinitionId: string,
+): Promise<FormFillGuideRow | null> {
+  const { data } = await db()
+    .from("form_fill_guides")
+    .select("*")
+    .eq("form_definition_id", formDefinitionId)
+    .maybeSingle();
+  return data ?? null;
+}
+
+export async function upsertFormFillGuide(
+  row: TablesInsert<"form_fill_guides">,
+): Promise<FormFillGuideRow> {
+  const { data, error } = await db()
+    .from("form_fill_guides")
+    .upsert(row, { onConflict: "form_definition_id" })
+    .select()
+    .single();
+  return throwOnError(data, error, "upsertFormFillGuide");
+}
+
+// ---------------------------------------------------------------------------
 // Datasets
 // ---------------------------------------------------------------------------
 

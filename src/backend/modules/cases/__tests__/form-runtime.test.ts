@@ -434,7 +434,7 @@ describe("validateAnswerTypes", () => {
 // Service: saveFormDraft
 // ---------------------------------------------------------------------------
 
-import { saveFormDraft, staffUpdateFormAnswers, submitFormResponse, approveFormResponse, generateFilledPdf, resolveBySource, getCaseExtractions } from "../service";
+import { saveFormDraft, staffUpdateFormAnswers, submitFormResponse, approveFormResponse, generateFilledPdf, resolveFormResponseFieldValues, resolveBySource, getCaseExtractions } from "../service";
 
 describe("saveFormDraft", () => {
   beforeEach(() => {
@@ -1417,6 +1417,59 @@ describe("generateFilledPdf", () => {
     await generateFilledPdf(staffActor, { responseId: RESPONSE_ID });
 
     expect(mockFillAcroForm).toHaveBeenCalledWith(expect.anything(), {}, { FromDate: "01/2018" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Service: resolveFormResponseFieldValues (Pre-Mortem validator input)
+// Shares resolveFormResponseFieldsCore with generateFilledPdf → structured view
+// of exactly what would be filed. Unlike generateFilledPdf it must NOT require a
+// fileable status (validates drafts) nor throw on missing required.
+// ---------------------------------------------------------------------------
+
+describe("resolveFormResponseFieldValues", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCan.mockReturnValue(undefined);
+    mockRequireCaseAccess.mockResolvedValue(undefined);
+    mockGetPublishedAutomationVersion.mockResolvedValue(publishedVersion);
+    mockListQuestionGroups.mockResolvedValue([]);
+    mockListQuestions.mockResolvedValue([]);
+  });
+
+  it("blocks cross-tenant reads (requireCaseAccess rejects → no PII leak)", async () => {
+    mockFindFormResponseById.mockResolvedValue(approvedResponse);
+    mockRequireCaseAccess.mockRejectedValue(new Error("forbidden_case"));
+
+    await expect(
+      resolveFormResponseFieldValues(staffActor, RESPONSE_ID),
+    ).rejects.toThrow("forbidden_case");
+    expect(mockFindFormDefinitionById).not.toHaveBeenCalled();
+  });
+
+  it("validates a DRAFT response (no fileable status gate) and reports structured fields + missingRequired", async () => {
+    mockFindFormResponseById.mockResolvedValue({ ...draftResponse, answers: { qName: "Karelis" } });
+    mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
+    mockListQuestionGroups.mockResolvedValue([{ id: "grpA" }, { id: "grpSig", do_not_fill: true }]);
+    mockListQuestions.mockImplementation(async (groupId: string) =>
+      groupId === "grpA"
+        ? [
+            { id: "qName", source: "client_answer", source_ref: null, pdf_field_name: "FirstName", is_required: true, field_type: "text" },
+            { id: "qMiss", source: "client_answer", source_ref: null, pdf_field_name: "LastName", is_required: true, field_type: "text" },
+          ]
+        : [{ id: "qSig", source: "client_answer", source_ref: null, pdf_field_name: "SignName", is_required: false, field_type: "text" }],
+    );
+
+    // Would throw FORM_PDF_BLOCKED via generateFilledPdf; the validator resolves it.
+    const res = await resolveFormResponseFieldValues(staffActor, RESPONSE_ID);
+
+    const byId = Object.fromEntries(res.fields.map((f) => [f.questionId, f]));
+    expect(byId.qName).toMatchObject({ pdfFieldName: "FirstName", value: "Karelis", empty: false, doNotFill: false });
+    expect(byId.qMiss).toMatchObject({ pdfFieldName: "LastName", value: null, empty: true, required: true });
+    expect(byId.qSig).toMatchObject({ doNotFill: true, value: null });
+    // A required field with no value is reported (not thrown).
+    expect(res.missingRequired).toContain("LastName");
+    expect(res.versionId).toBe(publishedVersion.id);
   });
 });
 

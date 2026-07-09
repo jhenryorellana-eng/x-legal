@@ -1943,6 +1943,82 @@ export async function updateGenerationConfig(
   return config as unknown as GenerationConfig;
 }
 
+// ---------------------------------------------------------------------------
+// Pre-Mortem validation guide (rubric) — one per form_definition, both kinds.
+// ---------------------------------------------------------------------------
+
+/** The filling guide + Pre-Mortem enablement for one form (ai_letter OR pdf_automation). */
+export interface FormFillGuideView {
+  form_definition_id: string;
+  guide_markdown: string;
+  source_file_path: string | null;
+  enabled: boolean;
+}
+
+const FormFillGuideSchema = z.object({
+  form_definition_id: z.string(),
+  // The whole guide (e.g. Guia-Llenado-I-589.md ≈ 27KB) is injected as the rubric.
+  guide_markdown: z.string().max(500_000),
+  source_file_path: z.string().max(1024).nullable().optional(),
+  enabled: z.boolean(),
+});
+
+/**
+ * Upserts the Pre-Mortem validation guide (rubric) for a form_definition. Works for
+ * BOTH kinds (ai_letter and pdf_automation) — the guide is the admin-curated rubric
+ * the Pre-Mortem validator checks a generated artifact against. `enabled` is the
+ * unified flag that surfaces the case Pre-Mortem tab.
+ *
+ * @api-id API-CAT-47
+ */
+export async function saveFormFillGuide(
+  actor: Actor,
+  input: { form_definition_id: string; guide_markdown: string; source_file_path?: string | null; enabled: boolean },
+): Promise<FormFillGuideView> {
+  can(actor, "catalog", "edit");
+  const dto = FormFillGuideSchema.parse(input);
+
+  const form = await repo.findFormDefinition(dto.form_definition_id);
+  if (!form) throw catalogError("CATALOG_FORM_NOT_FOUND");
+  // Kind-agnostic: both ai_letter and pdf_automation can carry a validation guide.
+
+  const row = await repo.upsertFormFillGuide({
+    form_definition_id: dto.form_definition_id,
+    guide_markdown: dto.guide_markdown,
+    source_file_path: dto.source_file_path ?? null,
+    enabled: dto.enabled,
+    updated_by: actor.userId,
+  });
+
+  // Audit with redacted guide (length only, never the full text).
+  await writeAudit(actor, "catalog.form_fill_guide.updated", "form_fill_guides", row.form_definition_id, {
+    after: { form_definition_id: row.form_definition_id, enabled: row.enabled, guide_markdown: `[redacted:${row.guide_markdown.length}chars]` },
+  });
+
+  return {
+    form_definition_id: row.form_definition_id,
+    guide_markdown: row.guide_markdown,
+    source_file_path: row.source_file_path,
+    enabled: row.enabled,
+  };
+}
+
+/** Reads the Pre-Mortem guide for a form (null when never configured). */
+export async function getFormFillGuide(
+  actor: Actor,
+  formDefinitionId: string,
+): Promise<FormFillGuideView | null> {
+  can(actor, "catalog", "view");
+  const row = await repo.findFormFillGuide(formDefinitionId);
+  if (!row) return null;
+  return {
+    form_definition_id: row.form_definition_id,
+    guide_markdown: row.guide_markdown,
+    source_file_path: row.source_file_path,
+    enabled: row.enabled,
+  };
+}
+
 /**
  * Prueba de generación (RF-ADM-037): corrida real con is_test=true.
  *
@@ -2846,6 +2922,8 @@ export interface FormEditorData {
   };
   /** ai_letter config (null for pdf_automation or unconfigured). */
   generationConfig: GenerationConfig | null;
+  /** Pre-Mortem validation guide (rubric) + enablement — both kinds. */
+  preMortemGuide: { enabled: boolean; guideText: string | null; sourceFilePath: string | null };
 }
 
 /**
@@ -2906,6 +2984,13 @@ export async function getFormEditorData(
       ? ((await repo.findGenerationConfig(form.id)) as unknown as GenerationConfig | null)
       : null;
 
+  const guideRow = await repo.findFormFillGuide(form.id);
+  const preMortemGuide = {
+    enabled: guideRow?.enabled ?? false,
+    guideText: guideRow?.guide_markdown ?? null,
+    sourceFilePath: guideRow?.source_file_path ?? null,
+  };
+
   return {
     form: {
       id: form.id,
@@ -2929,6 +3014,7 @@ export async function getFormEditorData(
       profileFields: Array.from(PROFILE_SOURCE_FIELDS),
     },
     generationConfig,
+    preMortemGuide,
   };
 }
 

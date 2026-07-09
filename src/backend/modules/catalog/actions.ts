@@ -660,6 +660,29 @@ export async function updateGenerationConfigAction(
   }
 }
 
+/** @api-id API-CAT-47 — Pre-Mortem validation guide (both kinds). */
+export async function saveFormFillGuideAction(
+  input: Parameters<typeof svc.saveFormFillGuide>[1],
+): Promise<ActionResult<Awaited<ReturnType<typeof svc.saveFormFillGuide>>>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.saveFormFillGuide(actor, input));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+export async function getFormFillGuideAction(
+  formDefinitionId: string,
+): Promise<ActionResult<Awaited<ReturnType<typeof svc.getFormFillGuide>>>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.getFormFillGuide(actor, formDefinitionId));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 /** @api-id API-CAT-47 — test generation (is_test=true) */
 export async function testGenerationAction(
   input: Parameters<typeof svc.testGeneration>[1],

@@ -28,7 +28,7 @@ import {
 import { getAccountStatement } from "@/backend/modules/billing";
 import { getCaseTabAccess } from "@/backend/modules/case-tabs";
 import { getContractForCase } from "@/backend/modules/contracts";
-import { getRunsForCase, getPreMortemAssessmentsForCase, isPreMortemEnabledForCase } from "@/backend/modules/ai-engine";
+import { getRunsForCase, getPreMortemAssessmentsForCase, isPreMortemEnabledForCase, listValidableTargetsForCase } from "@/backend/modules/ai-engine";
 import { getValidationsForCase } from "@/backend/modules/integrations";
 import { getCaseExpedientes } from "@/backend/modules/expediente";
 import { getCaseRuta } from "@/backend/modules/scheduling";
@@ -46,7 +46,7 @@ import {
   confirmAttachmentAction,
   getAttachmentDownloadUrlAction,
 } from "@/backend/modules/messaging/actions";
-import { mapStatusToPill, buildRutaVM, buildPreMortemVM, mapStatementInstallments } from "../../../admin/casos/view-helpers";
+import { mapStatusToPill, buildRutaVM, buildPreMortemTargets, mapPreMortemReports, mapStatementInstallments } from "../../../admin/casos/view-helpers";
 import {
   reviewDocumentAction,
   registerPaymentAction,
@@ -76,13 +76,13 @@ export default async function LegalCasoDetailPage({
   searchParams,
 }: {
   params: Promise<{ caseId: string }>;
-  searchParams: Promise<{ tab?: string }>;
+  searchParams: Promise<{ tab?: string; target?: string }>;
 }) {
   const actor = await getActor();
   if (!actor || actor.kind !== "staff") redirect("/login");
 
   const { caseId } = await params;
-  const { tab } = await searchParams;
+  const { tab, target } = await searchParams;
   const locale = (await getLocale()) as Locale;
   const lc = locale === "en" ? "en" : "es";
   const strings = buildCasosStrings(lc);
@@ -95,7 +95,7 @@ export default async function LegalCasoDetailPage({
     throw err;
   }
 
-  const [documents, statement, contract, timeline, forms, runs, validationRows, expedienteRows, matrix, rutaRaw, priorPhasesRaw, preMortemEnabled, preMortemRows] =
+  const [documents, statement, contract, timeline, forms, runs, validationRows, expedienteRows, matrix, rutaRaw, priorPhasesRaw, preMortemEnabled, preMortemRows, preMortemTargetsRaw] =
     await Promise.all([
       getCaseDocuments(actor, caseId).catch(() => []),
       getAccountStatement(actor, caseId).catch(() => null),
@@ -110,6 +110,7 @@ export default async function LegalCasoDetailPage({
       getPriorPhaseMaterials(actor, caseId).catch(() => ({ phases: [] })),
       isPreMortemEnabledForCase(actor, caseId).catch(() => false),
       getPreMortemAssessmentsForCase(actor, caseId).catch(() => []),
+      listValidableTargetsForCase(actor, caseId).catch(() => []),
     ]);
 
   // Responsable / etapa (eje propio) — staff-only; degrade to null on failure.
@@ -219,7 +220,12 @@ export default async function LegalCasoDetailPage({
     forms: g.forms.map((f) => ({ ...f, label: resolveI18n(f.label, locale) })),
   }));
 
-  const preMortem = { enabled: preMortemEnabled, assessments: buildPreMortemVM(preMortemRows, locale) };
+  const preMortemTargets = buildPreMortemTargets(preMortemTargetsRaw, locale);
+  const preMortem = {
+    enabled: preMortemEnabled,
+    targets: preMortemTargets,
+    reports: mapPreMortemReports(preMortemRows, preMortemTargets, locale),
+  };
 
   const vm: CaseWorkspaceVM = {
     header: {
@@ -322,6 +328,7 @@ export default async function LegalCasoDetailPage({
       isAdmin={false}
       tabAccessByRole={tabAccess.allowedByRole}
       initialTab={tab as CaseTabId | undefined}
+      initialTarget={target}
       chatRaw={{
         getCaseThread: getCaseThreadAction,
         send: sendMessageAction,
