@@ -45,9 +45,10 @@ const {
   mockGetCaseExtractions: vi.fn(),
 }));
 
-const { mockUpdateExpediente, mockUpdateExpedienteStatus } = vi.hoisted(() => ({
+const { mockUpdateExpediente, mockUpdateExpedienteStatus, mockSendToFinanceSystem } = vi.hoisted(() => ({
   mockUpdateExpediente: vi.fn(),
   mockUpdateExpedienteStatus: vi.fn(),
+  mockSendToFinanceSystem: vi.fn(),
 }));
 
 const { mockEmitValidationSent, mockEmitVerdictReceived } = vi.hoisted(() => ({
@@ -152,6 +153,7 @@ vi.mock("@/backend/modules/cases", () => ({
 // Mock expediente module (dynamic import)
 vi.mock("@/backend/modules/expediente", () => ({
   canonicalClientLabel: (first: string, last: string) => `${first.charAt(0).toUpperCase()}. ${last}`,
+  sendToFinanceSystem: mockSendToFinanceSystem,
 }));
 
 // ---------------------------------------------------------------------------
@@ -347,6 +349,7 @@ describe("applyVerdict — state machine effects", () => {
     mockMarkWebhookEventProcessed.mockResolvedValue(undefined);
     mockWriteAudit.mockResolvedValue(undefined);
     mockAppendCaseTimeline.mockResolvedValue(undefined);
+    mockSendToFinanceSystem.mockResolvedValue(undefined);
   });
 
   it("'validated': sets validation status to 'validated' and triggers ready_for_delivery", async () => {
@@ -359,6 +362,24 @@ describe("applyVerdict — state machine effects", () => {
     expect(mockCasesUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ status: "ready_for_delivery" }),
     );
+  });
+
+  it("'validated': auto-sends the approved expediente to Andrium (sendToFinanceSystem)", async () => {
+    // Henry's flow: on lawyer approval the expediente flows straight to Andrium, no
+    // manual Diana step. Regression guard — this call previously had no real coverage.
+    await applyVerdict(VALID_VERDICT_PAYLOAD, VALID_VALIDATION_ROW);
+    expect(mockSendToFinanceSystem).toHaveBeenCalledWith(
+      expect.objectContaining({
+        caseId: VALID_VALIDATION_ROW.case_id,
+        expedienteId: VALID_VALIDATION_ROW.expediente_id,
+      }),
+    );
+  });
+
+  it("'needs_corrections': does NOT auto-send to Andrium", async () => {
+    const ncPayload = { ...VALID_VERDICT_PAYLOAD, verdict: "needs_corrections" as const };
+    await applyVerdict(ncPayload, VALID_VALIDATION_ROW);
+    expect(mockSendToFinanceSystem).not.toHaveBeenCalled();
   });
 
   it("'validated': emits validation.verdict_received event", async () => {

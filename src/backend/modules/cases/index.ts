@@ -58,6 +58,7 @@ export {
   // Case ownership stage — responsable / etapa (eje propio)
   getCaseStageInfo,
   transferCase,
+  handoffCaseFromLegal,
   assignCaseOwner,
   getCaseStageHistory,
   setDocumentTranslationNotRequired,

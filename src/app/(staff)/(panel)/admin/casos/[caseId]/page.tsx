@@ -67,6 +67,7 @@ import {
   updateCasePartyAction,
   addCaseAppointmentAction,
   transferCaseAction,
+  handoffCaseFromLegalAction,
   assignCaseOwnerAction,
   setDocumentTranslationNotRequiredAction,
   runPreMortemAction,
@@ -339,6 +340,7 @@ export default async function AdminCasoDetailPage({
         updateCaseParty: actor.role === "admin" ? updateCasePartyAction : undefined,
         addCaseAppointment: canManageCalendar ? addCaseAppointmentAction : undefined,
         transferCase: transferCaseAction,
+        handoffCaseFromLegal: handoffCaseFromLegalAction,
         assignCaseOwner: actor.role === "admin" ? assignCaseOwnerAction : undefined,
         setDocumentTranslationNotRequired: canManageDocs ? setDocumentTranslationNotRequiredAction : undefined,
       }}

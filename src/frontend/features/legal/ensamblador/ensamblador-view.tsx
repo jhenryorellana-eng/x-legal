@@ -97,7 +97,7 @@ export interface EnsambladorActions {
   autoAssembleWithAi: (input: { caseId: string; replace?: boolean }) => Promise<{ ok: boolean; data?: { coversCreated: number; itemsCreated: number; unresolved: string[] }; error?: { code: string } }>;
   deleteCoverItem: (input: { itemId: string }) => Promise<{ ok: boolean; error?: { code: string } }>;
   regenerateCover: (input: { itemId: string; title?: string; subtitle?: string; partyId?: string | null }) => Promise<{ ok: boolean; error?: { code: string } }>;
-  sendToFinance: (input: { caseId: string; expedienteId: string }) => Promise<{ ok: boolean; error?: { code: string } }>;
+  markReady: (input: { expedienteId: string }) => Promise<{ ok: boolean; error?: { code: string } }>;
   retryExhibit: (input: { exhibitId: string }) => Promise<{ ok: boolean; error?: { code: string } }>;
   createExhibitUploadUrl: (input: { exhibitId: string }) => Promise<{ ok: boolean; data?: { signedUrl: string; path: string }; error?: { code: string } }>;
   confirmManualExhibit: (input: { exhibitId: string; path: string }) => Promise<{ ok: boolean; error?: { code: string } }>;
@@ -117,6 +117,7 @@ const STATUS_PILL: Record<string, { kind: StatusKind; labelKey: string }> = {
   draft:               { kind: "pendiente", labelKey: "statusDraft" },
   compiling:           { kind: "revision",  labelKey: "statusCompiling" },
   compiled:            { kind: "aprobado",  labelKey: "statusCompiled" },
+  ready:               { kind: "aprobado",  labelKey: "statusReady" },
   compile_failed:      { kind: "corregir",  labelKey: "statusCompileFailed" },
   sent_to_lawyer:      { kind: "revision",  labelKey: "statusSentToLawyer" },
   corrections_needed:  { kind: "corregir",  labelKey: "statusCorrectionsNeeded" },
@@ -541,14 +542,14 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
     }
   }
 
-  // ---- Send to Andrium (handoff) ----
-  async function handleSendToFinance() {
-    if (!window.confirm(t("sendFinanceConfirm"))) return;
+  // ---- Mark "Listo" (finalize; the Traspaso does the plan-aware handoff) ----
+  async function handleMarkReady() {
+    if (!window.confirm(t("readyConfirm"))) return;
     setBusyFinance(true);
-    const r = await actions.sendToFinance({ caseId, expedienteId });
+    const r = await actions.markReady({ expedienteId });
     setBusyFinance(false);
     if (r.ok) {
-      toast.success(t("sendFinanceToast"));
+      toast.success(t("readyToast"));
       window.location.reload();
     } else {
       toast.error(errorMessage(r.error?.code ?? "UNEXPECTED", t));
@@ -767,14 +768,14 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
                 {busyCompile ? t("compilingBtn") : t("compileBtn")}
               </GradientBtn>
             )}
-            {(status === "compiled" || status === "approved") && (
+            {status === "compiled" && (
               <GradientBtn
                 size="md"
                 full={false}
                 disabled={busyFinance}
-                onClick={handleSendToFinance}
+                onClick={handleMarkReady}
               >
-                {busyFinance ? t("sendFinanceBtnBusy") : t("sendFinanceBtn")}
+                {busyFinance ? t("readyBtnBusy") : t("readyBtn")}
               </GradientBtn>
             )}
           </div>

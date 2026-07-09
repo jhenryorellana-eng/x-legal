@@ -57,6 +57,7 @@ import {
   submitFormResponse,
   getCaseDocumentDownloadUrl,
   transferCase,
+  handoffCaseFromLegal,
   assignCaseOwner,
   getCaseStageInfo,
   setDocumentTranslationNotRequired,
@@ -72,6 +73,8 @@ import {
   type DocumentTranslationRow,
 } from "@/backend/modules/ai-engine";
 import { addCaseAppointment, SchedulingError } from "@/backend/modules/scheduling";
+import { ExpedienteError } from "@/backend/modules/expediente";
+import { IntegrationsError } from "@/backend/modules/integrations";
 import { linkLeadToCase } from "@/backend/modules/kanban";
 import { classifySaveError } from "@/frontend/features/form-wizard/classify-save-error";
 import { getLocale } from "next-intl/server";
@@ -88,7 +91,9 @@ function mapErr(err: unknown): Err {
     err instanceof BillingError ||
     err instanceof CaseError ||
     err instanceof SchedulingError ||
-    err instanceof AiEngineError
+    err instanceof AiEngineError ||
+    err instanceof ExpedienteError ||
+    err instanceof IntegrationsError
   ) {
     return { ok: false, error: { code: err.code } };
   }
@@ -851,6 +856,22 @@ export async function transferCaseAction(input: {
     const actor = await requireActor();
     const res = await transferCase(actor, input);
     return { ok: true, stage: res.stage, ownerId: res.ownerId };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+/**
+ * Plan-aware handoff out of the legal stage (Diana's Traspaso). self → Andrium;
+ * with_lawyer → the reviewing lawyer. Gated by the 3-task legal checklist.
+ */
+export async function handoffCaseFromLegalAction(input: {
+  caseId: string;
+}): Promise<{ ok: true } | Err> {
+  try {
+    const actor = await requireActor();
+    await handoffCaseFromLegal(actor, input.caseId);
+    return { ok: true };
   } catch (err) {
     return mapErr(err);
   }

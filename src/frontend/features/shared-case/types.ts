@@ -307,6 +307,11 @@ export interface CaseStageVM {
   isAdmin: boolean;
   /** owner/admin AND checklist complete → "Traspasar" enabled (without force). */
   canTransfer: boolean;
+  /**
+   * Case plan requires lawyer validation (`with_lawyer`). Only meaningful in the
+   * `legal` stage: false → "Traspasar" (Andrium); true → "Traspasar a Abogado".
+   */
+  requiresLawyer: boolean;
   /** Candidates to reassign the CURRENT stage (admin). */
   eligibleOwners: StageOwnerOptionVM[];
   /** Candidates for the NEXT stage (transfer target picker). */
@@ -581,6 +586,14 @@ export interface CaseDetailActions {
     force?: boolean;
     note?: string;
   }) => Promise<{ ok: boolean; stage?: string; ownerId?: string | null; error?: { code: string } }>;
+  /**
+   * Plan-aware handoff out of the LEGAL stage (Diana): self → Andrium; with_lawyer
+   * → the reviewing lawyer. Gated by the 3-task legal checklist. Optional — only the
+   * legal/staff case surfaces inject it. Used instead of `transferCase` for legal.
+   */
+  handoffCaseFromLegal?: (input: {
+    caseId: string;
+  }) => Promise<{ ok: boolean; error?: { code: string } }>;
   /**
    * Reassign the responsible within the current stage (admin only). Optional —
    * only the admin surface injects it.

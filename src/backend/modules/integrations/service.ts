@@ -146,7 +146,9 @@ export async function sendToLawyer(
   if (!expediente || expediente.case_id !== parsed.caseId) {
     throw new IntegrationsError("EXPEDIENTE_NOT_FOUND");
   }
-  if (expediente.status !== "compiled") {
+  // New flow: Diana marks the expediente "Listo" (`ready`) before the Traspaso a
+  // Abogado. `compiled` still accepted for the legacy/admin path.
+  if (expediente.status !== "ready" && expediente.status !== "compiled") {
     throw new IntegrationsError("EXPEDIENTE_NOT_COMPILED");
   }
 
@@ -638,6 +640,17 @@ export async function applyVerdict(
     });
 
     await setCaseStatusSystem(caseId, "ready_for_delivery");
+
+    // Henry's flow (with_lawyer): once the lawyer validates, the approved expediente
+    // flows straight to Andrium — no manual "send" by Diana. sendToFinanceSystem
+    // emits expediente.sent_to_finance, which advances legal→operations + queues it
+    // for Andrium (same consumer as the self-plan handoff).
+    try {
+      const { sendToFinanceSystem } = await import("@/backend/modules/expediente");
+      await sendToFinanceSystem({ caseId, expedienteId, orgId });
+    } catch (err: unknown) {
+      logger.warn({ err, expedienteId }, "integrations: applyVerdict — auto send-to-Andrium failed");
+    }
 
     emitVerdictReceived({
       caseId,

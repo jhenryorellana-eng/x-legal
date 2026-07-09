@@ -350,12 +350,23 @@ export interface StageChecklistSignals {
   translationsCompleted: number;
   /** Estado del expediente vigente del caso (null si aún no existe). Etapas legal/operations. */
   expedienteStatus: string | null;
+  /** Etapa `legal`: automatizaciones (formularios `pdf_automation`) de la fase activa. */
+  autosTotal: number;
+  /** Automatizaciones con su PDF auto-rellenado generado (`filled_pdf_path`). */
+  autosDone: number;
+  /** Etapa `legal`: cartas IA (`ai_letter`) de la fase activa. */
+  lettersTotal: number;
+  /** Cartas con una generación IA `completed`. */
+  lettersDone: number;
 }
 
-/** Estados de expediente que cuentan como "al menos compilado" (no borrador/fallido). */
-const EXP_COMPILED_PLUS = ["compiled", "sent_to_lawyer", "approved", "sent_to_finance", "printed"];
-/** Estados de expediente entregados a Andrium (finanzas/impresión). */
-const EXP_SENT_PLUS = ["sent_to_finance", "printed"];
+/**
+ * Estados de expediente que cuentan como "listo o más allá" (Diana marcó "Listo",
+ * o ya está con el abogado / aprobado / enviado / impreso). `corrections_needed`
+ * NO cuenta (el abogado pidió cambios → Diana debe re-finalizar). Habilita el
+ * traspaso legal.
+ */
+const EXP_READY_PLUS = ["ready", "sent_to_lawyer", "approved", "sent_to_finance", "printed"];
 
 /**
  * Definition of Done por etapa. Devuelve los ítems con su estado `done`.
@@ -371,10 +382,11 @@ const EXP_SENT_PLUS = ["sent_to_finance", "printed"];
  *   Además, un caso "vacío" (sin ninguna tarea sustantiva aún instanciada) NO
  *   cuenta como listo: el checklist 100% no-aplicable no habilita el traspaso.
  *
- * Etapa `legal` (Diana): el expediente debe estar al menos compilado y enviado a
- *   Andrium (`sent_to_finance`). Normalmente el traspaso legal→operations lo
- *   dispara `sendToFinance` automáticamente (handoff único); este checklist
- *   refleja el progreso y habilita el traspaso manual del admin como respaldo.
+ * Etapa `legal` (Diana) — cierre de fase (decisión de Henry), por fase activa:
+ *   1. automatizaciones (`pdf_automation`) generadas · 2. cartas (`ai_letter`)
+ *   generadas · 3. expediente `ready`+ (Diana marcó "Listo"). Con las 3, el botón
+ *   de traspaso ("Traspasar" self → Andrium · "Traspasar a Abogado" with_lawyer →
+ *   validación) ejecuta el handoff (`handoffCaseFromLegal`).
  * Etapa `operations` (Andrium): el expediente debe estar impreso (`printed`).
  *
  * Pura.
@@ -396,9 +408,13 @@ export function computeStageChecklist(
       { key: "translation", done: done(s.docsToTranslate, s.translationsCompleted), applicable: s.docsToTranslate > 0 },
     ];
   } else if (stage === "legal") {
+    // Cierre de fase de Diana (decisión de Henry): 3 tareas de la fase activa.
+    // El traspaso ("Traspasar" self / "Traspasar a Abogado" with_lawyer) hace el
+    // envío; ya no se exige `expediente_sent` como prerequisito.
     items = [
-      { key: "expediente_compiled", done: exp !== null && EXP_COMPILED_PLUS.includes(exp) },
-      { key: "expediente_sent", done: exp !== null && EXP_SENT_PLUS.includes(exp) },
+      { key: "automations", done: done(s.autosTotal, s.autosDone), applicable: s.autosTotal > 0 },
+      { key: "letters", done: done(s.lettersTotal, s.lettersDone), applicable: s.lettersTotal > 0 },
+      { key: "expediente", done: exp !== null && EXP_READY_PLUS.includes(exp) },
     ];
   } else if (stage === "operations") {
     items = [{ key: "expediente_printed", done: exp === "printed" }];
@@ -436,6 +452,21 @@ export function canTransferStage(
     return "STAGE_NOT_READY";
   }
   return null;
+}
+
+/**
+ * Plan-aware target of the LEGAL handoff (Henry's flow). Pure.
+ *   - `with_lawyer`, expediente not yet validated (`status !== 'approved'`) → the
+ *     reviewing lawyer (sendToLawyer).
+ *   - `self`, OR `with_lawyer` already `approved` → Andrium (sendToFinance, which
+ *     accepts `ready` for self and `approved` for the with_lawyer recovery path,
+ *     i.e. a manual retry when the post-verdict auto-send didn't land).
+ */
+export function resolveLegalHandoffTarget(
+  requiresLawyer: boolean,
+  expedienteStatus: string,
+): "lawyer" | "andrium" {
+  return requiresLawyer && expedienteStatus !== "approved" ? "lawyer" : "andrium";
 }
 
 // ---------------------------------------------------------------------------

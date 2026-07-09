@@ -22,7 +22,7 @@ import {
   autoAssembleWithAi,
   deleteCoverItem,
   regenerateCover,
-  sendToFinance,
+  markExpedienteReady,
   ExpedienteError,
   type ExpedienteRow,
   type CoverRenderRow,
@@ -287,16 +287,17 @@ export async function autoAssembleWithAiAction(input: {
 }
 
 // ---------------------------------------------------------------------------
-// sendToFinanceAction  (API-EXP-...) — hand off to Andrium (printing)
+// markExpedienteReadyAction (API-EXP-15b) — Diana marks the expediente "Listo"
+// (compiled → ready). The handoff to Andrium / lawyer happens later at the
+// Traspaso (handoffCaseFromLegal), not here.
 // ---------------------------------------------------------------------------
 
-export async function sendToFinanceAction(input: {
-  caseId: string;
+export async function markExpedienteReadyAction(input: {
   expedienteId: string;
 }): Promise<ExpedienteResult> {
   try {
     const actor = await requireActor();
-    await sendToFinance(actor, { caseId: input.caseId, expedienteId: input.expedienteId });
+    await markExpedienteReady(actor, input.expedienteId);
     return { ok: true };
   } catch (err) {
     if (err instanceof ExpedienteError) return { ok: false, error: { code: err.code } };

@@ -54,6 +54,7 @@ import {
   PRODUCTION_STATUSES,
   computeStageChecklist,
   canTransferStage,
+  resolveLegalHandoffTarget,
   nextStage,
   STAGE_MODULE,
   type CaseStatus,
@@ -3988,6 +3989,7 @@ export interface ClientFormListItem {
 export async function getClientFormsForCase(
   actor: Actor,
   caseId: string,
+  opts?: { includeStaff?: boolean },
 ): Promise<ClientFormListItem[]> {
   await requireCaseAccess(actor, caseId);
 
@@ -4018,9 +4020,12 @@ export async function getClientFormsForCase(
     defs.map((d) => d.companion_questionnaire_id).filter((x): x is string => !!x),
   );
 
+  // Default: client-facing forms only. `includeStaff` (used by the legal-stage
+  // handoff checklist) also counts staff-filled automations/letters — the bulk of
+  // real pdf_automation / ai_letter defs are `filled_by='staff'`.
   const clientDefs = defs.filter(
     (d) =>
-      (d.filled_by === "client" || d.filled_by === "both") &&
+      (opts?.includeStaff || d.filled_by === "client" || d.filled_by === "both") &&
       !(d.kind === "questionnaire" && companionIds.has(d.id)),
   );
 
@@ -5259,6 +5264,12 @@ export interface CaseStageInfoDto {
   isAdmin: boolean;
   /** owner/admin AND checklist complete → "Traspasar" enabled (without force). */
   canTransfer: boolean;
+  /**
+   * Plan of the case requires lawyer validation (`with_lawyer`). Drives the
+   * plan-aware legal handoff: false → "Traspasar" (Andrium); true → "Traspasar a
+   * Abogado" (legal validation). Only meaningful in the `legal` stage.
+   */
+  requiresLawyer: boolean;
   /** Eligible responsibles for the CURRENT stage (admin reassign). */
   eligibleOwners: StageOwnerOption[];
   /** Eligible responsibles for the NEXT stage (transfer target picker). */
@@ -5276,10 +5287,48 @@ async function buildStageChecklist(actor: Actor, caseRow: CaseRow): Promise<Stag
   // Forms.
   let formsTotal = 0;
   let formsDone = 0;
+  // Legal stage — Diana's phase-close tasks: automations (pdf_automation) + letters
+  // (ai_letter). Phase-scoped: getClientFormsForCase reads the case's current phase.
+  let autosTotal = 0;
+  let autosDone = 0;
+  let lettersTotal = 0;
+  let lettersDone = 0;
   try {
     const forms = await getClientFormsForCase(actor, caseRow.id);
     formsTotal = forms.length;
     formsDone = forms.filter((f) => f.status === "submitted" || f.status === "approved").length;
+
+    if (stage === "legal") {
+      // Staff-inclusive: most real pdf_automation/ai_letter defs are filled_by=staff,
+      // so the client-only `forms` list above would miss them (false "n/a" green).
+      const legalForms = await getClientFormsForCase(actor, caseRow.id, { includeStaff: true });
+      const autos = legalForms.filter((f) => f.kind === "pdf_automation");
+      autosTotal = autos.length;
+      autosDone = autos.filter((f) => f.filledPdfPath !== null).length;
+
+      const letters = legalForms.filter((f) => f.kind === "ai_letter");
+      lettersTotal = letters.length;
+      if (letters.length > 0) {
+        const ai = (await import("@/backend/modules/ai-engine")) as {
+          getRunsForCase?: (
+            a: Actor,
+            c: string,
+          ) => Promise<
+            Array<{ status: string; form_definition_id: string; party_id: string | null; output_path: string | null }>
+          >;
+        };
+        const runs = ai.getRunsForCase ? await ai.getRunsForCase(actor, caseRow.id).catch(() => []) : [];
+        lettersDone = letters.filter((l) =>
+          runs.some(
+            (r) =>
+              r.form_definition_id === l.formDefinitionId &&
+              (l.partyId ? r.party_id === l.partyId : r.party_id === null) &&
+              r.status === "completed" &&
+              r.output_path !== null,
+          ),
+        ).length;
+      }
+    }
   } catch {
     // best-effort: a forms read failure must not crash the checklist
   }
@@ -5329,6 +5378,10 @@ async function buildStageChecklist(actor: Actor, caseRow: CaseRow): Promise<Stag
     docsToTranslate: tr.toTranslate,
     translationsCompleted: tr.completed,
     expedienteStatus,
+    autosTotal,
+    autosDone,
+    lettersTotal,
+    lettersDone,
   });
 }
 
@@ -5359,6 +5412,20 @@ export async function getCaseStageInfo(actor: Actor, caseId: string): Promise<Ca
   const canTransfer = canTransferStage(stage, checklist, { isOwner, isAdmin }) === null;
   const ns = nextStage(stage);
 
+  // Plan-aware legal handoff: `with_lawyer` → "Traspasar a Abogado" (validation);
+  // `self` → "Traspasar" (Andrium). Only queried in the legal stage.
+  let requiresLawyer = false;
+  if (stage === "legal") {
+    try {
+      const exp = (await import("@/backend/modules/expediente")) as {
+        findCasePlanRequiresLawyerValidation: (c: string) => Promise<boolean | null>;
+      };
+      requiresLawyer = (await exp.findCasePlanRequiresLawyerValidation(caseId)) ?? false;
+    } catch (err) {
+      logger.warn({ err, caseId }, "cases.getCaseStageInfo: plan lookup failed — defaulting to self handoff");
+    }
+  }
+
   const [ownerName, eligibleOwners, nextStageOwners] = await Promise.all([
     caseRow.current_owner_id
       ? findStaffDisplayName(caseRow.current_owner_id).catch(() => null)
@@ -5384,6 +5451,7 @@ export async function getCaseStageInfo(actor: Actor, caseId: string): Promise<Ca
     isOwner,
     isAdmin,
     canTransfer,
+    requiresLawyer,
     eligibleOwners,
     nextStageOwners,
   };
@@ -5492,6 +5560,65 @@ export async function transferCase(
   });
 
   return { stage: toStage, ownerId: toOwnerId };
+}
+
+/**
+ * Plan-aware handoff OUT of the `legal` stage (Henry's flow). Called by the Traspaso
+ * tab for the legal stage INSTEAD of the generic transferCase. Gated by the legal
+ * checklist (automations + letters + expediente `ready`). Does NOT advance the stage
+ * itself — it delegates to the expediente handoff, whose consumer does the stage move:
+ *   - self       → sendToFinance(vigente) → Andrium; the `expediente.sent_to_finance`
+ *                  consumer advances legal→operations + ready_for_delivery.
+ *   - with_lawyer → sendToLawyer(vigente) → legal validation (/legal/validaciones); the
+ *                  case STAYS in `legal` (Diana owns) until the verdict. On `validated`
+ *                  it auto-flows to Andrium (integrations → sendToFinanceSystem).
+ *
+ * @api-id API-CASE-STAGE-04
+ */
+export async function handoffCaseFromLegal(actor: Actor, caseId: string): Promise<void> {
+  await requireCaseAccess(actor, caseId);
+  if (actor.kind !== "staff") throw new AuthzError("wrong_kind");
+
+  const caseRow = await findCaseById(caseId);
+  if (!caseRow) throw new CaseError("CASE_NOT_FOUND");
+  if ((caseRow.current_stage ?? "sales") !== "legal") throw new CaseError("STAGE_FORBIDDEN");
+
+  // Gate: current owner or admin + the 3-task legal checklist complete.
+  const checklist = await buildStageChecklist(actor, caseRow);
+  const denied = canTransferStage("legal", checklist, {
+    isOwner: caseRow.current_owner_id === actor.userId,
+    isAdmin: actor.role === "admin",
+  });
+  if (denied) throw new CaseError(denied);
+
+  const exp = (await import("@/backend/modules/expediente")) as {
+    getCaseExpedientes: (a: Actor, c: string) => Promise<Array<{ id: string; status: string }>>;
+    sendToFinance: (a: Actor, i: { caseId: string; expedienteId: string }) => Promise<void>;
+    findCasePlanRequiresLawyerValidation: (caseId: string) => Promise<boolean | null>;
+  };
+  const rows = await exp.getCaseExpedientes(actor, caseId);
+  const vigente = rows[0]; // DESC by attempt_no → current attempt
+  if (!vigente) throw new CaseError("STAGE_NOT_READY");
+
+  const requiresLawyer = (await exp.findCasePlanRequiresLawyerValidation(caseId)) ?? false;
+  if (resolveLegalHandoffTarget(requiresLawyer, vigente.status) === "lawyer") {
+    // with_lawyer, not yet validated: send to the reviewing lawyer (SaaS). The case
+    // stays in `legal` (Diana owns) until the verdict.
+    const integrations = (await import("@/backend/modules/integrations")) as {
+      sendToLawyer: (a: Actor, i: { caseId: string; expedienteId: string }) => Promise<unknown>;
+    };
+    await integrations.sendToLawyer(actor, { caseId, expedienteId: vigente.id });
+  } else {
+    // self (expediente `ready`), OR with_lawyer already `approved` — the latter is a
+    // RECOVERY path: the automatic send-to-Andrium after the lawyer verdict didn't
+    // land, so a manual Traspaso retries it. sendToFinance accepts `ready` (self) and
+    // `approved` (with_lawyer). The sent_to_finance consumer advances legal→operations.
+    await exp.sendToFinance(actor, { caseId, expedienteId: vigente.id });
+  }
+
+  await writeAudit(actor, "case.handoff_from_legal", "cases", caseId, {
+    after: { requiresLawyer, expedienteId: vigente.id },
+  });
 }
 
 const AssignCaseOwnerSchema = z.object({

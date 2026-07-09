@@ -15,6 +15,7 @@ export const EXPEDIENTE_STATUSES = [
   "compiling",
   "compile_failed",
   "compiled",
+  "ready",
   "sent_to_lawyer",
   "corrections_needed",
   "approved",
@@ -64,12 +65,14 @@ export interface ExpedienteTransitionRule {
  * compiling → compiled       (system: compile success)
  * compiling → compile_failed (system: compile error)
  * compile_failed → compiling (paralegal retries)
- * compiled → sent_to_lawyer  (paralegal sends for review)
- * compiled → sent_to_finance (shortcut: direct to finance if no legal review)
- * sent_to_lawyer → approved  (lawyer approves)
- * sent_to_lawyer → corrections_needed (lawyer requests corrections)
+ * compiled → ready           (paralegal marks the expediente "Listo" — finalized)
+ * ready → sent_to_finance    (handoff self plan: Traspaso → Andrium)
+ * ready → sent_to_lawyer     (handoff with_lawyer plan: Traspaso → legal validation)
+ * compiled → sent_to_lawyer  (legacy/admin: send for review before marking ready)
+ * sent_to_lawyer → approved  (lawyer approves → auto sendToFinance)
+ * sent_to_lawyer → corrections_needed (lawyer requests corrections → back to Diana)
  * corrections_needed → (new attempt via createCorrectionAttempt → new draft)
- * approved → sent_to_finance
+ * approved → sent_to_finance (auto on lawyer approval)
  * sent_to_finance → printed  (Andrium marks physical print)
  */
 export const EXPEDIENTE_TRANSITIONS: ExpedienteTransitionRule[] = [
@@ -77,8 +80,10 @@ export const EXPEDIENTE_TRANSITIONS: ExpedienteTransitionRule[] = [
   { from: "compiling",         to: "compiled",            allowedRoles: ["admin", "paralegal"] },
   { from: "compiling",         to: "compile_failed",      allowedRoles: ["admin", "paralegal"] },
   { from: "compile_failed",    to: "compiling",           allowedRoles: ["admin", "paralegal"] },
+  { from: "compiled",          to: "ready",               allowedRoles: ["admin", "paralegal"] },
+  { from: "ready",             to: "sent_to_finance",     allowedRoles: ["admin", "paralegal", "finance"] },
+  { from: "ready",             to: "sent_to_lawyer",      allowedRoles: ["admin", "paralegal"] },
   { from: "compiled",          to: "sent_to_lawyer",      allowedRoles: ["admin", "paralegal"] },
-  { from: "compiled",          to: "sent_to_finance",     allowedRoles: ["admin", "paralegal"] },
   { from: "sent_to_lawyer",    to: "approved",            allowedRoles: ["admin", "paralegal"] },
   { from: "sent_to_lawyer",    to: "corrections_needed",  allowedRoles: ["admin", "paralegal"] },
   { from: "approved",          to: "sent_to_finance",     allowedRoles: ["admin", "paralegal", "finance"] },

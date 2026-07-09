@@ -65,6 +65,11 @@ export {
   getPrintHistory,
 } from "./service";
 
+// Plan lookup — shared with the cases module for the plan-aware legal handoff.
+export {
+  findCasePlanRequiresLawyerValidation,
+} from "./repository";
+
 export type {
   PrintQueueItemDto,
 } from "./service";
@@ -75,7 +80,9 @@ export type {
 
 // Handoff to Andrium (printing)
 export {
+  markExpedienteReady,
   sendToFinance,
+  sendToFinanceSystem,
   markPrinted,
   markShipped,
   markFiled,

@@ -7,7 +7,6 @@
  * the expediente-assembler wave. Admin-only.
  */
 
-import Link from "next/link";
 import { Card } from "@/frontend/components/brand/card";
 import { StatusPill, type StatusKind } from "@/frontend/components/brand/status-pill";
 import { EmptyState } from "@/frontend/components/desktop/empty-state";
@@ -21,6 +20,7 @@ const EXP_PILL: Record<string, StatusKind> = {
   compiling: "revision",
   compile_failed: "corregir",
   compiled: "revision",
+  ready: "aprobado",
   sent_to_lawyer: "revision",
   corrections_needed: "corregir",
   approved: "aprobado",
@@ -49,7 +49,13 @@ export function ExpedienteTab({
           </h2>
           <p style={{ margin: "4px 0 0", fontSize: 13.5, color: "var(--ink-2)" }}>{t.expSub}</p>
         </div>
-        <Link
+        {/*
+          Native <a> (not next/link) on purpose: the client-side <Link> nav did NOT
+          fire from inside the shared-case-view tab tree (worked from the sidebar) —
+          a plain anchor lets the browser navigate reliably. The assembler route is
+          force-dynamic, so a full navigation is expected anyway.
+        */}
+        <a
           href={`/legal/expediente/${vm.header.caseId}`}
           style={{
             display: "inline-flex",
@@ -67,7 +73,7 @@ export function ExpedienteTab({
         >
           <Icon name="doc" size={15} color="#fff" />
           {t.expOpenAssembler}
-        </Link>
+        </a>
       </div>
 
       {vm.expedientes.length === 0 ? (

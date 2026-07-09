@@ -333,12 +333,22 @@ describe("domain: canTransitionExpediente", () => {
     expect(canTransitionExpediente("compile_failed", "compiling", "paralegal")).toBeNull();
   });
 
-  it("allows compiled → sent_to_lawyer", () => {
-    expect(canTransitionExpediente("compiled", "sent_to_lawyer", "paralegal")).toBeNull();
+  it("allows compiled → ready (paralegal marks 'Listo')", () => {
+    expect(canTransitionExpediente("compiled", "ready", "paralegal")).toBeNull();
   });
 
-  it("allows compiled → sent_to_finance (shortcut)", () => {
-    expect(canTransitionExpediente("compiled", "sent_to_finance", "paralegal")).toBeNull();
+  it("allows ready → sent_to_finance (self handoff)", () => {
+    expect(canTransitionExpediente("ready", "sent_to_finance", "paralegal")).toBeNull();
+  });
+
+  it("allows ready → sent_to_lawyer (with_lawyer handoff)", () => {
+    expect(canTransitionExpediente("ready", "sent_to_lawyer", "paralegal")).toBeNull();
+  });
+
+  it("no longer allows compiled → sent_to_finance directly (must go via ready)", () => {
+    expect(canTransitionExpediente("compiled", "sent_to_finance", "paralegal")).toBe(
+      "EXPEDIENTE_INVALID_TRANSITION",
+    );
   });
 
   it("allows sent_to_lawyer → approved", () => {

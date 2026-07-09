@@ -99,6 +99,7 @@ export class ExpedienteError extends Error {
       | "EXPEDIENTE_NOT_COMPILABLE"
       | "EXPEDIENTE_COMPILE_FAILED"
       | "EXPEDIENTE_NOT_COMPILED"
+      | "EXPEDIENTE_NOT_READY"
       | "EXPEDIENTE_NOT_APPROVED"
       | "EXPEDIENTE_ALREADY_SENT_TO_FINANCE"
       | "EXPEDIENTE_NOT_IN_PRINT_QUEUE"
@@ -1525,6 +1526,37 @@ export async function createCorrectionAttempt(
   return newExpediente;
 }
 
+/**
+ * Marks a compiled expediente as "Listo" (ready) — Diana finalized it and it is
+ * ready to be handed off. Plan-INdependent: where it goes next (Andrium for `self`,
+ * or the lawyer for `with_lawyer`) is decided at the case handoff
+ * (handoffCaseFromLegal), not here. Does NOT send to Andrium / emit any event.
+ *
+ * Gate: can(actor,'expedientes','edit'); status must be 'compiled'.
+ *
+ * @api-id API-EXP-15b
+ */
+export async function markExpedienteReady(
+  actor: Actor,
+  expedienteId: string,
+): Promise<void> {
+  can(actor, "expedientes", "edit");
+
+  const expediente = await findExpedienteById(expedienteId);
+  if (!expediente) throw new ExpedienteError("EXPEDIENTE_NOT_FOUND");
+  await requireCaseAccess(actor, expediente.case_id);
+
+  if (expediente.status !== "compiled") {
+    throw new ExpedienteError("EXPEDIENTE_NOT_COMPILED", { status: expediente.status });
+  }
+
+  await updateExpediente(expedienteId, { status: "ready" });
+
+  await writeAudit(actor, "expediente.marked_ready", "expedientes", expedienteId, {
+    after: { status: "ready", caseId: expediente.case_id },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // HANDOFF TO ANDRIUM (printing queue)
 // ---------------------------------------------------------------------------
@@ -1536,9 +1568,12 @@ export async function createCorrectionAttempt(
  *
  * Gates:
  *  - can(actor, 'expedientes', 'edit')
- *  - Plan with_lawyer: expediente.status must be 'approved'
- *  - Plan self:        expediente.status must be 'compiled'
+ *  - Plan with_lawyer: expediente.status must be 'approved' (lawyer verdict)
+ *  - Plan self:        expediente.status must be 'ready' (Diana marked "Listo")
  *  - Already 'sent_to_finance' or later: blocked (EXPEDIENTE_ALREADY_SENT_TO_FINANCE)
+ *
+ * NOTE: no longer a Diana-facing button — called by handoffCaseFromLegal (self, at
+ * the Traspaso) and by the lawyer-verdict handler (with_lawyer, auto on approval).
  *
  * @api-id API-EXP-15
  */
@@ -1559,13 +1594,14 @@ export async function sendToFinance(
     });
   }
 
-  // Determine required status based on plan
+  // Determine required status based on plan: self hands off from 'ready' (Diana
+  // marked "Listo"); with_lawyer from 'approved' (lawyer verdict).
   const requiresLawyerValidation = await findCasePlanRequiresLawyerValidation(input.caseId);
-  const requiredStatus = requiresLawyerValidation ? "approved" : "compiled";
+  const requiredStatus = requiresLawyerValidation ? "approved" : "ready";
 
   if (expediente.status !== requiredStatus) {
     throw new ExpedienteError(
-      requiresLawyerValidation ? "EXPEDIENTE_NOT_APPROVED" : "EXPEDIENTE_NOT_COMPILED",
+      requiresLawyerValidation ? "EXPEDIENTE_NOT_APPROVED" : "EXPEDIENTE_NOT_READY",
       { status: expediente.status, required: requiredStatus },
     );
   }
@@ -1585,6 +1621,37 @@ export async function sendToFinance(
 
   await writeAudit(actor, "expediente.sent_to_finance", "expedientes", input.expedienteId, {
     after: { status: "sent_to_finance", caseId: input.caseId },
+  });
+}
+
+/**
+ * System (no-actor) auto-handoff of an APPROVED expediente to Andrium — called by
+ * the lawyer-verdict webhook (with_lawyer plan): when the lawyer validates, the
+ * approved expediente flows straight to Andrium without a Diana action (Henry's
+ * flow). Mirrors sendToFinance's effects (status → sent_to_finance + the
+ * `expediente.sent_to_finance` event that advances legal→operations) minus the
+ * actor gate. Idempotent: no-op unless status is exactly 'approved'.
+ */
+export async function sendToFinanceSystem(input: {
+  caseId: string;
+  expedienteId: string;
+  orgId: string;
+}): Promise<void> {
+  const expediente = await findExpedienteById(input.expedienteId);
+  if (!expediente) return;
+  if (expediente.status !== "approved") return; // only the lawyer-approved path; idempotent
+
+  await updateExpediente(input.expedienteId, {
+    status: "sent_to_finance",
+    sent_to_finance_at: new Date().toISOString(),
+    sent_to_finance_by: null,
+  });
+
+  emitExpedienteSentToFinance({
+    caseId: input.caseId,
+    expedienteId: input.expedienteId,
+    attemptNo: expediente.attempt_no,
+    orgId: input.orgId,
   });
 }
 

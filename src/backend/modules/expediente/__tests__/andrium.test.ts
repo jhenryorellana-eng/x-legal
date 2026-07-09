@@ -142,7 +142,7 @@ const actor = {
 };
 
 type ExpStatus =
-  | "draft" | "compiling" | "compile_failed" | "compiled"
+  | "draft" | "compiling" | "compile_failed" | "compiled" | "ready"
   | "sent_to_lawyer" | "corrections_needed" | "approved"
   | "sent_to_finance" | "printed";
 
@@ -152,7 +152,7 @@ const makeExp = (status: ExpStatus, overrides: Record<string, unknown> = {}) => 
   attempt_no: 1,
   status,
   built_by: actor.userId,
-  compiled_pdf_path: ["compiled", "approved", "sent_to_finance", "printed"].includes(status)
+  compiled_pdf_path: ["compiled", "ready", "approved", "sent_to_finance", "printed"].includes(status)
     ? `expedientes/${CASE_ID}/exp-a1.pdf`
     : null,
   page_count: null,
@@ -172,7 +172,7 @@ const makeExp = (status: ExpStatus, overrides: Record<string, unknown> = {}) => 
 // Import service after mocks
 // ---------------------------------------------------------------------------
 
-import { sendToFinance, markPrinted, markShipped, markFiled, ExpedienteError } from "../service";
+import { markExpedienteReady, sendToFinance, markPrinted, markShipped, markFiled, ExpedienteError } from "../service";
 
 // ---------------------------------------------------------------------------
 // sendToFinance
@@ -190,8 +190,8 @@ describe("service: sendToFinance", () => {
       mockFindCasePlanRequiresLawyerValidation.mockResolvedValue(false);
     });
 
-    it("succeeds when status is compiled (plan self)", async () => {
-      mockFindExpedienteById.mockResolvedValue(makeExp("compiled"));
+    it("succeeds when status is ready (plan self)", async () => {
+      mockFindExpedienteById.mockResolvedValue(makeExp("ready"));
       await sendToFinance(actor, { caseId: CASE_ID, expedienteId: EXP_ID });
       expect(mockUpdateExpediente).toHaveBeenCalledWith(
         EXP_ID,
@@ -199,19 +199,19 @@ describe("service: sendToFinance", () => {
       );
     });
 
-    it("throws EXPEDIENTE_NOT_COMPILED when status is draft (plan self)", async () => {
-      mockFindExpedienteById.mockResolvedValue(makeExp("draft"));
+    it("throws EXPEDIENTE_NOT_READY when status is compiled (not yet 'Listo', plan self)", async () => {
+      mockFindExpedienteById.mockResolvedValue(makeExp("compiled"));
       await expect(
         sendToFinance(actor, { caseId: CASE_ID, expedienteId: EXP_ID }),
-      ).rejects.toMatchObject({ code: "EXPEDIENTE_NOT_COMPILED" });
+      ).rejects.toMatchObject({ code: "EXPEDIENTE_NOT_READY" });
     });
 
-    it("throws EXPEDIENTE_NOT_COMPILED when status is approved but plan is self", async () => {
-      // 'approved' is for with_lawyer — plan self requires 'compiled'
+    it("throws EXPEDIENTE_NOT_READY when status is approved but plan is self", async () => {
+      // 'approved' is the with_lawyer path — plan self hands off from 'ready'
       mockFindExpedienteById.mockResolvedValue(makeExp("approved"));
       await expect(
         sendToFinance(actor, { caseId: CASE_ID, expedienteId: EXP_ID }),
-      ).rejects.toMatchObject({ code: "EXPEDIENTE_NOT_COMPILED" });
+      ).rejects.toMatchObject({ code: "EXPEDIENTE_NOT_READY" });
     });
   });
 
@@ -259,7 +259,7 @@ describe("service: sendToFinance", () => {
 
   it("emits expediente.sent_to_finance event on success", async () => {
     mockFindCasePlanRequiresLawyerValidation.mockResolvedValue(false);
-    mockFindExpedienteById.mockResolvedValue(makeExp("compiled"));
+    mockFindExpedienteById.mockResolvedValue(makeExp("ready"));
     await sendToFinance(actor, { caseId: CASE_ID, expedienteId: EXP_ID });
     expect(mockEmitExpedienteSentToFinance).toHaveBeenCalledWith(
       expect.objectContaining({ caseId: CASE_ID, expedienteId: EXP_ID }),
@@ -268,7 +268,7 @@ describe("service: sendToFinance", () => {
 
   it("writes audit on success", async () => {
     mockFindCasePlanRequiresLawyerValidation.mockResolvedValue(false);
-    mockFindExpedienteById.mockResolvedValue(makeExp("compiled"));
+    mockFindExpedienteById.mockResolvedValue(makeExp("ready"));
     await sendToFinance(actor, { caseId: CASE_ID, expedienteId: EXP_ID });
     expect(mockWriteAudit).toHaveBeenCalledWith(
       actor,
@@ -289,11 +289,50 @@ describe("service: sendToFinance", () => {
 
   it("sets sent_to_finance_at and sent_to_finance_by on update", async () => {
     mockFindCasePlanRequiresLawyerValidation.mockResolvedValue(false);
-    mockFindExpedienteById.mockResolvedValue(makeExp("compiled"));
+    mockFindExpedienteById.mockResolvedValue(makeExp("ready"));
     await sendToFinance(actor, { caseId: CASE_ID, expedienteId: EXP_ID });
     const call = mockUpdateExpediente.mock.calls[0][1] as Record<string, unknown>;
     expect(call.sent_to_finance_by).toBe(actor.userId);
     expect(typeof call.sent_to_finance_at).toBe("string");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// markExpedienteReady ("Listo")
+// ---------------------------------------------------------------------------
+
+describe("service: markExpedienteReady", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUpdateExpediente.mockResolvedValue(undefined);
+    mockWriteAudit.mockResolvedValue(undefined);
+  });
+
+  it("transitions compiled → ready and audits", async () => {
+    mockFindExpedienteById.mockResolvedValue(makeExp("compiled"));
+    await markExpedienteReady(actor, EXP_ID);
+    expect(mockUpdateExpediente).toHaveBeenCalledWith(EXP_ID, { status: "ready" });
+    expect(mockWriteAudit).toHaveBeenCalledWith(
+      actor,
+      "expediente.marked_ready",
+      "expedientes",
+      EXP_ID,
+      expect.any(Object),
+    );
+  });
+
+  it("throws EXPEDIENTE_NOT_COMPILED when not compiled (e.g. still draft)", async () => {
+    mockFindExpedienteById.mockResolvedValue(makeExp("draft"));
+    await expect(markExpedienteReady(actor, EXP_ID)).rejects.toMatchObject({
+      code: "EXPEDIENTE_NOT_COMPILED",
+    });
+    expect(mockUpdateExpediente).not.toHaveBeenCalled();
+  });
+
+  it("does NOT emit sent_to_finance (marking ready is not a handoff)", async () => {
+    mockFindExpedienteById.mockResolvedValue(makeExp("compiled"));
+    await markExpedienteReady(actor, EXP_ID);
+    expect(mockEmitExpedienteSentToFinance).not.toHaveBeenCalled();
   });
 });
 

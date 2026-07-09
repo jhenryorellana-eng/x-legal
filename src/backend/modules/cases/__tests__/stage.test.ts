@@ -10,6 +10,7 @@ import {
   STAGE_MODULE,
   computeStageChecklist,
   canTransferStage,
+  resolveLegalHandoffTarget,
   type StageChecklistSignals,
 } from "../domain";
 
@@ -25,6 +26,10 @@ const READY: StageChecklistSignals = {
   docsToTranslate: 4,
   translationsCompleted: 4,
   expedienteStatus: null,
+  autosTotal: 1,
+  autosDone: 1,
+  lettersTotal: 0,
+  lettersDone: 0,
 };
 
 describe("cases/domain: stage order", () => {
@@ -97,25 +102,43 @@ describe("cases/domain: computeStageChecklist (sales)", () => {
   });
 });
 
-describe("cases/domain: computeStageChecklist (legal/operations — real expediente gating)", () => {
-  it("legal: no expediente → both items pending, not ready", () => {
+describe("cases/domain: computeStageChecklist (legal — Diana's 3 phase-close tasks)", () => {
+  it("legal: 3 tasks (automations · letters · expediente); no expediente → not ready", () => {
     const c = computeStageChecklist("legal", { ...READY, expedienteStatus: null });
-    expect(c.items.map((i) => i.key)).toEqual(["expediente_compiled", "expediente_sent"]);
-    expect(c.items.every((i) => !i.done)).toBe(true);
+    expect(c.items.map((i) => i.key)).toEqual(["automations", "letters", "expediente"]);
+    expect(c.items.find((i) => i.key === "expediente")?.done).toBe(false);
     expect(c.allDone).toBe(false);
   });
 
-  it("legal: compiled but not sent → compiled done, sent pending, not ready", () => {
+  it("legal: an automation without its PDF blocks the handoff", () => {
+    const c = computeStageChecklist("legal", { ...READY, autosDone: 0, expedienteStatus: "ready" });
+    expect(c.items.find((i) => i.key === "automations")?.done).toBe(false);
+    expect(c.allDone).toBe(false);
+  });
+
+  it("legal: applicable letters not all generated block the handoff", () => {
+    const c = computeStageChecklist("legal", { ...READY, lettersTotal: 1, lettersDone: 0, expedienteStatus: "ready" });
+    expect(c.items.find((i) => i.key === "letters")?.done).toBe(false);
+    expect(c.allDone).toBe(false);
+  });
+
+  it("legal: expediente `compiled` (not yet 'Listo') is NOT done", () => {
     const c = computeStageChecklist("legal", { ...READY, expedienteStatus: "compiled" });
-    expect(c.items.find((i) => i.key === "expediente_compiled")?.done).toBe(true);
-    expect(c.items.find((i) => i.key === "expediente_sent")?.done).toBe(false);
+    expect(c.items.find((i) => i.key === "expediente")?.done).toBe(false);
+  });
+
+  it("legal: `corrections_needed` (lawyer wants changes) is NOT done", () => {
+    const c = computeStageChecklist("legal", { ...READY, expedienteStatus: "corrections_needed" });
+    expect(c.items.find((i) => i.key === "expediente")?.done).toBe(false);
     expect(c.allDone).toBe(false);
   });
 
-  it("legal: sent_to_finance → both done, ready to hand off", () => {
-    const c = computeStageChecklist("legal", { ...READY, expedienteStatus: "sent_to_finance" });
-    expect(c.items.every((i) => i.done)).toBe(true);
-    expect(c.allDone).toBe(true);
+  it("legal: expediente `ready`+ counts as done → all 3 tasks satisfied", () => {
+    for (const s of ["ready", "sent_to_lawyer", "approved", "sent_to_finance", "printed"]) {
+      const c = computeStageChecklist("legal", { ...READY, expedienteStatus: s });
+      expect(c.items.find((i) => i.key === "expediente")?.done).toBe(true);
+      expect(c.allDone).toBe(true);
+    }
   });
 
   it("operations: ready only when the expediente is printed", () => {
@@ -147,5 +170,21 @@ describe("cases/domain: canTransferStage", () => {
   it("never transfers from a terminal stage", () => {
     const done = computeStageChecklist("done", READY);
     expect(canTransferStage("done", done, { isOwner: true, isAdmin: true, force: true })).toBe("STAGE_TERMINAL");
+  });
+});
+
+describe("cases/domain: resolveLegalHandoffTarget (plan-aware legal handoff)", () => {
+  it("self plan → always Andrium", () => {
+    expect(resolveLegalHandoffTarget(false, "ready")).toBe("andrium");
+    expect(resolveLegalHandoffTarget(false, "approved")).toBe("andrium");
+  });
+
+  it("with_lawyer, expediente `ready` (not yet validated) → lawyer", () => {
+    expect(resolveLegalHandoffTarget(true, "ready")).toBe("lawyer");
+  });
+
+  it("with_lawyer, expediente already `approved` → Andrium (recovery/retry path)", () => {
+    // The post-verdict auto-send didn't land → a manual Traspaso retries via sendToFinance.
+    expect(resolveLegalHandoffTarget(true, "approved")).toBe("andrium");
   });
 });

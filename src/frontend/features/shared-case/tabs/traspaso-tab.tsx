@@ -26,6 +26,8 @@ const CHECK_LABEL: Record<string, keyof CasosStrings["detail"]> = {
   docs: "checkDocs",
   forms: "checkForms",
   translation: "checkTranslation",
+  automations: "checkAutomations",
+  letters: "checkLetters",
   expediente: "checkExpediente",
   expediente_compiled: "checkExpedienteCompiled",
   expediente_sent: "checkExpedienteSent",
@@ -62,17 +64,35 @@ export function TraspasoTab({
   }
 
   const isTerminal = stage.nextStage === null;
-  const needsPick = stage.nextStageOwners.length > 1;
+  // The legal handoff is plan-aware (Andrium / lawyer) and goes through
+  // handoffCaseFromLegal — no generic transferCase, no owner picker, no force.
+  const isLegalHandoff = stage.stage === "legal";
+  const needsPick = !isLegalHandoff && stage.nextStageOwners.length > 1;
   const pickOk = !needsPick || toOwner !== "";
   const baseEnabled = stage.canTransfer || (stage.isAdmin && force);
+  const handoffAvailable = isLegalHandoff ? !!actions.handoffCaseFromLegal : !!actions.transferCase;
   const canSubmitTransfer =
-    !!actions.transferCase && !isTerminal && baseEnabled && pickOk && !pending;
+    handoffAvailable && !isTerminal && (isLegalHandoff ? stage.canTransfer : baseEnabled) && pickOk && !pending;
 
   const nextLabel = stage.nextStage ? stageLabel(t, stage.nextStage) : "";
+  const handoffLabel = isLegalHandoff
+    ? stage.requiresLawyer
+      ? t.handoffToLawyer
+      : t.handoffToAndrium
+    : interp(t.transferButton, { stage: nextLabel });
 
   function onTransfer() {
-    if (!actions.transferCase) return;
     setErr(null);
+    if (isLegalHandoff) {
+      if (!actions.handoffCaseFromLegal) return;
+      startTransition(async () => {
+        const res = await actions.handoffCaseFromLegal!({ caseId: vm.header.caseId });
+        if (res?.ok) router.refresh();
+        else setErr(res?.error?.code ?? "transferError");
+      });
+      return;
+    }
+    if (!actions.transferCase) return;
     startTransition(async () => {
       const res = await actions.transferCase!({
         caseId: vm.header.caseId,
@@ -157,7 +177,7 @@ export function TraspasoTab({
       </Card>
 
       {/* Transfer action */}
-      {!isTerminal && actions.transferCase && (
+      {!isTerminal && handoffAvailable && (
         <Card>
           {/* Next-owner picker (only when several candidates) */}
           {needsPick && (
@@ -178,8 +198,8 @@ export function TraspasoTab({
             </label>
           )}
 
-          {/* Admin force (when tasks are not all done) */}
-          {stage.isAdmin && !stage.allDone && (
+          {/* Admin force (when tasks are not all done) — not for the legal handoff */}
+          {!isLegalHandoff && stage.isAdmin && !stage.allDone && (
             <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, fontSize: 13, color: "var(--ink-2)", fontWeight: 600 }}>
               <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} />
               {t.transferForce}
@@ -193,7 +213,7 @@ export function TraspasoTab({
             style={primaryBtnStyle(canSubmitTransfer)}
           >
             <Icon name="chevR" size={16} color="#fff" />
-            {interp(t.transferButton, { stage: nextLabel })}
+            {handoffLabel}
           </button>
 
           {err && (
