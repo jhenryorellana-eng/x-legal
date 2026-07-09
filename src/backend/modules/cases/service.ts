@@ -4997,9 +4997,16 @@ async function resolveFormResponseFieldsCore(
     const isOptionGroup =
       (q.field_type === "select" || q.field_type === "multiselect") && Array.isArray(q.options);
     const optionFields = isOptionGroup
-      ? (q.options as Array<{ value: string; pdf_field_name?: string | null }>)
+      ? (q.options as Array<{ value: string; pdf_field_name?: string | null; label_i18n?: { en?: string; es?: string } | null }>)
       : null;
     const hasOptionFields = !!optionFields && optionFields.some((o) => o?.pdf_field_name);
+    // Human/English label of an option code (e.g. "si" → "Yes"): what actually reads
+    // on the form. The validator must see this, NOT the internal selector code, or it
+    // wrongly flags "value 'si' should be 'Yes'" when the correct box is in fact ticked.
+    const optLabel = (code: string): string => {
+      const o = optionFields?.find((of) => String(of.value) === String(code));
+      return o?.label_i18n?.en || o?.label_i18n?.es || String(code);
+    };
 
     // Do-not-fill section (I-589 Part D signature, Parts F/G): left ENTIRELY blank by
     // legal design — recorded for validation context, never filled.
@@ -5048,10 +5055,12 @@ async function resolveFormResponseFieldsCore(
       const selected = Array.isArray(resolved)
         ? resolved.map((v) => String(v))
         : resolved != null && resolved !== "" ? [String(resolved)] : [];
+      // Structured view for the validator: the English labels of the chosen options.
+      const selectedLabels = selected.map(optLabel);
       const need = Math.max(readMinSelected(q.validation), condState.required ? 1 : 0);
       if (selected.length < need) {
         missingRequired.push(q.pdf_field_name ?? q.id);
-        fields.push({ questionId: q.id, pdfFieldName: q.pdf_field_name, label, fieldType: q.field_type, source: q.source, value: selected, visible: true, required: true, empty: selected.length === 0, doNotFill: false });
+        fields.push({ questionId: q.id, pdfFieldName: q.pdf_field_name, label, fieldType: q.field_type, source: q.source, value: selectedLabels, visible: true, required: true, empty: selected.length === 0, doNotFill: false });
         continue;
       }
       if (optionFields) {
@@ -5060,7 +5069,7 @@ async function resolveFormResponseFieldsCore(
           if (o?.pdf_field_name) fieldValues[o.pdf_field_name] = chosen.has(String(o.value));
         }
       }
-      fields.push({ questionId: q.id, pdfFieldName: q.pdf_field_name, label, fieldType: q.field_type, source: q.source, value: selected, visible: true, required: condState.required, empty: selected.length === 0, doNotFill: false });
+      fields.push({ questionId: q.id, pdfFieldName: q.pdf_field_name, label, fieldType: q.field_type, source: q.source, value: selectedLabels, visible: true, required: condState.required, empty: selected.length === 0, doNotFill: false });
       continue;
     }
 
@@ -5097,7 +5106,9 @@ async function resolveFormResponseFieldsCore(
       for (const o of optionFields) {
         if (o?.pdf_field_name) fieldValues[o.pdf_field_name] = String(o.value) === String(resolved);
       }
-      fields.push({ questionId: q.id, pdfFieldName: q.pdf_field_name, label, fieldType: q.field_type, source: q.source, value: String(resolved), visible: true, required: condState.required, empty: false, doNotFill: false });
+      // The validator sees the English label of the ticked option ("Yes"/"No"/"Male"…),
+      // i.e. what reads on the form — not the internal selector code ("si").
+      fields.push({ questionId: q.id, pdfFieldName: q.pdf_field_name, label, fieldType: q.field_type, source: q.source, value: optLabel(String(resolved)), visible: true, required: condState.required, empty: false, doNotFill: false });
       continue;
     }
 

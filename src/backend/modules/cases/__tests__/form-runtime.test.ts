@@ -1471,6 +1471,32 @@ describe("resolveFormResponseFieldValues", () => {
     expect(res.missingRequired).toContain("LastName");
     expect(res.versionId).toBe(publishedVersion.id);
   });
+
+  it("shows the ENGLISH label of a Yes/No select (not the internal 'si' code) so the validator doesn't misflag it", async () => {
+    // The client picked "si" on a Yes/No select whose options carry English labels.
+    mockFindFormResponseById.mockResolvedValue({ ...approvedResponse, answers: { qMarried: "si" } });
+    mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
+    mockListQuestionGroups.mockResolvedValue([{ id: "grpA" }]);
+    mockListQuestions.mockResolvedValue([
+      {
+        id: "qMarried",
+        source: "client_answer",
+        source_ref: null,
+        pdf_field_name: null,
+        is_required: false,
+        field_type: "select",
+        options: [
+          { value: "si", label_i18n: { en: "Yes", es: "Sí" }, pdf_field_name: "MarriedYes" },
+          { value: "no", label_i18n: { en: "No", es: "No" }, pdf_field_name: "MarriedNo" },
+        ],
+      },
+    ]);
+
+    const res = await resolveFormResponseFieldValues(staffActor, RESPONSE_ID);
+    const qMarried = res.fields.find((f) => f.questionId === "qMarried");
+    // The structured value the validator sees is the English label — what reads on the form.
+    expect(qMarried?.value).toBe("Yes");
+  });
 });
 
 // ---------------------------------------------------------------------------
