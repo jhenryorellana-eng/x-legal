@@ -1865,6 +1865,9 @@
           "printed": "Impreso"
         },
         "expOpenAssembler": "Abrir ensamblador",
+        "expViewBtn": "Ver expediente",
+        "expViewBusy": "Abriendo…",
+        "expViewError": "No se pudo abrir el expediente.",
         "uploadDoc": "Subir PDF",
         "uploading": "Subiendo…",
         "uploadDone": "Documento subido",

@@ -16,6 +16,21 @@ import {
   getRunStatus,
   AiEngineError,
 } from "@/backend/modules/ai-engine";
+import { getCompiledPdfUrl, ExpedienteError } from "@/backend/modules/expediente";
+
+/** Short-lived signed URL of an expediente attempt's compiled PDF ("Ver expediente"). */
+export async function getExpedientePdfUrlAction(input: {
+  expedienteId: string;
+}): Promise<{ ok: boolean; data?: string; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    const url = await getCompiledPdfUrl(actor, input.expedienteId);
+    return { ok: true, data: url };
+  } catch (err) {
+    if (err instanceof ExpedienteError) return { ok: false, error: { code: err.code } };
+    return { ok: false, error: { code: "UNEXPECTED" } };
+  }
+}
 
 /** Short-lived signed URL of a run's generated letter (null when not generated). */
 export async function getGenerationOutputUrlAction(input: {

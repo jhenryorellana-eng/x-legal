@@ -2,16 +2,21 @@
 
 /**
  * Expediente tab (DOC-53 §3.4 — legal file) — expediente assembly attempts for
- * the case (real data via getCaseExpedientes). Read-only summary per attempt
- * (status + page count); the drag&drop assembler + compile/send actions land in
- * the expediente-assembler wave. Admin-only.
+ * the case (real data via getCaseExpedientes). Per attempt: status + page count,
+ * plus a "Ver expediente" button that opens the compiled PDF directly (so Diana
+ * doesn't have to detour through the sidebar → assembler → "Ver PDF"). The
+ * "Abrir ensamblador" CTA opens the drag&drop assembler to build/edit.
  */
 
+import * as React from "react";
 import { Card } from "@/frontend/components/brand/card";
 import { StatusPill, type StatusKind } from "@/frontend/components/brand/status-pill";
 import { EmptyState } from "@/frontend/components/desktop/empty-state";
+import { GhostBtn } from "@/frontend/components/brand/ghost-btn";
+import { toast } from "@/frontend/components/desktop";
 import { Icon } from "@/frontend/components/brand/icon";
-import type { CaseWorkspaceVM, ExpedienteVM } from "../types";
+import { getBridge } from "@/frontend/platform-bridge";
+import type { CaseWorkspaceVM, CaseDetailActions, ExpedienteVM } from "../types";
 import type { CasosStrings } from "../strings";
 import { interp } from "../strings";
 
@@ -28,17 +33,40 @@ const EXP_PILL: Record<string, StatusKind> = {
   printed: "hecho",
 };
 
+/** Statuses whose attempt has a compiled PDF → "Ver expediente" applies. */
+const HAS_PDF = new Set([
+  "compiled",
+  "ready",
+  "sent_to_lawyer",
+  "corrections_needed",
+  "approved",
+  "sent_to_finance",
+  "printed",
+]);
+
 export function ExpedienteTab({
   vm,
+  actions,
   strings,
   title,
 }: {
   vm: CaseWorkspaceVM;
+  actions: CaseDetailActions;
   strings: CasosStrings;
   title: string;
 }) {
   const t = strings.detail;
   const statusLabels = t.expStatus as Record<string, string>;
+  const [busy, setBusy] = React.useState<string | null>(null);
+
+  async function viewPdf(expedienteId: string) {
+    if (!actions.getExpedientePdfUrl) return;
+    setBusy(expedienteId);
+    const r = await actions.getExpedientePdfUrl({ expedienteId });
+    setBusy(null);
+    if (r.ok && r.data) getBridge().share.openExternal(r.data);
+    else toast.error(t.expViewError);
+  }
 
   return (
     <Card>
@@ -82,23 +110,31 @@ export function ExpedienteTab({
         </div>
       ) : (
         <div style={{ marginTop: 16 }}>
-          {vm.expedientes.map((e: ExpedienteVM) => (
-            <div key={e.id} className="formcard">
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{ margin: 0, fontSize: 14, fontWeight: 800, color: "var(--ink)" }}>
-                  {interp(t.expAttempt, { n: String(e.attemptNo) })}
-                </p>
-                {e.pageCount != null && (
-                  <p style={{ margin: "2px 0 0", fontSize: 12.5, color: "var(--ink-3)", fontWeight: 700 }}>
-                    {interp(t.expPages, { n: String(e.pageCount) })}
+          {vm.expedientes.map((e: ExpedienteVM) => {
+            const canView = HAS_PDF.has(e.status) && !!actions.getExpedientePdfUrl;
+            return (
+              <div key={e.id} className="formcard">
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ margin: 0, fontSize: 14, fontWeight: 800, color: "var(--ink)" }}>
+                    {interp(t.expAttempt, { n: String(e.attemptNo) })}
                   </p>
+                  {e.pageCount != null && (
+                    <p style={{ margin: "2px 0 0", fontSize: 12.5, color: "var(--ink-3)", fontWeight: 700 }}>
+                      {interp(t.expPages, { n: String(e.pageCount) })}
+                    </p>
+                  )}
+                </div>
+                <StatusPill kind={EXP_PILL[e.status] ?? "pendiente"}>
+                  {statusLabels[e.status] ?? e.status}
+                </StatusPill>
+                {canView && (
+                  <GhostBtn size="md" full={false} icon="doc" disabled={busy === e.id} onClick={() => viewPdf(e.id)}>
+                    {busy === e.id ? t.expViewBusy : t.expViewBtn}
+                  </GhostBtn>
                 )}
               </div>
-              <StatusPill kind={EXP_PILL[e.status] ?? "pendiente"}>
-                {statusLabels[e.status] ?? e.status}
-              </StatusPill>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </Card>

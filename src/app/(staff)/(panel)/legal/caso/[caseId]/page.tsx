@@ -67,7 +67,7 @@ import {
   runPreMortemAction,
 } from "../../../admin/casos/actions";
 import { getFormResponsePdfUrlAction, generateFilledPdfAction } from "../../../admin/casos/form-actions";
-import { getGenerationOutputUrlAction, startLetterGenerationAction, getRunStatusAction } from "../../../admin/casos/generation-actions";
+import { getGenerationOutputUrlAction, startLetterGenerationAction, getRunStatusAction, getExpedientePdfUrlAction } from "../../../admin/casos/generation-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -295,6 +295,7 @@ export default async function LegalCasoDetailPage({
         getFilledPdfUrl: getFormResponsePdfUrlAction,
         generateFilledPdf: generateFilledPdfAction,
         getGenerationOutputUrl: getGenerationOutputUrlAction,
+        getExpedientePdfUrl: getExpedientePdfUrlAction,
         startLetterGeneration: startLetterGenerationAction,
         getRunStatus: getRunStatusAction,
         runPreMortem: runPreMortemAction,
