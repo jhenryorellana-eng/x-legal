@@ -22,7 +22,7 @@ import {
   onExpedientePrinted as onExpedientePrintedKanban,
 } from "@/backend/modules/kanban";
 import { onContractSigned as onContractSignedBilling } from "@/backend/modules/billing";
-import { ensureCaseConversation, postSystemMessage } from "@/backend/modules/messaging";
+import { ensureCaseConversation, syncCaseParticipants, postSystemMessage } from "@/backend/modules/messaging";
 import { registerAiEngineConsumers } from "@/backend/modules/ai-engine";
 import { captureFromRun } from "@/backend/modules/exhibits";
 import { attachReadyExhibits } from "@/backend/modules/expediente";
@@ -316,6 +316,22 @@ export function registerConsumers(): void {
       await postSystemMessage(payload.caseId, "sys.downpayment_confirmed");
     } catch (err) {
       logger.error({ err, caseId: payload.caseId }, "messaging: ensure/system-message failed — conversation is lazily created on first read");
+    }
+  });
+
+  // case.owner_changed → keep the case conversation's participants in sync with
+  // the case's current assignments (DOC-46 §3.5/§5.2). The Legal handoff sets
+  // assigned_paralegal_id and emits this event; without this consumer the newly
+  // assigned paralegal never joins the thread (she can't see the case in her
+  // inbox). Idempotent + no-op if the conversation doesn't exist yet.
+  appEvents.on("case.owner_changed", async (event) => {
+    const payload = event.payload as { caseId: string };
+    if (!payload.caseId) return;
+    logger.info({ caseId: payload.caseId }, "messaging: consuming case.owner_changed → sync participants");
+    try {
+      await syncCaseParticipants(payload.caseId);
+    } catch (err) {
+      logger.error({ err, caseId: payload.caseId }, "messaging: syncCaseParticipants failed — participants self-heal on next read");
     }
   });
 

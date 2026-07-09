@@ -27,6 +27,7 @@ import {
 import { getUnreadBadge } from "@/backend/modules/messaging";
 import {
   listConversationsAction,
+  getCaseThreadAction,
   getConversationThreadAction,
   listStaffDirectoryAction,
   openTeamConversationAction,
@@ -159,7 +160,10 @@ export default async function StaffPanelLayout({
           locale: locale as "es" | "en",
           initialUnread: msgBadge.total,
           raw: {
-            getCaseThread: getConversationThreadAction,
+            // getCaseThread takes a caseId → ensures/creates the case conversation
+            // and returns its thread (used by the "Mensajes" button's on-demand
+            // open). getConversationThread takes an existing conversationId.
+            getCaseThread: getCaseThreadAction,
             getConversationThread: getConversationThreadAction,
             listConversations: listConversationsAction,
             staffDirectory: listStaffDirectoryAction,

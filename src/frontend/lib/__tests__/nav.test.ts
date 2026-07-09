@@ -45,12 +45,13 @@ describe("navForRole", () => {
   });
 
   it("every legal item gates on a module the paralegal owns", () => {
+    // Citas/agenda son de Ventas → el paralegal ya NO posee `calendar`
+    // (decisión de Henry 2026-07-09; supersede DOC-54 §0.2).
     const dianaModules = new Set([
       "dashboard",
       "cases",
       "expedientes",
       "validations",
-      "calendar",
       "messaging",
       "clients",
     ]);
@@ -59,6 +60,13 @@ describe("navForRole", () => {
         expect(dianaModules.has(item.module)).toBe(true);
       }
     }
+  });
+
+  it("legal sidebar does NOT surface Citas (/ventas/citas) — sales-only", () => {
+    const hrefs = LEGAL_NAV.flatMap((g) => g.items.map((i) => i.href));
+    expect(hrefs).not.toContain("/ventas/citas");
+    const modules = LEGAL_NAV.flatMap((g) => g.items.map((i) => i.module));
+    expect(modules).not.toContain("calendar");
   });
 });
 

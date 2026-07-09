@@ -74,6 +74,7 @@ vi.mock("@/backend/platform/authz", () => ({
 
 import {
   ensureCaseConversation,
+  syncCaseParticipants,
   postSystemMessage,
   sendMessage,
   markRead,
@@ -104,10 +105,27 @@ beforeEach(() => {
 
 describe("ensureCaseConversation", () => {
   it("returns the existing conversation", async () => {
+    // Self-contained: ensureCaseConversation reads participant sources first (needs
+    // orgId) before the existing-conversation lookup. clearAllMocks() doesn't reset
+    // implementations, so without this the test only passed when run after another
+    // that happened to set it (order-dependent leak).
+    mockRepo.loadCaseParticipantSources.mockResolvedValue({ orgId: ORG, caseMemberIds: [], paralegalId: null, salesId: null, adminIds: [] });
     mockRepo.findCaseConversation.mockResolvedValue(conv);
     const r = await ensureCaseConversation(CASE);
     expect(r.id).toBe(CONV);
     expect(mockRepo.insertConversation).not.toHaveBeenCalled();
+  });
+  it("self-heals participants on an EXISTING conversation (adds the newly-assigned paralegal)", async () => {
+    // Conversation was created in Sales (no paralegal). The Legal handoff set
+    // assigned_paralegal_id; re-ensuring must add her without re-creating the row.
+    mockRepo.findCaseConversation.mockResolvedValue(conv);
+    mockRepo.loadCaseParticipantSources.mockResolvedValue({ orgId: ORG, caseMemberIds: ["client-1"], paralegalId: "staff-1", salesId: "sales-1", adminIds: ["admin-1"] });
+    await ensureCaseConversation(CASE);
+    expect(mockRepo.insertConversation).not.toHaveBeenCalled();
+    expect(mockRepo.addParticipants).toHaveBeenCalledWith(
+      CONV,
+      expect.arrayContaining(["client-1", "staff-1", "sales-1", "admin-1"]),
+    );
   });
   it("creates + adds participants when absent", async () => {
     mockRepo.findCaseConversation.mockResolvedValueOnce(null);
@@ -122,6 +140,21 @@ describe("ensureCaseConversation", () => {
     mockRepo.insertConversation.mockResolvedValue({ row: null, conflict: true });
     const r = await ensureCaseConversation(CASE);
     expect(r.id).toBe(CONV);
+  });
+});
+
+describe("syncCaseParticipants (case.owner_changed consumer)", () => {
+  it("reconciles participants of an existing case conversation", async () => {
+    mockRepo.findCaseConversation.mockResolvedValue(conv);
+    mockRepo.loadCaseParticipantSources.mockResolvedValue({ orgId: ORG, caseMemberIds: ["client-1"], paralegalId: "staff-1", salesId: null, adminIds: [] });
+    await syncCaseParticipants(CASE);
+    expect(mockRepo.addParticipants).toHaveBeenCalledWith(CONV, expect.arrayContaining(["client-1", "staff-1"]));
+  });
+  it("is a no-op when the conversation doesn't exist yet", async () => {
+    mockRepo.findCaseConversation.mockResolvedValue(null);
+    await syncCaseParticipants(CASE);
+    expect(mockRepo.loadCaseParticipantSources).not.toHaveBeenCalled();
+    expect(mockRepo.addParticipants).not.toHaveBeenCalled();
   });
 });
 

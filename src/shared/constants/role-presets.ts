@@ -20,7 +20,10 @@ const MATRIX: Record<ModuleKey, { sales: Cell; paralegal: Cell; finance: Cell }>
   leads: { sales: "E", paralegal: "-", finance: "-" },
   clients: { sales: "V", paralegal: "V", finance: "V" },
   cases: { sales: "V", paralegal: "E", finance: "V" },
-  calendar: { sales: "E", paralegal: "V", finance: "-" },
+  // Citas/agenda son responsabilidad de Ventas (Vanessa). El paralegal (Diana)
+  // NO gestiona citas → sin acceso a calendar (decisión de Henry, 2026-07-09;
+  // supersede DOC-22 §6 / DOC-54 §0.2 que daban al paralegal agenda read-only).
+  calendar: { sales: "E", paralegal: "-", finance: "-" },
   availability: { sales: "E", paralegal: "-", finance: "-" },
   metrics: { sales: "V", paralegal: "-", finance: "-" },
   catalog: { sales: "-", paralegal: "-", finance: "-" },

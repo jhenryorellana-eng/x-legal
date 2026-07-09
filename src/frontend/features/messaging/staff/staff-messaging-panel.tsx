@@ -256,24 +256,67 @@ export function StaffMessagingPanel({ locale, initialUnread = 0, raw }: StaffMes
     setOpen(true);
   }, [request]);
 
-  // Once the inbox is loaded, select the pending case's conversation (if any).
-  // Clear the pending flag either way — no conversation yet → stay on the list.
+  // Once the inbox is loaded, select the pending case's conversation. If the
+  // case isn't in the inbox (the viewer may have just been assigned and isn't a
+  // participant yet), ensure/create it on demand via getCaseThread — which also
+  // self-heals the participant set — then refresh the inbox and open it. This is
+  // what makes the "Mensajes" button always open the chat (DOC-46 §2.1).
   React.useEffect(() => {
     if (!pendingCaseId || !list) return;
-    const conv = list.clients.find((c) => c.caseId === pendingCaseId);
-    if (conv) {
+    const caseId = pendingCaseId;
+
+    const openFromSummary = (c: ConversationSummaryVM) =>
       setSelected({
-        conversationId: conv.conversationId,
-        name: conv.name,
-        initials: conv.initials,
-        color: conv.color,
+        conversationId: c.conversationId,
+        name: c.name,
+        initials: c.initials,
+        color: c.color,
         sub:
-          [conv.serviceChip, conv.caseNumber].filter(Boolean).join(" · ") ||
+          [c.serviceChip, c.caseNumber].filter(Boolean).join(" · ") ||
           tt(locale, "Grupo · cliente + equipo", "Group · client + team"),
       });
+
+    const existing = list.clients.find((c) => c.caseId === caseId);
+    if (existing) {
+      openFromSummary(existing);
+      setPendingCaseId(null);
+      return;
     }
-    setPendingCaseId(null);
-  }, [pendingCaseId, list, locale]);
+
+    let cancelled = false;
+    void (async () => {
+      const res = await raw.getCaseThread(caseId);
+      if (cancelled) return;
+      if (!res.success) {
+        setPendingCaseId(null);
+        return;
+      }
+      const refreshed = await raw.listConversations();
+      if (cancelled) return;
+      if (refreshed.success) {
+        setList(refreshed.data);
+        const found = refreshed.data.clients.find((c) => c.caseId === caseId);
+        if (found) {
+          openFromSummary(found);
+        } else {
+          // Defensive: viewer has case access but isn't a participant — open the
+          // thread directly by its conversation id (header from the other party).
+          const peer = res.data.participants?.find((p) => p.userId !== res.data.meUserId);
+          setSelected({
+            conversationId: res.data.conversation.id,
+            name: peer?.name ?? tt(locale, "Chat del caso", "Case chat"),
+            initials: peer?.initials ?? "#",
+            color: peer?.color ?? "#E4002B",
+            sub: null,
+          });
+        }
+      }
+      setPendingCaseId(null);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingCaseId, list, locale, raw]);
 
   // Load the inbox + directory + badge whenever the panel opens.
   React.useEffect(() => {

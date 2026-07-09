@@ -16,7 +16,8 @@ import { getLocale, getTranslations } from "next-intl/server";
 import { formatInTimeZone, toZonedTime } from "date-fns-tz";
 import { startOfISOWeek, addDays, format } from "date-fns";
 import { es as esLocale, enUS } from "date-fns/locale";
-import { getActor, getCurrentUserLocation } from "@/backend/modules/identity";
+import { getActor, getCurrentUserLocation, allows } from "@/backend/modules/identity";
+import { staffHomePath } from "@/shared/staff-routes";
 import { getWeekAgenda } from "@/backend/modules/scheduling";
 import type { WeekAgendaResult } from "@/backend/modules/scheduling";
 import { CitasClient } from "./client";
@@ -90,6 +91,12 @@ export default async function VentasCitasPage(
   const searchParams = await props.searchParams;
   const actor = await getActor();
   if (!actor || actor.kind !== "staff") redirect("/login");
+
+  // Module gate (DOC-22 §5.4): /ventas/citas belongs to the `calendar` module
+  // (sales + admin). Staff without it — e.g. the paralegal, who no longer manages
+  // appointments — are redirected to their panel home instead of landing on an
+  // empty agenda they can't use. Mirrors the write-side `can()` (defense in depth).
+  if (!allows(actor, "calendar", "view")) redirect(staffHomePath(actor.role));
 
   const locale = (await getLocale()) as Locale;
   const t = await getTranslations("staff.ventas.citas");

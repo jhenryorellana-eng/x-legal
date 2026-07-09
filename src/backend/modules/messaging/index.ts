@@ -8,6 +8,7 @@
 export {
   // system-level (consumers)
   ensureCaseConversation,
+  syncCaseParticipants,
   postSystemMessage,
   // use cases
   sendMessage,

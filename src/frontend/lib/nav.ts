@@ -150,10 +150,9 @@ export const LEGAL_NAV: NavGroup[] = [
   {
     labelKey: "communication",
     items: [
-      // Calendar is a shared, read-only agenda for legal (DOC-54 §0.2). There is
-      // no /legal/citas surface — the org calendar lives under /ventas/citas and
-      // the `calendar` module gate keeps it read-only for the paralegal.
-      { labelKey: "appointments", href: "/ventas/citas", icon: "calendar", module: "calendar" },
+      // Citas/agenda son de Ventas (Vanessa). El paralegal (Diana) NO gestiona
+      // citas → sin ítem "Citas" ni módulo `calendar` (decisión de Henry,
+      // 2026-07-09; supersede DOC-54 §0.2 que daba al paralegal agenda read-only).
       { labelKey: "legalConfig", href: "/legal/configuracion", icon: "gear", module: "validations" },
     ],
   },

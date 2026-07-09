@@ -174,25 +174,41 @@ async function requireParticipant(actor: Actor, conversationId: string): Promise
 // ---------------------------------------------------------------------------
 
 export async function ensureCaseConversation(caseId: string): Promise<ConversationRow> {
-  const existing = await findCaseConversation(caseId);
-  if (existing) return existing;
-
   const sources = await loadCaseParticipantSources(caseId);
   if (!sources.orgId) throw new MessagingError("CONVERSATION_NOT_FOUND", { caseId });
 
-  const { row, conflict } = await insertConversation({ orgId: sources.orgId, scope: "case", caseId });
-
-  if (conflict) {
-    // Lost the race — another insert won. Re-read and ensure participants.
-    const won = await findCaseConversation(caseId);
-    if (!won) throw new MessagingError("CONVERSATION_NOT_FOUND", { caseId });
-    await addParticipants(won.id, computeCaseParticipantIds(sources));
-    return won;
+  let conv = await findCaseConversation(caseId);
+  if (!conv) {
+    const { row, conflict } = await insertConversation({ orgId: sources.orgId, scope: "case", caseId });
+    // On unique-constraint race, another insert won — re-read the winner.
+    conv = conflict ? await findCaseConversation(caseId) : row;
+    if (!conv) throw new MessagingError("CONVERSATION_NOT_FOUND", { caseId });
   }
-  if (!row) throw new MessagingError("CONVERSATION_NOT_FOUND", { caseId });
 
-  await addParticipants(row.id, computeCaseParticipantIds(sources));
-  return row;
+  // Self-healing: reconcile participants on EVERY ensure (fresh insert, lost
+  // race, and already-existing) so the set always mirrors the case's current
+  // assignments. This is what keeps the paralegal added at the Legal handoff in
+  // the thread even though the conversation was created earlier (in Sales, when
+  // assigned_paralegal_id was still null). addParticipants is idempotent
+  // (upsert ignoreDuplicates), so this never duplicates rows. (DOC-46 §2.1/§3.5)
+  await addParticipants(conv.id, computeCaseParticipantIds(sources));
+  return conv;
+}
+
+/**
+ * Reconcile a case conversation's participant set with the case's current
+ * assignments (client members ∪ paralegal ∪ sales ∪ org admins). Idempotent.
+ * No-op when the conversation doesn't exist yet — it will be created later with
+ * the correct set via `ensureCaseConversation` (downpayment.confirmed consumer
+ * or first read). Consumed on `case.owner_changed` so a reassignment/handoff
+ * adds the newly-assigned paralegal without a manual step (DOC-46 §3.5/§5.2).
+ */
+export async function syncCaseParticipants(caseId: string): Promise<void> {
+  const conv = await findCaseConversation(caseId);
+  if (!conv) return;
+  const sources = await loadCaseParticipantSources(caseId);
+  if (!sources.orgId) return;
+  await addParticipants(conv.id, computeCaseParticipantIds(sources));
 }
 
 // ---------------------------------------------------------------------------

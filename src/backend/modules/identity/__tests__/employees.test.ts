@@ -325,7 +325,7 @@ describe("inviteEmployee", () => {
   });
 
   it("applies preset permissions from DOC-22 §6 matrix for paralegal role", async () => {
-    // paralegal: cases=E, calendar=V, expedientes=E, validations=E, messaging=E...
+    // paralegal: cases=E, expedientes=E, validations=E, messaging=E...
     await inviteEmployee(ADMIN_ACTOR, INVITE_INPUT);
     const insertArgs = mockInsertStaffRows.mock.calls[0]?.[0];
     const perms: Array<{ module_key: string; can_view: boolean; can_edit: boolean }> =
@@ -340,10 +340,9 @@ describe("inviteEmployee", () => {
     expect(casesPerms?.can_view).toBe(true);
     expect(casesPerms?.can_edit).toBe(true);
 
-    // paralegal has calendar=V (view only)
-    const calendarPerms = perms.find((p) => p.module_key === "calendar");
-    expect(calendarPerms?.can_view).toBe(true);
-    expect(calendarPerms?.can_edit).toBe(false);
+    // Citas/agenda son de Ventas: el paralegal NO tiene calendar (decisión de
+    // Henry 2026-07-09; supersede el DOC-22 §6 original que daba calendar=V).
+    expect(perms.find((p) => p.module_key === "calendar")).toBeUndefined();
   });
 
   it("uses provided permissionsPreset if given (overrides role preset)", async () => {
