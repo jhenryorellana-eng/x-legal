@@ -3606,6 +3606,8 @@ export async function assessPreMortemRisk(
     "and judge whether the document is high enough quality to be APPROVED. " +
     "Use web_search to consult official examples/instructions and calibrate quality. " +
     "Be precise and cite the exact field or section in each finding. " +
+    "IMPORTANT: write the free-text fields — `summary`, and each finding's `description` and `correction` — in SPANISH (the legal staff reads Spanish). " +
+    "Keep the enum fields (`severity`, `category`, `semaforo`, `verdict`) EXACTLY as the codes given (do not translate them); `location` may keep the official English field/section name. " +
     "You MUST respond with valid JSON only, no prose before or after.";
 
   const userMessage =
@@ -3614,7 +3616,8 @@ export async function assessPreMortemRisk(
     "\n\n---\n## CASE CONTEXT (source data — PII masked; use to detect discrepancies)\n\n" + contextBlock +
     "\n\n---\n## FINDING CATEGORIES (use ONLY these category codes)\n\n" + categoriesBlock +
     "\n\n---\n## TASK\n\n" +
-    "Validate the document against the guide and the case context. Assign an overall quality score (0-100), a semáforo, and a verdict on whether it would be approved. List every issue as a finding.\n\n" +
+    "Validate the document against the guide and the case context. Assign an overall quality score (0-100), a semáforo, and a verdict on whether it would be approved. List every issue as a finding. " +
+    "Write `summary`, `description` and `correction` in SPANISH; keep `severity`/`category`/`semaforo`/`verdict` as the exact codes.\n\n" +
     "Respond ONLY with this JSON (no prose, no markdown fences):\n" +
     "{\n" +
     '  "score": 0,\n' +
