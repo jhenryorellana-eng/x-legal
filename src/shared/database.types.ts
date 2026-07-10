@@ -1291,6 +1291,7 @@ export type Database = {
           form_definition_id: string
           id: string
           party_id: string | null
+          questionnaire_instance_id: string | null
           rejection_reason_i18n: Json | null
           reviewed_at: string | null
           reviewed_by: string | null
@@ -1311,6 +1312,7 @@ export type Database = {
           form_definition_id: string
           id?: string
           party_id?: string | null
+          questionnaire_instance_id?: string | null
           rejection_reason_i18n?: Json | null
           reviewed_at?: string | null
           reviewed_by?: string | null
@@ -1331,6 +1333,7 @@ export type Database = {
           form_definition_id?: string
           id?: string
           party_id?: string | null
+          questionnaire_instance_id?: string | null
           rejection_reason_i18n?: Json | null
           reviewed_at?: string | null
           reviewed_by?: string | null
@@ -1364,6 +1367,98 @@ export type Database = {
           },
           {
             foreignKeyName: "case_form_responses_party_id_fkey"
+            columns: ["party_id"]
+            isOneToOne: false
+            referencedRelation: "case_parties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_form_responses_questionnaire_instance_id_fkey"
+            columns: ["questionnaire_instance_id"]
+            isOneToOne: false
+            referencedRelation: "case_questionnaire_instances"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      case_questionnaire_instances: {
+        Row: {
+          case_id: string
+          cost_usd: number | null
+          created_at: string
+          error: string | null
+          form_definition_id: string
+          generated_at: string | null
+          id: string
+          input_tokens: number | null
+          inputs_snapshot: Json | null
+          is_current: boolean
+          mode: string
+          model: string | null
+          output_tokens: number | null
+          party_id: string | null
+          schema: Json | null
+          status: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          case_id: string
+          cost_usd?: number | null
+          created_at?: string
+          error?: string | null
+          form_definition_id: string
+          generated_at?: string | null
+          id?: string
+          input_tokens?: number | null
+          inputs_snapshot?: Json | null
+          is_current?: boolean
+          mode: string
+          model?: string | null
+          output_tokens?: number | null
+          party_id?: string | null
+          schema?: Json | null
+          status?: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          case_id?: string
+          cost_usd?: number | null
+          created_at?: string
+          error?: string | null
+          form_definition_id?: string
+          generated_at?: string | null
+          id?: string
+          input_tokens?: number | null
+          inputs_snapshot?: Json | null
+          is_current?: boolean
+          mode?: string
+          model?: string | null
+          output_tokens?: number | null
+          party_id?: string | null
+          schema?: Json | null
+          status?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_questionnaire_instances_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_questionnaire_instances_form_definition_id_fkey"
+            columns: ["form_definition_id"]
+            isOneToOne: false
+            referencedRelation: "form_definitions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_questionnaire_instances_party_id_fkey"
             columns: ["party_id"]
             isOneToOne: false
             referencedRelation: "case_parties"
@@ -2965,6 +3060,7 @@ export type Database = {
           label_i18n: Json
           party_roles: string[] | null
           position: number
+          requires_documents_complete: boolean
           service_phase_id: string
           slug: string
           updated_at: string
@@ -2981,6 +3077,7 @@ export type Database = {
           label_i18n: Json
           party_roles?: string[] | null
           position?: number
+          requires_documents_complete?: boolean
           service_phase_id: string
           slug: string
           updated_at?: string
@@ -2997,6 +3094,7 @@ export type Database = {
           label_i18n?: Json
           party_roles?: string[] | null
           position?: number
+          requires_documents_complete?: boolean
           service_phase_id?: string
           slug?: string
           updated_at?: string
@@ -4384,6 +4482,68 @@ export type Database = {
             columns: ["referred_user_id"]
             isOneToOne: false
             referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      questionnaire_generation_configs: {
+        Row: {
+          allow_client_trigger: boolean
+          auto_trigger: boolean
+          created_at: string
+          form_definition_id: string
+          generation_prompt: string | null
+          hybrid_layout: string
+          input_document_slugs: string[]
+          input_form_slugs: string[]
+          mode: string
+          model: string | null
+          on_new_evidence: string
+          prerequisite_document_slugs: string[]
+          prerequisite_form_slugs: string[]
+          target_question_count: number | null
+          updated_at: string
+        }
+        Insert: {
+          allow_client_trigger?: boolean
+          auto_trigger?: boolean
+          created_at?: string
+          form_definition_id: string
+          generation_prompt?: string | null
+          hybrid_layout?: string
+          input_document_slugs?: string[]
+          input_form_slugs?: string[]
+          mode?: string
+          model?: string | null
+          on_new_evidence?: string
+          prerequisite_document_slugs?: string[]
+          prerequisite_form_slugs?: string[]
+          target_question_count?: number | null
+          updated_at?: string
+        }
+        Update: {
+          allow_client_trigger?: boolean
+          auto_trigger?: boolean
+          created_at?: string
+          form_definition_id?: string
+          generation_prompt?: string | null
+          hybrid_layout?: string
+          input_document_slugs?: string[]
+          input_form_slugs?: string[]
+          mode?: string
+          model?: string | null
+          on_new_evidence?: string
+          prerequisite_document_slugs?: string[]
+          prerequisite_form_slugs?: string[]
+          target_question_count?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "questionnaire_generation_configs_form_definition_id_fkey"
+            columns: ["form_definition_id"]
+            isOneToOne: true
+            referencedRelation: "form_definitions"
             referencedColumns: ["id"]
           },
         ]

@@ -101,9 +101,11 @@ export const formEditorPdfMock: FormEditorVM = {
   sources: {
     documents: [{ slug: "passport", paths: ["full_name", "date_of_birth", "passport_number"] }],
     forms: ["carta-apoyo"],
+    allFormSlugs: ["carta-apoyo", "i-589"],
     profileFields: ["first_name", "last_name", "country_of_origin", "pii.ssn", "pii.a_number", "pii.passport"],
   },
   generationConfig: null,
+  questionnaireGenConfig: null,
   datasets: [
     { id: "ds1", name: "Casos ganadores EOIR 2023–2025", tokens: 96000, active: true },
     { id: "ds2", name: "Memorándums Reforzar Asilo", tokens: 41000, active: true },

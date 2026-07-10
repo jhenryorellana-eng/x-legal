@@ -184,6 +184,7 @@ export class CaseError extends Error {
       | "FORM_VERSION_NOT_PUBLISHED"
       | "FORM_VERSION_MISMATCH"
       | "FORM_NOT_EDITABLE_BY_CLIENT"
+      | "FORMS_LOCKED_DOCS_INCOMPLETE"
       | "FORM_NOT_SUBMITTABLE"
       | "FORM_VALIDATION_FAILED"
       | "FORM_PDF_BLOCKED"
@@ -3214,6 +3215,85 @@ export async function getDocumentsMatrix(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Documents gate (Ola 2) — "100% of visible documents → forms unlock"
+// ---------------------------------------------------------------------------
+
+/** Whether the case's visible documents are 100% uploaded (the forms gate). */
+export interface DocumentsGateStatus {
+  /** True when every visible document is uploaded (or there are none to upload). */
+  complete: boolean;
+  /** Visible documents already uploaded (counts 'revision' + 'aprobado'). */
+  done: number;
+  /** Visible documents requested (excludes staff-hidden ones). */
+  total: number;
+}
+
+/**
+ * Computes the documents gate for an ALREADY-LOADED case row. Reuses
+ * `buildDocumentsMatrix` (the single source of truth for completeness): the
+ * denominator is every VISIBLE document (staff hide non-applicable optional docs
+ * via case_requirement_overrides.is_hidden), and "done" counts a document as soon
+ * as it is uploaded ('revision') — not only once staff approves it, matching the
+ * client-facing progress. With no documents requested the gate is open.
+ */
+async function computeDocumentsGate(
+  caseRow: Awaited<ReturnType<typeof findCaseById>>,
+): Promise<DocumentsGateStatus> {
+  if (!caseRow) return { complete: true, done: 0, total: 0 };
+  const { counts } = await buildDocumentsMatrix(caseRow, { includeHidden: false });
+  return {
+    complete: counts.total === 0 || counts.done >= counts.total,
+    done: counts.done,
+    total: counts.total,
+  };
+}
+
+/**
+ * Public, actor-scoped documents-gate read: "are this case's visible documents
+ * 100% uploaded?". Consumed by the home "Tu siguiente paso" CTA (camino) and
+ * available to any UI needing gate status. The forms hard gate (getFormForClient
+ * + write paths, via assertDocumentsGate) and the list soft-gate share the SAME
+ * math through the internal computeDocumentsGate — one definition of "complete".
+ *
+ * @api-id API-CASE-05b (documents gate)
+ */
+export async function getDocumentsGateStatus(
+  actor: Actor,
+  caseId: string,
+): Promise<DocumentsGateStatus> {
+  await requireCaseAccess(actor, caseId);
+  const caseRow = await findCaseById(caseId);
+  if (!caseRow) throw new CaseError("CASE_NOT_FOUND");
+  return computeDocumentsGate(caseRow);
+}
+
+/**
+ * Enforces the documents gate at EVERY form entry point (open, first save,
+ * submit) — centralized so the read path and both write paths can't drift.
+ *
+ * Policy: a client cannot START a gated form until 100% of the case's visible
+ * documents are uploaded. But a form the client has ALREADY started or finished
+ * (existingResponse present) stays reachable — so they can view/continue their own
+ * work (e.g. an already-submitted I-589) and completed work is never hidden, and
+ * a doc that later regresses can't retroactively lock a form they legitimately
+ * began. Staff are never gated; an exempted form (requires_documents_complete=
+ * false) is never gated. The gate only bites on the transition INTO a response,
+ * which is exactly what closes the direct-POST bypass on the write paths.
+ */
+async function assertDocumentsGate(
+  actor: Actor,
+  caseId: string,
+  formDef: { requires_documents_complete: boolean },
+  existingResponse: unknown,
+): Promise<void> {
+  if (actor.kind !== "client") return;
+  if (!formDef.requires_documents_complete) return;
+  if (existingResponse) return;
+  const gate = await computeDocumentsGate(await findCaseById(caseId));
+  if (!gate.complete) throw new CaseError("FORMS_LOCKED_DOCS_INCOMPLETE");
+}
+
 export interface CaseMilestoneItem {
   id: string;
   labelI18n: I18nValue;
@@ -3807,6 +3887,67 @@ export interface FormForClientDto {
    *  translation when the client locale differs. Defaults 'en'. */
   sourceLanguage: "en" | "es";
   groups: FormGroupDto[];
+  /**
+   * Ola 3 — per-case questionnaire state (null for normal forms / global
+   * questionnaires). When set, `groups` may be empty and the wizard renders the
+   * gate state instead of questions.
+   *  - pending_prereqs: complete the prerequisite form(s) first (see missingPrereqs)
+   *  - generating: the AI is preparing personalized questions
+   *  - failed: generation failed (staff can retry)
+   */
+  questionnaireGate?: "pending_prereqs" | "generating" | "failed" | null;
+  /** Prerequisite form slugs still missing when questionnaireGate==='pending_prereqs'. */
+  missingPrereqs?: { forms: string[]; documents: string[] } | null;
+}
+
+/**
+ * Ola 3 — maps a generated questionnaire instance's jsonb schema to wizard groups.
+ * Questions are all client_answer (no prefills); answers key off the stable uuids.
+ * `positionOffset` places generated groups AFTER base groups in hybrid mode.
+ */
+function schemaToWizardGroups(
+  schema: unknown,
+  answers: Record<string, unknown>,
+  positionOffset: number,
+): FormGroupDto[] {
+  const s = (schema ?? {}) as {
+    groups?: Array<{
+      id: string; title_i18n: unknown; position: number;
+      questions?: Array<{
+        id: string; question_i18n: unknown; help_i18n: unknown; field_type: string;
+        options: unknown; is_required: boolean; position: number; source: string;
+        validation: unknown; condition: unknown;
+      }>;
+    }>;
+  };
+  return (s.groups ?? [])
+    .map((g, gi) => ({
+      id: g.id,
+      titleI18n: asI18n(g.title_i18n) ?? { en: "", es: "" },
+      position: positionOffset + (g.position ?? gi),
+      questions: (g.questions ?? [])
+        .map((q) => {
+          const opts = q.options as Array<{ value: string; label_i18n: unknown }> | null;
+          return {
+            id: q.id,
+            groupId: g.id,
+            questionI18n: asI18n(q.question_i18n) ?? { en: "", es: "" },
+            helpI18n: asI18n(q.help_i18n),
+            fieldType: q.field_type,
+            options: opts ? opts.map((o) => ({ value: o.value, labelI18n: asI18n(o.label_i18n) ?? { en: o.value, es: o.value } })) : null,
+            isRequired: q.is_required,
+            position: q.position,
+            source: q.source ?? "client_answer",
+            validation: (q.validation as { regex?: string; min?: number; max?: number } | null) ?? null,
+            prefillValue: null,
+            isPrefilled: false,
+            currentAnswer: answers[q.id] ?? null,
+            condition: parseConditionOrNull(q.condition),
+          } as FormQuestionDto;
+        })
+        .sort((a, b) => a.position - b.position),
+    }))
+    .sort((a, b) => a.position - b.position);
 }
 
 /**
@@ -3830,6 +3971,12 @@ export async function getFormForClient(
 
   const partyId = input.partyId ?? null;
   const existingResponse = await findFormResponse(input.caseId, input.formDefinitionId, partyId);
+
+  // Ola 2 — documents gate. Blocks OPENING a not-yet-started gated form until the
+  // case's visible documents are 100% uploaded; a form the client already started
+  // (existingResponse) stays viewable so completed work — e.g. an approved I-589 —
+  // is never hidden. Covers the forms list, the direct URL, and Mi Historia.
+  await assertDocumentsGate(actor, input.caseId, formDef, existingResponse);
 
   // Get published version (for pdf_automation)
   const catalog = await import("@/backend/modules/catalog" as string) as {
@@ -3927,6 +4074,50 @@ export async function getFormForClient(
     groups.sort((a, b) => a.position - b.position);
   }
 
+  // Ola 3 — per-case questionnaire (automatic/hybrid): the client fills AI-generated
+  // questions grounded in their I-589 + documents. In hybrid the base groups built
+  // above stay and the generated ones are appended; in automatic they replace them.
+  let questionnaireGate: FormForClientDto["questionnaireGate"] = null;
+  let missingPrereqs: FormForClientDto["missingPrereqs"] = null;
+  if (formDef.kind === "questionnaire") {
+    const aiEngine = (await import("@/backend/modules/ai-engine" as string)) as {
+      getQuestionnaireClientState: (caseId: string, formDefinitionId: string, partyId: string | null) => Promise<{ isDynamic: boolean; mode: string; autoTrigger: boolean; instance: { status: string; schema: unknown } | null; prereqs: { ok: boolean; missingForms: string[]; missingDocuments: string[] } | null }>;
+      startQuestionnaireGeneration: (actor: Actor, input: { caseId: string; formDefinitionId: string; partyId?: string | null }) => Promise<unknown>;
+      getCurrentQuestionnaireInstance: (caseId: string, formDefinitionId: string, partyId: string | null) => Promise<{ status: string; schema: unknown } | null>;
+    };
+    const state = await aiEngine.getQuestionnaireClientState(input.caseId, input.formDefinitionId, partyId);
+    if (state.isDynamic) {
+      let instance = state.instance;
+      const needsGen = !instance || instance.status === "pending_prereqs" || instance.status === "failed";
+      // Lazy auto-trigger: when the client opens the questionnaire with prerequisites
+      // met and nothing generating/ready yet, kick off generation now.
+      if (actor.kind === "client" && state.autoTrigger && state.prereqs?.ok && needsGen) {
+        // Best-effort kickoff: NEVER let a generation-start failure break this read
+        // (the client would otherwise get a misleading "form not found"). On failure
+        // we fall back to whatever instance/state we already resolved above.
+        try {
+          await aiEngine.startQuestionnaireGeneration(actor, { caseId: input.caseId, formDefinitionId: input.formDefinitionId, partyId });
+          instance = await aiEngine.getCurrentQuestionnaireInstance(input.caseId, input.formDefinitionId, partyId);
+        } catch (err) {
+          logger.error({ err, caseId: input.caseId, formDefinitionId: input.formDefinitionId }, "getFormForClient: questionnaire auto-trigger failed (non-fatal)");
+        }
+      }
+      const answers = (existingResponse?.answers ?? {}) as Record<string, unknown>;
+      const status = instance?.status ?? "pending_prereqs";
+      if (status === "ready" || status === "stale") {
+        const generated = schemaToWizardGroups(instance?.schema, answers, groups.length);
+        groups = state.mode === "hybrid" ? [...groups, ...generated] : generated;
+      } else {
+        if (state.mode === "automatic") groups = [];
+        questionnaireGate = status === "queued" || status === "generating" ? "generating"
+          : status === "failed" ? "failed" : "pending_prereqs";
+        if (questionnaireGate === "pending_prereqs" && state.prereqs) {
+          missingPrereqs = { forms: state.prereqs.missingForms, documents: state.prereqs.missingDocuments };
+        }
+      }
+    }
+  }
+
   return {
     responseId: existingResponse?.id ?? null,
     formDefinitionId: input.formDefinitionId,
@@ -3942,6 +4133,8 @@ export async function getFormForClient(
     filledBy: formDef.filled_by,
     sourceLanguage: (published?.source_language === "es" ? "es" : "en"),
     groups,
+    questionnaireGate,
+    missingPrereqs,
   };
 }
 
@@ -3975,6 +4168,10 @@ export interface ClientFormListItem {
   /** Path to the generated official PDF (null = not generated yet). */
   filledPdfPath: string | null;
   position: number;
+  /** Ola 2 soft-gate: true when this form is locked because the case's visible
+   *  documents aren't 100% uploaded yet (and the form is not exempted). The list
+   *  shows a "Bloqueado" pill; opening it is still hard-gated in getFormForClient. */
+  locked: boolean;
 }
 
 /**
@@ -4010,12 +4207,26 @@ export async function getClientFormsForCase(
         is_per_party: boolean;
         position: number;
         companion_questionnaire_id: string | null;
+        requires_documents_complete: boolean;
       }>
     >;
   };
   if (!catalog.listFormDefinitions) return [];
 
   const defs = await catalog.listFormDefinitions(caseRow.current_phase_id);
+
+  // Ola 2 soft-gate: compute the documents gate ONCE for the whole list, so each
+  // card can show whether it's locked (the hard gate in getFormForClient is the
+  // real authority; this only drives the "Bloqueado" pill + friendly redirect). A
+  // form the client already started/finished (hasResponse) is never locked — it
+  // stays viewable, mirroring assertDocumentsGate's existing-response exemption.
+  const gate = await computeDocumentsGate(caseRow);
+  const isLocked = (requiresDocs: boolean, hasResponse: boolean) => requiresDocs && !gate.complete && !hasResponse;
+  // The lock badge must read the SAME flag the hard gate will check. For an
+  // ai_letter the client fills the companion QUESTIONNAIRE (fillId), whose row —
+  // not the letter's — is what getFormForClient gates on. Resolve by fillId so an
+  // admin toggling either row independently can't desync badge vs reachability.
+  const requiresDocsById = new Map(defs.map((d) => [d.id, d.requires_documents_complete]));
 
   // A companion questionnaire is surfaced THROUGH its parent ai_letter card (one
   // "Memorándum" entry whose fill target is the questionnaire), never as its own
@@ -4057,6 +4268,7 @@ export async function getClientFormsForCase(
           responseId: resp?.id ?? null,
           filledPdfPath: resp?.filled_pdf_path ?? null,
           position: d.position,
+          locked: isLocked(requiresDocsById.get(fillId) ?? d.requires_documents_complete, !!resp),
         });
       }
     } else {
@@ -4073,6 +4285,7 @@ export async function getClientFormsForCase(
         responseId: resp?.id ?? null,
         filledPdfPath: resp?.filled_pdf_path ?? null,
         position: d.position,
+        locked: isLocked(requiresDocsById.get(fillId) ?? d.requires_documents_complete, !!resp),
       });
     }
   }
@@ -4346,6 +4559,11 @@ async function saveFormDraftImpl(
 
   let response = await findFormResponse(parsed.caseId, parsed.formDefinitionId, partyId);
 
+  // Ola 2 gate (write path): block the FIRST save that would create a response on
+  // a locked form — closes the direct-POST bypass. A staff edit (staffEdit) and an
+  // existing response are exempt (assertDocumentsGate returns early for both).
+  if (!staffEdit) await assertDocumentsGate(actor, parsed.caseId, formDef, response);
+
   if (!response) {
     // First save: freeze the published version
     const catalog = await import("@/backend/modules/catalog" as string) as {
@@ -4357,11 +4575,25 @@ async function saveFormDraftImpl(
       throw new CaseError("FORM_VERSION_NOT_PUBLISHED");
     }
 
+    // Ola 3 — pin a dynamic-questionnaire response to the generated instance it was
+    // filled against. Answers key off the instance's stable uuids (and, in hybrid,
+    // the base question ids), so we do NOT freeze an automation_version_id — that
+    // keeps the version-integrity check below scoped to global/pdf forms only.
+    let questionnaireInstanceId: string | null = null;
+    if (formDef.kind === "questionnaire") {
+      const aiEngine = (await import("@/backend/modules/ai-engine" as string)) as {
+        getCurrentQuestionnaireInstance: (c: string, f: string, p: string | null) => Promise<{ id: string; status: string } | null>;
+      };
+      const inst = await aiEngine.getCurrentQuestionnaireInstance(parsed.caseId, parsed.formDefinitionId, partyId);
+      if (inst && (inst.status === "ready" || inst.status === "stale")) questionnaireInstanceId = inst.id;
+    }
+
     const caseForPhase = await findCaseById(parsed.caseId);
     response = await insertFormResponse({
       case_id: parsed.caseId,
       form_definition_id: parsed.formDefinitionId,
-      automation_version_id: published?.id ?? null,
+      automation_version_id: questionnaireInstanceId ? null : (published?.id ?? null),
+      questionnaire_instance_id: questionnaireInstanceId,
       party_id: partyId,
       status: "draft",
       service_phase_id: caseForPhase?.current_phase_id ?? null,
@@ -4372,6 +4604,31 @@ async function saveFormDraftImpl(
     // is deliberately left unchanged (an approved form stays approved).
     if (!staffEdit && response.status !== "draft") {
       throw new CaseError("FORM_NOT_SUBMITTABLE");
+    }
+
+    // Ola 3 — keep the questionnaire pin in lockstep with the rendered instance.
+    // getFormForClient always renders the CURRENT instance; if the questionnaire was
+    // regenerated after this draft was first pinned (staff/admin regen → new current,
+    // old demoted), the client now answers the NEW instance's question ids while the
+    // response still points at the OLD one. loadQuestionLabelsForResponse resolves AI
+    // labels from the pinned instance, so a stale pin silently drops the wording of
+    // every newly-answered AI question in the memo. Re-pin a *draft* to the current
+    // ready/stale instance so pin == the schema the answers key off. Never touch a
+    // submitted/approved response (its answers are frozen against the submit-time
+    // schema) and never clobber a valid pin while a regeneration is still generating.
+    if (!staffEdit && response.status === "draft" && formDef.kind === "questionnaire") {
+      const aiEngine = (await import("@/backend/modules/ai-engine" as string)) as {
+        getCurrentQuestionnaireInstance: (c: string, f: string, p: string | null) => Promise<{ id: string; status: string } | null>;
+      };
+      const inst = await aiEngine.getCurrentQuestionnaireInstance(parsed.caseId, parsed.formDefinitionId, partyId);
+      if (
+        inst &&
+        (inst.status === "ready" || inst.status === "stale") &&
+        inst.id !== response.questionnaire_instance_id
+      ) {
+        await updateFormResponse(response.id, { questionnaire_instance_id: inst.id });
+        response = { ...response, questionnaire_instance_id: inst.id };
+      }
     }
   }
 
@@ -4442,6 +4699,11 @@ export async function submitFormResponse(
   if (!response || (response.status !== "draft" && response.status !== "rejected")) {
     throw new CaseError("FORM_NOT_SUBMITTABLE");
   }
+  // Ola 2 gate: submit is only reachable on an EXISTING response (draft/rejected),
+  // which could only be created by passing the gate at creation time
+  // (saveFormDraftImpl). A never-started, locked form has no response and dies on
+  // the FORM_NOT_SUBMITTABLE check above — so there is no submit-side bypass to
+  // block here (assertDocumentsGate would no-op on the existing response anyway).
 
   // Full server-side validation (RF-TRX-027 — client is never the source of truth).
   // A pdf_automation form ALWAYS resolves to ≥1 question; an empty result means the

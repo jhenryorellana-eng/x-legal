@@ -13,6 +13,8 @@
  * @module ai-engine/domain
  */
 
+import type { QuestionCondition } from "@/shared/form-logic/conditions";
+
 // ---------------------------------------------------------------------------
 // Generation run state machine (DOC-42 §2.1)
 // ---------------------------------------------------------------------------
@@ -589,11 +591,13 @@ function buildDatasetXml(items: DatasetItem[]): string {
  * Builds the user message with case context, documents, and format instructions.
  * All case data is PII-masked before injection.
  */
-function buildUserMessage(
-  snapshot: ConfigSnapshot,
-  inputs: ResolvedInputs,
-  outputLanguage?: string,
-): string {
+/**
+ * Builds the CASE-CONTEXT blocks (extractions payload + form answers + full
+ * document text), all PII-masked. Shared by the document generator
+ * (buildUserMessage) and the per-case questionnaire generator
+ * (buildQuestionGenContext) so both read the case the exact same way.
+ */
+function buildCaseContextBlocks(inputs: ResolvedInputs): string[] {
   const parts: string[] = [];
 
   // 1. CASE CONTEXT — extractions payload (field-by-field, labeled by slug)
@@ -630,12 +634,78 @@ function buildUserMessage(
     }
   }
 
+  return parts;
+}
+
+function buildUserMessage(
+  snapshot: ConfigSnapshot,
+  inputs: ResolvedInputs,
+  outputLanguage?: string,
+): string {
+  const parts = buildCaseContextBlocks(inputs);
+
   // 4. FORMAT/LANGUAGE INSTRUCTIONS (fixed platform block)
   const lang = outputLanguage ?? snapshot.output_language ?? "es";
   parts.push("\n## INSTRUCCIONES DE FORMATO Y IDIOMA");
   parts.push(buildFormatInstructions(lang, snapshot.max_output_tokens));
 
   return parts.join("\n");
+}
+
+/**
+ * Builds the user message for the PER-CASE questionnaire generator (Ola 3):
+ * the same masked case context (I-589 answers + uploaded documents), plus the
+ * list of base questions already covered so the AI adds ONLY deeper follow-ups.
+ */
+export function buildQuestionGenContext(
+  inputs: ResolvedInputs,
+  alreadyCoveredQuestions: string[],
+): string {
+  const parts = buildCaseContextBlocks(inputs);
+  if (inputs.documents.length === 0 && inputs.forms.length === 0) {
+    parts.push("(No hay documentos ni respuestas de formulario disponibles todavía.)");
+  }
+  if (alreadyCoveredQuestions.length > 0) {
+    parts.push("\n## PREGUNTAS YA CUBIERTAS (NO las repitas — solo profundiza más allá de estas)");
+    alreadyCoveredQuestions.forEach((q, i) => parts.push(`${i + 1}. ${q}`));
+  }
+  return parts.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Ola 3 — Per-case generated questionnaire schema (stored as jsonb on the instance)
+// ---------------------------------------------------------------------------
+
+/** The 6 canonical client-answerable field types (mirrors form_questions). */
+export const QUESTIONNAIRE_FIELD_TYPES = [
+  "text", "textarea", "number", "date", "checkbox", "select",
+] as const;
+export type QuestionnaireFieldType = (typeof QUESTIONNAIRE_FIELD_TYPES)[number];
+
+export interface GeneratedQuestion {
+  /** Stable uuid — answers are keyed by this id (survives regeneration). */
+  id: string;
+  question_i18n: { es: string; en: string };
+  help_i18n: { es: string; en: string } | null;
+  field_type: QuestionnaireFieldType;
+  options: Array<{ value: string; label_i18n: { es: string; en: string } }> | null;
+  is_required: boolean;
+  position: number;
+  /** Always 'client_answer' — the client fills these. */
+  source: "client_answer";
+  validation: { regex?: string; min?: number; max?: number } | null;
+  /** Conditional visibility, with `when.question` already resolved to a uuid. */
+  condition: QuestionCondition | null;
+}
+export interface GeneratedGroup {
+  id: string;
+  title_i18n: { es: string; en: string };
+  position: number;
+  questions: GeneratedQuestion[];
+}
+/** The full generated questionnaire stored in case_questionnaire_instances.schema. */
+export interface QuestionnaireSchema {
+  groups: GeneratedGroup[];
 }
 
 function buildFormatInstructions(outputLanguage: string, maxOutputTokens: number): string {

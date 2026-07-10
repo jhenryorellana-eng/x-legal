@@ -58,6 +58,175 @@ export async function findGenerationConfig(
 }
 
 // ---------------------------------------------------------------------------
+// Ola 3 — per-case questionnaire generation (config + instances)
+// ai-engine is the single writer of case_questionnaire_instances (like
+// document_extractions); catalog owns the config editing, ai-engine reads it.
+// ---------------------------------------------------------------------------
+
+export type QuestionnaireGenConfigRow = Tables<"questionnaire_generation_configs">;
+export type QuestionnaireInstanceRow = Tables<"case_questionnaire_instances">;
+
+/** Reads a questionnaire's generation config (catalog owns editing; ai-engine reads). */
+export async function findQuestionnaireGenerationConfig(
+  formDefinitionId: string,
+): Promise<QuestionnaireGenConfigRow | null> {
+  const client = createServiceClient();
+  const { data, error } = await client
+    .from("questionnaire_generation_configs")
+    .select("*")
+    .eq("form_definition_id", formDefinitionId)
+    .maybeSingle();
+  if (error) {
+    logger.error({ err: error, formDefinitionId }, "ai-engine: findQuestionnaireGenerationConfig failed");
+    return null;
+  }
+  return data;
+}
+
+/** The current (latest) questionnaire instance for a (case, form, party). */
+export async function findCurrentQuestionnaireInstance(
+  caseId: string,
+  formDefinitionId: string,
+  partyId: string | null,
+): Promise<QuestionnaireInstanceRow | null> {
+  const client = createServiceClient();
+  let q = client
+    .from("case_questionnaire_instances")
+    .select("*")
+    .eq("case_id", caseId)
+    .eq("form_definition_id", formDefinitionId)
+    .eq("is_current", true);
+  q = partyId ? q.eq("party_id", partyId) : q.is("party_id", null);
+  const { data } = await q.maybeSingle();
+  return data ?? null;
+}
+
+export async function findQuestionnaireInstanceById(
+  id: string,
+): Promise<QuestionnaireInstanceRow | null> {
+  const client = createServiceClient();
+  const { data } = await client
+    .from("case_questionnaire_instances")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  return data ?? null;
+}
+
+/** Next version number for a (case, form, party) instance chain. */
+export async function nextQuestionnaireInstanceVersion(
+  caseId: string,
+  formDefinitionId: string,
+  partyId: string | null,
+): Promise<number> {
+  const client = createServiceClient();
+  let q = client
+    .from("case_questionnaire_instances")
+    .select("version")
+    .eq("case_id", caseId)
+    .eq("form_definition_id", formDefinitionId)
+    .order("version", { ascending: false })
+    .limit(1);
+  q = partyId ? q.eq("party_id", partyId) : q.is("party_id", null);
+  const { data } = await q;
+  const max = (data?.[0] as { version?: number } | undefined)?.version ?? 0;
+  return max + 1;
+}
+
+/**
+ * Creates a NEW current instance, demoting any prior current one first (the
+ * partial unique index `case_qn_instance_current_uidx` allows only one is_current
+ * per case/form/party). Conflict-safe: if a concurrent call already claimed the
+ * current slot (unique violation 23505 — two simultaneous first-opens), re-reads
+ * and returns THAT instance instead of throwing, so the caller stays idempotent
+ * and never double-generates (the job dedupe on case/form/party finishes the job).
+ */
+export async function createQuestionnaireInstance(
+  row: TablesInsert<"case_questionnaire_instances">,
+): Promise<QuestionnaireInstanceRow> {
+  const client = createServiceClient();
+  let demote = client
+    .from("case_questionnaire_instances")
+    .update({ is_current: false })
+    .eq("case_id", row.case_id)
+    .eq("form_definition_id", row.form_definition_id)
+    .eq("is_current", true);
+  demote = row.party_id ? demote.eq("party_id", row.party_id) : demote.is("party_id", null);
+  await demote;
+
+  const { data, error } = await client
+    .from("case_questionnaire_instances")
+    .insert({ ...row, is_current: true })
+    .select()
+    .single();
+  if (error || !data) {
+    if ((error as { code?: string } | null)?.code === "23505") {
+      const existing = await findCurrentQuestionnaireInstance(row.case_id, row.form_definition_id, row.party_id ?? null);
+      if (existing) return existing;
+    }
+    throw new Error(`createQuestionnaireInstance failed: ${error?.message}`);
+  }
+  return data;
+}
+
+export async function updateQuestionnaireInstance(
+  id: string,
+  patch: TablesUpdate<"case_questionnaire_instances">,
+): Promise<void> {
+  const client = createServiceClient();
+  const { error } = await client.from("case_questionnaire_instances").update(patch).eq("id", id);
+  if (error) logger.error({ err: error, id }, "ai-engine: updateQuestionnaireInstance failed");
+}
+
+/**
+ * Of `slugs`, returns those with a submitted/approved response for this case
+ * (used to evaluate questionnaire prerequisites, e.g. "the I-589 is completed").
+ * A per-party prereq is satisfied by the matching party OR a case-level response.
+ */
+export async function findSubmittedFormSlugs(
+  caseId: string,
+  slugs: string[],
+  partyId: string | null,
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (slugs.length === 0) return out;
+  const client = createServiceClient();
+  const { data } = await client
+    .from("case_form_responses")
+    .select("status, party_id, form_definitions!inner(slug)")
+    .eq("case_id", caseId)
+    .in("form_definitions.slug", slugs)
+    .in("status", ["submitted", "approved"]);
+  const rows = (data ?? []) as Array<{ status: string; party_id: string | null; form_definitions: { slug: string } | null }>;
+  for (const r of rows) {
+    const slug = r.form_definitions?.slug;
+    if (!slug) continue;
+    if (partyId == null || r.party_id === partyId || r.party_id == null) out.add(slug);
+  }
+  return out;
+}
+
+/** The Spanish text of every published (base) question of a form — used by hybrid
+ *  mode to tell the generator which questions are already covered. */
+export async function listPublishedQuestionTexts(formDefinitionId: string): Promise<string[]> {
+  const client = createServiceClient();
+  const { data: ver } = await client
+    .from("form_automation_versions")
+    .select("id")
+    .eq("form_definition_id", formDefinitionId)
+    .eq("status", "published")
+    .maybeSingle();
+  const versionId = (ver as { id?: string } | null)?.id;
+  if (!versionId) return [];
+  const { data } = await client
+    .from("form_questions")
+    .select("question_i18n, form_question_groups!inner(automation_version_id)")
+    .eq("form_question_groups.automation_version_id", versionId);
+  const rows = (data ?? []) as Array<{ question_i18n: { es?: string; en?: string } | null }>;
+  return rows.map((r) => r.question_i18n?.es ?? r.question_i18n?.en ?? "").filter(Boolean);
+}
+
+// ---------------------------------------------------------------------------
 // Generation runs
 // ---------------------------------------------------------------------------
 
@@ -425,16 +594,27 @@ export async function sumMonthlyCosts(
     .lt("created_at", endDate)
     .not("cost_usd", "is", null);
 
+  // Questionnaire generation (Ola 3)
+  const { data: qnData } = await client
+    .from("case_questionnaire_instances")
+    .select("cost_usd, cases!inner(org_id)")
+    .eq("cases.org_id", orgId)
+    .gte("created_at", startDate)
+    .lt("created_at", endDate)
+    .not("cost_usd", "is", null);
+
   const genTotal = (genData ?? []).reduce((s, r) => s + (r.cost_usd ?? 0), 0);
   const extTotal = (extData ?? []).reduce((s, r) => s + (r.cost_usd ?? 0), 0);
   const transTotal = (transData ?? []).reduce((s, r) => s + (r.cost_usd ?? 0), 0);
+  const qnTotal = (qnData ?? []).reduce((s, r) => s + (r.cost_usd ?? 0), 0);
 
   return {
-    totalUsd: parseFloat((genTotal + extTotal + transTotal).toFixed(4)),
+    totalUsd: parseFloat((genTotal + extTotal + transTotal + qnTotal).toFixed(4)),
     bySource: {
       generations: parseFloat(genTotal.toFixed(4)),
       extractions: parseFloat(extTotal.toFixed(4)),
       translations: parseFloat(transTotal.toFixed(4)),
+      questionnaires: parseFloat(qnTotal.toFixed(4)),
     },
   };
 }
@@ -1083,21 +1263,62 @@ async function loadQuestionLabelsForResponse(responseId: string): Promise<Map<st
   const client = createServiceClient();
   const { data: resp } = await client
     .from("case_form_responses")
-    .select("automation_version_id")
+    .select("automation_version_id, questionnaire_instance_id, form_definition_id")
     .eq("id", responseId)
     .maybeSingle();
-  const versionId = (resp as { automation_version_id?: string | null } | null)?.automation_version_id;
+  const r = resp as {
+    automation_version_id?: string | null;
+    questionnaire_instance_id?: string | null;
+    form_definition_id?: string | null;
+  } | null;
   const labels = new Map<string, string>();
-  if (!versionId) return labels;
-  const { data } = await client
-    .from("form_questions")
-    .select("id, question_i18n, form_question_groups!inner(automation_version_id)")
-    .eq("form_question_groups.automation_version_id", versionId);
-  for (const row of (data ?? []) as Array<{ id: string; question_i18n: unknown }>) {
-    const q = row.question_i18n as { es?: string; en?: string } | null;
-    const text = q?.es || q?.en;
-    if (text) labels.set(row.id, text);
+
+  // form_questions of a frozen automation version (global / pdf forms). For an Ola 3
+  // dynamic questionnaire, also fold in the published version's labels so a HYBRID
+  // form's base-question answers are re-keyed too (not just the AI-generated ones).
+  const versionIds = new Set<string>();
+  if (r?.automation_version_id) versionIds.add(r.automation_version_id);
+  if (r?.questionnaire_instance_id && r?.form_definition_id) {
+    const { data: pub } = await client
+      .from("form_automation_versions")
+      .select("id")
+      .eq("form_definition_id", r.form_definition_id)
+      .eq("status", "published")
+      .maybeSingle();
+    const pubId = (pub as { id?: string } | null)?.id;
+    if (pubId) versionIds.add(pubId);
   }
+  for (const versionId of versionIds) {
+    const { data } = await client
+      .from("form_questions")
+      .select("id, question_i18n, form_question_groups!inner(automation_version_id)")
+      .eq("form_question_groups.automation_version_id", versionId);
+    for (const row of (data ?? []) as Array<{ id: string; question_i18n: unknown }>) {
+      const q = row.question_i18n as { es?: string; en?: string } | null;
+      const text = q?.es || q?.en;
+      if (text) labels.set(row.id, text);
+    }
+  }
+
+  // Ola 3 — AI-generated questions live in the instance schema (jsonb), not
+  // form_questions. Re-key those answers by their question text too.
+  if (r?.questionnaire_instance_id) {
+    const { data: inst } = await client
+      .from("case_questionnaire_instances")
+      .select("schema")
+      .eq("id", r.questionnaire_instance_id)
+      .maybeSingle();
+    const schema = (inst as { schema?: unknown } | null)?.schema as {
+      groups?: Array<{ questions?: Array<{ id?: string; question_i18n?: { es?: string; en?: string } }> }>;
+    } | null;
+    for (const g of schema?.groups ?? []) {
+      for (const q of g.questions ?? []) {
+        const text = q.question_i18n?.es || q.question_i18n?.en;
+        if (q.id && text) labels.set(q.id, text);
+      }
+    }
+  }
+
   return labels;
 }
 

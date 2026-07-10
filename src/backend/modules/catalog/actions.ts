@@ -660,6 +660,18 @@ export async function updateGenerationConfigAction(
   }
 }
 
+/** @api-id API-CAT-QN-01 — Ola 3 questionnaire per-case generation config. */
+export async function updateQuestionnaireGenerationConfigAction(
+  input: Parameters<typeof svc.updateQuestionnaireGenerationConfig>[1],
+): Promise<ActionResult<Awaited<ReturnType<typeof svc.updateQuestionnaireGenerationConfig>>>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.updateQuestionnaireGenerationConfig(actor, input));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 /** @api-id API-CAT-47 — Pre-Mortem validation guide (both kinds). */
 export async function saveFormFillGuideAction(
   input: Parameters<typeof svc.saveFormFillGuide>[1],

@@ -52,6 +52,8 @@ import {
   nextVersionNumber,
   GenerationSectionSchema,
   GenerationAssemblySchema,
+  QuestionnaireGenerationConfigSchema,
+  type QuestionnaireGenerationConfigInput,
 } from "./domain";
 
 import { z } from "zod";
@@ -1846,6 +1848,64 @@ export async function setFormActive(
 /**
  * @api-id API-CAT-46
  */
+/**
+ * Ola 3 — upserts a questionnaire's generation config (mode + inputs + prompt +
+ * prerequisites + triggers). Validates slugs against the service and the model
+ * against the whitelist. @api-id API-CAT-QN-01
+ */
+export async function updateQuestionnaireGenerationConfig(
+  actor: Actor,
+  input: QuestionnaireGenerationConfigInput,
+): Promise<void> {
+  can(actor, "catalog", "edit");
+  const parsed = QuestionnaireGenerationConfigSchema.parse(input);
+
+  const form = await repo.findFormDefinition(parsed.form_definition_id);
+  if (!form) throw catalogError("CATALOG_FORM_NOT_FOUND");
+  if (form.kind !== "questionnaire") {
+    throw catalogError("CATALOG_FORM_KIND_MISMATCH", "Questionnaire generation config belongs to a questionnaire form.");
+  }
+
+  // A questionnaire can never be its own context/prerequisite (the client excludes
+  // it, but a direct action call could persist a self-reference that no consumer
+  // can satisfy). Guard server-side too (mirrors resolveProposedCondition's guard).
+  if ([...parsed.input_form_slugs, ...parsed.prerequisite_form_slugs].includes(form.slug)) {
+    throw catalogError("CATALOG_SOURCE_REF_INVALID", "A questionnaire cannot reference itself as a context or prerequisite form.");
+  }
+
+  const slugIndex = await repo.getServiceSlugIndex(form.service_phase_id);
+  for (const s of [...parsed.input_document_slugs, ...parsed.prerequisite_document_slugs]) {
+    if (!slugIndex.documents.includes(s)) {
+      throw catalogError("CATALOG_SOURCE_REF_INVALID", `Document slug "${s}" not found in service.`);
+    }
+  }
+  for (const s of [...parsed.input_form_slugs, ...parsed.prerequisite_form_slugs]) {
+    if (!slugIndex.forms.includes(s)) {
+      throw catalogError("CATALOG_SOURCE_REF_INVALID", `Form slug "${s}" not found in service.`);
+    }
+  }
+
+  await repo.upsertQuestionnaireGenerationConfig({
+    form_definition_id: parsed.form_definition_id,
+    mode: parsed.mode,
+    generation_prompt: parsed.generation_prompt ?? null,
+    input_document_slugs: parsed.input_document_slugs,
+    input_form_slugs: parsed.input_form_slugs,
+    prerequisite_form_slugs: parsed.prerequisite_form_slugs,
+    prerequisite_document_slugs: parsed.prerequisite_document_slugs,
+    target_question_count: parsed.target_question_count ?? null,
+    model: parsed.model ?? null,
+    hybrid_layout: parsed.hybrid_layout,
+    auto_trigger: parsed.auto_trigger,
+    allow_client_trigger: parsed.allow_client_trigger,
+    on_new_evidence: parsed.on_new_evidence,
+  });
+  await writeAudit(actor, "catalog.questionnaire_config.updated", "questionnaire_generation_configs", parsed.form_definition_id, {
+    // Redact the prompt text in the audit log (length only), like updateGenerationConfig.
+    after: { ...parsed, generation_prompt: parsed.generation_prompt ? `[redacted:${parsed.generation_prompt.length}chars]` : null },
+  });
+}
+
 export async function updateGenerationConfig(
   actor: Actor,
   input: {
@@ -2918,10 +2978,14 @@ export interface FormEditorData {
   sources: {
     documents: FormEditorSourceOption[];
     forms: string[];
+    /** ALL form slugs of the service (Ola 3 questionnaire config input/prereq picker). */
+    allFormSlugs: string[];
     profileFields: string[];
   };
   /** ai_letter config (null for pdf_automation or unconfigured). */
   generationConfig: GenerationConfig | null;
+  /** Ola 3 — questionnaire per-case generation config (null unless kind=questionnaire). */
+  questionnaireGenConfig: Record<string, unknown> | null;
   /** Pre-Mortem validation guide (rubric) + enablement — both kinds. */
   preMortemGuide: { enabled: boolean; guideText: string | null; sourceFilePath: string | null };
 }
@@ -2984,6 +3048,10 @@ export async function getFormEditorData(
       ? ((await repo.findGenerationConfig(form.id)) as unknown as GenerationConfig | null)
       : null;
 
+  // Ola 3 — a questionnaire's per-case generation config (mode/inputs/prompt/…).
+  const questionnaireGenConfig =
+    form.kind === "questionnaire" ? await repo.findQuestionnaireGenerationConfig(form.id) : null;
+
   const guideRow = await repo.findFormFillGuide(form.id);
   const preMortemGuide = {
     enabled: guideRow?.enabled ?? false,
@@ -3011,9 +3079,13 @@ export async function getFormEditorData(
     sources: {
       documents,
       forms: slugIndex.aiLetterSlugs,
+      // All form slugs of the service — used by the questionnaire config panel to
+      // pick input/prerequisite forms (e.g. the I-589), not just ai_letters.
+      allFormSlugs: slugIndex.forms,
       profileFields: Array.from(PROFILE_SOURCE_FIELDS),
     },
     generationConfig,
+    questionnaireGenConfig: questionnaireGenConfig as unknown as Record<string, unknown> | null,
     preMortemGuide,
   };
 }

@@ -12,7 +12,7 @@ import { getLocale, getTimeZone, getTranslations } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
 import {
   getCaseWorkspace,
-  getDocumentsMatrix,
+  getDocumentsGateStatus,
   getCaseMilestones,
   getCaseTimeline,
 } from "@/backend/modules/cases";
@@ -37,10 +37,11 @@ export default async function CaminoPage({
   const tz = await getTimeZone();
   const t = await getTranslations("cliente.camino");
 
-  let ws, docs, milestonesDto;
+  let ws, gate, milestonesDto;
   try {
     ws = await getCaseWorkspace(actor, caseId);
-    docs = await getDocumentsMatrix(actor, caseId);
+    // Same documents-gate authority as the forms gate (single source of truth).
+    gate = await getDocumentsGateStatus(actor, caseId);
     milestonesDto = await getCaseMilestones(actor, caseId);
   } catch {
     notFound();
@@ -52,7 +53,7 @@ export default async function CaminoPage({
   const phaseName = pickLocale(ws.phase?.labelI18n, locale);
   const phaseDescription = pickLocale(ws.phase?.descriptionI18n, locale);
 
-  const docsComplete = docs.total > 0 && docs.done >= docs.total;
+  const docsComplete = gate.total > 0 && gate.complete;
   const currentMilestone = milestonesDto.milestones.find((m) => m.state === "current");
   const currentMilestoneLabel = currentMilestone
     ? pickLocale(currentMilestone.labelI18n, locale)
@@ -92,8 +93,8 @@ export default async function CaminoPage({
       phaseName={phaseName}
       phaseDescription={phaseDescription}
       progress={ws.phaseProgress}
-      docsDone={docs.done}
-      docsTotal={docs.total}
+      docsDone={gate.done}
+      docsTotal={gate.total}
       docsPending={ws.pendingDocuments}
       docsComplete={docsComplete}
       firstVisit={onboarded === "1"}

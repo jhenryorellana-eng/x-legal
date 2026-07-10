@@ -52,6 +52,7 @@ export function buildCatalogStrings(tt: Translator): Record<string, string> {
     "formsKindLetter", "formsKindPdf", "formsKindLetterHint", "formsKindPdfHint", "formsLabel",
     "formsSlug", "formsFilledBy", "formsFilledClient", "formsFilledStaff", "formsFilledBoth",
     "formsCreate", "formsEmpty", "formsDraft", "formsActive", "formsConfigure",
+    "formsRequiresDocs", "formsRequiresDocsHint",
   ];
   const out: Record<string, string> = {};
   // raw(): several messages carry placeholders ({n}, {email}); calling t()

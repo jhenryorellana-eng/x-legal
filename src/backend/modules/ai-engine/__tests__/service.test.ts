@@ -278,6 +278,7 @@ import {
   getDocumentTranslation,
   getDocumentTranslationPdf,
   getAiCostsReport,
+  materializeProposalToSchema,
   AiEngineError,
 } from "../service";
 
@@ -1697,5 +1698,65 @@ describe("getAiCostsReport", () => {
     expect(r.topRuns.every((q) => !q.isTest)).toBe(true);
     expect(r.queries).toHaveLength(4); // non-test only
     expect(r.prevTotalUsd).toBe(0); // previous window empty
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ola 3 — materializeProposalToSchema (pure: proposal → per-case schema)
+// ---------------------------------------------------------------------------
+
+describe("materializeProposalToSchema", () => {
+  it("mints stable uuids per group + question and forces source=client_answer", () => {
+    const schema = materializeProposalToSchema({
+      groups: [
+        {
+          title_i18n: { es: "Grupo", en: "Group" },
+          questions: [
+            { key: "q1", question_i18n: { es: "¿Cuándo?", en: "When?" }, field_type: "date", is_required: true },
+            { key: "q2", question_i18n: { es: "¿Dónde?", en: "Where?" }, field_type: "textarea" },
+          ],
+        },
+      ],
+    });
+    expect(schema.groups).toHaveLength(1);
+    const [g] = schema.groups;
+    expect(g.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(g.questions).toHaveLength(2);
+    expect(g.questions.every((q) => q.id.match(/^[0-9a-f-]{36}$/) && q.source === "client_answer")).toBe(true);
+    expect(g.questions[0].field_type).toBe("date");
+    // ids are unique
+    expect(new Set(g.questions.map((q) => q.id)).size).toBe(2);
+  });
+
+  it("sanitizes an unknown field_type to textarea", () => {
+    const schema = materializeProposalToSchema({
+      groups: [{ title_i18n: { es: "G", en: "G" }, questions: [{ key: "q1", question_i18n: { es: "x", en: "x" }, field_type: "wysiwyg" }] }],
+    });
+    expect(schema.groups[0].questions[0].field_type).toBe("textarea");
+  });
+
+  it("resolves a condition's key reference to the target question's uuid", () => {
+    const schema = materializeProposalToSchema({
+      groups: [
+        {
+          title_i18n: { es: "G", en: "G" },
+          questions: [
+            { key: "abuse", question_i18n: { es: "¿Sufrió abuso?", en: "Abuse?" }, field_type: "checkbox" },
+            { key: "detail", question_i18n: { es: "Detalle", en: "Detail" }, field_type: "textarea", condition: { when: { question: "abuse", op: "equals", value: "yes" }, action: "show" } },
+          ],
+        },
+      ],
+    });
+    const abuseId = schema.groups[0].questions[0].id;
+    const detail = schema.groups[0].questions[1];
+    expect(detail.condition).not.toBeNull();
+    expect(detail.condition?.when.question).toBe(abuseId); // key → uuid resolved
+  });
+
+  it("drops a condition that references an unknown key (fail-safe)", () => {
+    const schema = materializeProposalToSchema({
+      groups: [{ title_i18n: { es: "G", en: "G" }, questions: [{ key: "q1", question_i18n: { es: "x", en: "x" }, field_type: "textarea", condition: { when: { question: "ghost", op: "equals", value: "y" }, action: "show" } }] }],
+    });
+    expect(schema.groups[0].questions[0].condition).toBeNull();
   });
 });

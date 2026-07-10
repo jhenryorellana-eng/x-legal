@@ -41,14 +41,22 @@ export {
   proposeExtractionSchema,
   // Expediente assembly planner (consumed by expediente module)
   proposeExpedienteAssembly,
+  // Ola 3 — per-case questionnaire generation (consumed by cases + jobs + actions)
+  startQuestionnaireGeneration,
+  getCurrentQuestionnaireInstance,
+  getQuestionnaireClientState,
+  evaluateQuestionnairePrereqs,
+  materializeProposalToSchema,
   // Job entrypoints (consumed by jobs/ layer)
   executeGenerationJob,
   executeExtractionJob,
   executeTranslationJob,
+  executeQuestionnaireGenerationJob,
   // job-failed callbacks
   markRunFailedByCallback,
   markExtractionFailed,
   markTranslationFailed,
+  markQuestionnaireGenerationFailed,
   // Budget (consumed by ai-budget-aggregation cron)
   sumMonthlyCosts,
   // Pre-Mortem validator (quality validation of generations/automations)
@@ -71,6 +79,11 @@ export type {
   ProposedQuestion,
   ProposedGroup,
   SegmentationProposal,
+  // Ola 3 — per-case questionnaire generation
+  QuestionnairePrereqStatus,
+  GenerateQuestionnairePayload,
+  QuestionnaireClientState,
+  QuestionnaireMode,
   AiFieldRequest,
   DocumentLegibilityVerdict,
   // Expediente assembly planner (consumed by expediente module)
@@ -102,6 +115,10 @@ export type {
   ExtractionResult,
   BudgetCheck,
   ChunkProgress,
+  // Ola 3 — per-case generated questionnaire schema (consumed by cases wizard)
+  QuestionnaireSchema,
+  GeneratedGroup,
+  GeneratedQuestion,
 } from "./domain";
 
 // ---------------------------------------------------------------------------
@@ -112,6 +129,8 @@ export type {
   GenerationRunRow,
   DocumentExtractionRow,
   DocumentTranslationRow,
+  QuestionnaireInstanceRow,
+  QuestionnaireGenConfigRow,
 } from "./repository";
 
 // ---------------------------------------------------------------------------

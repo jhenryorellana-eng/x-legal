@@ -504,6 +504,7 @@ export async function insertFormResponse(row: {
   party_id: string | null;
   status: string;
   service_phase_id?: string | null;
+  questionnaire_instance_id?: string | null;
 }): Promise<CaseFormResponseRow> {
   const supabase = createServiceClient();
   const { data, error } = await supabase
@@ -515,6 +516,7 @@ export async function insertFormResponse(row: {
       party_id: row.party_id,
       status: row.status,
       service_phase_id: row.service_phase_id ?? null,
+      questionnaire_instance_id: row.questionnaire_instance_id ?? null,
       answers: {},
     })
     .select()
@@ -600,6 +602,9 @@ export async function updateFormResponse(
     reviewed_at: string;
     correction_due_at: string | null;
     rejection_reason_i18n: import("@/shared/database.types").Json;
+    /** Ola 3 — re-pin a dynamic questionnaire draft to the current instance after
+     *  a regeneration (keeps pin == the schema the answers are keyed to). */
+    questionnaire_instance_id: string | null;
   }>,
 ): Promise<void> {
   const supabase = createServiceClient();
@@ -894,11 +899,11 @@ export async function getCaseSummariesByClient(
 /** Finds a form definition by id. */
 export async function findFormDefinitionById(
   formDefinitionId: string,
-): Promise<{ id: string; slug: string; kind: string; filled_by: string; is_per_party: boolean; party_roles: string[] | null; is_active: boolean; label_i18n: unknown } | null> {
+): Promise<{ id: string; slug: string; kind: string; filled_by: string; is_per_party: boolean; party_roles: string[] | null; is_active: boolean; label_i18n: unknown; requires_documents_complete: boolean } | null> {
   const supabase = createServiceClient();
   const { data } = await supabase
     .from("form_definitions")
-    .select("id, slug, kind, filled_by, is_per_party, party_roles, is_active, label_i18n")
+    .select("id, slug, kind, filled_by, is_per_party, party_roles, is_active, label_i18n, requires_documents_complete")
     .eq("id", formDefinitionId)
     .maybeSingle();
   return data ?? null;

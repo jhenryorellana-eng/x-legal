@@ -35,6 +35,7 @@ export {
   getCaseWorkspace,
   getCaseTimeline,
   getDocumentsMatrix,
+  getDocumentsGateStatus,
   getCaseMilestones,
   getClientDisplayName,
   // F4-Ola3: form runtime (API-CASE-16 through API-CASE-19)
@@ -120,6 +121,7 @@ export type {
   CaseTimelineCita,
   DocumentsMatrixDto,
   DocumentMatrixItem,
+  DocumentsGateStatus,
   CaseMilestonesDto,
   CaseMilestoneItem,
   I18nValue,

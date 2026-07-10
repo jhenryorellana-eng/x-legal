@@ -47,6 +47,7 @@ import { handleReconcileStripePayments } from "@/backend/jobs/reconcile-stripe-p
 import { handleChargeDueInstallments } from "@/backend/jobs/charge-due-installments";
 import { handleSendCampaign } from "@/backend/jobs/send-campaign";
 import { handleFetchExhibit } from "@/backend/jobs/fetch-exhibit";
+import { handleGenerateQuestionnaire } from "@/backend/jobs/generate-questionnaire";
 
 // ---------------------------------------------------------------------------
 // Job registry — jobKey → handler
@@ -67,6 +68,7 @@ const JOB_REGISTRY: Record<string, JobHandler> = {
   "run-generation": handleRunGeneration,
   "extract-document": handleExtractDocument,
   "translate-document": handleTranslateDocument,
+  "generate-questionnaire": handleGenerateQuestionnaire,
   "ai-budget-aggregation": handleAiBudgetAggregation,
   "job-failed": handleJobFailed,
   // F6 integrations (DOC-70, DOC-26 §2.8)

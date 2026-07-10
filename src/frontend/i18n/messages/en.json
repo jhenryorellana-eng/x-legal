@@ -662,7 +662,18 @@
       "notFoundTitle": "We couldn't find that form",
       "notFoundBody": "It may no longer be available. Message your team if you have questions.",
       "noVersionTitle": "This form isn't ready yet",
-      "noVersionBody": "Your team is preparing it. We'll let you know as soon as you can fill it in."
+      "noVersionBody": "Your team is preparing it. We'll let you know as soon as you can fill it in.",
+      "lockedTitle": "First, your documents",
+      "lockedBody": "To fill out your forms, upload all your documents first. As soon as they're complete, your forms unlock.",
+      "lockedCta": "Go to Documents",
+      "lockedPill": "Locked",
+      "qGeneratingTitle": "We're preparing your questions",
+      "qGeneratingBody": "Our system is reading your case to create personalized questions about what you experienced. Come back in a moment and refresh the page.",
+      "qFailedTitle": "We couldn't prepare your questions",
+      "qFailedBody": "There was a problem generating your questions. Your team will review it and let you know. Message them if you have questions.",
+      "qPendingTitle": "Complete your form first",
+      "qPendingBody": "To create your personalized questions, we first need you to complete the I-589 form. As soon as you submit it, we'll prepare your questions.",
+      "qPendingCta": "See my forms"
     }
   },
   "staff": {
@@ -1247,7 +1258,9 @@
         "formsEmpty": "No forms in this phase yet.",
         "formsDraft": "Draft",
         "formsActive": "Active",
-        "formsConfigure": "Configure"
+        "formsConfigure": "Configure",
+        "formsRequiresDocs": "Requires documents",
+        "formsRequiresDocsHint": "When on, the client cannot fill this form until 100% of their documents are uploaded. Turn off to exempt it (e.g. an intake survey)."
       },
       "employees": {
         "title": "Employees",

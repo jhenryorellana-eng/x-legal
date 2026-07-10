@@ -52,6 +52,7 @@ const {
   mockTranslateAnswersBatch,
   mockInterpretDocumentFields,
   mockSynthesizeLetterFields,
+  mockGetCurrentQuestionnaireInstance,
   // audit mocks
   mockWriteAudit,
   mockAppendCaseTimeline,
@@ -83,6 +84,7 @@ const {
   mockTranslateAnswersBatch: vi.fn().mockResolvedValue({}),
   mockInterpretDocumentFields: vi.fn().mockResolvedValue({}),
   mockSynthesizeLetterFields: vi.fn().mockResolvedValue({}),
+  mockGetCurrentQuestionnaireInstance: vi.fn().mockResolvedValue(null),
   mockWriteAudit: vi.fn().mockResolvedValue(undefined),
   mockAppendCaseTimeline: vi.fn().mockResolvedValue(undefined),
   mockEmit: vi.fn(),
@@ -188,6 +190,7 @@ vi.mock("@/backend/modules/ai-engine", () => ({
   translateAnswersBatch: mockTranslateAnswersBatch,
   interpretDocumentFields: mockInterpretDocumentFields,
   synthesizeLetterFields: mockSynthesizeLetterFields,
+  getCurrentQuestionnaireInstance: mockGetCurrentQuestionnaireInstance,
 }));
 
 vi.mock("@/backend/platform/crypto", () => ({
@@ -620,6 +623,65 @@ describe("saveFormDraft", () => {
       patch: {},
     });
     expect(result.id).toBe(RESPONSE_ID);
+  });
+
+  // Ola 3 — a dynamic questionnaire draft must stay pinned to the instance the
+  // client is actually answering. getFormForClient renders the CURRENT instance, so
+  // after a regeneration (new current, old demoted) the draft's pin has to follow —
+  // otherwise loadQuestionLabelsForResponse resolves AI labels from the wrong schema
+  // and the memo loses the wording of every newly-answered question.
+  const QN_FORM_DEF = { ...activeFormDef, kind: "questionnaire" };
+  const OLD_INSTANCE_ID = "b2b2b2b2-2222-4222-8222-222222222222";
+  const NEW_INSTANCE_ID = "a1a1a1a1-1111-4111-8111-111111111111";
+  const qnDraft = { ...draftResponse, automation_version_id: null, questionnaire_instance_id: OLD_INSTANCE_ID };
+
+  it("re-pins a questionnaire draft to the current instance after a regeneration", async () => {
+    mockFindFormDefinitionById.mockResolvedValue(QN_FORM_DEF);
+    mockFindFormResponse.mockResolvedValue(qnDraft);
+    mockGetCurrentQuestionnaireInstance.mockResolvedValue({ id: NEW_INSTANCE_ID, status: "ready" });
+    mockFindFormResponseById.mockResolvedValue({ ...qnDraft, questionnaire_instance_id: NEW_INSTANCE_ID });
+
+    await saveFormDraft(clientActor, {
+      caseId: CASE_ID,
+      formDefinitionId: FORM_DEF_ID,
+      partyId: null,
+      patch: { q1: "x" },
+    });
+
+    expect(mockUpdateFormResponse).toHaveBeenCalledWith(RESPONSE_ID, { questionnaire_instance_id: NEW_INSTANCE_ID });
+    expect(mockMergeFormAnswers).toHaveBeenCalledWith(RESPONSE_ID, { q1: "x" });
+  });
+
+  it("does NOT re-pin a questionnaire draft when the current instance already matches the pin", async () => {
+    mockFindFormDefinitionById.mockResolvedValue(QN_FORM_DEF);
+    mockFindFormResponse.mockResolvedValue({ ...qnDraft, questionnaire_instance_id: NEW_INSTANCE_ID });
+    mockGetCurrentQuestionnaireInstance.mockResolvedValue({ id: NEW_INSTANCE_ID, status: "ready" });
+    mockFindFormResponseById.mockResolvedValue({ ...qnDraft, questionnaire_instance_id: NEW_INSTANCE_ID });
+
+    await saveFormDraft(clientActor, {
+      caseId: CASE_ID,
+      formDefinitionId: FORM_DEF_ID,
+      partyId: null,
+      patch: { q1: "x" },
+    });
+
+    expect(mockUpdateFormResponse).not.toHaveBeenCalled();
+  });
+
+  it("does NOT re-pin a questionnaire draft while the current instance is still generating", async () => {
+    mockFindFormDefinitionById.mockResolvedValue(QN_FORM_DEF);
+    mockFindFormResponse.mockResolvedValue(qnDraft);
+    mockGetCurrentQuestionnaireInstance.mockResolvedValue({ id: NEW_INSTANCE_ID, status: "generating" });
+    mockFindFormResponseById.mockResolvedValue(qnDraft);
+
+    await saveFormDraft(clientActor, {
+      caseId: CASE_ID,
+      formDefinitionId: FORM_DEF_ID,
+      partyId: null,
+      patch: { q1: "x" },
+    });
+
+    expect(mockUpdateFormResponse).not.toHaveBeenCalled();
   });
 });
 

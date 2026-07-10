@@ -795,6 +795,34 @@ export async function upsertGenerationConfig(
 }
 
 // ---------------------------------------------------------------------------
+// Ola 3 — questionnaire generation config (1:1 with a questionnaire form_def)
+// ---------------------------------------------------------------------------
+
+export type QuestionnaireGenConfigRow = Tables<"questionnaire_generation_configs">;
+
+export async function findQuestionnaireGenerationConfig(
+  formDefinitionId: string,
+): Promise<QuestionnaireGenConfigRow | null> {
+  const { data } = await db()
+    .from("questionnaire_generation_configs")
+    .select("*")
+    .eq("form_definition_id", formDefinitionId)
+    .maybeSingle();
+  return data;
+}
+
+export async function upsertQuestionnaireGenerationConfig(
+  row: TablesInsert<"questionnaire_generation_configs">,
+): Promise<QuestionnaireGenConfigRow> {
+  const { data, error } = await db()
+    .from("questionnaire_generation_configs")
+    .upsert(row, { onConflict: "form_definition_id" })
+    .select()
+    .single();
+  return throwOnError(data, error, "upsertQuestionnaireGenerationConfig");
+}
+
+// ---------------------------------------------------------------------------
 // Form fill guides (Pre-Mortem rubric — one per form_definition, both kinds)
 // ---------------------------------------------------------------------------
 

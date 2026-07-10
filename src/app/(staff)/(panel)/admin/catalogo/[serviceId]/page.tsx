@@ -141,6 +141,7 @@ export default async function ServiceDetailPage({
       filled_by: f.filled_by as "client" | "staff" | "both",
       is_active: f.is_active,
       position: f.position,
+      requires_documents_complete: f.requires_documents_complete,
       published_version: f.published_version,
     })),
   }));

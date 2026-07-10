@@ -94,12 +94,32 @@ export interface FormEditorVM {
   sources: {
     documents: SourceDocumentVM[];
     forms: string[];
+    /** ALL form slugs of the service (Ola 3 questionnaire input/prereq picker). */
+    allFormSlugs: string[];
     profileFields: string[];
   };
   generationConfig: GenerationConfigVM | null;
+  /** Ola 3 — questionnaire per-case generation config (null unless kind=questionnaire). */
+  questionnaireGenConfig: QuestionnaireGenConfigVM | null;
   datasets: { id: string; name: string; tokens: number; active: boolean }[];
   /** Pre-Mortem validation guide (rubric) + enablement — for BOTH kinds. */
   preMortemGuide: { enabled: boolean; guideText: string | null };
+}
+
+/** Ola 3 — per-case questionnaire generation config (editable in the admin panel). */
+export interface QuestionnaireGenConfigVM {
+  mode: "global" | "automatic" | "hybrid";
+  generation_prompt: string | null;
+  input_document_slugs: string[];
+  input_form_slugs: string[];
+  prerequisite_form_slugs: string[];
+  prerequisite_document_slugs: string[];
+  target_question_count: number | null;
+  model: string | null;
+  hybrid_layout: "append_group" | "merge_by_topic";
+  auto_trigger: boolean;
+  allow_client_trigger: boolean;
+  on_new_evidence: "never" | "flag" | "auto";
 }
 
 export interface GenerationSectionVM {
@@ -180,6 +200,8 @@ export interface FormEditorActions {
   /** Set the version-wide default for how empty applicable fields render (auto|na|blank). */
   setVersionEmptyPolicy: (input: { version_id: string; default_empty_policy: VersionEmptyPolicy }) => Promise<Res<unknown>>;
   saveGenerationConfig: (input: Record<string, unknown>) => Promise<Res<unknown>>;
+  /** Ola 3 — upsert the questionnaire's per-case generation config. */
+  saveQuestionnaireGenConfig: (input: Record<string, unknown>) => Promise<Res<unknown>>;
   /** Upsert the Pre-Mortem validation guide (rubric) + enablement for this form (both kinds). */
   savePreMortemGuide: (input: { form_definition_id: string; enabled: boolean; guide_markdown: string; source_file_path?: string | null }) => Promise<Res<unknown>>;
   testGeneration: (input: { form_definition_id: string; case_id: string; party_id?: string }) => Promise<Res<{ run_id: string }>>;

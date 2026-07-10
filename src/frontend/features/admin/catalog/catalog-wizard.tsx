@@ -73,6 +73,8 @@ export interface WizardForm {
   filled_by: "client" | "staff" | "both";
   is_active: boolean;
   position: number;
+  /** Ola 2 gate: when false, this form is exempt from the "documents 100%" gate. */
+  requires_documents_complete: boolean;
   /** Published version number (pdf_automation only); null = no published version yet. */
   published_version: number | null;
 }
@@ -2057,6 +2059,7 @@ function FormsStep({
         filled_by: formFilledBy,
         is_active: true,
         position: phase.forms.length,
+        requires_documents_complete: true,
         published_version: null,
       };
       setPhases((prev) => prev.map((p, i) => (i === phaseIdx ? { ...p, forms: [...p.forms, created] } : p)));
@@ -2079,6 +2082,29 @@ function FormsStep({
       setPhases((prev) =>
         prev.map((p, i) =>
           i === phaseIdx ? { ...p, forms: p.forms.map((f) => (f.id === form.id ? { ...f, is_active: next } : f)) } : p,
+        ),
+      );
+    } else {
+      toast.error(r.error?.message ?? "Error");
+    }
+    setTogglingIds((s) => {
+      const n = new Set(s);
+      n.delete(form.id);
+      return n;
+    });
+  }
+
+  // Ola 2 — per-form override of the "documents 100% → forms" gate. Mirrors
+  // toggleActive: optimistic + guarded, persisted via updateForm.
+  async function toggleRequiresDocs(form: WizardForm) {
+    if (togglingIds.has(form.id)) return;
+    setTogglingIds((s) => new Set(s).add(form.id));
+    const next = !form.requires_documents_complete;
+    const r = await actions.updateForm(form.id, { requires_documents_complete: next });
+    if (r.success) {
+      setPhases((prev) =>
+        prev.map((p, i) =>
+          i === phaseIdx ? { ...p, forms: p.forms.map((f) => (f.id === form.id ? { ...f, requires_documents_complete: next } : f)) } : p,
         ),
       );
     } else {
@@ -2196,6 +2222,10 @@ function FormsStep({
                   {f.published_version ? `v${f.published_version}` : t.formsDraft}
                 </Chip>
               )}
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "var(--ink-2)", cursor: "pointer" }} title={t.formsRequiresDocsHint}>
+                <Switch checked={f.requires_documents_complete} disabled={togglingIds.has(f.id)} onCheckedChange={() => toggleRequiresDocs(f)} aria-label={t.formsRequiresDocs} />
+                {t.formsRequiresDocs}
+              </label>
               <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "var(--ink-2)", cursor: "pointer" }}>
                 <Switch checked={f.is_active} disabled={togglingIds.has(f.id)} onCheckedChange={() => toggleActive(f)} aria-label={t.formsActive} />
                 {t.formsActive}

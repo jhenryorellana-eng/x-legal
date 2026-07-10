@@ -1,4 +1,5 @@
 import * as React from "react";
+import Link from "next/link";
 import { Lex, type LexMood } from "@/frontend/components/brand/lex";
 
 /**
@@ -9,10 +10,13 @@ export function EmptyCase({
   title,
   body,
   lexMood = "calma",
+  action,
 }: {
   title: string;
   body?: string;
   lexMood?: LexMood;
+  /** Optional call-to-action link (e.g. "Ir a Documentos"). Server-safe <a>. */
+  action?: { href: string; label: string };
 }) {
   return (
     <div
@@ -49,6 +53,28 @@ export function EmptyCase({
         >
           {body}
         </p>
+      )}
+      {action && (
+        <Link
+          href={action.href}
+          style={{
+            marginTop: 8,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            height: 48,
+            padding: "0 24px",
+            borderRadius: 999,
+            background: "var(--accent)",
+            color: "#fff",
+            fontWeight: 800,
+            fontSize: 15,
+            textDecoration: "none",
+            boxShadow: "0 10px 30px rgba(11,27,51,0.12)",
+          }}
+        >
+          {action.label}
+        </Link>
       )}
     </div>
   );

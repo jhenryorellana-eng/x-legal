@@ -55,6 +55,17 @@ export default async function FormularioPage({
     });
   } catch (err) {
     if (err instanceof CaseError) {
+      // Ola 2 gate: documents not 100% → locked state with CTA to Documentos.
+      if (err.code === "FORMS_LOCKED_DOCS_INCOMPLETE") {
+        return (
+          <EmptyCase
+            title={tEmpty("lockedTitle")}
+            body={tEmpty("lockedBody")}
+            lexMood="atento"
+            action={{ href: `/caso/${caseId}/documentos`, label: tEmpty("lockedCta") }}
+          />
+        );
+      }
       // FORM_NOT_FOUND / FORM_NOT_EDITABLE_BY_CLIENT → friendly empty.
       return <EmptyCase title={tEmpty("notFoundTitle")} body={tEmpty("notFoundBody")} lexMood="atento" />;
     }
@@ -62,8 +73,27 @@ export default async function FormularioPage({
     return <EmptyCase title={tEmpty("notFoundTitle")} body={tEmpty("notFoundBody")} lexMood="atento" />;
   }
 
+  // Ola 3 — per-case questionnaire states (before the generic no-version check,
+  // since a ready dynamic questionnaire has groups but may have no versionId).
+  if (dto.questionnaireGate === "generating") {
+    return <EmptyCase title={tEmpty("qGeneratingTitle")} body={tEmpty("qGeneratingBody")} lexMood="calma" />;
+  }
+  if (dto.questionnaireGate === "failed") {
+    return <EmptyCase title={tEmpty("qFailedTitle")} body={tEmpty("qFailedBody")} lexMood="atento" />;
+  }
+  if (dto.questionnaireGate === "pending_prereqs") {
+    return (
+      <EmptyCase
+        title={tEmpty("qPendingTitle")}
+        body={tEmpty("qPendingBody")}
+        lexMood="atento"
+        action={{ href: `/caso/${caseId}/formularios`, label: tEmpty("qPendingCta") }}
+      />
+    );
+  }
+
   // No published version / no groups → the form has no questions yet to answer.
-  if (!dto.versionId || dto.groups.length === 0) {
+  if (dto.groups.length === 0) {
     return <EmptyCase title={tEmpty("noVersionTitle")} body={tEmpty("noVersionBody")} lexMood="calma" />;
   }
 

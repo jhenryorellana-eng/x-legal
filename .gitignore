@@ -59,6 +59,7 @@ next-env.d.ts
 
 # Evidence session artifacts (real JWTs / cookies — never commit)
 docs/_evidence/**/*cookie*.json
+docs/_evidence/**/*cookie*.txt
 docs/_evidence/**/*-fresh.txt
 docs/_evidence/**/*-LLENADO.pdf
 docs/_evidence/**/*-APP-GENERADO.pdf

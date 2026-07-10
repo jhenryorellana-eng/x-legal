@@ -47,6 +47,9 @@ const mocks = vi.hoisted(() => {
     findPhaseById: vi.fn(),
     findServiceById: vi.fn(),
     findVersionByQuestion: vi.fn(),
+    getServiceSlugIndex: vi.fn(),
+    findQuestionnaireGenerationConfig: vi.fn(),
+    upsertQuestionnaireGenerationConfig: vi.fn(),
   };
 
   // Supabase storage
@@ -142,6 +145,9 @@ vi.mock("../repository", () => ({
   findPhaseById: mocks.repo.findPhaseById,
   findServiceById: mocks.repo.findServiceById,
   findVersionByQuestion: mocks.repo.findVersionByQuestion,
+  getServiceSlugIndex: mocks.repo.getServiceSlugIndex,
+  findQuestionnaireGenerationConfig: mocks.repo.findQuestionnaireGenerationConfig,
+  upsertQuestionnaireGenerationConfig: mocks.repo.upsertQuestionnaireGenerationConfig,
 }));
 
 vi.mock("@/backend/platform/supabase", () => ({
@@ -209,6 +215,7 @@ import {
   testGeneration,
   updateDatasetItem,
   deleteDataset,
+  updateQuestionnaireGenerationConfig,
 } from "../service";
 
 // ---------------------------------------------------------------------------
@@ -1168,5 +1175,80 @@ describe("deleteDataset", () => {
     await expect(deleteDataset(makeActor(), "ds-in-use")).rejects.toMatchObject({
       code: "CATALOG_DATASET_IN_USE",
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ola 3 — updateQuestionnaireGenerationConfig (mode/inputs/prereqs/prompt)
+// ---------------------------------------------------------------------------
+
+describe("updateQuestionnaireGenerationConfig", () => {
+  function makeQuestionnaireRow() {
+    return { ...makePdfFormRow(), id: "33333333-3333-4333-8333-333333333333", slug: "memo-cuestionario", kind: "questionnaire" };
+  }
+  const validInput = {
+    form_definition_id: "33333333-3333-4333-8333-333333333333",
+    mode: "hybrid" as const,
+    generation_prompt: "profundiza en lo que vivió",
+    input_form_slugs: ["i-589"],
+    input_document_slugs: ["declaracion"],
+    prerequisite_form_slugs: ["i-589"],
+    prerequisite_document_slugs: [],
+    target_question_count: 18,
+    model: "claude-sonnet-4-6" as const,
+    hybrid_layout: "append_group" as const,
+    auto_trigger: true,
+    allow_client_trigger: false,
+    on_new_evidence: "flag" as const,
+  };
+
+  beforeEach(() => {
+    mocks.can.mockReturnValue(undefined);
+    mocks.repo.getServiceSlugIndex.mockResolvedValue({
+      documents: ["declaracion"],
+      forms: ["i-589", "memo-cuestionario"],
+      documentsWithSchema: {},
+      aiLetterSlugs: [],
+    });
+    mocks.repo.upsertQuestionnaireGenerationConfig.mockResolvedValue({});
+  });
+
+  it("throws CATALOG_FORM_NOT_FOUND when the form is missing", async () => {
+    mocks.repo.findFormDefinition.mockResolvedValue(null);
+    await expect(updateQuestionnaireGenerationConfig(makeActor(), validInput)).rejects.toMatchObject({ code: "CATALOG_FORM_NOT_FOUND" });
+  });
+
+  it("throws CATALOG_FORM_KIND_MISMATCH for a non-questionnaire form", async () => {
+    mocks.repo.findFormDefinition.mockResolvedValue({ ...makeQuestionnaireRow(), kind: "ai_letter" });
+    await expect(updateQuestionnaireGenerationConfig(makeActor(), validInput)).rejects.toMatchObject({ code: "CATALOG_FORM_KIND_MISMATCH" });
+  });
+
+  it("rejects a self-referencing prerequisite form (CATALOG_SOURCE_REF_INVALID)", async () => {
+    mocks.repo.findFormDefinition.mockResolvedValue(makeQuestionnaireRow());
+    await expect(
+      updateQuestionnaireGenerationConfig(makeActor(), { ...validInput, prerequisite_form_slugs: ["memo-cuestionario"] }),
+    ).rejects.toMatchObject({ code: "CATALOG_SOURCE_REF_INVALID" });
+  });
+
+  it("rejects an unknown document slug (CATALOG_SOURCE_REF_INVALID)", async () => {
+    mocks.repo.findFormDefinition.mockResolvedValue(makeQuestionnaireRow());
+    await expect(
+      updateQuestionnaireGenerationConfig(makeActor(), { ...validInput, input_document_slugs: ["ghost-doc"] }),
+    ).rejects.toMatchObject({ code: "CATALOG_SOURCE_REF_INVALID" });
+  });
+
+  it("upserts a valid config and writes an audit entry", async () => {
+    mocks.repo.findFormDefinition.mockResolvedValue(makeQuestionnaireRow());
+    await updateQuestionnaireGenerationConfig(makeActor(), validInput);
+    expect(mocks.repo.upsertQuestionnaireGenerationConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        form_definition_id: "33333333-3333-4333-8333-333333333333",
+        mode: "hybrid",
+        input_form_slugs: ["i-589"],
+        prerequisite_form_slugs: ["i-589"],
+        model: "claude-sonnet-4-6",
+      }),
+    );
+    expect(mocks.writeAudit).toHaveBeenCalled();
   });
 });

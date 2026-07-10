@@ -103,6 +103,14 @@ export interface EnqueueOptions {
   delay?: number;
   /** Schedule for cron-style delivery (QStash Schedules format) */
   cron?: string;
+  /**
+   * Endpoint timeout (QStash format, e.g. "280s"). QStash defaults to 60s; a
+   * long-running AI job (Anthropic call up to 240s) MUST raise this below the
+   * route's maxDuration so QStash doesn't fire a concurrent retry while the first
+   * attempt is still alive (double-run / double-spend). No-op in local dev (the
+   * loopback self-dispatch below doesn't go through QStash).
+   */
+  timeout?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -200,6 +208,7 @@ export async function enqueueJob(
     retries: options.retries ?? 3,
     deduplicationId: toQStashDeduplicationId(payload.dedupeId),
     ...(options.delay !== undefined && { delay: options.delay }),
+    ...(options.timeout ? { timeout: options.timeout as `${bigint}s` } : {}),
   });
 
   logger.info(

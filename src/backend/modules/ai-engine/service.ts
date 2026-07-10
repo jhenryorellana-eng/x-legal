@@ -60,6 +60,8 @@ import {
 } from "@/shared/constants/finding-categories";
 import { resolvePeriodRange, type Period } from "@/shared/period";
 import { isVerbatimValue } from "@/shared/form-logic/empty-policy";
+import { randomUUID } from "node:crypto";
+import { parseConditionOrNull } from "@/shared/form-logic/conditions";
 
 import {
   canTransitionRun,
@@ -108,6 +110,12 @@ import {
   type BudgetCheck,
   type AnthropicUsage,
   type RunContext,
+  buildQuestionGenContext,
+  QUESTIONNAIRE_FIELD_TYPES,
+  type QuestionnaireSchema,
+  type GeneratedGroup,
+  type GeneratedQuestion,
+  type QuestionnaireFieldType,
 } from "./domain";
 
 import {
@@ -150,6 +158,15 @@ import {
   listFormResponsesForForms,
   findFormFillGuide,
   findLatestEligibleRunForPreMortem,
+  findQuestionnaireGenerationConfig,
+  findCurrentQuestionnaireInstance,
+  nextQuestionnaireInstanceVersion,
+  createQuestionnaireInstance,
+  updateQuestionnaireInstance,
+  findSubmittedFormSlugs,
+  listPublishedQuestionTexts,
+  type QuestionnaireInstanceRow,
+  type QuestionnaireGenConfigRow,
   type GenerationRunRow,
   type DocumentExtractionRow as _DocumentExtractionRow,
   type DocumentTranslationRow,
@@ -2367,6 +2384,378 @@ export async function proposeQuestionnaireQuestions(input: {
   } catch (err) {
     logger.warn({ err }, "ai-engine: proposeQuestionnaireQuestions failed — no groups proposed");
     return { groups: [] };
+  }
+}
+
+// ===========================================================================
+// Ola 3 — Per-case questionnaire generation ("super-detailed questions")
+//
+// Reads the client's I-589 answers + uploaded documents (declaración jurada,
+// evidencias, NTA/Parole) and generates DEEP, SPECIFIC follow-up questions
+// grounded in THIS client's record. Modeled as a per-case AI generation with its
+// own instance + cost (like document_extractions) — NOT an ai_generation_run.
+// ===========================================================================
+
+function normalizeI18n(v: { es?: string; en?: string } | null | undefined): { es: string; en: string } {
+  const es = (v?.es ?? v?.en ?? "").toString().trim();
+  const en = (v?.en ?? v?.es ?? "").toString().trim();
+  return { es, en };
+}
+
+const QUESTIONNAIRE_GEN_SYSTEM_BASE =
+  "Eres un paralegal experto en inmigración que diseña un CUESTIONARIO PERSONALIZADO para un cliente, " +
+  "leyendo su expediente real (respuestas del formulario I-589 y los documentos que subió: declaración jurada, " +
+  "evidencias sustentatorias, NTA/Parole). Tu objetivo es generar preguntas MUY ESPECÍFICAS y PROFUNDAS que " +
+  "hagan que el cliente EXTIENDA y DETALLE lo que vivió, para nutrir después la redacción de un memorándum legal.\n\n" +
+  "REGLAS ABSOLUTAS:\n" +
+  "1. FUNDAMENTA cada pregunta en algo concreto del expediente. Cita el detalle: si mencionó una carta de " +
+  "extorsión, pregunta su fecha, quién la entregó y qué exigía; si mencionó un allanamiento, pregunta dónde, " +
+  "cuándo exactamente, quiénes participaron, qué se llevaron, quién fue testigo y qué pasó después.\n" +
+  "2. NUNCA inventes hechos, nombres, fechas ni lugares. Si un dato falta, PREGÚNTALO — no lo asumas.\n" +
+  "3. Profundiza según el tipo de daño: abuso → dónde/cuándo/quién/testigos/lesiones/atención médica/denuncia; " +
+  "amenazas → medio/frecuencia/contenido textual/autor; persecución política, religiosa o por grupo social → " +
+  "cómo se le identificó, qué actos concretos y qué consecuencias tuvo.\n" +
+  "4. Pide FECHAS y LUGARES concretos para poder corroborar con noticias y eventos públicos (elecciones, " +
+  "represión, informes de la ONU/ACNUR/HRW): pregunta '¿en qué fecha aproximada?' y '¿en qué ciudad o zona?'.\n" +
+  "5. NO repitas lo que el cliente ya respondió en el I-589 ni en las preguntas base — SOLO profundiza más allá.\n" +
+  "6. Las preguntas las responde el CLIENTE (source='client_answer'); usa field_type 'textarea' para relatos, " +
+  "'date' para fechas y 'select'/'checkbox' con opciones cuando aplique. NUNCA uses campos de PDF.\n" +
+  "7. Redacta cada pregunta de forma clara y empática, dirigida al cliente ('usted'), bilingüe (es + en).";
+
+function buildQuestionnaireGenSystem(config: QuestionnaireGenConfigRow): string {
+  const extra = config.generation_prompt?.trim();
+  return extra
+    ? `${QUESTIONNAIRE_GEN_SYSTEM_BASE}\n\nINSTRUCCIONES ADICIONALES DEL SERVICIO:\n${extra}`
+    : QUESTIONNAIRE_GEN_SYSTEM_BASE;
+}
+
+function questionGenOutputInstructions(target: number | null): string {
+  const n = target && target > 0 ? target : 15;
+  return (
+    "\n\n## FORMATO DE SALIDA\n" +
+    'Devuelve SOLO JSON con esta forma: {"groups":[{"title_i18n":{"es":"...","en":"..."},' +
+    '"questions":[{"key":"q1","question_i18n":{"es":"...","en":"..."},"help_i18n":{"es":"...","en":"..."},' +
+    '"field_type":"textarea|text|date|number|select|checkbox","is_required":true}]}]}. ' +
+    `Genera aproximadamente ${n} preguntas repartidas en 3–6 grupos temáticos. Las claves \`key\` deben ser ` +
+    'únicas (q1, q2, …). Para "select"/"checkbox" añade "options":[{"value":"...","label_i18n":{"es":"...","en":"..."}}].'
+  );
+}
+
+const QUESTIONNAIRE_STUB_PROPOSAL: SegmentationProposal = {
+  groups: [
+    {
+      title_i18n: { es: "Profundicemos en tu historia", en: "Let's go deeper into your story" },
+      position: 0,
+      questions: [
+        { key: "q1", question_i18n: { es: "¿En qué fecha y lugar ocurrió el hecho más grave que describiste?", en: "On what date and where did the most serious event you described happen?" }, field_type: "textarea", source: "client_answer", is_required: true, position: 0 },
+        { key: "q2", question_i18n: { es: "¿Quiénes fueron testigos y qué pasó después?", en: "Who witnessed it and what happened afterward?" }, field_type: "textarea", source: "client_answer", is_required: false, position: 1 },
+      ],
+    },
+  ],
+};
+
+/**
+ * Turns an AI SegmentationProposal into the immutable per-case schema: mints a
+ * stable uuid per group/question (answers key off these, surviving regeneration)
+ * and resolves each condition's `key` reference to the real uuid (dropping
+ * unresolved / self references — fail-safe). Pure.
+ */
+export function materializeProposalToSchema(proposal: SegmentationProposal): QuestionnaireSchema {
+  const keyToId = new Map<string, string>();
+  const withRaw: Array<{ q: GeneratedQuestion; raw: ProposedQuestion["condition"] }> = [];
+
+  const groups: GeneratedGroup[] = proposal.groups.map((g, gi) => {
+    const questions = (g.questions ?? []).map((pq, qi): GeneratedQuestion => {
+      const id = randomUUID();
+      if (typeof pq.key === "string" && pq.key) keyToId.set(pq.key, id);
+      const ft = QUESTIONNAIRE_FIELD_TYPES.includes(pq.field_type as QuestionnaireFieldType)
+        ? (pq.field_type as QuestionnaireFieldType)
+        : "textarea";
+      const options = Array.isArray(pq.options)
+        ? pq.options.map((o) => ({ value: String(o.value), label_i18n: normalizeI18n(o.label_i18n) }))
+        : null;
+      const q: GeneratedQuestion = {
+        id,
+        question_i18n: normalizeI18n(pq.question_i18n),
+        help_i18n: pq.help_i18n ? normalizeI18n(pq.help_i18n) : null,
+        field_type: ft,
+        options,
+        is_required: pq.is_required ?? false,
+        position: pq.position ?? qi,
+        source: "client_answer",
+        validation: pq.validation ?? null,
+        condition: null,
+      };
+      withRaw.push({ q, raw: pq.condition ?? null });
+      return q;
+    });
+    return { id: randomUUID(), title_i18n: normalizeI18n(g.title_i18n ?? g.title), position: g.position ?? gi, questions };
+  });
+
+  const mintedIds = new Set(keyToId.values());
+  for (const { q, raw } of withRaw) {
+    if (!raw || typeof raw !== "object" || !raw.when) continue;
+    const keyRef = typeof raw.when.question === "string" ? raw.when.question : "";
+    const resolvedId = keyToId.get(keyRef) ?? (mintedIds.has(keyRef) ? keyRef : undefined);
+    if (!resolvedId || resolvedId === q.id) continue;
+    q.condition = parseConditionOrNull({
+      when: { question: resolvedId, op: raw.when.op, value: raw.when.value },
+      action: raw.action,
+      lock_message_i18n: raw.lock_message_i18n ?? null,
+    });
+  }
+
+  return { groups };
+}
+
+/**
+ * Runs the AI question generator against a case's resolved inputs. Web search is
+ * OFF (privacy: never send client facts to a search engine). Never throws —
+ * returns an empty schema on failure so the job can mark the instance failed.
+ */
+async function generateCaseQuestionnaire(input: {
+  config: QuestionnaireGenConfigRow;
+  inputs: ResolvedInputs;
+  alreadyCovered: string[];
+}): Promise<{ schema: QuestionnaireSchema; model: string; inputTokens: number; outputTokens: number; costUsd: number }> {
+  const model = input.config.model || DEFAULT_GENERATION_MODEL;
+  if (isAiStubEnabled()) {
+    return { schema: materializeProposalToSchema(QUESTIONNAIRE_STUB_PROPOSAL), model, inputTokens: 0, outputTokens: 0, costUsd: 0 };
+  }
+  const system = buildQuestionnaireGenSystem(input.config);
+  const user = buildQuestionGenContext(input.inputs, input.alreadyCovered) + questionGenOutputInstructions(input.config.target_question_count);
+  try {
+    const client = getAnthropicClient();
+    const r = await callAnthropic(client, { model, system, user, maxTokens: 8000, timeoutMs: 240_000 });
+    const parsed = stripFencesAndParse<{ groups?: ProposedGroup[] }>(r.text);
+    const proposal: SegmentationProposal = { groups: Array.isArray(parsed?.groups) ? parsed.groups : [] };
+    return {
+      schema: materializeProposalToSchema(proposal),
+      model,
+      inputTokens: r.usage.inputTokens,
+      outputTokens: r.usage.outputTokens,
+      costUsd: computeAnthropicCost(r.usage, model) ?? 0,
+    };
+  } catch (err) {
+    logger.warn({ err }, "ai-engine: generateCaseQuestionnaire failed");
+    return { schema: { groups: [] }, model, inputTokens: 0, outputTokens: 0, costUsd: 0 };
+  }
+}
+
+export interface QuestionnairePrereqStatus {
+  ok: boolean;
+  missingForms: string[];
+  missingDocuments: string[];
+}
+
+/** Evaluates whether a case meets a questionnaire's (admin-configured) prerequisites. */
+export async function evaluateQuestionnairePrereqs(
+  caseId: string,
+  partyId: string | null,
+  config: QuestionnaireGenConfigRow,
+): Promise<QuestionnairePrereqStatus> {
+  const missingForms: string[] = [];
+  if (config.prerequisite_form_slugs.length > 0) {
+    const done = await findSubmittedFormSlugs(caseId, config.prerequisite_form_slugs, partyId);
+    for (const slug of config.prerequisite_form_slugs) if (!done.has(slug)) missingForms.push(slug);
+  }
+  let missingDocuments: string[] = [];
+  if (config.prerequisite_document_slugs.length > 0) {
+    // A document counts as present only with a completed extraction (resolveGenerationInputs).
+    const resolved = await resolveGenerationInputs(caseId, partyId, [], config.prerequisite_document_slugs);
+    const present = new Set(resolved.documents.map((d) => d.slug));
+    missingDocuments = config.prerequisite_document_slugs.filter((s) => !present.has(s));
+  }
+  return { ok: missingForms.length === 0 && missingDocuments.length === 0, missingForms, missingDocuments };
+}
+
+/** Reads the current questionnaire instance (consumed by cases.getFormForClient). */
+export async function getCurrentQuestionnaireInstance(
+  caseId: string,
+  formDefinitionId: string,
+  partyId: string | null,
+): Promise<QuestionnaireInstanceRow | null> {
+  return findCurrentQuestionnaireInstance(caseId, formDefinitionId, partyId);
+}
+
+export type QuestionnaireMode = "global" | "automatic" | "hybrid";
+export interface QuestionnaireClientState {
+  mode: QuestionnaireMode;
+  /** false when the questionnaire has no config or is global (render base questions). */
+  isDynamic: boolean;
+  hybridLayout: "append_group" | "merge_by_topic";
+  autoTrigger: boolean;
+  allowClientTrigger: boolean;
+  instance: QuestionnaireInstanceRow | null;
+  /** Only computed when there is no ready instance yet. */
+  prereqs: QuestionnairePrereqStatus | null;
+}
+
+/**
+ * One-shot read of everything cases.getFormForClient needs to decide how to render
+ * a questionnaire: its mode, the current instance (if any), and — when nothing is
+ * ready yet — whether prerequisites are met. Global questionnaires report
+ * isDynamic=false so the caller keeps the existing published-version path.
+ */
+export async function getQuestionnaireClientState(
+  caseId: string,
+  formDefinitionId: string,
+  partyId: string | null,
+): Promise<QuestionnaireClientState> {
+  const config = await findQuestionnaireGenerationConfig(formDefinitionId);
+  if (!config || config.mode === "global") {
+    return {
+      mode: "global", isDynamic: false, hybridLayout: "append_group",
+      autoTrigger: false, allowClientTrigger: false, instance: null, prereqs: null,
+    };
+  }
+  const instance = await findCurrentQuestionnaireInstance(caseId, formDefinitionId, partyId);
+  const needsPrereqCheck = !instance || instance.status === "pending_prereqs" || instance.status === "failed";
+  const prereqs = needsPrereqCheck ? await evaluateQuestionnairePrereqs(caseId, partyId, config) : null;
+  return {
+    mode: config.mode as QuestionnaireMode,
+    isDynamic: true,
+    hybridLayout: (config.hybrid_layout as "append_group" | "merge_by_topic") ?? "append_group",
+    autoTrigger: config.auto_trigger,
+    allowClientTrigger: config.allow_client_trigger,
+    instance,
+    prereqs,
+  };
+}
+
+/**
+ * Kicks off per-case questionnaire generation (API-AI-QN-01). No-op for global
+ * mode. If prerequisites aren't met, records a pending_prereqs marker and returns
+ * without enqueuing. Otherwise freezes the resolved inputs, creates a queued
+ * instance, and enqueues the generate-questionnaire job. Idempotent: an already
+ * queued/generating current instance short-circuits.
+ */
+export async function startQuestionnaireGeneration(
+  actor: Actor,
+  input: { caseId: string; formDefinitionId: string; partyId?: string | null },
+): Promise<{ status: "skipped" | "pending_prereqs" | "queued" | "in_progress"; instanceId?: string; missing?: QuestionnairePrereqStatus }> {
+  await requireCaseAccess(actor, input.caseId);
+  const partyId = input.partyId ?? null;
+  const config = await findQuestionnaireGenerationConfig(input.formDefinitionId);
+  if (!config || config.mode === "global") return { status: "skipped" };
+
+  const current = await findCurrentQuestionnaireInstance(input.caseId, input.formDefinitionId, partyId);
+  if (current && (current.status === "queued" || current.status === "generating")) {
+    return { status: "in_progress", instanceId: current.id };
+  }
+
+  const prereq = await evaluateQuestionnairePrereqs(input.caseId, partyId, config);
+  if (!prereq.ok) {
+    if (!current || current.status !== "pending_prereqs") {
+      const version = await nextQuestionnaireInstanceVersion(input.caseId, input.formDefinitionId, partyId);
+      await createQuestionnaireInstance({
+        case_id: input.caseId, form_definition_id: input.formDefinitionId, party_id: partyId,
+        status: "pending_prereqs", version, mode: config.mode,
+      });
+    }
+    return { status: "pending_prereqs", missing: prereq };
+  }
+
+  const resolved = await resolveGenerationInputs(input.caseId, partyId, config.input_form_slugs, config.input_document_slugs);
+  const version = await nextQuestionnaireInstanceVersion(input.caseId, input.formDefinitionId, partyId);
+  const instance = await createQuestionnaireInstance({
+    case_id: input.caseId, form_definition_id: input.formDefinitionId, party_id: partyId,
+    status: "queued", version, mode: config.mode,
+    inputs_snapshot: resolved as unknown as import("@/shared/database.types").Json,
+    model: config.model,
+  });
+
+  // Dedupe on (case, form, party) — NOT the instance id — so a double-open that
+  // momentarily creates two instances still enqueues at most ONE job (QStash drops
+  // the duplicate publish). The job resolves the CURRENT instance, so it always
+  // works on the live one and never double-bills.
+  const dedupeKey = `generate-questionnaire:${input.caseId}:${input.formDefinitionId}:${partyId ?? "case"}`;
+  await enqueueJob(
+    { jobKey: "generate-questionnaire", entityId: instance.id, attempt: 1, dedupeId: dedupeKey, orgId: actor.orgId,
+      caseId: input.caseId, formDefinitionId: input.formDefinitionId, partyId },
+    // 280s endpoint timeout (< route maxDuration 300s): stops QStash's 60s default
+    // from retrying while the ≤240s Anthropic generation is still running.
+    { retries: 2, timeout: "280s" },
+  );
+  return { status: "queued", instanceId: instance.id };
+}
+
+export interface GenerateQuestionnairePayload {
+  jobKey: "generate-questionnaire";
+  entityId: string;
+  attempt: number;
+  dedupeId: string;
+  caseId: string;
+  formDefinitionId: string;
+  partyId: string | null;
+  orgId?: string;
+}
+
+/**
+ * Job runner (generate-questionnaire). Resolves the CURRENT instance for the
+ * (case, form, party), runs the generator, and marks it ready (or failed).
+ * Retry-safe: a crash mid-generation leaves status 'generating', which a QStash
+ * retry REPROCESSES (rather than skipping) — mirrors executeExtractionJob's
+ * treatment of 'pending'. Terminal states (ready/failed) short-circuit.
+ */
+export async function executeQuestionnaireGenerationJob(payload: {
+  caseId: string;
+  formDefinitionId: string;
+  partyId: string | null;
+}): Promise<string> {
+  const instance = await findCurrentQuestionnaireInstance(payload.caseId, payload.formDefinitionId, payload.partyId);
+  if (!instance) return "instance-not-found";
+  if (instance.status !== "queued" && instance.status !== "generating") return `skipped-${instance.status}`;
+
+  await updateQuestionnaireInstance(instance.id, { status: "generating" });
+  try {
+    const config = await findQuestionnaireGenerationConfig(instance.form_definition_id);
+    if (!config) throw new Error("questionnaire generation config missing");
+
+    const snapshot = (instance.inputs_snapshot ?? { documents: [], forms: [] }) as unknown as ConfigSnapshot["resolved_inputs"];
+    const inputs = await loadResolvedInputs({ resolved_inputs: snapshot } as ConfigSnapshot);
+
+    const alreadyCovered = config.mode === "hybrid"
+      ? await listPublishedQuestionTexts(instance.form_definition_id)
+      : [];
+
+    const result = await generateCaseQuestionnaire({ config, inputs, alreadyCovered });
+    if (result.schema.groups.length === 0) throw new Error("generator returned no questions");
+
+    await updateQuestionnaireInstance(instance.id, {
+      status: "ready",
+      schema: result.schema as unknown as import("@/shared/database.types").Json,
+      model: result.model,
+      input_tokens: result.inputTokens,
+      output_tokens: result.outputTokens,
+      cost_usd: result.costUsd,
+      generated_at: new Date().toISOString(),
+      error: null,
+    });
+    return "ready";
+  } catch (err) {
+    await updateQuestionnaireInstance(instance.id, {
+      status: "failed",
+      error: err instanceof Error ? err.message : String(err),
+    });
+    logger.error({ err, instanceId: instance.id }, "ai-engine: executeQuestionnaireGenerationJob failed");
+    return "failed";
+  }
+}
+
+/**
+ * job-failed callback for generate-questionnaire (DOC-26 §5). When QStash exhausts
+ * retries, mark the current instance 'failed' so the client wizard shows the
+ * "failed" gate state instead of being stuck at "generating" forever.
+ */
+export async function markQuestionnaireGenerationFailed(payload: {
+  caseId: string;
+  formDefinitionId: string;
+  partyId: string | null;
+}): Promise<void> {
+  const instance = await findCurrentQuestionnaireInstance(payload.caseId, payload.formDefinitionId, payload.partyId);
+  if (instance && (instance.status === "queued" || instance.status === "generating")) {
+    await updateQuestionnaireInstance(instance.id, { status: "failed", error: "generation job exhausted retries" });
   }
 }
 

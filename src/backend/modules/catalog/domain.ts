@@ -388,8 +388,30 @@ export const CreateFormDtoSchema = z.object({
   description_i18n: I18nTextDraftSchema.nullable().optional(),
   filled_by: FilledBySchema.optional(),
   position: z.number().int().optional(),
+  // Ola 2 gate override: false exempts this form from the "documents 100%" gate.
+  requires_documents_complete: z.boolean().optional(),
 });
 export type CreateFormDto = z.infer<typeof CreateFormDtoSchema>;
+
+// ---------------------------------------------------------------------------
+// Ola 3 — questionnaire generation config (per-case AI question generation)
+// ---------------------------------------------------------------------------
+export const QuestionnaireGenerationConfigSchema = z.object({
+  form_definition_id: z.string().uuid(),
+  mode: z.enum(["global", "automatic", "hybrid"]),
+  generation_prompt: z.string().max(8000).nullable().optional(),
+  input_document_slugs: z.array(z.string()).default([]),
+  input_form_slugs: z.array(z.string()).default([]),
+  prerequisite_form_slugs: z.array(z.string()).default([]),
+  prerequisite_document_slugs: z.array(z.string()).default([]),
+  target_question_count: z.number().int().min(1).max(60).nullable().optional(),
+  model: z.enum(GENERATION_MODELS).nullable().optional(),
+  hybrid_layout: z.enum(["append_group", "merge_by_topic"]).default("append_group"),
+  auto_trigger: z.boolean().default(true),
+  allow_client_trigger: z.boolean().default(false),
+  on_new_evidence: z.enum(["never", "flag", "auto"]).default("flag"),
+});
+export type QuestionnaireGenerationConfigInput = z.infer<typeof QuestionnaireGenerationConfigSchema>;
 
 // ---------------------------------------------------------------------------
 // Automation Version (pdf_automation)

@@ -662,7 +662,18 @@
       "notFoundTitle": "No encontramos ese formulario",
       "notFoundBody": "Puede que ya no esté disponible. Escríbele a tu equipo si tienes dudas.",
       "noVersionTitle": "Este formulario aún no está listo",
-      "noVersionBody": "Tu equipo lo está preparando. Te avisaremos en cuanto puedas completarlo."
+      "noVersionBody": "Tu equipo lo está preparando. Te avisaremos en cuanto puedas completarlo.",
+      "lockedTitle": "Primero, tus documentos",
+      "lockedBody": "Para llenar tus formularios, primero sube todos tus documentos. En cuanto estén completos, se desbloquean.",
+      "lockedCta": "Ir a Documentos",
+      "lockedPill": "Bloqueado",
+      "qGeneratingTitle": "Estamos preparando tus preguntas",
+      "qGeneratingBody": "Nuestro sistema está leyendo tu caso para crear preguntas personalizadas sobre lo que viviste. Vuelve en un momento y recarga la página.",
+      "qFailedTitle": "No pudimos preparar tus preguntas",
+      "qFailedBody": "Hubo un problema al generar tus preguntas. Tu equipo lo revisará y te avisará. Escríbeles si tienes dudas.",
+      "qPendingTitle": "Primero completa tu formulario",
+      "qPendingBody": "Para crear tus preguntas personalizadas, primero necesitamos que completes el formulario I-589. En cuanto lo envíes, prepararemos tus preguntas.",
+      "qPendingCta": "Ver mis formularios"
     }
   },
   "staff": {
@@ -1247,7 +1258,9 @@
         "formsEmpty": "Aún no hay formularios en esta fase.",
         "formsDraft": "Borrador",
         "formsActive": "Activo",
-        "formsConfigure": "Configurar"
+        "formsConfigure": "Configurar",
+        "formsRequiresDocs": "Requiere documentos",
+        "formsRequiresDocsHint": "Si está activo, el cliente no puede llenar este formulario hasta subir el 100% de sus documentos. Desactívalo para eximirlo (ej. una encuesta inicial)."
       },
       "employees": {
         "title": "Empleados",

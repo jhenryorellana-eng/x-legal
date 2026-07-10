@@ -27,6 +27,7 @@ import {
   duplicateVersionAsDraftAction,
   updateVersionEmptyPolicyAction,
   updateGenerationConfigAction,
+  updateQuestionnaireGenerationConfigAction,
   saveFormFillGuideAction,
   testGenerationAction,
 } from "@/backend/modules/catalog/actions";
@@ -161,6 +162,18 @@ export async function testGenerationUi(input: {
   party_id?: string;
 }): Promise<Res<{ run_id: string }>> {
   return envelope(await testGenerationAction(input));
+}
+
+// --- questionnaire (Ola 3) per-case generation config ----------------------
+
+export async function saveQuestionnaireGenConfigUi(
+  input: Record<string, unknown>,
+): Promise<Res<unknown>> {
+  return envelope(
+    await updateQuestionnaireGenerationConfigAction(
+      input as Parameters<typeof updateQuestionnaireGenerationConfigAction>[0],
+    ),
+  );
 }
 
 // --- Pre-Mortem validation guide (both kinds) ------------------------------

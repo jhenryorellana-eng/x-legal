@@ -44,6 +44,17 @@ export default async function FormulariosListPage({
   // Single form → skip the list and go straight in.
   if (forms.length === 1) {
     const f = forms[0];
+    // Ola 2 gate: a locked single form must not auto-open into the wizard.
+    if (f.locked) {
+      return (
+        <EmptyCase
+          title={t("lockedTitle")}
+          body={t("lockedBody")}
+          lexMood="atento"
+          action={{ href: `/caso/${caseId}/documentos`, label: t("lockedCta") }}
+        />
+      );
+    }
     if (f.kind === "ai_letter" && !f.partyId) {
       redirect(`/caso/${caseId}/historia`);
     }
@@ -64,6 +75,7 @@ export default async function FormulariosListPage({
       partyId: f.partyId,
       partyName: f.partyName,
       status: f.status,
+      locked: f.locked,
     };
   });
 
@@ -78,6 +90,7 @@ export default async function FormulariosListPage({
         draft: t("draft"),
         submitted: t("submitted"),
         pending: t("pending"),
+        locked: t("lockedPill"),
       }}
     />
   );

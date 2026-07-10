@@ -30,6 +30,9 @@ const {
   mockFindClientDisplayName,
   mockFindPersonRecord,
   mockGetCaseRequirements,
+  mockFindFormDefinitionById,
+  mockFindFormResponse,
+  mockGetPublishedAutomationVersion,
 } = vi.hoisted(() => ({
   mockCan: vi.fn(),
   mockRequireCaseAccess: vi.fn().mockResolvedValue(undefined),
@@ -45,6 +48,9 @@ const {
   mockFindClientDisplayName: vi.fn().mockResolvedValue(null),
   mockFindPersonRecord: vi.fn().mockResolvedValue(null),
   mockGetCaseRequirements: vi.fn(),
+  mockFindFormDefinitionById: vi.fn(),
+  mockFindFormResponse: vi.fn().mockResolvedValue(null),
+  mockGetPublishedAutomationVersion: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("@/backend/platform/authz", () => ({
@@ -88,6 +94,9 @@ vi.mock("@/backend/modules/audit", () => ({
 // catalog is dynamically imported inside the SUT — vitest intercepts it.
 vi.mock("@/backend/modules/catalog", () => ({
   getCaseRequirements: mockGetCaseRequirements,
+  getPublishedAutomationVersion: mockGetPublishedAutomationVersion,
+  listQuestionGroups: vi.fn().mockResolvedValue([]),
+  listQuestions: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("../repository", async (importOriginal) => {
@@ -105,10 +114,12 @@ vi.mock("../repository", async (importOriginal) => {
     listServicePhases: mockListServicePhases,
     findClientDisplayName: mockFindClientDisplayName,
     findPersonRecord: mockFindPersonRecord,
+    findFormDefinitionById: mockFindFormDefinitionById,
+    findFormResponse: mockFindFormResponse,
   };
 });
 
-import { setRequirementVisibility, getDocumentsMatrix, CaseError } from "../service";
+import { setRequirementVisibility, getDocumentsMatrix, getDocumentsGateStatus, getFormForClient, saveFormDraft, CaseError } from "../service";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -118,6 +129,7 @@ const CASE_ID = "cccccccc-cccc-4ccc-8ccc-000000000001";
 const PHASE_ID = "11111111-1111-4111-8111-000000000001";
 const DOC_ID = "22222222-2222-4222-8222-000000000001";
 const PARTY_ANNA = "33333333-3333-4333-8333-000000000002";
+const FORM_ID = "44444444-4444-4444-8444-000000000001";
 
 function actor(role: "admin" | "sales" | "paralegal" | "finance") {
   return {
@@ -188,6 +200,16 @@ beforeEach(() => {
     { id: PHASE_ID, service_id: ACTIVE_CASE.service_id, slug: "fase-1", label_i18n: { es: "Fase 1", en: "Phase 1" }, position: 0 },
   ]);
   mockGetCaseRequirements.mockResolvedValue({ documents: [expandedDoc()] });
+  // Default form for the gate tests: an active, client-fillable, gated form with
+  // NO existing response. Combined with the default requirements (1 visible doc)
+  // + no uploaded docs above, the case is INCOMPLETE unless a test overrides it.
+  mockFindFormDefinitionById.mockResolvedValue({
+    id: FORM_ID, slug: "form-x", kind: "pdf_automation", filled_by: "client",
+    is_per_party: false, party_roles: null, is_active: true,
+    label_i18n: { es: "F", en: "F" }, requires_documents_complete: true,
+  });
+  mockFindFormResponse.mockResolvedValue(null);
+  mockGetPublishedAutomationVersion.mockResolvedValue(null);
 });
 
 // ---------------------------------------------------------------------------
@@ -349,5 +371,125 @@ describe("getDocumentsMatrix party name + hidden", () => {
 
     const res = await getDocumentsMatrix(actor("admin"), CASE_ID, { includeHidden: true });
     expect(res.total).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getDocumentsGateStatus (Ola 2 — "documents 100% → forms" gate)
+// ---------------------------------------------------------------------------
+
+/** A minimal case_documents row buildDocumentsMatrix can group + score. */
+function uploadedDoc(over: Record<string, unknown> = {}) {
+  return {
+    id: DOC_ID,
+    required_document_type_id: DOC_ID,
+    party_id: PARTY_ANNA,
+    status: "approved",
+    display_name: "Pasaporte",
+    original_filename: "pasaporte.pdf",
+    mime_type: "application/pdf",
+    created_at: new Date().toISOString(),
+    rejection_reason_i18n: null,
+    correction_due_at: null,
+    translation_not_required: true,
+    ...over,
+  };
+}
+
+describe("getDocumentsGateStatus", () => {
+  it("is INCOMPLETE when a visible document is not uploaded", async () => {
+    mockGetCaseRequirements.mockResolvedValue({ documents: [expandedDoc()] });
+    mockListCaseDocuments.mockResolvedValue([]); // nothing uploaded → pendiente
+
+    const gate = await getDocumentsGateStatus(CLIENT_ACTOR, CASE_ID);
+    expect(gate).toMatchObject({ complete: false, done: 0, total: 1 });
+  });
+
+  it("is COMPLETE once every visible document is uploaded (uploaded counts, not only approved)", async () => {
+    mockGetCaseRequirements.mockResolvedValue({ documents: [expandedDoc()] });
+    // 'uploaded' (pending staff review) already satisfies the client-facing gate.
+    mockListCaseDocuments.mockResolvedValue([uploadedDoc({ status: "uploaded" })]);
+
+    const gate = await getDocumentsGateStatus(CLIENT_ACTOR, CASE_ID);
+    expect(gate).toMatchObject({ complete: true, done: 1, total: 1 });
+  });
+
+  it("is OPEN when the case requests no documents (nothing to block)", async () => {
+    mockGetCaseRequirements.mockResolvedValue({ documents: [] });
+    mockListCaseDocuments.mockResolvedValue([]);
+
+    const gate = await getDocumentsGateStatus(CLIENT_ACTOR, CASE_ID);
+    expect(gate).toMatchObject({ complete: true, total: 0 });
+  });
+
+  it("does NOT count a staff-hidden optional requirement (denominator shrinks to 0 → open)", async () => {
+    mockGetCaseRequirements.mockResolvedValue({
+      documents: [expandedDoc({ is_required: false, is_hidden: true })],
+    });
+    mockListCaseDocuments.mockResolvedValue([]);
+
+    const gate = await getDocumentsGateStatus(CLIENT_ACTOR, CASE_ID);
+    expect(gate).toMatchObject({ complete: true, total: 0 });
+  });
+
+  it("a rejected document still counts as pending → gate stays incomplete", async () => {
+    mockGetCaseRequirements.mockResolvedValue({ documents: [expandedDoc()] });
+    mockListCaseDocuments.mockResolvedValue([uploadedDoc({ status: "rejected" })]);
+
+    const gate = await getDocumentsGateStatus(CLIENT_ACTOR, CASE_ID);
+    expect(gate.complete).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getFormForClient / saveFormDraft — gate ENFORCEMENT + existing-response exemption
+// (the two blockers: gate must bite on read AND write, but never hide already-
+// started/finished work). Default state (beforeEach) = incomplete docs, gated
+// client form, no existing response.
+// ---------------------------------------------------------------------------
+
+describe("documents gate enforcement (getFormForClient / saveFormDraft)", () => {
+  it("READ: throws FORMS_LOCKED for a not-yet-started gated form while docs incomplete", async () => {
+    await expect(
+      getFormForClient(CLIENT_ACTOR, { caseId: CASE_ID, formDefinitionId: FORM_ID, partyId: null }),
+    ).rejects.toThrow("FORMS_LOCKED_DOCS_INCOMPLETE");
+  });
+
+  it("READ: does NOT gate a form the client already started/submitted (existing response is exempt)", async () => {
+    // Karelis scenario: an approved I-589 must stay viewable even with incomplete docs.
+    mockFindFormResponse.mockResolvedValue({ id: "resp-1", status: "approved", automation_version_id: null, answers: {} });
+    await expect(
+      getFormForClient(CLIENT_ACTOR, { caseId: CASE_ID, formDefinitionId: FORM_ID, partyId: null }),
+    ).resolves.toBeTruthy();
+  });
+
+  it("READ: does NOT gate once documents are complete", async () => {
+    mockListCaseDocuments.mockResolvedValue([uploadedDoc({ status: "approved" })]);
+    await expect(
+      getFormForClient(CLIENT_ACTOR, { caseId: CASE_ID, formDefinitionId: FORM_ID, partyId: null }),
+    ).resolves.toBeTruthy();
+  });
+
+  it("READ: does NOT gate an EXEMPT form (requires_documents_complete=false)", async () => {
+    mockFindFormDefinitionById.mockResolvedValue({
+      id: FORM_ID, slug: "intake", kind: "pdf_automation", filled_by: "client",
+      is_per_party: false, party_roles: null, is_active: true,
+      label_i18n: { es: "F", en: "F" }, requires_documents_complete: false,
+    });
+    await expect(
+      getFormForClient(CLIENT_ACTOR, { caseId: CASE_ID, formDefinitionId: FORM_ID, partyId: null }),
+    ).resolves.toBeTruthy();
+  });
+
+  it("READ: never gates STAFF (only clients are gated)", async () => {
+    await expect(
+      getFormForClient(actor("admin"), { caseId: CASE_ID, formDefinitionId: FORM_ID, partyId: null }),
+    ).resolves.toBeTruthy();
+  });
+
+  it("WRITE: blocks the first saveDraft that would CREATE a response on a locked form", async () => {
+    await expect(
+      saveFormDraft(CLIENT_ACTOR, { caseId: CASE_ID, formDefinitionId: FORM_ID, partyId: null, patch: { q1: "x" } }),
+    ).rejects.toThrow("FORMS_LOCKED_DOCS_INCOMPLETE");
   });
 });

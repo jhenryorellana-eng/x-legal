@@ -40,8 +40,9 @@ export interface RawFormEditorData {
       questions: Array<Record<string, unknown>>;
     }>;
   } | null;
-  sources: { documents: Array<{ slug: string; paths?: string[] }>; forms: string[]; profileFields: string[] };
+  sources: { documents: Array<{ slug: string; paths?: string[] }>; forms: string[]; allFormSlugs?: string[]; profileFields: string[] };
   generationConfig: Record<string, unknown> | null;
+  questionnaireGenConfig?: Record<string, unknown> | null;
   preMortemGuide?: { enabled: boolean; guideText: string | null; sourceFilePath?: string | null };
 }
 
@@ -111,6 +112,7 @@ export function buildFormEditorVM(data: RawFormEditorData, datasets: RawDataset[
     sources: {
       documents: data.sources.documents.map((d) => ({ slug: d.slug, paths: d.paths ?? [] })),
       forms: data.sources.forms,
+      allFormSlugs: data.sources.allFormSlugs ?? [],
       profileFields: data.sources.profileFields,
     },
     generationConfig: cfg
@@ -136,6 +138,22 @@ export function buildFormEditorVM(data: RawFormEditorData, datasets: RawDataset[
           attach_sources_kinds: (cfg.attach_sources_kinds as string[]) ?? ["country_condition", "jurisprudence"],
           curated_sources:
             (cfg.curated_sources as { url: string; title: string; category: string }[]) ?? [],
+        }
+      : null,
+    questionnaireGenConfig: data.questionnaireGenConfig
+      ? {
+          mode: (data.questionnaireGenConfig.mode as "global" | "automatic" | "hybrid") ?? "global",
+          generation_prompt: (data.questionnaireGenConfig.generation_prompt as string | null) ?? null,
+          input_document_slugs: (data.questionnaireGenConfig.input_document_slugs as string[]) ?? [],
+          input_form_slugs: (data.questionnaireGenConfig.input_form_slugs as string[]) ?? [],
+          prerequisite_form_slugs: (data.questionnaireGenConfig.prerequisite_form_slugs as string[]) ?? [],
+          prerequisite_document_slugs: (data.questionnaireGenConfig.prerequisite_document_slugs as string[]) ?? [],
+          target_question_count: (data.questionnaireGenConfig.target_question_count as number | null) ?? null,
+          model: (data.questionnaireGenConfig.model as string | null) ?? null,
+          hybrid_layout: (data.questionnaireGenConfig.hybrid_layout as "append_group" | "merge_by_topic") ?? "append_group",
+          auto_trigger: (data.questionnaireGenConfig.auto_trigger as boolean) ?? true,
+          allow_client_trigger: (data.questionnaireGenConfig.allow_client_trigger as boolean) ?? false,
+          on_new_evidence: (data.questionnaireGenConfig.on_new_evidence as "never" | "flag" | "auto") ?? "flag",
         }
       : null,
     datasets: datasets.map((d) => ({ id: d.id, name: d.name, tokens: d.total_tokens, active: d.is_active })),

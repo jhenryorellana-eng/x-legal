@@ -22,6 +22,8 @@ export interface FormListEntry {
   partyId: string | null;
   partyName: string | null;
   status: string | null;
+  /** Ola 2 soft-gate: locked until the case's documents are 100% uploaded. */
+  locked?: boolean;
 }
 
 export interface FormulariosListLabels {
@@ -31,6 +33,7 @@ export interface FormulariosListLabels {
   draft: string;
   submitted: string;
   pending: string;
+  locked: string;
 }
 
 export function FormulariosList({
@@ -45,6 +48,12 @@ export function FormulariosList({
   const router = useRouter();
 
   const open = (e: FormListEntry) => {
+    // Ola 2 soft-gate: a locked card sends the client to Documentos instead of
+    // into a form the hard gate would reject anyway.
+    if (e.locked) {
+      router.push(`/caso/${caseId}/documentos`);
+      return;
+    }
     // Mi Historia (ai_letter) keeps its dedicated route; PDF forms use the wizard.
     const base =
       e.kind === "ai_letter" && !e.partyId
@@ -74,16 +83,17 @@ export function FormulariosList({
                 alignItems: "center",
                 gap: 14,
                 width: "100%",
-                background: "var(--card)",
+                background: e.locked ? "var(--chip, #f4f5f7)" : "var(--card)",
                 border: "1px solid var(--line)",
                 borderRadius: 22,
                 padding: "16px 16px",
                 cursor: "pointer",
                 textAlign: "left",
-                boxShadow: "0 10px 30px rgba(11,27,51,0.06)",
+                boxShadow: e.locked ? "none" : "0 10px 30px rgba(11,27,51,0.06)",
+                opacity: e.locked ? 0.9 : 1,
               }}
             >
-              <IconTile name="form" color="var(--accent)" size={48} />
+              <IconTile name={e.locked ? "lock" : "form"} color={e.locked ? "var(--ink-3)" : "var(--accent)"} size={48} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div
                   style={{
@@ -99,7 +109,9 @@ export function FormulariosList({
                 >
                   {e.label}
                 </div>
-                {submitted ? (
+                {e.locked ? (
+                  <Chip tone="gold">{labels.locked}</Chip>
+                ) : submitted ? (
                   <Chip tone="green" dot>
                     {labels.submitted}
                   </Chip>
@@ -111,7 +123,7 @@ export function FormulariosList({
                   <Chip tone="gold">{labels.pending}</Chip>
                 )}
               </div>
-              <Icon name="chevR" size={20} color="var(--ink-3)" />
+              <Icon name={e.locked ? "lock" : "chevR"} size={20} color="var(--ink-3)" />
             </button>
           );
         })}

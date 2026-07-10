@@ -21,6 +21,7 @@ import {
   markRunFailedByCallback,
   markExtractionFailed,
   markTranslationFailed,
+  markQuestionnaireGenerationFailed,
 } from "@/backend/modules/ai-engine";
 
 // ---------------------------------------------------------------------------
@@ -34,6 +35,10 @@ const JobFailedPayloadSchema = z.object({
   runId: z.string().uuid().optional(),
   caseDocumentId: z.string().uuid().optional(),
   translationId: z.string().uuid().optional(),
+  // generate-questionnaire (Ola 3) — keyed by (case, form, party)
+  caseId: z.string().uuid().optional(),
+  formDefinitionId: z.string().uuid().optional(),
+  partyId: z.string().uuid().nullable().optional(),
 }).passthrough(); // pass-through: we only read known fields
 
 // ---------------------------------------------------------------------------
@@ -96,6 +101,17 @@ export async function handleJobFailed(rawPayload: unknown): Promise<void> {
         const translationId = parsed.translationId ?? entityId ?? "";
         if (translationId) {
           await markTranslationFailed(translationId, errorMsg);
+        }
+        break;
+      }
+
+      case "generate-questionnaire": {
+        if (parsed.caseId && parsed.formDefinitionId) {
+          await markQuestionnaireGenerationFailed({
+            caseId: parsed.caseId,
+            formDefinitionId: parsed.formDefinitionId,
+            partyId: parsed.partyId ?? null,
+          });
         }
         break;
       }

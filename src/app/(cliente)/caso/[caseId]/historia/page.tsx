@@ -35,6 +35,7 @@ export default async function HistoriaPage({
   const locale = (await getLocale()) as Locale;
   const t = await getTranslations("cliente.formWizard");
   const tHist = await getTranslations("cliente.historia");
+  const tEmpty = await getTranslations("cliente.formularios");
 
   // Resolve the Mi Historia (ai_letter) form for the current phase.
   let storyFormId = "";
@@ -64,6 +65,16 @@ export default async function HistoriaPage({
   try {
     dto = await getFormForClient(actor, { caseId, formDefinitionId: storyFormId, partyId });
   } catch (err) {
+    if (err instanceof CaseError && err.code === "FORMS_LOCKED_DOCS_INCOMPLETE") {
+      return (
+        <EmptyCase
+          title={tEmpty("lockedTitle")}
+          body={tEmpty("lockedBody")}
+          lexMood="atento"
+          action={{ href: `/caso/${caseId}/documentos`, label: tEmpty("lockedCta") }}
+        />
+      );
+    }
     if (err instanceof CaseError) {
       return <EmptyCase title={tHist("placeholderTitle")} body={tHist("placeholderBody")} lexMood="atento" />;
     }
