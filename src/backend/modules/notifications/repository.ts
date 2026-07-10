@@ -207,6 +207,60 @@ export async function findUserById(userId: string): Promise<RecipientInfo | null
   };
 }
 
+/** Recipient contact used to personalize rich transactional emails. */
+export interface RecipientProfile {
+  id: string;
+  email: string | null;
+  emailBouncedAt: string | null;
+  locale: string | null;
+  /** E.164 login phone (the client's credential today). */
+  phoneE164: string | null;
+  /** Display name (preferred_name → first+last), or null for staff/unknown. */
+  fullName: string | null;
+}
+
+/**
+ * Resolves a recipient's contact + display name for personalized emails
+ * (welcome, contract-ready, payment receipt). Joins client_profiles for the
+ * name; phone comes from users.phone_e164.
+ */
+export async function findRecipientProfile(
+  userId: string,
+): Promise<RecipientProfile | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("users")
+    .select(
+      "id, email, email_bounced_at, locale, phone_e164, client_profiles(first_name, last_name, preferred_name)",
+    )
+    .eq("id", userId)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (!data) return null;
+
+  const rec = data as unknown as Record<string, unknown>;
+  const cpRaw = rec["client_profiles"];
+  const cp = (Array.isArray(cpRaw) ? cpRaw[0] : cpRaw) as
+    | { first_name?: string | null; last_name?: string | null; preferred_name?: string | null }
+    | null
+    | undefined;
+
+  const fullName =
+    cp?.preferred_name?.trim() ||
+    [cp?.first_name, cp?.last_name].filter((s) => s && s.trim()).join(" ").trim() ||
+    null;
+
+  return {
+    id: rec["id"] as string,
+    email: (rec["email"] as string | null) ?? null,
+    emailBouncedAt: (rec["email_bounced_at"] as string | null) ?? null,
+    locale: (rec["locale"] as string | null) ?? null,
+    phoneE164: (rec["phone_e164"] as string | null) ?? null,
+    fullName,
+  };
+}
+
 /**
  * Returns the staff user IDs for a given role (e.g. "finance").
  */

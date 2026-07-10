@@ -93,6 +93,8 @@ export interface CaseCreatedEvent {
   type: "case.created";
   payload: {
     caseId: string;
+    /** True when this is the client's first case — gates the welcome email. */
+    isFirstCase?: boolean;
   };
   occurredAt: Date;
 }

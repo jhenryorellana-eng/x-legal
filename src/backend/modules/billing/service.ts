@@ -14,6 +14,7 @@ import { z } from "zod";
 import { can, requireCaseAccess, AuthzError } from "@/backend/platform/authz";
 import type { Actor } from "@/backend/platform/authz";
 import { appEvents } from "@/backend/platform/events";
+import type { PaymentReceiptFacts } from "./events";
 import { env } from "@/backend/platform/env";
 import { logger } from "@/backend/platform/logger";
 import { getStripe } from "@/backend/platform/stripe";
@@ -53,6 +54,7 @@ import {
   findPendingZellePayment,
   findInstallmentCaseId,
   getAccountStatement as repoGetAccountStatement,
+  findCaseNumberById,
   findActiveStripePayment,
   listOrphanStripePayments,
   listPendingStripeSessionsToReconcile,
@@ -246,6 +248,67 @@ async function assertClientManualPaymentAllowed(
   }
 }
 
+/**
+ * Assembles the plan-progress facts for a payment receipt email (amount +
+ * remaining cuotas + next due), reusing the account statement. Computed after
+ * the installment is marked paid so `paidCount`/`remaining` include this one.
+ */
+async function buildPaymentReceiptFacts(
+  caseId: string,
+  payment: PaymentRow,
+): Promise<PaymentReceiptFacts> {
+  // Defensive: the payment is already marked succeeded + ledgered by the time we
+  // build the receipt. A failure here (a secondary read) must NOT break the
+  // confirmation — degrade to minimal facts + a warning (amount/method stay
+  // correct; only the plan-progress fields are lost).
+  try {
+    const [statement, caseNumber] = await Promise.all([
+      repoGetAccountStatement(caseId),
+      findCaseNumberById(caseId),
+    ]);
+
+    const installments = statement?.installments ?? [];
+    const active = installments.filter((i) => i.status !== "waived");
+    const paidCount = active.filter((i) => i.status === "paid").length;
+    const remaining = active.filter((i) => i.status !== "paid");
+    const remainingAmountCents = remaining.reduce((sum, i) => sum + i.amountCents, 0);
+
+    let cardLast4: string | null = null;
+    if ((payment.autopay || payment.method === "stripe") && payment.payer_user_id) {
+      const customer = await findStripeCustomer(payment.payer_user_id);
+      cardLast4 = customer?.card_last4 ?? null;
+    }
+
+    return {
+      installmentCount: statement?.plan?.installmentCount ?? installments.length,
+      paidCount,
+      remainingCount: remaining.length,
+      remainingAmountCents,
+      nextDueDate: statement?.nextDue?.dueDate ?? null,
+      nextDueAmountCents: statement?.nextDue?.amountCents ?? null,
+      caseNumber: caseNumber ?? null,
+      autopay: payment.autopay ?? false,
+      cardLast4,
+    };
+  } catch (err) {
+    logger.warn(
+      { err, caseId, paymentId: payment.id },
+      "billing.buildPaymentReceiptFacts: failed — emitting minimal receipt facts",
+    );
+    return {
+      installmentCount: 0,
+      paidCount: 0,
+      remainingCount: 0,
+      remainingAmountCents: 0,
+      nextDueDate: null,
+      nextDueAmountCents: null,
+      caseNumber: null,
+      autopay: payment.autopay ?? false,
+      cardLast4: null,
+    };
+  }
+}
+
 async function applyPaymentSuccess(
   payment: PaymentRow,
   installment: InstallmentRow,
@@ -292,6 +355,10 @@ async function applyPaymentSuccess(
 
   if (!caseId) return;
 
+  // Receipt facts for the client email (amount + plan progress). Computed after
+  // the installment is marked paid so this payment is reflected in the counts.
+  const receipt = await buildPaymentReceiptFacts(caseId, payment);
+
   // Emit domain event
   if (installment.is_downpayment) {
     await appEvents.emitAndWait({
@@ -302,6 +369,7 @@ async function applyPaymentSuccess(
         paymentId: payment.id,
         amountCents: payment.amount_cents,
         method: payment.method,
+        ...receipt,
       },
       occurredAt: new Date(),
     });
@@ -315,6 +383,7 @@ async function applyPaymentSuccess(
         number: installment.number,
         amountCents: payment.amount_cents,
         method: payment.method,
+        ...receipt,
       },
       occurredAt: new Date(),
     });

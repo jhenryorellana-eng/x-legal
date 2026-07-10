@@ -16,6 +16,14 @@ export interface ContractSentEvent {
     caseId: string | null;
     /** Single-use signing token → /firma/{signingToken} (client's signing link). */
     signingToken: string;
+    // Presentation fields for the enriched contract-ready email (from the
+    // contract's frozen plan_snapshot). Optional — absent on legacy emits.
+    /** Service label i18n object ({ es, en }) frozen at contract creation. */
+    serviceLabelI18n?: unknown;
+    planTotalCents?: number;
+    planDownpaymentCents?: number;
+    planInstallmentCount?: number;
+    planFrequency?: string;
   };
   occurredAt: Date;
 }

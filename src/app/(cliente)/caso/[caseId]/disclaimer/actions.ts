@@ -11,8 +11,10 @@
  */
 
 import { headers } from "next/headers";
+import { getLocale, getTranslations } from "next-intl/server";
 import { requireActor } from "@/backend/modules/identity";
 import { acceptTermsFromImage, ContractError } from "@/backend/modules/contracts";
+import { buildConsentDocument } from "@/frontend/features/cliente/disclaimer/consent-content";
 
 export interface AcceptTermsResult {
   ok: boolean;
@@ -35,10 +37,19 @@ export async function acceptTermsAction(input: {
   try {
     const actor = await requireActor();
     const headerStore = await headers();
+    // Snapshot the exact consent text shown (server-authoritative, from the same
+    // i18n resolver the disclaimer page uses) → frozen for non-repudiation.
+    const locale = await getLocale();
+    const t = await getTranslations("cliente.disclaimer");
+    const documentSnapshot = buildConsentDocument(
+      t as unknown as (key: string) => string,
+      locale,
+    );
     await acceptTermsFromImage(actor, {
       caseId: input.caseId,
       signatureJpegDataUrl: input.signatureJpegDataUrl,
       ip: clientIp(headerStore),
+      documentSnapshot,
     });
     return { ok: true };
   } catch (err) {

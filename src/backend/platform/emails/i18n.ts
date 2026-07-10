@@ -44,6 +44,11 @@ export function footerCopy(locale: Locale): {
  * receipt keys that previously fell back to the raw key string.
  */
 export const SUBJECTS: Record<string, { es: string; en: string }> = {
+  // Account onboarding — welcome (first case created)
+  welcome: {
+    es: "¡Bienvenido a UsaLatinoPrime! Tu caso ya está en marcha",
+    en: "Welcome to UsaLatinoPrime! Your case is underway",
+  },
   // F2 — contracts / documents / downpayment
   "contract-ready": {
     es: "Tu contrato está listo para firmar",
@@ -73,9 +78,10 @@ export const SUBJECTS: Record<string, { es: string; en: string }> = {
     es: "Pago inicial recibido — caso activo",
     en: "Down payment received — case is active",
   },
+  // Down-payment receipt (welcome moved to the `welcome` template at case creation).
   "downpayment-confirmed": {
-    es: "Bienvenido — tu caso está activo",
-    en: "Welcome — your case is now active",
+    es: "Recibo de tu cuota inicial",
+    en: "Your down payment receipt",
   },
   // F3 — appointments
   "appointment-booked": {

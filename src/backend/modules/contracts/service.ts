@@ -18,9 +18,10 @@ import {
   validateUploadedObject,
   createSignedUploadUrl,
   createSignedDownloadUrl,
+  downloadBytesFromStorage,
 } from "@/backend/platform/storage";
 import { writeAudit, appendCaseTimeline } from "@/backend/modules/audit";
-import { jpegDataUrlToPdf } from "./signature-pdf";
+import type { ConsentDocumentSnapshot } from "@/shared/consent";
 
 import {
   canTransitionContract,
@@ -36,6 +37,8 @@ import {
   getActiveTermsVersion,
   findAcceptance,
   insertAcceptance,
+  updateAcceptanceSignedPdfPath,
+  findClientDisplayName,
   latestAcceptanceForCaseService,
   type ContractRow,
   type ContractTermsAcceptanceRow,
@@ -230,9 +233,28 @@ export async function sendContractForSigning(
     signing_expires_at: expiresAt.toISOString(),
   });
 
+  // Presentation fields for the enriched contract-ready email, from the frozen
+  // plan_snapshot (so notifications need no live catalog/billing lookup).
+  const planSnap = (contract.plan_snapshot ?? {}) as {
+    serviceLabel?: unknown;
+    totalCents?: number;
+    downpaymentCents?: number;
+    installmentCount?: number;
+    frequency?: string;
+  };
+
   await appEvents.emitAndWait({
     type: "contract.sent",
-    payload: { contractId, caseId: contract.case_id, signingToken: token },
+    payload: {
+      contractId,
+      caseId: contract.case_id,
+      signingToken: token,
+      serviceLabelI18n: planSnap.serviceLabel ?? null,
+      planTotalCents: planSnap.totalCents ?? 0,
+      planDownpaymentCents: planSnap.downpaymentCents ?? 0,
+      planInstallmentCount: planSnap.installmentCount ?? 0,
+      planFrequency: planSnap.frequency ?? "monthly",
+    },
     occurredAt: new Date(),
   });
 
@@ -545,7 +567,10 @@ const AcceptTermsSchema = z.object({
   ip: z.string().nullable().optional(),
 });
 
-export type AcceptTermsInput = z.infer<typeof AcceptTermsSchema>;
+export interface AcceptTermsInput extends z.infer<typeof AcceptTermsSchema> {
+  /** Frozen consent text the client accepted (server-built snapshot). */
+  documentSnapshot?: ConsentDocumentSnapshot | null;
+}
 
 /**
  * Records client acceptance of the active Terms & Conditions.
@@ -591,6 +616,7 @@ export async function acceptTermsInApp(
     signatureImagePath: parsed.signatureUploadRef,
     ip: parsed.ip ?? null,
     acceptedAt: new Date().toISOString(),
+    documentSnapshot: input.documentSnapshot ?? null,
   });
 
   await writeContractTimeline({
@@ -617,31 +643,33 @@ export async function acceptTermsInApp(
  */
 export async function acceptTermsFromImage(
   actor: Actor,
-  input: { caseId: string; signatureJpegDataUrl: string; ip: string | null },
+  input: {
+    caseId: string;
+    signatureJpegDataUrl: string;
+    ip: string | null;
+    /** Frozen consent text the client accepted (server-built snapshot). */
+    documentSnapshot?: ConsentDocumentSnapshot | null;
+  },
 ): Promise<ContractTermsAcceptanceRow> {
   await requireCaseAccess(actor, input.caseId);
   if (actor.kind !== "client") throw new AuthzError("wrong_kind");
 
-  const pdfBytes = jpegDataUrlToPdf(input.signatureJpegDataUrl);
-  const path = `signatures/${input.caseId}-${actor.userId}-${Date.now()}.pdf`;
-  const { signedUrl, path: uploadRef } = await createSignedUploadUrl(
-    "contracts",
-    path,
+  // Store the raw signature IMAGE (contracts bucket allows image/jpeg|png) so it
+  // can be embedded in the signed-consent PDF on demand — mirrors the /firma
+  // contract flow. (Previously wrapped in a PDF, which the consent PDF can't
+  // embed.) Trusted server-side upload → acceptTermsInApp re-validates it.
+  const { bytes, mime, ext } = decodeImageDataUrl(input.signatureJpegDataUrl);
+  const uploadRef = await uploadContractObject(
+    `signatures/${input.caseId}-${actor.userId}-${Date.now()}.${ext}`,
+    bytes,
+    mime,
   );
-
-  const putRes = await fetch(signedUrl, {
-    method: "PUT",
-    headers: { "content-type": "application/pdf" },
-    body: pdfBytes as unknown as BodyInit,
-  });
-  if (!putRes.ok) {
-    throw new ContractError("SIGNATURE_UPLOAD_FAILED");
-  }
 
   return acceptTermsInApp(actor, {
     caseId: input.caseId,
     signatureUploadRef: uploadRef,
     ip: input.ip,
+    documentSnapshot: input.documentSnapshot ?? null,
   });
 }
 
@@ -776,14 +804,42 @@ export async function getSignedContractDownloadUrl(
 export interface TermsAcceptanceView {
   acceptedAt: string;
   termsVersion: string;
-  /** Short-lived signed URL for the acceptance signature (PDF), or null. */
-  signatureDownloadUrl: string | null;
+  /** Short-lived signed URL for the FULL signed consent PDF (text + signature). */
+  documentDownloadUrl: string | null;
 }
 
 /**
- * Returns the latest in-app Terms acceptance for a case (signature + date),
- * with a short-lived download URL for the signed acceptance. Null when the
- * client has not accepted yet. Authorizes via case access (staff allowed).
+ * Rebuilds a consent snapshot from the active terms version — fallback for
+ * legacy acceptances recorded before document_snapshot existed. Best-effort:
+ * uses the org's currently active terms body (may differ from an old version).
+ */
+async function reconstructConsentSnapshot(
+  orgId: string,
+): Promise<ConsentDocumentSnapshot | null> {
+  const tv = await getActiveTermsVersion(orgId);
+  if (!tv) return null;
+  const row = tv as unknown as Record<string, unknown>;
+  const body = row["body_md_i18n"] as { es?: string; en?: string } | undefined;
+  const title = row["title_i18n"] as { es?: string; en?: string } | undefined;
+  const bodyText = body?.es ?? body?.en ?? "";
+  if (!bodyText) return null;
+  return {
+    locale: "es",
+    title: title?.es ?? title?.en ?? "Consentimiento",
+    sections: [{ title: "", body: bodyText }],
+    closing: "",
+  };
+}
+
+/**
+ * Returns the latest in-app Terms acceptance for a case with a short-lived
+ * download URL for the FULL signed consent PDF (the accepted text + the embedded
+ * signature + the legal evidence line). Null when the client has not accepted.
+ *
+ * The PDF is rendered LAZILY: on the first call it assembles the frozen
+ * document_snapshot + the stored signature image into a PDF (mupdf), caches it
+ * at signed_pdf_path, and serves it; later calls return the cached one — the
+ * same pattern as getSignedContractDownloadUrl. Authorizes via case access.
  *
  * @api-id API-CTR-11
  */
@@ -794,13 +850,57 @@ export async function getTermsAcceptanceForCase(
   await requireCaseAccess(actor, caseId);
   const row = await latestAcceptanceForCaseService(caseId);
   if (!row) return null;
-  const signatureDownloadUrl = row.signature_image_path
-    ? await createSignedDownloadUrl("contracts", row.signature_image_path)
-    : null;
-  return {
+
+  const base = { acceptedAt: row.accepted_at, termsVersion: row.terms_version };
+
+  // Cached on a previous download.
+  if (row.signed_pdf_path) {
+    return {
+      ...base,
+      documentDownloadUrl: await createSignedDownloadUrl("contracts", row.signed_pdf_path),
+    };
+  }
+
+  // Resolve the frozen consent text (snapshot), or reconstruct for legacy rows.
+  const snapshot =
+    (row.document_snapshot as ConsentDocumentSnapshot | null) ??
+    (await reconstructConsentSnapshot(actor.orgId));
+
+  // No text at all (legacy row, no active terms) → fall back to the raw signature.
+  if (!snapshot) {
+    const url = row.signature_image_path
+      ? await createSignedDownloadUrl("contracts", row.signature_image_path)
+      : null;
+    return { ...base, documentDownloadUrl: url };
+  }
+
+  // Embed the signature image (skip legacy PDF-wrapped signatures).
+  let signatureImageDataUrl: string | undefined;
+  const sigPath = row.signature_image_path;
+  if (sigPath && !sigPath.toLowerCase().endsWith(".pdf")) {
+    try {
+      const bytes = await downloadBytesFromStorage("contracts", sigPath);
+      const mime = sigPath.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg";
+      signatureImageDataUrl = `data:${mime};base64,${Buffer.from(bytes).toString("base64")}`;
+    } catch {
+      // Render the document without the embedded signature if the fetch fails.
+    }
+  }
+
+  const signerName = await findClientDisplayName(row.user_id);
+  const { renderConsentPdf } = await import("./consent-pdf");
+  const pdf = await renderConsentPdf(snapshot, {
+    signatureImageDataUrl,
+    signerName,
     acceptedAt: row.accepted_at,
-    termsVersion: row.terms_version,
-    signatureDownloadUrl,
+    ip: (row.ip as string | null) ?? null,
+    version: row.terms_version,
+  });
+  const uploadRef = await uploadContractObject(`consent/${row.id}.pdf`, pdf, "application/pdf");
+  await updateAcceptanceSignedPdfPath(row.id, uploadRef);
+  return {
+    ...base,
+    documentDownloadUrl: await createSignedDownloadUrl("contracts", uploadRef),
   };
 }
 

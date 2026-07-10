@@ -31,6 +31,7 @@ import type { Actor } from "@/backend/platform/authz";
 import { enqueueJob } from "@/backend/platform/qstash";
 import { logger } from "@/backend/platform/logger";
 import type { DomainEvent } from "@/backend/platform/events";
+import type { EmailData } from "@/backend/platform/emails";
 
 import {
   insertNotificationIdempotent,
@@ -39,6 +40,8 @@ import {
   markAllNotificationsRead,
   getUnreadCountForUser,
   findUserById,
+  findRecipientProfile,
+  type RecipientProfile,
   findStaffByRole,
   findCaseClientMembers,
   findCaseAssignedStaff,
@@ -122,6 +125,19 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
       channels: { push: true, email: false }, // ①② in-app + push
       category: "case_updates",
       deepLinkTemplate: "/ventas/clientes/{caseId}",
+    },
+    {
+      // Welcome email (◆ account email) — ONLY on the client's FIRST case
+      // (Henry 2026-07-09: welcome moved from downpayment.confirmed to case
+      // creation). Email-only: brand-new clients have no push subscription yet.
+      type: "case.created.welcome",
+      recipients: [{ resolverKey: "clients_of_case" }],
+      channels: { push: false, email: true }, // ③ email
+      category: "case_updates",
+      emailTemplateKey: "welcome",
+      unsuppressible: true,
+      when: (p) => p["isFirstCase"] === true,
+      deepLinkTemplate: "/home",
     },
   ],
   // case.phase_advanced (cycle restart) → sales (Vanessa) starts the new phase;
@@ -384,6 +400,9 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
       channels: { push: false, email: true }, // ①③ (no push per matrix)
       category: "payment_reminders",
       emailTemplateKey: "installment-paid",
+      // Transactional receipt — always delivered (Henry 2026-07-09), not gated
+      // by the payment_reminders toggle like the due/overdue nudges.
+      unsuppressible: true,
       deepLinkTemplate: "/pagos",
     },
     {
@@ -595,9 +614,18 @@ function buildActionUrl(
 // Render bilingual content for a notification type
 // ---------------------------------------------------------------------------
 
+/** Formats integer USD cents for in-app copy ("$1,234.56"). */
+function fmtCents(v: unknown): string {
+  const cents = typeof v === "number" ? v : Number(v ?? 0);
+  return `$${((Number.isFinite(cents) ? cents : 0) / 100).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
 function renderContent(
   type: string,
-  _payload: Record<string, unknown>,
+  payload: Record<string, unknown>,
 ): { titleI18n: { en: string; es: string }; bodyI18n: { en: string; es: string } | null; icon: string; color: string } {
   // F2 content map — extend as more event types are added
   const contentMap: Record<string, { titleI18n: { en: string; es: string }; bodyI18n: { en: string; es: string } | null; icon: string; color: string }> = {
@@ -612,6 +640,15 @@ function renderContent(
       bodyI18n: { en: "A new case was created for your client.", es: "Se creó un nuevo caso para tu cliente." },
       icon: "file-check",
       color: "accent",
+    },
+    "case.created.welcome": {
+      titleI18n: { en: "Welcome to UsaLatinoPrime!", es: "¡Bienvenido a UsaLatinoPrime!" },
+      bodyI18n: {
+        en: "Your case has been created. Sign your contract to get started.",
+        es: "Tu caso fue creado. Firma tu contrato para comenzar.",
+      },
+      icon: "party-popper",
+      color: "green",
     },
     "case.phase_advanced": {
       titleI18n: { en: "New phase — start the tasks", es: "Nueva fase — inicia las tareas" },
@@ -794,12 +831,122 @@ function renderContent(
     },
   };
 
-  return contentMap[type] ?? {
+  const base = contentMap[type] ?? {
     titleI18n: { en: type, es: type },
     bodyI18n: null,
     icon: "bell",
     color: "gray",
   };
+
+  // Payment receipts: enrich the in-app body with the amount + remaining cuotas
+  // from the (enriched) event payload (the email carries the full receipt).
+  if (type === "installment.paid" && payload["amountCents"] != null) {
+    const amount = fmtCents(payload["amountCents"]);
+    const remaining = Number(payload["remainingCount"] ?? NaN);
+    const remainingEs = Number.isFinite(remaining)
+      ? remaining === 0
+        ? " ¡Completaste tus pagos!"
+        : ` Te ${remaining === 1 ? "falta 1 cuota" : `faltan ${remaining} cuotas`}.`
+      : "";
+    const remainingEn = Number.isFinite(remaining)
+      ? remaining === 0
+        ? " You're all paid up!"
+        : ` ${remaining === 1 ? "1 installment" : `${remaining} installments`} left.`
+      : "";
+    return {
+      ...base,
+      bodyI18n: {
+        es: `Recibimos tu pago de ${amount}.${remainingEs}`,
+        en: `We received your ${amount} payment.${remainingEn}`,
+      },
+    };
+  }
+
+  return base;
+}
+
+// ---------------------------------------------------------------------------
+// Build structured email data for rich templates (DOC-73 §2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Assembles the typed `emailData` a rich template needs, from the (enriched)
+ * event payload + the resolved recipient profile. Returns undefined for
+ * templateKeys that use the generic NotificationEmail (title/body only).
+ */
+function buildEmailData(
+  templateKey: string,
+  payload: Record<string, unknown>,
+  recipient: RecipientProfile,
+): EmailData | undefined {
+  const clientName = recipient.fullName ?? null;
+  const phone = recipient.phoneE164 ?? null;
+  const num = (v: unknown): number => (typeof v === "number" ? v : Number(v ?? 0)) || 0;
+  const str = (v: unknown): string | null => (v == null ? null : String(v));
+
+  switch (templateKey) {
+    case "welcome":
+      return { kind: "welcome", clientName, phone };
+
+    case "contract-ready": {
+      const locale = recipient.locale === "en" ? "en" : "es";
+      const labelI18n = payload["serviceLabelI18n"];
+      const serviceName =
+        labelI18n && typeof labelI18n === "object"
+          ? String(
+              (labelI18n as Record<string, unknown>)[locale] ??
+                (labelI18n as Record<string, unknown>)["es"] ??
+                (labelI18n as Record<string, unknown>)["en"] ??
+                "",
+            )
+          : String(payload["serviceName"] ?? "");
+      return {
+        kind: "contract-ready",
+        clientName,
+        phone,
+        serviceName,
+        totalCents: num(payload["planTotalCents"]),
+        downpaymentCents: num(payload["planDownpaymentCents"]),
+        installmentCount: num(payload["planInstallmentCount"]),
+        frequency: String(payload["planFrequency"] ?? "monthly"),
+      };
+    }
+
+    case "installment-paid":
+    case "downpayment-confirmed": {
+      const isDownpayment =
+        templateKey === "downpayment-confirmed" || payload["isDownpayment"] === true;
+      const installmentNumber =
+        payload["installmentNumber"] != null
+          ? num(payload["installmentNumber"])
+          : payload["number"] != null
+            ? num(payload["number"])
+            : isDownpayment
+              ? 0
+              : null;
+      return {
+        kind: "payment-receipt",
+        clientName,
+        amountCents: num(payload["amountCents"]),
+        method: String(payload["method"] ?? ""),
+        autopay: payload["autopay"] === true,
+        cardLast4: str(payload["cardLast4"]),
+        isDownpayment,
+        installmentNumber,
+        installmentCount: num(payload["installmentCount"]),
+        paidCount: num(payload["paidCount"]),
+        remainingCount: num(payload["remainingCount"]),
+        remainingAmountCents: num(payload["remainingAmountCents"]),
+        nextDueDate: str(payload["nextDueDate"]),
+        nextDueAmountCents:
+          payload["nextDueAmountCents"] != null ? num(payload["nextDueAmountCents"]) : null,
+        caseNumber: str(payload["caseNumber"]),
+      };
+    }
+
+    default:
+      return undefined;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1004,14 +1151,17 @@ export async function notifyFromEvent(event: DomainEvent): Promise<void> {
 
         // Email channel
         if (rule.channels.email) {
-          const user = await findUserById(userId);
-          const hasEmail = user?.email && !user.emailBouncedAt;
+          const recipient = await findRecipientProfile(userId);
+          const hasEmail = recipient?.email && !recipient.emailBouncedAt;
           // Channel gate (DOC-47 §4.1 step 4): unsuppressible rules always email;
           // suppressible rules respect the user's email channel toggle (the
           // category was already gated above). email also requires a non-bounced
           // address (DOC-73 §6.2) and a catalog template key.
           const shouldSendEmail = rule.unsuppressible || prefs.channels.email;
           if (shouldSendEmail && hasEmail && rule.emailTemplateKey) {
+            // Rich templates (welcome, contract-ready, receipt) get structured
+            // data; generic templates fall back to the notification title/body.
+            const emailData = buildEmailData(rule.emailTemplateKey, payload, recipient!);
             try {
               await enqueueJob({
                 jobKey: "deliver-notification",
@@ -1021,8 +1171,9 @@ export async function notifyFromEvent(event: DomainEvent): Promise<void> {
                 channel: "email",
                 notificationId,
                 templateKey: rule.emailTemplateKey,
-                recipientEmail: user!.email!,
-                locale: user!.locale ?? "es",
+                recipientEmail: recipient!.email!,
+                locale: recipient!.locale ?? "es",
+                ...(emailData ? { emailData } : {}),
               });
             } catch (err) {
               logger.warn(

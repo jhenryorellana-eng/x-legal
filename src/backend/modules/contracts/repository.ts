@@ -228,6 +228,8 @@ export async function insertAcceptance(row: {
   signatureImagePath: string;
   ip: string | null;
   acceptedAt: string;
+  /** Frozen consent text the client accepted (non-repudiation). */
+  documentSnapshot?: unknown;
 }): Promise<ContractTermsAcceptanceRow> {
   const supabase = createServiceClient();
   const { data, error } = await supabase
@@ -239,6 +241,7 @@ export async function insertAcceptance(row: {
       signature_image_path: row.signatureImagePath,
       ip: row.ip as unknown,
       accepted_at: row.acceptedAt,
+      document_snapshot: (row.documentSnapshot ?? null) as never,
     })
     .select()
     .single();
@@ -249,4 +252,42 @@ export async function insertAcceptance(row: {
     );
   }
   return data;
+}
+
+/**
+ * Caches the assembled signed-consent PDF path on an acceptance row
+ * (service_role write — RLS denies UPDATE to authenticated; the row's legal
+ * evidence fields are never touched, only this derived cache).
+ */
+export async function updateAcceptanceSignedPdfPath(
+  acceptanceId: string,
+  signedPdfPath: string,
+): Promise<void> {
+  const supabase = createServiceClient();
+  const { error } = await supabase
+    .from("contract_terms_acceptances")
+    .update({ signed_pdf_path: signedPdfPath })
+    .eq("id", acceptanceId);
+  if (error) {
+    throw new Error(
+      `contracts.repository: updateAcceptanceSignedPdfPath failed — ${error.message}`,
+    );
+  }
+}
+
+/** Resolves a client's display name (preferred → first+last) for the signature. */
+export async function findClientDisplayName(userId: string): Promise<string | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("client_profiles")
+    .select("first_name, last_name, preferred_name")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (!data) return null;
+  const d = data as { first_name?: string | null; last_name?: string | null; preferred_name?: string | null };
+  return (
+    d.preferred_name?.trim() ||
+    [d.first_name, d.last_name].filter((s) => s && s.trim()).join(" ").trim() ||
+    null
+  );
 }

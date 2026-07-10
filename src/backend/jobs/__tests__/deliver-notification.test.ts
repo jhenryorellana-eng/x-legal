@@ -12,6 +12,13 @@ const mockFindUserById = vi.hoisted(() => vi.fn());
 const mockListPushSubscriptions = vi.hoisted(() => vi.fn());
 const mockDeletePushSubscriptionByEndpoint = vi.hoisted(() => vi.fn());
 const mockSendPush = vi.hoisted(() => vi.fn());
+// Minimal stand-in for EmailDataSchema (a zod schema) — the job composes it into
+// its payload schema via `.optional()`; validation of emailData is not under test.
+const mockEmailDataSchema = vi.hoisted(() => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { z } = require("zod");
+  return z.any();
+});
 
 vi.mock("@/backend/modules/notifications", () => ({
   findNotificationById: mockFindNotificationById,
@@ -30,6 +37,7 @@ vi.mock("@/backend/platform/resend", () => ({
 
 vi.mock("@/backend/platform/emails", () => ({
   renderTransactionalEmail: vi.fn(),
+  EmailDataSchema: mockEmailDataSchema,
 }));
 
 vi.mock("@/backend/platform/logger", () => ({

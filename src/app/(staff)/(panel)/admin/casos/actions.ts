@@ -688,7 +688,7 @@ export async function getTermsAcceptanceAction(input: {
   try {
     const actor = await requireActor();
     const acc = await getTermsAcceptanceForCase(actor, input.caseId);
-    return { ok: true, accepted: !!acc, acceptedAt: acc?.acceptedAt ?? null, url: acc?.signatureDownloadUrl ?? null };
+    return { ok: true, accepted: !!acc, acceptedAt: acc?.acceptedAt ?? null, url: acc?.documentDownloadUrl ?? null };
   } catch (err) {
     return mapErr(err);
   }

@@ -10,3 +10,10 @@ export {
   renderCampaignEmail,
 } from "./render";
 export { pickLocale, emailSubject, type Locale } from "./i18n";
+export {
+  EmailDataSchema,
+  type EmailData,
+  type WelcomeEmailData,
+  type ContractReadyEmailData,
+  type PaymentReceiptEmailData,
+} from "./data";

@@ -431,6 +431,17 @@ export async function getAccountStatement(
   };
 }
 
+/** Returns the human case number (ULP-YYYY-NNNN) for a case, or null. */
+export async function findCaseNumberById(caseId: string): Promise<string | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("cases")
+    .select("case_number")
+    .eq("id", caseId)
+    .maybeSingle();
+  return (data?.case_number as string | undefined) ?? null;
+}
+
 /**
  * Returns the next due installment (first pending/overdue by due_date asc).
  */

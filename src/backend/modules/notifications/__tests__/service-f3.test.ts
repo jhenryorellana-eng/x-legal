@@ -40,6 +40,7 @@ vi.mock("../repository.js", () => ({
   findCaseClientMembers: mockFindCaseClientMembers,
   findCaseAssignedStaff: mockFindCaseAssignedStaff,
   findUserById: mockFindUserById,
+  findRecipientProfile: mockFindUserById,
   findLeadAssignedStaff: mockFindLeadAssignedStaff,
   getPreferences: mockGetPreferences,
   upsertPreferences: vi.fn().mockResolvedValue(undefined),

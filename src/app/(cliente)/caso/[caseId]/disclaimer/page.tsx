@@ -9,13 +9,11 @@
  */
 
 import { notFound, redirect } from "next/navigation";
-import { getTranslations } from "next-intl/server";
+import { getLocale, getTranslations } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
 import { getTermsStatusForCase } from "@/backend/modules/contracts";
-import {
-  DisclaimerScreen,
-  type DisclaimerSection,
-} from "@/frontend/features/cliente/disclaimer/disclaimer-screen";
+import { DisclaimerScreen } from "@/frontend/features/cliente/disclaimer/disclaimer-screen";
+import { buildConsentDocument } from "@/frontend/features/cliente/disclaimer/consent-content";
 import { acceptTermsAction } from "./actions";
 
 export default async function DisclaimerPage({
@@ -44,18 +42,17 @@ export default async function DisclaimerPage({
 
   // Notice sections: the normative 5-section seed (managed body rendering arrives
   // with the rich-text terms editor; the seed text IS the terms content here).
-  // Dynamic key access → cast the translator (data-driven, validated by check:i18n).
+  // Built via the shared resolver so the accept action snapshots the SAME text
+  // into the acceptance record (the downloadable signed consent matches this).
+  const locale = await getLocale();
   const tDyn = t as unknown as (key: string) => string;
-  const sections: DisclaimerSection[] = [1, 2, 3, 4, 5].map((n) => ({
-    title: tDyn(`section${n}.title`),
-    body: tDyn(`section${n}.body`),
-  }));
+  const consent = buildConsentDocument(tDyn, locale);
 
   return (
     <DisclaimerScreen
       caseId={caseId}
-      sections={sections}
-      closing={t("closing")}
+      sections={consent.sections}
+      closing={consent.closing}
       acceptTerms={acceptTermsAction}
       labels={{
         brandPrime: t("brandPrime"),

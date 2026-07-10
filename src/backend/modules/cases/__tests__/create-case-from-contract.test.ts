@@ -154,6 +154,8 @@ vi.mock("../repository", async (importOriginal) => {
     findClientDisplayName: vi.fn().mockResolvedValue(null),
     findClientFullName: vi.fn().mockResolvedValue({ first_name: "Carlos", last_name: "Mendoza" }),
     findPlanKind: vi.fn().mockResolvedValue(null),
+    // createCaseFromContract now reads this to gate the welcome email (isFirstCase).
+    getCaseSummariesByClient: vi.fn().mockResolvedValue([{ id: "case-1" }]),
   };
 });
 

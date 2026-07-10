@@ -745,10 +745,14 @@ export async function createCaseFromContract(
   const caseId = atomic.caseId;
   const contractId = atomic.contractId;
 
-  // Step 5: Emit domain events + audit
+  // Step 5: Emit domain events + audit.
+  // isFirstCase gates the client welcome email (Henry 2026-07-09): the atomic
+  // insert already committed this case, so its own row is counted → the first
+  // ever case for the client returns exactly 1.
+  const clientCases = await getCaseSummariesByClient(actor.orgId, p.primaryClientId);
   await appEvents.emitAndWait({
     type: "case.created",
-    payload: { caseId },
+    payload: { caseId, isFirstCase: clientCases.length <= 1 },
     occurredAt: new Date(),
   });
 

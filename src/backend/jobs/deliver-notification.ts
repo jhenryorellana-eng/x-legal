@@ -17,7 +17,7 @@
 import { z } from "zod";
 import { logger } from "@/backend/platform/logger";
 import { sendTransactional } from "@/backend/platform/resend";
-import { renderTransactionalEmail } from "@/backend/platform/emails";
+import { renderTransactionalEmail, EmailDataSchema } from "@/backend/platform/emails";
 import { sendPush } from "@/backend/platform/webpush";
 import {
   findNotificationById,
@@ -36,6 +36,8 @@ const EmailChannelSchema = z.object({
   templateKey: z.string(),
   recipientEmail: z.string().email(),
   locale: z.string().default("es"),
+  /** Structured payload for rich templates (welcome, contract, receipt). */
+  emailData: EmailDataSchema.optional(),
 });
 
 const PushChannelSchema = z.object({
@@ -110,6 +112,7 @@ export async function handleDeliverNotification(
       title,
       body: body || undefined,
       actionPath: notification.action_url,
+      data: payload.emailData,
     });
 
     try {

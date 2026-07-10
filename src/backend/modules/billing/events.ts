@@ -20,6 +20,31 @@
  * - installment.overdue    → notifications + kanban (Ola-2)
  */
 
+/**
+ * Receipt facts attached to payment-confirmation events so the client email
+ * (DOC-73 `installment-paid`/`downpayment-confirmed`) can show amount, method
+ * and plan progress without a second data fetch at render time.
+ */
+export interface PaymentReceiptFacts {
+  /** Total installments in the plan (incl. down payment). */
+  installmentCount: number;
+  /** Installments already paid (this one included). */
+  paidCount: number;
+  /** Installments still owed (not paid, not waived). */
+  remainingCount: number;
+  /** Sum of the remaining installments, in cents. */
+  remainingAmountCents: number;
+  /** Next due installment date (YYYY-MM-DD) or null when fully paid. */
+  nextDueDate: string | null;
+  nextDueAmountCents: number | null;
+  /** Human case number (ULP-YYYY-NNNN). */
+  caseNumber: string | null;
+  /** True when this payment was an automatic (off-session) card charge. */
+  autopay: boolean;
+  /** Last 4 of the saved card, when paid by card/autopay. */
+  cardLast4: string | null;
+}
+
 export interface DownpaymentConfirmedEvent {
   type: "downpayment.confirmed";
   payload: {
@@ -28,7 +53,7 @@ export interface DownpaymentConfirmedEvent {
     paymentId: string;
     amountCents: number;
     method: string;
-  };
+  } & PaymentReceiptFacts;
   occurredAt: Date;
 }
 
@@ -41,7 +66,7 @@ export interface InstallmentPaidEvent {
     number: number;
     amountCents: number;
     method: string;
-  };
+  } & PaymentReceiptFacts;
   occurredAt: Date;
 }
 

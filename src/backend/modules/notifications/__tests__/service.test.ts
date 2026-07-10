@@ -39,6 +39,7 @@ vi.mock("../repository.js", () => ({
   findCaseClientMembers: mockFindCaseClientMembers,
   findCaseAssignedStaff: mockFindCaseAssignedStaff,
   findUserById: mockFindUserById,
+  findRecipientProfile: mockFindUserById,
   getPreferences: mockGetPreferences,
   upsertPreferences: vi.fn().mockResolvedValue(undefined),
   findUnreadMessageDigest: mockFindUnreadMessageDigest,
@@ -559,6 +560,53 @@ describe("notifyFromEvent — onboarding flow", () => {
     expect(input.actionUrl).toBe(`/ventas/clientes/${CASE_ID}`);
   });
 
+  it("case.created (isFirstCase) → welcome email to the client + sales in-app", async () => {
+    mockFindUserById.mockResolvedValue({
+      id: CLIENT_USER_ID,
+      email: "client@example.com",
+      emailBouncedAt: null,
+      locale: "es",
+      phoneE164: "+15551234567",
+      fullName: "María González",
+      kind: "client",
+    });
+    await notifyFromEvent({
+      type: "case.created",
+      payload: { caseId: CASE_ID, isFirstCase: true },
+      occurredAt: new Date(),
+    });
+    // Sales in-app + client welcome (2 in-app rows).
+    const clientRows = mockInsertNotificationIdempotent.mock.calls.filter(
+      ([i]) => i.userId === CLIENT_USER_ID,
+    );
+    expect(clientRows).toHaveLength(1);
+    expect(clientRows[0][0].type).toBe("case.created.welcome");
+
+    const emailJob = mockEnqueueJob.mock.calls.find(([p]) => p.channel === "email");
+    expect(emailJob).toBeDefined();
+    expect(emailJob![0].templateKey).toBe("welcome");
+    expect(emailJob![0].recipientEmail).toBe("client@example.com");
+    expect(emailJob![0].emailData).toMatchObject({
+      kind: "welcome",
+      phone: "+15551234567",
+      clientName: "María González",
+    });
+  });
+
+  it("case.created (NOT first case) → no welcome email", async () => {
+    await notifyFromEvent({
+      type: "case.created",
+      payload: { caseId: CASE_ID, isFirstCase: false },
+      occurredAt: new Date(),
+    });
+    const clientRows = mockInsertNotificationIdempotent.mock.calls.filter(
+      ([i]) => i.userId === CLIENT_USER_ID,
+    );
+    expect(clientRows).toHaveLength(0);
+    const emailJobs = mockEnqueueJob.mock.calls.filter(([p]) => p.channel === "email");
+    expect(emailJobs).toHaveLength(0);
+  });
+
   it("contract.sent → in-app + push + contract-ready email to the client with /firma/{token}", async () => {
     mockFindUserById.mockResolvedValue({
       id: CLIENT_USER_ID,
@@ -584,6 +632,67 @@ describe("notifyFromEvent — onboarding flow", () => {
     // Push is now enabled for the signing link (best-effort; delivered if subscribed).
     const pushJob = mockEnqueueJob.mock.calls.find(([p]) => p.channel === "push");
     expect(pushJob).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// installment.paid — the payment receipt is a transactional email that must be
+// delivered even when the client turned payment_reminders OFF (unsuppressible),
+// and carries the structured receipt (amount + remaining) as emailData.
+// ---------------------------------------------------------------------------
+
+describe("notifyFromEvent('installment.paid') — receipt", () => {
+  const paidEvent = {
+    type: "installment.paid" as const,
+    payload: {
+      caseId: CASE_ID,
+      installmentId: "inst-2",
+      paymentId: "00000000-0000-0000-0000-000000000099",
+      number: 2,
+      amountCents: 20000,
+      method: "zelle",
+      installmentCount: 6,
+      paidCount: 2,
+      remainingCount: 4,
+      remainingAmountCents: 80000,
+      nextDueDate: "2026-09-01",
+      nextDueAmountCents: 20000,
+      caseNumber: "ULP-2026-0007",
+      autopay: false,
+      cardLast4: null,
+    },
+    occurredAt: new Date(),
+  };
+
+  it("emails the client the receipt even with payment_reminders OFF (unsuppressible)", async () => {
+    mockGetPreferences.mockResolvedValue({
+      messages: true,
+      appointment_reminders: true,
+      payment_reminders: false, // client disabled reminders
+      case_updates: true,
+      channels: { inapp: true, push: true, email: true },
+    });
+    mockFindUserById.mockResolvedValue({
+      id: CLIENT_USER_ID,
+      email: "client@example.com",
+      emailBouncedAt: null,
+      locale: "es",
+      phoneE164: "+15551234567",
+      fullName: "María",
+      kind: "client",
+    });
+
+    await notifyFromEvent(paidEvent);
+
+    const emailJob = mockEnqueueJob.mock.calls.find(([p]) => p.channel === "email");
+    expect(emailJob).toBeDefined();
+    expect(emailJob![0].templateKey).toBe("installment-paid");
+    expect(emailJob![0].emailData).toMatchObject({
+      kind: "payment-receipt",
+      amountCents: 20000,
+      remainingCount: 4,
+      caseNumber: "ULP-2026-0007",
+    });
   });
 });
 

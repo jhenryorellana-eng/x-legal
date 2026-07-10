@@ -2242,9 +2242,11 @@ export type Database = {
           accepted_at: string
           case_id: string
           created_at: string
+          document_snapshot: Json | null
           id: string
           ip: unknown
           signature_image_path: string
+          signed_pdf_path: string | null
           terms_version: string
           user_id: string
         }
@@ -2252,9 +2254,11 @@ export type Database = {
           accepted_at?: string
           case_id: string
           created_at?: string
+          document_snapshot?: Json | null
           id?: string
           ip?: unknown
           signature_image_path: string
+          signed_pdf_path?: string | null
           terms_version: string
           user_id: string
         }
@@ -2262,9 +2266,11 @@ export type Database = {
           accepted_at?: string
           case_id?: string
           created_at?: string
+          document_snapshot?: Json | null
           id?: string
           ip?: unknown
           signature_image_path?: string
+          signed_pdf_path?: string | null
           terms_version?: string
           user_id?: string
         }

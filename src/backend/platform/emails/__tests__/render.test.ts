@@ -28,7 +28,7 @@ describe("renderTransactionalEmail", () => {
       actionPath: "/caso/abc-123",
     });
 
-    expect(subject).toBe("Bienvenido — tu caso está activo");
+    expect(subject).toBe("Recibo de tu cuota inicial");
     // Brand: logo alt ("X Legal") + wordmark suffix ("LEGAL")
     expect(html).toContain("X Legal");
     expect(html).toContain("LEGAL");
@@ -81,6 +81,107 @@ describe("renderTransactionalEmail", () => {
     expect(html).not.toContain("<img src=x onerror=alert(2)>");
     // The escaped form is present
     expect(html).toContain("&lt;script&gt;");
+  });
+});
+
+describe("renderTransactionalEmail — rich templates (data-driven)", () => {
+  it("routes to the welcome template with the registered phone", async () => {
+    const { subject, html } = await renderTransactionalEmail({
+      templateKey: "welcome",
+      locale: "es",
+      title: "welcome",
+      actionPath: "/home",
+      data: { kind: "welcome", clientName: "María", phone: "+15551234567" },
+    });
+    expect(subject).toBe("¡Bienvenido a UsaLatinoPrime! Tu caso ya está en marcha");
+    expect(html).toContain("María");
+    expect(html).toContain("+15551234567");
+    expect(html).toContain("Entrar a la app"); // CTA (ctaUrl present)
+  });
+
+  it("routes to the contract-ready template with the plan summary", async () => {
+    const { subject, html } = await renderTransactionalEmail({
+      templateKey: "contract-ready",
+      locale: "es",
+      title: "contract",
+      actionPath: "/firma/tok-123",
+      data: {
+        kind: "contract-ready",
+        clientName: "Carlos",
+        phone: "+15559876543",
+        serviceName: "Asilo",
+        totalCents: 300000,
+        downpaymentCents: 100000,
+        installmentCount: 6,
+        frequency: "monthly",
+      },
+    });
+    expect(subject).toBe("Tu contrato está listo para firmar");
+    expect(html).toContain("Asilo");
+    expect(html).toContain("$3,000.00"); // total
+    expect(html).toContain("$1,000.00"); // downpayment
+    expect(html).toContain("+15559876543");
+    expect(html).toContain("Revisar y firmar");
+  });
+
+  it("routes to the payment receipt with a dynamic 'cuota N de M' subject", async () => {
+    const { subject, html } = await renderTransactionalEmail({
+      templateKey: "installment-paid",
+      locale: "es",
+      title: "receipt",
+      actionPath: "/pagos",
+      data: {
+        kind: "payment-receipt",
+        clientName: "María",
+        amountCents: 20000,
+        method: "zelle",
+        autopay: false,
+        cardLast4: null,
+        isDownpayment: false,
+        installmentNumber: 2,
+        installmentCount: 6,
+        paidCount: 2,
+        remainingCount: 4,
+        remainingAmountCents: 80000,
+        nextDueDate: "2026-09-01",
+        nextDueAmountCents: 20000,
+        caseNumber: "ULP-2026-0007",
+      },
+    });
+    expect(subject).toBe("Recibo de tu pago — cuota 2 de 6");
+    expect(html).toContain("$200.00"); // amount
+    expect(html).toContain("Zelle"); // method label
+    expect(html).toContain("ULP-2026-0007"); // case number
+    expect(html).toContain("Ver mis pagos"); // CTA
+  });
+
+  it("labels an autopay receipt with the card last4", async () => {
+    const { subject, html } = await renderTransactionalEmail({
+      templateKey: "downpayment-confirmed",
+      locale: "es",
+      title: "receipt",
+      actionPath: "/pagos",
+      data: {
+        kind: "payment-receipt",
+        clientName: null,
+        amountCents: 50000,
+        method: "stripe",
+        autopay: true,
+        cardLast4: "4242",
+        isDownpayment: true,
+        installmentNumber: 0,
+        installmentCount: 4,
+        paidCount: 1,
+        remainingCount: 3,
+        remainingAmountCents: 150000,
+        nextDueDate: null,
+        nextDueAmountCents: null,
+        caseNumber: "ULP-2026-0008",
+      },
+    });
+    expect(subject).toBe("Recibo de tu cuota inicial"); // downpayment subject
+    expect(html).toContain("Cobro automático");
+    expect(html).toContain("4242");
   });
 });
 
