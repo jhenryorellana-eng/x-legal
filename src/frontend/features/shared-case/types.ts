@@ -578,15 +578,26 @@ export interface CaseDetailActions {
     lastName: string;
   }) => Promise<{ ok: boolean; resynced?: boolean; error?: { code: string } }>;
   /**
-   * Advance the case to the next service phase (admin + paralegal only). Manual,
-   * staff-driven — the within-phase % is automatic. Optional: only surfaces that
-   * authorize it inject the action; absence hides the affordance.
+   * Advance the case to the next service phase (admin + finance / Andrium — the
+   * operations phase boundary that follows printing). Restarts the cycle at the
+   * sales stage, or completes the case on the last phase. When several sales
+   * owners are eligible the backend answers STAGE_OWNER_REQUIRED with `candidates`
+   * so the UI can pick one and retry with `toOwnerId`. Optional: only surfaces
+   * that authorize it inject the action; absence hides the affordance.
    */
   advanceCasePhase?: (input: {
     caseId: string;
     toPhaseId?: string | null;
+    toOwnerId?: string | null;
     note?: string | null;
-  }) => Promise<{ ok: boolean; phaseIndex?: number; phaseCount?: number; error?: { code: string } }>;
+  }) => Promise<{
+    ok: boolean;
+    completed?: boolean;
+    phaseIndex?: number;
+    phaseCount?: number;
+    candidates?: Array<{ userId: string; displayName: string; role: string }>;
+    error?: { code: string };
+  }>;
   /**
    * Advance the case to the next milestone (admin + paralegal only). Milestones
    * are the progression unit; advancing crosses phases automatically. Optional:

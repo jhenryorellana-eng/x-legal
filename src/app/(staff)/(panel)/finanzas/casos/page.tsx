@@ -7,6 +7,7 @@
  * (El board `collections` de cobranza de Andrium es un eje aparte, no se toca aquí.)
  */
 
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
@@ -212,7 +213,7 @@ export default async function FinanzasCasosPage() {
     return (
       <div style={{ padding: "54px 32px", maxWidth: 480 }}>
         <p style={{ color: "var(--red)", fontWeight: 700 }}>{t("loadError")}</p>
-        <a href="/finanzas/casos" style={{ color: "var(--accent)", fontWeight: 700 }}>{t("retry")}</a>
+        <Link href="/finanzas/casos" style={{ color: "var(--accent)", fontWeight: 700 }}>{t("retry")}</Link>
       </div>
     );
   }
@@ -224,7 +225,7 @@ export default async function FinanzasCasosPage() {
       columns={columnVMs}
       cards={cardVMs}
       totalDocsToReview={totalDocsToReview}
-      caseBasePath="/ventas/clientes"
+      caseBasePath="/finanzas/casos"
       strings={strings}
       actions={{
         moveCard: moveKanbanCardAction,

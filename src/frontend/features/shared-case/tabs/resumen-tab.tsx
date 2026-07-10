@@ -26,6 +26,7 @@ import { formatCents, SectionLabel } from "../ui";
 import { buildZelleRegisterStrings } from "../zelle-strings";
 import { PhaseStepper } from "../components/phase-stepper";
 import { CaseHistory } from "../components/case-history";
+import { AdvancePhaseAction } from "../components/advance-phase-action";
 
 export function ResumenTab({
   vm,
@@ -47,6 +48,11 @@ export function ResumenTab({
   // unit; advancing crosses phases automatically. Shown whenever the case has a
   // configured service — the backend rejects once the last milestone is reached.
   const canAdvance = !!actions.advanceCaseMilestone && vm.header.phaseCount > 0;
+
+  // Phase boundary — Andrium (finance) / admin at the operations stage. Shown only
+  // there; enabled once the expediente is printed (stage checklist complete). Reuses
+  // advanceCasePhase: closes the phase → cycle restart at sales, or completes the case.
+  const canAdvancePhase = !!actions.advanceCasePhase && vm.stage?.stage === "operations";
 
   async function onAdvanceMilestone() {
     if (!actions.advanceCaseMilestone) return;
@@ -156,6 +162,28 @@ export function ResumenTab({
                 >
                   {busy === "phase" ? t.advancingMilestone : t.advanceMilestone}
                 </GradientBtn>
+              </div>
+            )}
+            {canAdvancePhase && (
+              <div style={{ marginTop: 14 }}>
+                <AdvancePhaseAction
+                  caseId={vm.header.caseId}
+                  advance={actions.advanceCasePhase!}
+                  enabled={vm.stage?.allDone ?? false}
+                  strings={{
+                    button: t.advancePhaseButton,
+                    blocked: t.advancePhaseBlocked,
+                    confirmTitle: t.advancePhaseConfirmTitle,
+                    confirmBody: t.advancePhaseConfirmBody,
+                    ownerLabel: t.advancePhaseOwnerLabel,
+                    ownerHint: t.advancePhaseOwnerHint,
+                    selectOwner: t.advancePhaseSelectOwner,
+                    cancel: t.advancePhaseCancel,
+                    toastAdvanced: t.advancePhaseToastAdvanced,
+                    toastCompleted: t.advancePhaseToastCompleted,
+                    errorTitle: t.advancePhaseError,
+                  }}
+                />
               </div>
             )}
           </Card>

@@ -276,14 +276,22 @@ describe("advanceCasePhase", () => {
     expect(res).toMatchObject({ completed: true, stage: "done" });
   });
 
-  it("requires owner selection when several sales owners are eligible", async () => {
+  it("requires owner selection when several sales owners are eligible (surfaces candidates)", async () => {
     mockListStaffWithModuleEdit.mockResolvedValue([
       { userId: VANESSA, displayName: "Vanessa", role: "sales" },
       { userId: VANESSA_2, displayName: "Otra", role: "sales" },
     ]);
-    await expect(
-      advanceCasePhase(actor("admin"), { caseId: CASE_ID }),
-    ).rejects.toMatchObject({ code: "STAGE_OWNER_REQUIRED" });
+    const err = await advanceCasePhase(actor("admin"), { caseId: CASE_ID }).catch((e) => e);
+    expect(err).toBeInstanceOf(CaseError);
+    expect(err.code).toBe("STAGE_OWNER_REQUIRED");
+    // Contract the UI relies on: advanceCasePhaseAction reads err.details.candidates
+    // so the "Avanzar de fase" modal can ask which sales owner receives the case.
+    expect(err.details?.candidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ userId: VANESSA }),
+        expect.objectContaining({ userId: VANESSA_2 }),
+      ]),
+    );
     expect(mockUpdateCase).not.toHaveBeenCalled();
   });
 

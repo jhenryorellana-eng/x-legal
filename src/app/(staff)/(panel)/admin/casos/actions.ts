@@ -442,16 +442,37 @@ export async function setRequirementVisibilityAction(input: {
   }
 }
 
+/** Eligible sales owner surfaced when a phase advance restarts the cycle. */
+export interface AdvancePhaseOwnerOption {
+  userId: string;
+  displayName: string;
+  role: string;
+}
+
 export async function advanceCasePhaseAction(input: {
   caseId: string;
   toPhaseId?: string | null;
+  toOwnerId?: string | null;
   note?: string | null;
-}): Promise<{ ok: boolean; phaseIndex?: number; phaseCount?: number; error?: { code: string } }> {
+}): Promise<{
+  ok: boolean;
+  completed?: boolean;
+  phaseIndex?: number;
+  phaseCount?: number;
+  candidates?: AdvancePhaseOwnerOption[];
+  error?: { code: string };
+}> {
   try {
     const actor = await requireActor();
     const res = await advanceCasePhase(actor, input);
-    return { ok: true, phaseIndex: res.phaseIndex, phaseCount: res.phaseCount };
+    return { ok: true, completed: res.completed, phaseIndex: res.phaseIndex, phaseCount: res.phaseCount };
   } catch (err) {
+    // On a cycle restart with several eligible sales owners the service throws
+    // STAGE_OWNER_REQUIRED with the candidate list — surface it so the UI can ask.
+    if (err instanceof CaseError) {
+      const candidates = err.details?.candidates as AdvancePhaseOwnerOption[] | undefined;
+      return { ok: false, error: { code: err.code }, candidates };
+    }
     return mapErr(err);
   }
 }
