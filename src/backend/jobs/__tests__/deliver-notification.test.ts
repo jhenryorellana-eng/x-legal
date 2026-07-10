@@ -15,7 +15,6 @@ const mockSendPush = vi.hoisted(() => vi.fn());
 // Minimal stand-in for EmailDataSchema (a zod schema) — the job composes it into
 // its payload schema via `.optional()`; validation of emailData is not under test.
 const mockEmailDataSchema = vi.hoisted(() => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { z } = require("zod");
   return z.any();
 });

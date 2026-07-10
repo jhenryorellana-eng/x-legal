@@ -23,7 +23,7 @@ import {
 import * as React from "react";
 import { COLORS, FONT_STACK, MAX_WIDTH } from "./theme";
 import { footerCopy, type Locale } from "./i18n";
-import { env } from "../env";
+import { emailBaseUrl } from "./url";
 
 export interface BrandLayoutProps {
   locale: Locale;
@@ -75,7 +75,7 @@ export function BrandLayout({
             <Row>
               <Column style={{ width: 44, verticalAlign: "middle" }}>
                 <Img
-                  src={`${env.NEXT_PUBLIC_APP_URL}/icons/logo.png`}
+                  src={`${emailBaseUrl()}/icons/logo.png`}
                   width={36}
                   height={36}
                   alt="X Legal"

@@ -16,13 +16,7 @@ import { ContractReadyEmail } from "./templates/ContractReadyEmail";
 import { PaymentReceiptEmail } from "./templates/PaymentReceiptEmail";
 import { ctaLabel, emailSubject, pickLocale, type Locale } from "./i18n";
 import type { EmailData, PaymentReceiptEmailData } from "./data";
-import { env } from "../env";
-
-/** Resolves a relative deep-link path to an absolute URL on the app origin. */
-function absoluteUrl(path: string): string {
-  if (/^https?:\/\//i.test(path)) return path;
-  return `${env.NEXT_PUBLIC_APP_URL}${path.startsWith("/") ? path : `/${path}`}`;
-}
+import { emailAbsoluteUrl } from "./url";
 
 /** Dynamic subject for a payment receipt ("cuota {n} de {total}" — DOC-73 §2). */
 function paymentReceiptSubject(
@@ -58,7 +52,7 @@ export async function renderTransactionalEmail(input: {
   data?: EmailData | null;
 }): Promise<{ subject: string; html: string; text: string }> {
   const locale = pickLocale(input.locale);
-  const ctaUrl = input.actionPath ? absoluteUrl(input.actionPath) : undefined;
+  const ctaUrl = input.actionPath ? emailAbsoluteUrl(input.actionPath) : undefined;
   const data = input.data ?? undefined;
 
   let element: ReactElement;
