@@ -36,7 +36,7 @@ export const homeMock: DashboardScreenProps = {
       caseId: "demo3",
       href: "/caso/demo3/camino",
       title: "Asilo — Carlos",
-      phaseLabel: "Fase 2 de 2 · Reforzar",
+      phaseLabel: "Preparación del caso",
       serviceIcon: "shield",
       serviceColor: "#1BB673",
       progress: 72,

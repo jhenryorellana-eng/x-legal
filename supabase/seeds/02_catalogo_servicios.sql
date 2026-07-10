@@ -92,15 +92,11 @@ join (values
    '{"es":"Fase 3 — I-485","en":"Phase 3 — I-485"}'::jsonb,
    '{"es":"Ajuste de estatus / Green Card.","en":"Adjustment of status / Green Card."}'::jsonb,
    3),
-  -- Asilo Político (no terminal phase: closure = cases.status='completed', DOC-32 Proposal P1)
-  ('asilo-politico', 'sustentos',
-   '{"es":"Fase 1 — Sustentos","en":"Phase 1 — Foundations"}'::jsonb,
-   '{"es":"Identidad, estatus de ingreso y formulario I-589 (partes 1-5).","en":"Identity, entry status and Form I-589 (parts 1-5)."}'::jsonb,
+  -- Asilo Político (single-phase service: closure = cases.status='completed', DOC-32 P1 + migration 0079)
+  ('asilo-politico', 'principal',
+   '{"es":"Preparación del caso","en":"Case preparation"}'::jsonb,
+   '{"es":"Identidad, Formulario I-589, declaración jurada, evidencias y generación del memorándum de Miedo Creíble.","en":"Identity, Form I-589, sworn declaration, evidence and Credible Fear memorandum generation."}'::jsonb,
    1),
-  ('asilo-politico', 'reforzar',
-   '{"es":"Fase 2 — Reforzar","en":"Phase 2 — Strengthen"}'::jsonb,
-   '{"es":"Declaración jurada, evidencias y generación del Miedo Creíble.","en":"Sworn declaration, evidence and Credible Fear generation."}'::jsonb,
-   2),
   -- Reforzar Asilo (entry service: maps to asilo-politico phase 'reforzar')
   ('reforzar-asilo', 'reforzar',
    '{"es":"Reforzar Asilo","en":"Strengthen Asylum"}'::jsonb,
@@ -147,7 +143,7 @@ set entry_parent_service_id = (select id from public.services where slug = 'asil
         from public.service_phases ph
         join public.services p on p.id = ph.service_id
        where p.slug = 'asilo-politico'
-         and ph.slug = 'reforzar'
+         and ph.slug = 'principal'
     )
 where s.slug = 'reforzar-asilo';
 
@@ -198,8 +194,7 @@ join (values
   ('visa-juvenil',                 'custodia', 3, 30),
   ('visa-juvenil',                 'i360',     2, 30),
   ('visa-juvenil',                 'i485',     2, 30),
-  ('asilo-politico',               'sustentos',2, 30),
-  ('asilo-politico',               'reforzar', 3, 30),
+  ('asilo-politico',               'principal',3, 30),
   ('reforzar-asilo',               'reforzar', 2, 30),
   ('apelacion',                    'unica',    2, 30),
   ('cambio-de-corte',              'unica',    1, 30),
@@ -428,34 +423,34 @@ join (values
   on d.phase_slug = ph.slug
 on conflict (service_phase_id, slug) do nothing;
 
--- ── Asilo Político — fase sustentos ─────────────────────────────────────────
+-- ── Asilo Político — fase principal (identidad + I-589) ─────────────────────
 insert into public.required_document_types
   (service_phase_id, slug, label_i18n, category_i18n, is_required, is_per_party, party_roles, ai_extract, position)
 select ph.id, d.slug, d.label, d.cat, d.req, d.per_party, d.roles, d.ai, d.pos
 from public.service_phases ph
 join public.services s on s.id = ph.service_id and s.slug = 'asilo-politico'
 join (values
-  ('sustentos', 'pasaporte',
+  ('principal', 'pasaporte',
    '{"es":"Pasaporte","en":"Passport"}'::jsonb,
    '{"es":"Identidad","en":"Identity"}'::jsonb,
    true, false, null, true, 10),
-  ('sustentos', 'id-con-foto',
+  ('principal', 'id-con-foto',
    '{"es":"Cédula o identificación con foto","en":"Photo ID"}'::jsonb,
    '{"es":"Identidad","en":"Identity"}'::jsonb,
    true, false, null, false, 20),
-  ('sustentos', 'i94',
+  ('principal', 'i94',
    '{"es":"Registro I-94 (si entró por avión)","en":"I-94 record (if entered by air)"}'::jsonb,
    '{"es":"Inmigración","en":"Immigration"}'::jsonb,
    false, false, null, true, 30),
-  ('sustentos', 'parole-nta',
+  ('principal', 'parole-nta',
    '{"es":"Parole / NTA (Notice to Appear)","en":"Parole / NTA (Notice to Appear)"}'::jsonb,
    '{"es":"Inmigración","en":"Immigration"}'::jsonb,
    false, false, null, true, 40),
-  ('sustentos', 'acta-matrimonio',
+  ('principal', 'acta-matrimonio',
    '{"es":"Acta de matrimonio","en":"Marriage certificate"}'::jsonb,
    '{"es":"Familia","en":"Family"}'::jsonb,
    false, true, array['spouse']::text[], false, 50),
-  ('sustentos', 'actas-nacimiento-hijos',
+  ('principal', 'actas-nacimiento-hijos',
    '{"es":"Actas de nacimiento de hijos","en":"Children''s birth certificates"}'::jsonb,
    '{"es":"Familia","en":"Family"}'::jsonb,
    false, true, array['minor']::text[], false, 60)
@@ -463,27 +458,27 @@ join (values
   on d.phase_slug = ph.slug
 on conflict (service_phase_id, slug) do nothing;
 
--- ── Asilo Político — fase reforzar ──────────────────────────────────────────
+-- ── Asilo Político — fase principal (declaración + evidencias + miedo creíble) ─
 insert into public.required_document_types
   (service_phase_id, slug, label_i18n, category_i18n, is_required, is_per_party, party_roles, ai_extract, position)
 select ph.id, d.slug, d.label, d.cat, d.req, d.per_party, d.roles, d.ai, d.pos
 from public.service_phases ph
 join public.services s on s.id = ph.service_id and s.slug = 'asilo-politico'
 join (values
-  ('reforzar', 'declaracion-jurada-personal',
+  ('principal', 'declaracion-jurada-personal',
    '{"es":"Declaración jurada personal","en":"Personal sworn declaration"}'::jsonb,
    '{"es":"Tu caso","en":"Your Case"}'::jsonb,
    -- null::text[] cast required: when every row in this VALUES list is null,
    -- Postgres infers text and the insert into party_roles text[] fails (42804)
-   true, false, null::text[], true, 10),
-  ('reforzar', 'evidencias-persecucion',
+   true, false, null::text[], true, 70),
+  ('principal', 'evidencias-persecucion',
    '{"es":"Evidencias de persecución (fotos, reportes, amenazas)","en":"Persecution evidence (photos, reports, threats)"}'::jsonb,
    '{"es":"Tu caso","en":"Your Case"}'::jsonb,
-   false, false, null, false, 20),
-  ('reforzar', 'condiciones-pais',
+   false, false, null, false, 80),
+  ('principal', 'condiciones-pais',
    '{"es":"Condiciones del país de origen","en":"Country conditions"}'::jsonb,
    '{"es":"Tu caso","en":"Your Case"}'::jsonb,
-   false, false, null, false, 30)
+   false, false, null, false, 90)
 ) as d(phase_slug, slug, label, cat, req, per_party, roles, ai, pos)
   on d.phase_slug = ph.slug
 on conflict (service_phase_id, slug) do nothing;
@@ -780,9 +775,9 @@ join (values
   ('visa-juvenil', 'i485',    'uscis-i-485',               'pdf_automation',  '{"es":"Formulario USCIS I-485","en":"USCIS Form I-485"}'::jsonb,                                               'staff',  1),
   ('visa-juvenil', 'i485',    'uscis-i-765',               'pdf_automation',  '{"es":"Formulario USCIS I-765 (permiso de trabajo)","en":"USCIS Form I-765 (work permit)"}'::jsonb,            'staff',  2),
   ('visa-juvenil', 'i485',    'uscis-i-131',               'pdf_automation',  '{"es":"Formulario USCIS I-131 (permiso de viaje)","en":"USCIS Form I-131 (travel permit)"}'::jsonb,            'staff',  3),
-  ('asilo-politico','sustentos','uscis-i-589',             'pdf_automation',  '{"es":"Formulario I-589 (partes 1-5)","en":"Form I-589 (parts 1-5)"}'::jsonb,                                  'both',   1),
-  ('asilo-politico','reforzar', 'declaracion-jurada',      'ai_letter',       '{"es":"Declaración jurada","en":"Sworn declaration"}'::jsonb,                                                  'both',   1),
-  ('asilo-politico','reforzar', 'memorandum-asilo',        'ai_letter',       '{"es":"Memorándum legal de asilo","en":"Asylum legal memorandum"}'::jsonb,                                    'staff',  2),
+  ('asilo-politico','principal','uscis-i-589',              'pdf_automation',  '{"es":"Formulario I-589 (partes 1-5)","en":"Form I-589 (parts 1-5)"}'::jsonb,                                  'both',   1),
+  ('asilo-politico','principal','declaracion-jurada',       'ai_letter',       '{"es":"Declaración jurada","en":"Sworn declaration"}'::jsonb,                                                  'both',   2),
+  ('asilo-politico','principal','memorandum-de-miedo-creible','ai_letter',     '{"es":"Memorándum de Miedo Creíble","en":"Credible Fear memorandum"}'::jsonb,                                 'staff',  3),
   ('reforzar-asilo','reforzar', 'memorandum-miedo-creible','ai_letter',       '{"es":"Memorándum de Miedo Creíble","en":"Credible Fear memorandum"}'::jsonb,                                 'staff',  1),
   ('apelacion',    'unica',    'eoir-26',                  'pdf_automation',  '{"es":"Formulario EOIR-26 (Notice of Appeal)","en":"Form EOIR-26 (Notice of Appeal)"}'::jsonb,                'staff',  1),
   ('apelacion',    'unica',    'carta-apelacion',          'ai_letter',       '{"es":"Carta de apelación","en":"Appeal brief letter"}'::jsonb,                                               'staff',  2),

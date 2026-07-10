@@ -352,6 +352,7 @@
       "title": "Tu proceso avanza, {name}",
       "fallbackName": "",
       "subtitle": "Estás en la Fase {x} de {y}. Vas muy bien.",
+      "subtitleSingle": "Vas muy bien.",
       "inProgress": "En curso",
       "next": "Siguiente",
       "progress": "Progreso",

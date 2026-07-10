@@ -22,7 +22,7 @@ export const asiloPolitico: DemoScenario = {
     ],
   },
   caseTitle: "Asilo Político — Karelis",
-  phaseLabel: "Fase 1 de 2 · Preparación",
+  phaseLabel: "Preparación del caso",
 
   contract: {
     planLabel: "Asilo Político · Con abogado",
@@ -456,7 +456,7 @@ export const asiloPolitico: DemoScenario = {
       ],
       anexos: [
         {
-          group: "Fase 1 · Identidad y migratorio",
+          group: "Identidad y migratorio",
           items: [
             "Comprobante de domicilio — Karelis",
             "Pasaportes — Karelis, Alexander, Kamila y Amanda",
@@ -466,7 +466,7 @@ export const asiloPolitico: DemoScenario = {
           ],
         },
         {
-          group: "Fase 2 · Soporte del caso",
+          group: "Soporte del caso",
           items: [
             "Certificación de partido político — Karelis",
             "Declaración jurada",

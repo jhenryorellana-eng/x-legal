@@ -352,6 +352,7 @@
       "title": "Your process is moving, {name}",
       "fallbackName": "",
       "subtitle": "You're in Phase {x} of {y}. You're doing great.",
+      "subtitleSingle": "You're doing great.",
       "inProgress": "In progress",
       "next": "Next",
       "progress": "Progress",

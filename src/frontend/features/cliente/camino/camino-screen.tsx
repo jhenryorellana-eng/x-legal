@@ -230,24 +230,28 @@ export function CaminoScreen(props: CaminoScreenProps) {
       >
         <ProgressRing pct={progress} size={84} stroke={10} />
         <div style={{ flex: 1 }}>
-          <div
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              background: "var(--gold-soft)",
-              color: "var(--gold-deep)",
-              borderRadius: 999,
-              padding: "5px 11px",
-              fontSize: 13,
-              fontWeight: 800,
-            }}
-          >
-            <Icon name="map" size={15} color="var(--gold-deep)" />{" "}
-            {labels.phaseChip
-              .replace("{x}", String(phaseIndex))
-              .replace("{y}", String(phaseCount))}
-          </div>
+          {/* "Fase X de Y" only makes sense for multi-phase services; a
+              single-phase service (e.g. Asilo) shows just the phase name below. */}
+          {phaseCount > 1 && (
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                background: "var(--gold-soft)",
+                color: "var(--gold-deep)",
+                borderRadius: 999,
+                padding: "5px 11px",
+                fontSize: 13,
+                fontWeight: 800,
+              }}
+            >
+              <Icon name="map" size={15} color="var(--gold-deep)" />{" "}
+              {labels.phaseChip
+                .replace("{x}", String(phaseIndex))
+                .replace("{y}", String(phaseCount))}
+            </div>
+          )}
           <div
             className="t-title"
             style={{

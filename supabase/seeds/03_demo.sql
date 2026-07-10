@@ -117,7 +117,7 @@ on conflict (id) do nothing;
 -- ---------------------------------------------------------------------------
 -- Demo cases
 -- ULP-2026-0001: visa-juvenil, with_lawyer, phase=custodia, active
--- ULP-2026-0002: asilo-politico, self, phase=reforzar, active
+-- ULP-2026-0002: asilo-politico, self, phase=principal, active
 -- ---------------------------------------------------------------------------
 
 -- Case 0001
@@ -168,7 +168,7 @@ select
 from public.orgs o
 join public.services s on s.slug = 'asilo-politico'
 join public.service_plans pl on pl.service_id = s.id and pl.kind = 'self'
-join public.service_phases ph on ph.service_id = s.id and ph.slug = 'reforzar'
+join public.service_phases ph on ph.service_id = s.id and ph.slug = 'principal'
 join public.staff_profiles diana on diana.role = 'paralegal'
 join public.staff_profiles vane  on vane.role  = 'sales'
 where o.name = 'UsaLatinoPrime'
@@ -234,7 +234,7 @@ select
 from public.service_phases ph
 join public.services s on s.id = ph.service_id and s.slug = 'asilo-politico'
 join public.staff_profiles diana on diana.role = 'paralegal'
-where ph.slug = 'reforzar'
+where ph.slug = 'principal'
 on conflict do nothing;
 
 -- ---------------------------------------------------------------------------
@@ -464,7 +464,7 @@ select
 from public.service_phases ph
 join public.services s on s.id = ph.service_id and s.slug = 'asilo-politico'
 join public.staff_profiles vane on vane.role = 'sales'
-where ph.slug = 'reforzar'
+where ph.slug = 'principal'
 -- explicit arbiter (id): bare ON CONFLICT fails on tables with EXCLUDE constraints (55000)
 on conflict (id) do nothing;
 

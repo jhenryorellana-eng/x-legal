@@ -79,7 +79,10 @@ export default async function ProcesoPage({
       labels={{
         back: t("back"),
         title: t("title", { name }),
-        subtitle: t("subtitle", { x: dto.phaseIndex, y: dto.phaseCount }),
+        subtitle:
+          dto.phaseCount > 1
+            ? t("subtitle", { x: dto.phaseIndex, y: dto.phaseCount })
+            : t("subtitleSingle"),
         inProgress: t("inProgress"),
         next: t("next"),
         progress: t("progress"),

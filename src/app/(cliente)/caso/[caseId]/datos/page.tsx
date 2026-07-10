@@ -56,8 +56,12 @@ export default async function DatosPage({
 
   const serviceName = pickLocale(ws.service?.labelI18n, locale);
   const phaseName = pickLocale(ws.phase?.labelI18n, locale);
+  // Single-phase services (e.g. Asilo) show just the phase name — "Fase 1 de 1"
+  // is noise when there's only one phase.
   const phaseValue = ws.phase
-    ? t("phaseValue", { x: ws.phaseIndex, y: ws.phaseCount, phase: phaseName })
+    ? ws.phaseCount > 1
+      ? t("phaseValue", { x: ws.phaseIndex, y: ws.phaseCount, phase: phaseName })
+      : phaseName
     : "—";
 
   const rows: DatosRow[] = [

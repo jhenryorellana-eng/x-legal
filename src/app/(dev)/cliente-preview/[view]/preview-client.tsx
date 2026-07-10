@@ -114,7 +114,7 @@ export function ClientePreview({ view }: { view: string }) {
         labels={{
           back: "Más",
           title: "Tu proceso avanza, María",
-          subtitle: "Estás en la Fase 1 de 2. Vas muy bien.",
+          subtitle: "Vas muy bien.",
           inProgress: "En curso",
           next: "Siguiente",
           progress: "Progreso",

@@ -131,11 +131,15 @@ export default async function HomePage() {
     }
 
     const phaseName = ws?.phase ? pickLocale(ws.phase.labelI18n, locale) : "";
+    // Single-phase services (e.g. Asilo) drop the "Fase X de Y ·" prefix — it's
+    // noise when there's only one phase; just the phase name reads cleanly.
     const phaseLabel = ws?.phase
-      ? phaseTpl
-          .replace("{x}", String(ws.phaseIndex))
-          .replace("{y}", String(ws.phaseCount))
-          .replace("{phase}", phaseName)
+      ? ws.phaseCount > 1
+        ? phaseTpl
+            .replace("{x}", String(ws.phaseIndex))
+            .replace("{y}", String(ws.phaseCount))
+            .replace("{phase}", phaseName)
+        : phaseName
       : null;
     // First entry to a case (an active terms version exists and isn't yet
     // accepted) must land on the disclaimer; afterwards — or when no terms are
