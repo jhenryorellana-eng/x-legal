@@ -597,7 +597,7 @@ function buildDatasetXml(items: DatasetItem[]): string {
  * (buildUserMessage) and the per-case questionnaire generator
  * (buildQuestionGenContext) so both read the case the exact same way.
  */
-function buildCaseContextBlocks(inputs: ResolvedInputs): string[] {
+export function buildCaseContextBlocks(inputs: ResolvedInputs): string[] {
   const parts: string[] = [];
 
   // 1. CASE CONTEXT — extractions payload (field-by-field, labeled by slug)

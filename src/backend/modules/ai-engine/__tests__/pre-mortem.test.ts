@@ -58,6 +58,7 @@ const mocks = vi.hoisted(() => {
     getTranslationSource: vi.fn(),
     loadDatasetItems: vi.fn(),
     loadResolvedInputs: vi.fn(),
+    resolveGenerationInputs: vi.fn(),
   };
 
   const authz = {
@@ -272,6 +273,10 @@ beforeEach(() => {
   mocks.repo.matchDatasetItems.mockResolvedValue([]);
   mocks.embeddings.embedText.mockResolvedValue(new Array(768).fill(0.1));
   mocks.cases.getCaseExtractions.mockResolvedValue([]);
+  // ai_letter now always resolves to a full run row (for config_snapshot + party_id).
+  mocks.repo.findRunById.mockResolvedValue({ ...BASE_RUN });
+  // Default: no frozen/config source inputs → validator falls back to extractions.
+  mocks.repo.loadResolvedInputs.mockResolvedValue({ documents: [], forms: [] });
   mockAnthropic(VALID_REPORT_JSON);
   mocks.repo.insertPreMortemAssessment.mockResolvedValue({ id: ASSESSMENT_ID, created_at: "2026-06-29T10:10:00.000Z" });
 });
@@ -352,6 +357,97 @@ describe("assessPreMortemRisk", () => {
     expect(result.findings).toHaveLength(1);
     expect(result.findings[0].category).toBe("mal_llenado");
     expect(result.createdBy).toBe(ACTOR.userId);
+  });
+
+  it("ai_letter: injects the SOURCE material (questionnaire answers) the memo was generated from", async () => {
+    mocks.repo.findRunById.mockResolvedValue({
+      ...BASE_RUN,
+      config_snapshot: {
+        resolved_inputs: {
+          documents: [],
+          forms: [{ slug: "memorandum-de-miedo-creible-cuestionario", response_id: "r1" }],
+        },
+      },
+    });
+    mocks.repo.loadResolvedInputs.mockResolvedValue({
+      documents: [],
+      forms: [
+        {
+          slug: "memorandum-de-miedo-creible-cuestionario",
+          answers: { "¿A qué le teme si regresa?": "A ser detenida por el colectivo armado en Caracas" },
+        },
+      ],
+    });
+
+    await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter", runId: RUN_ID } });
+
+    expect(mocks.repo.loadResolvedInputs).toHaveBeenCalledOnce();
+    const streamArg = JSON.stringify(mocks.anthropicClient.messages.stream.mock.calls[0][0]);
+    expect(streamArg).toContain("MATERIAL FUENTE");
+    expect(streamArg).toContain("A ser detenida por el colectivo armado en Caracas");
+    // When source material is present the generic extractions block is skipped.
+    expect(mocks.cases.getCaseExtractions).not.toHaveBeenCalled();
+  });
+
+  it("ai_letter: truncates a giant memo to budget with a visible marker (no silent cap)", async () => {
+    mocks.repo.findRunById.mockResolvedValue({ ...BASE_RUN, output_text: "A".repeat(200_000) });
+
+    await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter", runId: RUN_ID } });
+
+    const streamArg = JSON.stringify(mocks.anthropicClient.messages.stream.mock.calls[0][0]);
+    expect(streamArg).toContain("truncado por presupuesto");
+    expect(mocks.logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ label: "memo" }),
+      expect.stringContaining("truncated to budget"),
+    );
+  });
+
+  it("ai_letter: masks PII BEFORE truncating a giant memo (a boundary cut must not leak raw PII)", async () => {
+    // ~180k chars of repeated SSNs → exceeds PREMORTEM_MEMO_BUDGET (120k) → truncates.
+    // If masking ran AFTER truncation, the SSN straddling the cut would leak raw digits.
+    const giant = "relleno con SSN 123-45-6789 aqui. ".repeat(6000);
+    mocks.repo.findRunById.mockResolvedValue({ ...BASE_RUN, output_text: giant });
+
+    await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter", runId: RUN_ID } });
+
+    const streamArg = JSON.stringify(mocks.anthropicClient.messages.stream.mock.calls[0][0]);
+    expect(streamArg).not.toContain("123-45-6789"); // raw SSN never reaches the provider
+    expect(streamArg).toContain("6789"); // the masked form (•••-••-6789) survives
+    expect(streamArg).toContain("truncado por presupuesto");
+  });
+
+  it("ai_letter: falls back to config slugs when the run froze empty inputs (older runs)", async () => {
+    mocks.repo.findRunById.mockResolvedValue({
+      ...BASE_RUN,
+      party_id: null,
+      config_snapshot: { resolved_inputs: { documents: [], forms: [] } },
+    });
+    mocks.repo.findGenerationConfig.mockResolvedValue({
+      dataset_id: DATASET_ID,
+      model: "claude-opus-4-7",
+      input_form_slugs: ["memorandum-de-miedo-creible-cuestionario"],
+      input_document_slugs: ["declaracion-jurada"],
+    });
+    mocks.repo.resolveGenerationInputs.mockResolvedValue({
+      documents: [{ slug: "declaracion-jurada", case_document_id: "d1", extraction_id: "e1" }],
+      forms: [{ slug: "memorandum-de-miedo-creible-cuestionario", response_id: "r1" }],
+    });
+    mocks.repo.loadResolvedInputs.mockResolvedValue({
+      documents: [],
+      forms: [{ slug: "memorandum-de-miedo-creible-cuestionario", answers: { "¿Qué teme?": "Represalias del grupo armado en su barrio" } }],
+    });
+
+    await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter", runId: RUN_ID } });
+
+    expect(mocks.repo.resolveGenerationInputs).toHaveBeenCalledWith(
+      CASE_ID,
+      null,
+      ["memorandum-de-miedo-creible-cuestionario"],
+      ["declaracion-jurada"],
+    );
+    const streamArg = JSON.stringify(mocks.anthropicClient.messages.stream.mock.calls[0][0]);
+    expect(streamArg).toContain("MATERIAL FUENTE");
+    expect(streamArg).toContain("Represalias del grupo armado en su barrio");
   });
 
   it("pdf_automation: resolves field values, validates, persists with response_id", async () => {

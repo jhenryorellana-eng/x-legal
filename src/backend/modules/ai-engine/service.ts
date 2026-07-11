@@ -110,6 +110,7 @@ import {
   type BudgetCheck,
   type AnthropicUsage,
   type RunContext,
+  buildCaseContextBlocks,
   buildQuestionGenContext,
   QUESTIONNAIRE_FIELD_TYPES,
   type QuestionnaireSchema,
@@ -3786,6 +3787,19 @@ const PREMORTEM_RETRIEVAL_K = 8;
 const PREMORTEM_DATASET_BUDGET = 30_000;
 /** Chars of masked case context (extractions) injected into the validator prompt. */
 const PREMORTEM_CONTEXT_BUDGET = 30_000;
+/**
+ * Chars of the generated memo (ai_letter) injected into the validator prompt. A
+ * court-grade credible-fear memo can reach ~250 pages (>500k chars). We keep a
+ * head+tail slice (the tail carries the perjury declaration) and log when we clip
+ * — never a silent cap. Single-pass validation stays within the Opus context.
+ */
+const PREMORTEM_MEMO_BUDGET = 120_000;
+/**
+ * Chars of the SOURCE material (questionnaire answers + declaración + evidencias,
+ * with OCR) injected so the validator can catch contradictions / incoherence /
+ * vagueness against the exact record the memo was generated from.
+ */
+const PREMORTEM_SOURCE_BUDGET = 40_000;
 /** web_search server-tool call cap for the validator (official examples). */
 const PREMORTEM_WEB_SEARCH_MAX_USES = 5;
 /** Output token budget — I-589 has 460 fields → reports can be long. */
@@ -3854,6 +3868,54 @@ async function resolveMemoText(outputText: string | null, outputPath: string | n
   });
 }
 
+/**
+ * Truncates `text` to `budget` chars keeping a head+tail slice (the tail of a memo
+ * carries the perjury declaration), inserting a visible marker and logging when it
+ * clips — never a silent cap (the validator must know it saw a partial document).
+ */
+function budgetTextHeadTail(text: string, budget: number, label: string, caseId: string): string {
+  if (text.length <= budget) return text;
+  const head = Math.floor(budget * 0.7);
+  const tail = budget - head;
+  const omitted = text.length - budget;
+  logger.info(
+    { job: "assessPreMortemRisk", caseId, label, originalChars: text.length, budget, omitted },
+    "ai-engine: pre-mortem context truncated to budget",
+  );
+  return (
+    text.slice(0, head) +
+    `\n\n[... ${label} truncado por presupuesto: ${omitted} chars omitidos ...]\n\n` +
+    text.slice(text.length - tail)
+  );
+}
+
+/**
+ * Loads the SOURCE material a memo (ai_letter) was generated from — the frozen
+ * questionnaire answers + uploaded documents (declaración + evidencias, with OCR) —
+ * so the Pre-Mortem can validate the memo against the exact record (contradictions,
+ * incoherence, vagueness). Prefers the run's frozen `resolved_inputs`; falls back to
+ * re-resolving the config's declared slugs for older runs that froze empty inputs.
+ * Returns empty inputs (never throws) when nothing resolves.
+ */
+async function loadPreMortemSourceInputs(
+  snapshot: ConfigSnapshot | null,
+  partyId: string | null,
+  caseId: string,
+  cfg: { input_form_slugs: string[] | null; input_document_slugs: string[] | null } | null,
+): Promise<ResolvedInputs> {
+  const frozen = snapshot?.resolved_inputs;
+  if (frozen && ((frozen.documents?.length ?? 0) > 0 || (frozen.forms?.length ?? 0) > 0)) {
+    return await loadResolvedInputs(snapshot as ConfigSnapshot);
+  }
+  const formSlugs = cfg?.input_form_slugs ?? [];
+  const docSlugs = cfg?.input_document_slugs ?? [];
+  if (formSlugs.length > 0 || docSlugs.length > 0) {
+    const resolved = await resolveGenerationInputs(caseId, partyId, formSlugs, docSlugs);
+    return await loadResolvedInputs({ resolved_inputs: resolved } as ConfigSnapshot);
+  }
+  return { documents: [], forms: [] };
+}
+
 /** Renders resolved pdf_automation fields as a compact table for the validator. */
 function renderFieldsForValidation(
   fields: Array<{ pdfFieldName: string | null; label: string; fieldType: string; value: string | string[] | boolean | null; visible: boolean; required: boolean; empty: boolean; doNotFill: boolean }>,
@@ -3912,31 +3974,52 @@ export async function assessPreMortemRisk(
   let formDefinitionId = "";
   let configModel: string | null = null;
   let documentBlock: string; // the artifact rendered (masked) for the prompt
+  // For an ai_letter memo: the SOURCE material it was generated from (questionnaire
+  // answers + declaración + evidencias) — injected so the validator can check the
+  // memo for contradictions / incoherence / vagueness against the exact record.
+  let aiLetterSourceInputs: ResolvedInputs | null = null;
 
   if (target.kind === "ai_letter") {
     targetKind = "ai_letter";
-    let outputText: string;
+    // Resolve to a full run row either way — we need config_snapshot + party_id to
+    // load the source material the memo was generated from.
+    let run: Awaited<ReturnType<typeof findRunById>>;
     if (target.runId) {
-      const run = await findRunById(target.runId);
+      run = await findRunById(target.runId);
       if (!run) throw new AiEngineError("PREMORTEM_NO_TARGET", { reason: "Provided run not found", runId: target.runId });
-      // IDOR: the run MUST belong to the already-authorized case.
-      if (run.case_id !== input.caseId) throw new AuthzError("forbidden_case");
-      outputText = await resolveMemoText(run.output_text, run.output_path);
-      runId = run.id;
-      formDefinitionId = run.form_definition_id ?? "";
-      if (formDefinitionId) {
-        const cfg = await findGenerationConfig(formDefinitionId);
-        configModel = cfg?.model ?? null;
-      }
     } else {
       const eligible = await findLatestEligibleRunForPreMortem(input.caseId);
       if (!eligible) throw new AiEngineError("PREMORTEM_NO_TARGET", { reason: "No completed ai_letter run with an enabled guide", caseId: input.caseId });
-      outputText = await resolveMemoText(eligible.outputText, eligible.outputPath);
-      runId = eligible.runId;
-      formDefinitionId = eligible.formDefinitionId;
-      configModel = eligible.model;
+      run = await findRunById(eligible.runId);
+      if (!run) throw new AiEngineError("PREMORTEM_NO_TARGET", { reason: "Eligible run not found", runId: eligible.runId });
     }
-    documentBlock = "## GENERATED LETTER (sensitive — identifiers masked)\n\n" + maskPii(outputText);
+    // IDOR: the run MUST belong to the already-authorized case.
+    if (run.case_id !== input.caseId) throw new AuthzError("forbidden_case");
+
+    const outputText = await resolveMemoText(run.output_text, run.output_path);
+    runId = run.id;
+    formDefinitionId = run.form_definition_id ?? "";
+    const cfg = formDefinitionId ? await findGenerationConfig(formDefinitionId) : null;
+    configModel = cfg?.model ?? run.model ?? null;
+
+    // Load the source material (frozen resolved_inputs, or re-resolved config slugs).
+    try {
+      aiLetterSourceInputs = await loadPreMortemSourceInputs(
+        run.config_snapshot as ConfigSnapshot | null,
+        run.party_id,
+        input.caseId,
+        cfg,
+      );
+    } catch (err) {
+      logger.warn({ err, caseId: input.caseId, runId }, "ai-engine: pre-mortem source-material load failed (non-fatal)");
+    }
+
+    // Mask BEFORE truncating: a cut landing mid-token (SSN/A-number/passport) would
+    // break maskPii's contiguous match and leak raw PII to the provider. Truncating an
+    // already-masked string can only garble a mask token (cosmetic), never leak.
+    documentBlock =
+      "## GENERATED LETTER (sensitive — identifiers masked)\n\n" +
+      budgetTextHeadTail(maskPii(outputText), PREMORTEM_MEMO_BUDGET, "memo", input.caseId);
   } else {
     targetKind = "pdf_automation";
     responseId = target.responseId;
@@ -3967,19 +4050,32 @@ export async function assessPreMortemRisk(
     throw new AiEngineError("PREMORTEM_NO_GUIDE", { formDefinitionId });
   }
 
-  // --- Load case context (masked, bounded) so the validator can catch discordances
-  // against the source documents (e.g. DOB in the form vs the passport extraction). ---
+  // --- Build the case/source context (masked, bounded). For an ai_letter memo we
+  // inject the SOURCE material it was generated from (questionnaire answers +
+  // declaración + evidencias, with OCR) so the validator can flag contradictions /
+  // incoherence / vagueness against the record. For a pdf_automation form (or a memo
+  // with no resolvable source) we inject the case extractions (e.g. DOB in the form
+  // vs the passport extraction). ---
   let contextBlock = "(No case context available.)";
-  try {
-    const cases = (await import("@/backend/modules/cases")) as {
-      getCaseExtractions: (actor: Actor, caseId: string) => Promise<unknown[]>;
-    };
-    const extractions = await cases.getCaseExtractions(actor, input.caseId);
-    if (Array.isArray(extractions) && extractions.length > 0) {
-      contextBlock = maskPii(JSON.stringify(extractions)).slice(0, PREMORTEM_CONTEXT_BUDGET);
+  let sourceBlock = "";
+  if (aiLetterSourceInputs && (aiLetterSourceInputs.documents.length > 0 || aiLetterSourceInputs.forms.length > 0)) {
+    const src = buildCaseContextBlocks(aiLetterSourceInputs).join("\n");
+    if (src.trim()) {
+      sourceBlock = budgetTextHeadTail(src, PREMORTEM_SOURCE_BUDGET, "material fuente", input.caseId);
     }
-  } catch (err) {
-    logger.warn({ err, caseId: input.caseId }, "ai-engine: pre-mortem case-context load failed (non-fatal)");
+  }
+  if (!sourceBlock) {
+    try {
+      const cases = (await import("@/backend/modules/cases")) as {
+        getCaseExtractions: (actor: Actor, caseId: string) => Promise<unknown[]>;
+      };
+      const extractions = await cases.getCaseExtractions(actor, input.caseId);
+      if (Array.isArray(extractions) && extractions.length > 0) {
+        contextBlock = maskPii(JSON.stringify(extractions)).slice(0, PREMORTEM_CONTEXT_BUDGET);
+      }
+    } catch (err) {
+      logger.warn({ err, caseId: input.caseId }, "ai-engine: pre-mortem case-context load failed (non-fatal)");
+    }
   }
 
   // --- Build validator prompt ---
@@ -3999,13 +4095,17 @@ export async function assessPreMortemRisk(
     "Mantén los campos de enumeración (`severity`, `category`, `semaforo`, `verdict`) EXACTAMENTE con los códigos dados (no los traduzcas); `location` puede conservar el nombre oficial del campo/sección en inglés. " +
     "DEBES responder únicamente con JSON válido, sin texto antes ni después.";
 
+  const contextSection = sourceBlock
+    ? "\n\n---\n## MATERIAL FUENTE (lo que el cliente declaró — el documento debe ser fiel y sin contradicciones)\n\n" + sourceBlock
+    : "\n\n---\n## CASE CONTEXT (source data — PII masked; use to detect discrepancies)\n\n" + contextBlock;
+
   const userMessage =
     "## FILLING GUIDE (the rubric — validate strictly against it)\n\n" + guide.guide_markdown +
     "\n\n---\n" + documentBlock +
-    "\n\n---\n## CASE CONTEXT (source data — PII masked; use to detect discrepancies)\n\n" + contextBlock +
+    contextSection +
     "\n\n---\n## FINDING CATEGORIES (use ONLY these category codes)\n\n" + categoriesBlock +
     "\n\n---\n## TAREA\n\n" +
-    "Valida el documento contra la guía y el contexto del caso. Asigna un puntaje de calidad general (0-100), un semáforo y un veredicto sobre si sería aprobado. Enumera cada problema como un hallazgo. " +
+    "Valida el documento contra la guía y el material del caso. Si hay MATERIAL FUENTE, compáralo con el documento y señala toda contradicción de hechos (fechas, lugares, personas, nexo), incoherencia interna, y afirmación vaga o no soportada por la fuente. Asigna un puntaje de calidad general (0-100), un semáforo y un veredicto sobre si sería aprobado. Enumera cada problema como un hallazgo. " +
     "Recuerda: `summary`, `description` y `correction` van EN ESPAÑOL; `severity`/`category`/`semaforo`/`verdict` van con los códigos exactos.\n\n" +
     "Responde SOLO con este JSON (sin prosa, sin fences de markdown):\n" +
     "{\n" +
