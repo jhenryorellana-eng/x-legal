@@ -55,7 +55,7 @@ const HENRY_ADMIN = "00000000-0000-0000-0000-000000000001";
   // (c) Add items (I-589 first, then memo) — guard against duplicates on re-run.
   const { data: existing } = await sb.from("expediente_items").select("item_type, ref_id").eq("expediente_id", draft.id);
   const has = (t: string, r: string) => (existing ?? []).some((e: { item_type: string; ref_id: string | null }) => e.item_type === t && e.ref_id === r);
-  const addItem = (exp as { addItem: (a: unknown, i: Record<string, unknown>) => Promise<{ id: string }> }).addItem;
+  const addItem = (exp as unknown as { addItem: (a: unknown, i: Record<string, unknown>) => Promise<{ id: string }> }).addItem;
 
   if (!has("automated_form", I589_RESPONSE_ID)) {
     await addItem(actor, { expedienteId: draft.id, itemType: "automated_form", refId: I589_RESPONSE_ID, title: "Form I-589 — Application for Asylum", includeInToc: true });

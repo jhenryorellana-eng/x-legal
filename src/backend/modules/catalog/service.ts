@@ -776,6 +776,11 @@ export async function ensureCompanionQuestionnaire(
     filled_by: "client",
     is_active: true,
     is_per_party: (letter as { is_per_party?: boolean }).is_per_party ?? false,
+    // The client fills THIS questionnaire (not the letter), so its documents gate
+    // must mirror the parent ai_letter's — otherwise the companion escapes the
+    // "docs 100% first" gate while the letter is correctly blocked.
+    requires_documents_complete:
+      (letter as { requires_documents_complete?: boolean }).requires_documents_complete ?? true,
   } as Parameters<typeof repo.insertFormDefinition>[0]);
 
   // A questionnaire version holds the groups/questions but has NO PDF.

@@ -15,6 +15,7 @@ import {
   getDocumentsGateStatus,
   getCaseMilestones,
   getCaseTimeline,
+  getClientFormsForCase,
 } from "@/backend/modules/cases";
 import { getCaseAppointments } from "@/backend/modules/scheduling";
 import { fmtDateShort, fmtTime } from "@/frontend/lib/datetime";
@@ -81,6 +82,14 @@ export default async function CaminoPage({
       ? t("deliveryWeeks", { n: timeline.totalWeeks })
       : null;
 
+  // Client-facing forms still pending (not yet submitted) — drives the "Formularios"
+  // tile count. For asilo that's the I-589 + the Memorándum (whose fill target is the
+  // companion questionnaire). Same "submitted" definition as formularios-list.tsx.
+  const clientForms = await getClientFormsForCase(actor, caseId).catch(() => []);
+  const formsPending = clientForms.filter(
+    (f) => !(f.status === "submitted" || f.status === "approved" || f.status === "in_validation"),
+  ).length;
+
   return (
     <CaminoScreen
       caseId={caseId}
@@ -96,6 +105,7 @@ export default async function CaminoPage({
       docsDone={gate.done}
       docsTotal={gate.total}
       docsPending={ws.pendingDocuments}
+      formsPending={formsPending}
       docsComplete={docsComplete}
       firstVisit={onboarded === "1"}
       currentMilestoneLabel={currentMilestoneLabel}

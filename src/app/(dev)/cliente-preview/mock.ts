@@ -107,6 +107,7 @@ export const caminoMock: CaminoScreenProps = {
   progress: 46,
   docsDone: 3,
   docsTotal: 7,
+  formsPending: 2,
   docsPending: 3,
   docsComplete: false,
   firstVisit: false,

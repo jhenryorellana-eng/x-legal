@@ -81,6 +81,27 @@ export default async function HistoriaPage({
     return <EmptyCase title={tHist("placeholderTitle")} body={tHist("placeholderBody")} lexMood="atento" />;
   }
 
+  // Ola 3 — per-case questionnaire gates (mirror /formulario/[formId]/page.tsx).
+  // The Memorándum's fill target is a dynamic (hybrid) questionnaire; block entry
+  // until it's generated / its prerequisites (e.g. the submitted I-589) are met,
+  // instead of silently showing the base questions early.
+  if (dto.questionnaireGate === "generating") {
+    return <EmptyCase title={tEmpty("qGeneratingTitle")} body={tEmpty("qGeneratingBody")} lexMood="calma" />;
+  }
+  if (dto.questionnaireGate === "failed") {
+    return <EmptyCase title={tEmpty("qFailedTitle")} body={tEmpty("qFailedBody")} lexMood="atento" />;
+  }
+  if (dto.questionnaireGate === "pending_prereqs") {
+    return (
+      <EmptyCase
+        title={tEmpty("qPendingTitle")}
+        body={tEmpty("qPendingBody")}
+        lexMood="atento"
+        action={{ href: `/caso/${caseId}/formularios`, label: tEmpty("qPendingCta") }}
+      />
+    );
+  }
+
   if (!dto.versionId || dto.groups.length === 0) {
     return <EmptyCase title={tHist("placeholderTitle")} body={tHist("placeholderBody")} lexMood="calma" />;
   }

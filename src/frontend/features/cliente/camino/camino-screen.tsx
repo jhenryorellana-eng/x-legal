@@ -69,6 +69,8 @@ export interface CaminoScreenProps {
   docsDone: number;
   docsTotal: number;
   docsPending: number;
+  /** Number of client-facing forms not yet submitted (I-589 + Memorándum for asilo). */
+  formsPending: number;
   /** When true, all docs are done → next step is the form wizard. */
   docsComplete: boolean;
   /** First-visit (just accepted disclaimer) → fire the tutorial. */
@@ -101,6 +103,7 @@ export function CaminoScreen(props: CaminoScreenProps) {
     docsDone,
     docsTotal,
     docsPending,
+    formsPending,
     docsComplete,
     firstVisit,
     currentMilestoneLabel,
@@ -481,11 +484,11 @@ export function CaminoScreen(props: CaminoScreenProps) {
               .replace("{y}", String(docsTotal)),
           },
           {
-            href: `/caso/${caseId}/historia`,
+            href: `/caso/${caseId}/formularios`,
             icon: "form" as const,
             color: "var(--gold)",
             label: labels.forms,
-            value: labels.formsValue.replace("{n}", "1"),
+            value: labels.formsValue.replace("{n}", String(formsPending)),
           },
           ...(deliveryLabel
             ? [
