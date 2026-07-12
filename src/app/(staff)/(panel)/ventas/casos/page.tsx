@@ -20,6 +20,7 @@ import { getBoard, backfillCasesBoard } from "@/backend/modules/kanban";
 import {
   listCasesByOwner,
   getCaseBoardAlerts,
+  resolveDepartmentOwner,
 } from "@/backend/modules/cases";
 import type { AdminCaseListItem, CaseBoardAlert } from "@/backend/modules/cases";
 import { getNotesSummaryForCases } from "@/backend/modules/notes";
@@ -64,17 +65,22 @@ export default async function VentasCasosPage() {
   let alertsMap: Record<string, CaseBoardAlert> = {};
   let notesSummary = new Map<string, { count: number; latestBody: string | null; latestAt: string | null }>();
 
+  // Admin oversight: view/operate the sales employee's (Vanessa) board, not the
+  // admin's own empty one. Non-admins → null → their own board.
+  const dept = await resolveDepartmentOwner(actor, "sales");
+  const ownerId = dept?.userId ?? actor.userId;
+
   try {
-    myCases = await listCasesByOwner(actor);
+    myCases = await listCasesByOwner(actor, ownerId);
     const caseIds = myCases.map((c) => c.id);
 
     try {
-      await backfillCasesBoard(actor, caseIds);
+      await backfillCasesBoard(actor, caseIds, ownerId);
     } catch (err) {
       console.error("[/ventas/casos] backfillCasesBoard failed:", err);
     }
 
-    board = await getBoard(actor, { kind: "cases" });
+    board = await getBoard(actor, { kind: "cases", ownerStaffId: dept?.userId });
 
     try {
       alertsMap = await getCaseBoardAlerts(actor, caseIds);
@@ -247,6 +253,7 @@ export default async function VentasCasosPage() {
       cards={cardVMs}
       totalDocsToReview={totalDocsToReview}
       caseBasePath="/ventas/clientes"
+      viewingAs={dept?.displayName ?? null}
       strings={strings}
       notesStrings={buildNotesStrings(locale === "en" ? "en" : "es")}
       locale={locale === "en" ? "en" : "es"}

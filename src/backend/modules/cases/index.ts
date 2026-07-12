@@ -59,6 +59,7 @@ export {
   getCaseBoardAlerts,
   // Case ownership stage — responsable / etapa (eje propio)
   getCaseStageInfo,
+  resolveDepartmentOwner,
   transferCase,
   handoffCaseFromLegal,
   assignCaseOwner,

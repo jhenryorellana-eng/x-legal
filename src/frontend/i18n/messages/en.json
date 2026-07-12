@@ -771,6 +771,8 @@
         "salesCases": "My cases",
         "financeCases": "My cases",
         "legalCases": "Board",
+        "legalBoard": "Legal board",
+        "collections": "Collections",
         "legalReview": "My cases"
       }
     },

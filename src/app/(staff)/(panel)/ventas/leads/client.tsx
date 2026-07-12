@@ -41,6 +41,7 @@ export interface LeadsClientProps {
   columns: LeadColumnVM[];
   cards: LeadCardVM[];
   strings: LeadsStrings;
+  viewingAs?: string | null;
   notesStrings: LeadsNotesStrings;
   noteActions: LeadsNoteActions;
   newLeadStrings: NuevoLeadStrings;
@@ -86,6 +87,7 @@ export function LeadsClient({
   columns,
   cards,
   strings,
+  viewingAs,
   notesStrings,
   noteActions,
   newLeadStrings,
@@ -138,6 +140,7 @@ export function LeadsClient({
         columns={columns}
         cards={cards}
         strings={strings}
+        viewingAs={viewingAs}
         notesStrings={notesStrings}
         locale={locale}
         columnStrings={columnStrings}

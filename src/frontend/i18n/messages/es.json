@@ -771,6 +771,8 @@
         "salesCases": "Mis casos",
         "financeCases": "Mis casos",
         "legalCases": "Tablero",
+        "legalBoard": "Tablero legal",
+        "collections": "Cobranza",
         "legalReview": "Mis casos"
       }
     },

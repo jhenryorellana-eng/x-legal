@@ -19,7 +19,7 @@ import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import { getActor, can } from "@/backend/modules/identity";
 import { getBoard } from "@/backend/modules/kanban";
-import { listCasesAdmin } from "@/backend/modules/cases";
+import { listCasesAdmin, resolveDepartmentOwner } from "@/backend/modules/cases";
 import type { AdminCaseListItem } from "@/backend/modules/cases";
 import { getNotesSummaryForCases } from "@/backend/modules/notes";
 import {
@@ -124,8 +124,11 @@ export default async function FinanzasPage() {
   const todayStr = nowDate.toISOString().split("T")[0];
   const monthStr = `${nowDate.getFullYear()}-${String(nowDate.getMonth() + 1).padStart(2, "0")}`;
 
+  // Admin oversight: view/operate Andrium's (finance) collections board.
+  const dept = await resolveDepartmentOwner(actor, "operations");
+
   try {
-    board = await getBoard(actor, { kind: "collections" });
+    board = await getBoard(actor, { kind: "collections", ownerStaffId: dept?.userId });
 
     // Hydration reads (best-effort; each degrades independently).
     const from = new Date(nowDate.getFullYear() - 1, nowDate.getMonth(), nowDate.getDate())
@@ -383,6 +386,7 @@ export default async function FinanzasPage() {
       cards={cardVMs}
       kpi={kpi}
       strings={strings}
+      viewingAs={dept?.displayName ?? null}
       notesStrings={buildNotesStrings(locale === "en" ? "en" : "es")}
       locale={locale === "en" ? "en" : "es"}
       actions={{

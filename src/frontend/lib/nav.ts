@@ -65,6 +65,8 @@ export const STAFF_NAV: NavGroup[] = [
     labelKey: "operations",
     items: [
       { labelKey: "cases", href: "/admin/casos", icon: "briefcase", module: "cases", badge: "cases" },
+      // Diana's kanban board (admin views/operates it — resolved to the paralegal).
+      { labelKey: "legalBoard", href: "/legal", icon: "grid", module: "cases" },
       { labelKey: "calendar", href: "/ventas/citas", icon: "calendar", module: "calendar" },
       { labelKey: "expedientes", href: "/legal/expediente", icon: "doc", module: "expedientes" },
       { labelKey: "validations", href: "/legal/validaciones", icon: "shield", module: "validations" },
@@ -89,6 +91,8 @@ export const STAFF_NAV: NavGroup[] = [
     labelKey: "finance",
     items: [
       { labelKey: "financeOverview", href: "/finanzas/resumen", icon: "bolt", module: "accounting" },
+      // Andrium's collections board (admin views/operates it — resolved to finance).
+      { labelKey: "collections", href: "/finanzas", icon: "grid", module: "collections" },
       { labelKey: "financeCases", href: "/finanzas/casos", icon: "briefcase", module: "cases" },
       { labelKey: "payments", href: "/finanzas/pagos", icon: "card", module: "billing", badge: "pagos" },
       { labelKey: "accounting", href: "/finanzas/contabilidad", icon: "wallet", module: "accounting" },

@@ -1451,9 +1451,13 @@ export async function reorderTasks(
 export async function listMyTasks(
   actor: Actor,
   options?: { includeDone?: boolean },
+  ownerId?: string,
 ): Promise<TaskRow[]> {
   if (actor.kind !== "staff") throw new AuthzError("wrong_kind");
-  return repo.listTasks(actor.userId, options?.includeDone ?? false);
+  // Admins may read another employee's Mi día tasks (read-only oversight); the
+  // kanban repo uses the service client so RLS is not the gate here.
+  const targetOwner = actor.role === "admin" && ownerId ? ownerId : actor.userId;
+  return repo.listTasks(targetOwner, options?.includeDone ?? false);
 }
 
 // ---------------------------------------------------------------------------
@@ -2223,16 +2227,20 @@ export async function onExpedientePrinted(payload: {
 export async function backfillCasesBoard(
   actor: Actor,
   caseIds: string[],
+  ownerId?: string,
 ): Promise<void> {
   can(actor, "cases", "view");
 
   if (caseIds.length === 0) return;
 
-  // Find or create the actor's cases board
-  let board = await repo.findBoard(actor.userId, "cases");
+  // Admins backfill the employee's board (department oversight); others their own.
+  const targetOwner = actor.role === "admin" && ownerId ? ownerId : actor.userId;
+
+  // Find or create the target owner's cases board
+  let board = await repo.findBoard(targetOwner, "cases");
   if (!board) {
     board = await repo.createBoardWithSeed(
-      actor.userId,
+      targetOwner,
       actor.orgId,
       "cases",
       seedColumnsFor("cases"),
@@ -2268,6 +2276,6 @@ export async function backfillCasesBoard(
     });
     nextPos += 1;
 
-    logger.info({ caseId, ownerId: actor.userId }, "kanban: backfillCasesBoard — card inserted");
+    logger.info({ caseId, ownerId: targetOwner }, "kanban: backfillCasesBoard — card inserted");
   }
 }

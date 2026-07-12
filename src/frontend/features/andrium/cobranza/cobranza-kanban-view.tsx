@@ -238,6 +238,8 @@ export interface CobranzaKanbanViewProps {
   cards: CollectionCardVM[];
   kpi: CollectionKpiVM | null;
   strings: CobranzaKanbanStrings;
+  /** When an admin views an employee's board, their name (for the banner). */
+  viewingAs?: string | null;
   /** Strings for the notes modal (shared with the case tab). */
   notesStrings: NotesStrings;
   locale: "es" | "en";
@@ -283,6 +285,7 @@ export function CobranzaKanbanView({
   cards: initialCards,
   kpi,
   strings,
+  viewingAs,
   notesStrings,
   locale,
   actions,
@@ -492,6 +495,27 @@ export function CobranzaKanbanView({
           {strings.manageColumns}
         </button>
       </div>
+
+      {viewingAs && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginBottom: 14,
+            padding: "9px 14px",
+            borderRadius: 12,
+            background: "color-mix(in srgb, var(--accent) 10%, transparent)",
+            border: "1px solid color-mix(in srgb, var(--accent) 28%, transparent)",
+            color: "var(--accent)",
+            fontSize: 13,
+            fontWeight: 700,
+          }}
+        >
+          <MSym name="visibility" size={17} />
+          {locale === "en" ? `Viewing ${viewingAs}'s board` : `Viendo el tablero de ${viewingAs}`}
+        </div>
+      )}
 
       {/* ── KPI Strip (DOC-55 §0.5) ── */}
       {kpi && (

@@ -12,6 +12,7 @@ import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import { getActor, getCurrentUserLocation } from "@/backend/modules/identity";
 import { getBoard, listLeads, listLeadCategories } from "@/backend/modules/kanban";
+import { resolveDepartmentOwner } from "@/backend/modules/cases";
 import { getNotesSummaryForLeads } from "@/backend/modules/notes";
 import { buildNotesStrings } from "@/frontend/features/shared-case/notes";
 import { LeadsClient } from "./client";
@@ -63,7 +64,10 @@ export default async function VentasLeadsPage() {
   const tnl = await getTranslations("staff.ventas.newLead");
   const tmc = await getTranslations("staff.ventas.manageCats");
 
-  const board = await getBoard(actor, { kind: "leads" }).catch(() => null);
+  // Admin oversight: view/operate Vanessa's (sales) leads board, not the admin's
+  // own empty one. Leads are org-scoped so only the board owner needs resolving.
+  const dept = await resolveDepartmentOwner(actor, "sales");
+  const board = await getBoard(actor, { kind: "leads", ownerStaffId: dept?.userId }).catch(() => null);
   const leadsPage = await listLeads(actor, {}).catch(() => null);
   const leadsById = new Map((leadsPage?.items ?? []).map((l) => [l.id, l]));
 
@@ -261,6 +265,7 @@ export default async function VentasLeadsPage() {
       columns={columns}
       cards={cards}
       strings={strings}
+      viewingAs={dept?.displayName ?? null}
       notesStrings={buildNotesStrings(locale === "en" ? "en" : "es")}
       noteActions={{
         addNote: addLeadNoteAction,

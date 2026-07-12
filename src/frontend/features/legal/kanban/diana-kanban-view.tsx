@@ -191,6 +191,8 @@ export interface DianaKanbanViewProps {
    *  (not a function) so it stays serializable across the server→client boundary.
    *  Defaults to the legal workspace. */
   caseBasePath?: string;
+  /** When an admin is viewing an employee's board, their name (for the banner). */
+  viewingAs?: string | null;
   strings: DianaKanbanStrings;
   /** Strings for the notes modal (shared with the case tab). */
   notesStrings: NotesStrings;
@@ -242,6 +244,7 @@ export function DianaKanbanView({
   totalDocsToReview,
   reviewQueueHref,
   caseBasePath = "/legal/caso",
+  viewingAs,
   strings,
   notesStrings,
   locale,
@@ -355,6 +358,30 @@ export function DianaKanbanView({
           {strings.newColumn}
         </button>
       </div>
+
+      {/* ── "Viewing as" banner (admin sees an employee's board) ── */}
+      {viewingAs && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginBottom: 14,
+            padding: "9px 14px",
+            borderRadius: 12,
+            background: "color-mix(in srgb, var(--accent) 10%, transparent)",
+            border: "1px solid color-mix(in srgb, var(--accent) 28%, transparent)",
+            color: "var(--accent)",
+            fontSize: 13,
+            fontWeight: 700,
+          }}
+        >
+          <MSym name="visibility" size={17} />
+          {locale === "en"
+            ? `Viewing ${viewingAs}'s board`
+            : `Viendo el tablero de ${viewingAs}`}
+        </div>
+      )}
 
       {/* ── Banner "Por revisar" (DOC-54 §1.6) ── */}
       {totalDocsToReview > 0 && (

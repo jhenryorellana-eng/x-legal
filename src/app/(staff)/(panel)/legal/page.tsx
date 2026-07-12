@@ -20,6 +20,7 @@ import { getBoard, backfillCasesBoard } from "@/backend/modules/kanban";
 import {
   listCasesByOwner,
   getCaseBoardAlerts,
+  resolveDepartmentOwner,
 } from "@/backend/modules/cases";
 import type { AdminCaseListItem, CaseBoardAlert } from "@/backend/modules/cases";
 import { getNotesSummaryForCases } from "@/backend/modules/notes";
@@ -69,20 +70,25 @@ export default async function LegalPage() {
   let alertsMap: Record<string, CaseBoardAlert> = {};
   let notesSummary = new Map<string, { count: number; latestBody: string | null; latestAt: string | null }>();
 
+  // Admin oversight: view/operate the paralegal's (Diana) board, not the admin's
+  // own empty one. Non-admins → null → their own board.
+  const dept = await resolveDepartmentOwner(actor, "legal");
+  const ownerId = dept?.userId ?? actor.userId;
+
   try {
-    myCases = await listCasesByOwner(actor);
+    myCases = await listCasesByOwner(actor, ownerId);
     const caseIds = myCases.map((c) => c.id);
 
     // Backfill is best-effort: a failure must never blank the whole board.
     try {
-      await backfillCasesBoard(actor, caseIds);
+      await backfillCasesBoard(actor, caseIds, ownerId);
     } catch (err) {
       // Best-effort: log to server stdout (the platform logger isn't importable
       // from the app layer per eslint-boundaries).
       console.error("[/legal] backfillCasesBoard failed:", err);
     }
 
-    board = await getBoard(actor, { kind: "cases" });
+    board = await getBoard(actor, { kind: "cases", ownerStaffId: dept?.userId });
 
     // Alerts are an enrichment: degrade to no-alerts on failure.
     try {
@@ -261,6 +267,7 @@ export default async function LegalPage() {
       cards={cardVMs}
       totalDocsToReview={totalDocsToReview}
       reviewQueueHref="/legal/por-revisar"
+      viewingAs={dept?.displayName ?? null}
       strings={strings}
       notesStrings={buildNotesStrings(locale === "en" ? "en" : "es")}
       locale={locale === "en" ? "en" : "es"}

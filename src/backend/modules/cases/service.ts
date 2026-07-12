@@ -5579,11 +5579,15 @@ export async function getCaseExtractions(
  */
 export async function listCasesByOwner(
   actor: Actor,
+  ownerId?: string,
 ): Promise<AdminCaseListItem[]> {
   can(actor, "cases", "view");
+  // Admins may view another employee's board (department oversight); everyone
+  // else is scoped to their own cases.
+  const targetOwner = actor.role === "admin" && ownerId ? ownerId : actor.userId;
   const page = await listCases({
     orgId: actor.orgId,
-    ownerId: actor.userId,
+    ownerId: targetOwner,
   });
 
   const items = await Promise.all(
@@ -5775,6 +5779,25 @@ async function eligibleOwnersForStage(orgId: string, stage: CaseStage): Promise<
   if (stage === "done") return [];
   const staff = await listStaffWithModuleEdit(orgId, STAGE_MODULE[stage]);
   return staff.map((s) => ({ userId: s.userId, displayName: s.displayName, role: s.role }));
+}
+
+/**
+ * Department owner for a section — lets an ADMIN view/operate the board of the
+ * section's employee (Ventas→`sales`→Vanessa, Operación→`legal`→Diana,
+ * Finanzas→`operations`→Andrium) instead of their own (empty) board.
+ *
+ * Non-admin → null (the caller uses `actor.userId`, i.e. their own board).
+ * Admin → the section's employee (the firm runs one active employee per role; if
+ * several are eligible, the first is returned). Null when nobody is eligible.
+ */
+export async function resolveDepartmentOwner(
+  actor: Actor,
+  stage: CaseStage,
+): Promise<{ userId: string; displayName: string } | null> {
+  if (actor.role !== "admin") return null;
+  const owners = await eligibleOwnersForStage(actor.orgId, stage);
+  const owner = owners[0];
+  return owner ? { userId: owner.userId, displayName: owner.displayName } : null;
 }
 
 /**

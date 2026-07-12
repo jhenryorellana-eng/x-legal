@@ -129,6 +129,8 @@ export interface LeadsViewProps {
   columns: LeadColumnVM[];
   cards: LeadCardVM[];
   strings: LeadsStrings;
+  /** When an admin views an employee's board, their name (for the banner). */
+  viewingAs?: string | null;
   /** Strings for the notes modal (shared with the case tab). */
   notesStrings: NotesStrings;
   locale: "es" | "en";
@@ -148,6 +150,7 @@ export function LeadsView({
   columns,
   cards: initialCards,
   strings,
+  viewingAs,
   notesStrings,
   locale,
   columnStrings,
@@ -309,6 +312,27 @@ export function LeadsView({
           </button>
         </div>
       </div>
+
+      {viewingAs && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginBottom: 14,
+            padding: "9px 14px",
+            borderRadius: 12,
+            background: "color-mix(in srgb, var(--accent) 10%, transparent)",
+            border: "1px solid color-mix(in srgb, var(--accent) 28%, transparent)",
+            color: "var(--accent)",
+            fontSize: 13,
+            fontWeight: 700,
+          }}
+        >
+          <MSym name="visibility" size={17} />
+          {locale === "en" ? `Viewing ${viewingAs}'s board` : `Viendo el tablero de ${viewingAs}`}
+        </div>
+      )}
 
       <LexBubble dismissKey="leads-tip" orb={30} enabled={strings.lexEnabled} html={strings.lexTipHtml}
         actions={[{ label: strings.lexOk, icon: "check", ghost: true, onClick: () => {} }]} />
