@@ -16,6 +16,7 @@ import type { StatusKind } from "@/frontend/components/brand/status-pill";
  */
 import type { CaseTabId, StaffRole as StaffRoleVM } from "@/shared/constants/case-tabs";
 export type { CaseTabId, StaffRoleVM };
+import type { NoteView, NoteVisibility } from "./notes";
 
 export interface CaseHeaderVM {
   caseId: string;
@@ -394,6 +395,8 @@ export interface CaseWorkspaceVM {
   priorPhases?: PriorPhaseGroupVM[];
   /** Pre-Mortem quality validations. `enabled` gates the tab; targets = validable docs; reports = history. */
   preMortem?: PreMortemVM;
+  /** Notes for the "Notas" tab (case notes + originating-lead notes, RLS-filtered). */
+  notes?: NoteView[];
 }
 
 /** Client-facing view of a document translation (status + result). */
@@ -405,6 +408,14 @@ export interface DocumentTranslationView {
 }
 
 export interface CaseDetailActions {
+  /** Add a note to the case with a visibility (general/team/personal). Optional. */
+  addNote?: (input: {
+    caseId: string;
+    body: string;
+    visibility: NoteVisibility;
+  }) => Promise<{ ok: boolean; note?: NoteView; error?: { code: string } }>;
+  /** Delete a note (author or admin). Optional. */
+  deleteNote?: (input: { noteId: string }) => Promise<{ ok: boolean; error?: { code: string } }>;
   /** Approve / reject a document (combined reviewDocument verdict). */
   reviewDocument: (input: {
     documentId: string;

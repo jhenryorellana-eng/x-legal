@@ -95,6 +95,8 @@ function card(o: Partial<LeadCardVM> & { id: string; phone: string; columnId: st
     uncontacted: o.uncontacted ?? false,
     ageLabel: o.ageLabel ?? "hace 1 h",
     lostReason: o.lostReason ?? null,
+    notesCount: o.notesCount ?? 0,
+    latestNote: o.latestNote ?? null,
   };
 }
 

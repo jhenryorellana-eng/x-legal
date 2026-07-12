@@ -21,6 +21,7 @@ import {
   getPriorPhaseMaterials,
   CaseError,
 } from "@/backend/modules/cases";
+import { getCaseNotes } from "@/backend/modules/notes";
 import { getAccountStatement } from "@/backend/modules/billing";
 import { getCaseTabAccess } from "@/backend/modules/case-tabs";
 import { getContractForCase } from "@/backend/modules/contracts";
@@ -71,6 +72,8 @@ import {
   assignCaseOwnerAction,
   setDocumentTranslationNotRequiredAction,
   runPreMortemAction,
+  addCaseNoteAction,
+  deleteNoteAction,
 } from "../actions";
 import { getFormResponsePdfUrlAction, generateFilledPdfAction } from "../form-actions";
 import { getGenerationOutputUrlAction, startLetterGenerationAction, getRunStatusAction } from "../generation-actions";
@@ -102,7 +105,7 @@ export default async function AdminCasoDetailPage({
   }
 
   // Parallel reads: documents, payment plan, contract, recent timeline.
-  const [documents, statement, contract, timeline, forms, runs, validationRows, expedienteRows, matrix, rutaRaw, priorPhasesRaw, preMortemEnabled, preMortemRows, preMortemTargetsRaw] = await Promise.all([
+  const [documents, statement, contract, timeline, forms, runs, validationRows, expedienteRows, matrix, rutaRaw, priorPhasesRaw, preMortemEnabled, preMortemRows, preMortemTargetsRaw, notes] = await Promise.all([
     getCaseDocuments(actor, caseId).catch(() => []),
     getAccountStatement(actor, caseId).catch(() => null),
     getContractForCase(actor, caseId).catch(() => null),
@@ -121,6 +124,7 @@ export default async function AdminCasoDetailPage({
     isPreMortemEnabledForCase(actor, caseId).catch(() => false),
     getPreMortemAssessmentsForCase(actor, caseId).catch(() => []),
     listValidableTargetsForCase(actor, caseId).catch(() => []),
+    getCaseNotes(actor, caseId).catch(() => []),
   ]);
 
   // Responsable / etapa (eje propio) — staff-only; degrade to null on failure.
@@ -312,12 +316,15 @@ export default async function AdminCasoDetailPage({
     expedientes,
     priorPhases,
     preMortem,
+    notes,
   };
 
   return (
     <SharedCaseView
       vm={vm}
       actions={{
+        addNote: addCaseNoteAction,
+        deleteNote: deleteNoteAction,
         reviewDocument: reviewDocumentAction,
         getFilledPdfUrl: getFormResponsePdfUrlAction,
         generateFilledPdf: generateFilledPdfAction,

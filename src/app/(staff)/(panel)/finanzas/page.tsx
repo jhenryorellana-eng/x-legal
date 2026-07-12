@@ -21,6 +21,7 @@ import { getActor, can } from "@/backend/modules/identity";
 import { getBoard } from "@/backend/modules/kanban";
 import { listCasesAdmin } from "@/backend/modules/cases";
 import type { AdminCaseListItem } from "@/backend/modules/cases";
+import { getNotesSummaryForCases } from "@/backend/modules/notes";
 import {
   getCollectionMetrics,
   listDueCalendar,
@@ -37,15 +38,20 @@ import type {
   CobranzaKanbanStrings,
 } from "@/frontend/features/andrium/cobranza/cobranza-kanban-view";
 import { CobranzaKanbanView } from "@/frontend/features/andrium/cobranza/cobranza-kanban-view";
+import { buildNotesStrings } from "@/frontend/features/shared-case/notes";
 import {
   moveKanbanCardAction,
-  updateKanbanCardNoteAction,
   createKanbanColumnAction,
   updateKanbanColumnAction,
   reorderKanbanColumnsAction,
   deleteKanbanColumnAction,
   remindInstallmentAction,
 } from "./actions";
+import {
+  addCaseNoteAction,
+  listCaseNotesAction,
+  deleteNoteAction,
+} from "../admin/casos/actions";
 
 export const dynamic = "force-dynamic";
 
@@ -195,6 +201,17 @@ export default async function FinanzasPage() {
   // ── Cards VM ─────────────────────────────────────────────────────────────
   const now = new Date();
 
+  // Notes summary (count + latest) per case for the card badge.
+  const boardCaseIds = (board?.cards ?? [])
+    .filter((c) => c.ref_type === "case")
+    .map((c) => c.ref_id);
+  let notesSummary = new Map<string, { count: number; latestBody: string | null; latestAt: string | null }>();
+  try {
+    notesSummary = await getNotesSummaryForCases(actor, boardCaseIds);
+  } catch (err) {
+    console.error("[/finanzas] getNotesSummaryForCases failed:", err);
+  }
+
   const cardVMs: CollectionCardVM[] = (board?.cards ?? [])
     .filter((card) => card.ref_type === "case")
     .map((card) => {
@@ -260,7 +277,8 @@ export default async function FinanzasPage() {
         daysLate,
         attemptNo,
         statusChip,
-        pinnedNote: card.pinned_note ?? null,
+        notesCount: notesSummary.get(card.ref_id)?.count ?? 0,
+        latestNote: notesSummary.get(card.ref_id)?.latestBody ?? null,
         ageLabel,
         ageTier,
         reminderInstallmentId,
@@ -311,7 +329,6 @@ export default async function FinanzasPage() {
     newColumn: t("newColumn"),
     emptyCol: t("emptyCol"),
     moveError: t("moveError"),
-    noteError: t("noteError"),
     orderError: t("orderError"),
     deleteError: t("deleteError"),
     colModalCreateTitle: t("colModalCreateTitle"),
@@ -333,7 +350,8 @@ export default async function FinanzasPage() {
     actionCollect: t("actionCollect"),
     actionRemind: t("actionRemind"),
     actionView: t("actionView"),
-    notePlaceholder: t("notePlaceholder"),
+    notesLabel: t("notesLabel"),
+    addNoteLabel: t("addNoteLabel"),
     chipPending: t("chipPending"),
     chipDone: t("chipDone"),
     emptyTitle: t("emptyTitle"),
@@ -365,9 +383,13 @@ export default async function FinanzasPage() {
       cards={cardVMs}
       kpi={kpi}
       strings={strings}
+      notesStrings={buildNotesStrings(locale === "en" ? "en" : "es")}
+      locale={locale === "en" ? "en" : "es"}
       actions={{
         moveCard: moveKanbanCardAction,
-        updateNote: updateKanbanCardNoteAction,
+        addNote: addCaseNoteAction,
+        listNotes: listCaseNotesAction,
+        deleteNote: deleteNoteAction,
         createColumn: createKanbanColumnAction,
         updateColumn: updateKanbanColumnAction,
         reorderColumns: reorderKanbanColumnsAction,

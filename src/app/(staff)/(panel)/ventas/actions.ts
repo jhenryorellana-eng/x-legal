@@ -65,6 +65,14 @@ import {
   SchedulingError,
 } from "@/backend/modules/scheduling";
 import { searchBookableCases } from "@/backend/modules/cases";
+import {
+  addLeadNote,
+  editNote,
+  removeNote,
+  getLeadNotes,
+  NotesError,
+  type NoteVM,
+} from "@/backend/modules/notes";
 import type { I18nText } from "@/shared/i18n";
 
 type Ok<T> = { ok: true } & T;
@@ -72,7 +80,7 @@ type Err = { ok: false; error: { code: string } };
 
 function mapErr(err: unknown): Err {
   if (err instanceof AuthzError) return { ok: false, error: { code: err.reason } };
-  if (err instanceof KanbanError || err instanceof SchedulingError) {
+  if (err instanceof KanbanError || err instanceof SchedulingError || err instanceof NotesError) {
     return { ok: false, error: { code: err.code } };
   }
   // H-5: log only the message, never the raw Error object (may carry PII in stack/metadata)
@@ -751,4 +759,60 @@ export async function setLocaleAction(locale: "es" | "en"): Promise<{ ok: boolea
   const jar = await cookies();
   jar.set("ulp-locale", locale, { path: "/", maxAge: 60 * 60 * 24 * 365 });
   return { ok: true };
+}
+
+// --------------------------------------------------------------------------
+// Notes (lead) — leads board note button (API: notes module)
+// --------------------------------------------------------------------------
+
+export async function addLeadNoteAction(input: {
+  leadId: string;
+  body: string;
+  visibility: string;
+}): Promise<Ok<{ note: NoteVM }> | Err> {
+  try {
+    const actor = await requireActor();
+    const note = await addLeadNote(actor, input);
+    return { ok: true, note };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+export async function listLeadNotesAction(input: {
+  leadId: string;
+}): Promise<Ok<{ notes: NoteVM[] }> | Err> {
+  try {
+    const actor = await requireActor();
+    const notes = await getLeadNotes(actor, input.leadId);
+    return { ok: true, notes };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+export async function editNoteAction(input: {
+  noteId: string;
+  body?: string;
+  visibility?: string;
+}): Promise<Ok<{ note: NoteVM }> | Err> {
+  try {
+    const actor = await requireActor();
+    const note = await editNote(actor, input);
+    return { ok: true, note };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+export async function deleteNoteAction(input: {
+  noteId: string;
+}): Promise<{ ok: true } | Err> {
+  try {
+    const actor = await requireActor();
+    await removeNote(actor, input);
+    return { ok: true };
+  } catch (err) {
+    return mapErr(err);
+  }
 }

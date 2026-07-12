@@ -20,6 +20,7 @@ import {
   LexDock,
   type CaseRowVM,
 } from "@/frontend/features/vanessa";
+import { buildNotesStrings } from "@/frontend/features/shared-case/notes";
 import {
   MOCK_KPIS,
   MOCK_ATTEND,
@@ -131,6 +132,8 @@ function LeadsPreview() {
         whatsapp: "WhatsApp",
         agendar: "Agendar cita",
         createCaseTooltip: "Crear caso (genera el contrato)",
+        notesLabel: "Notas",
+        addNoteLabel: "Agregar nota",
         lostTitle: "Marcar como perdido",
         lostBody: "Indica el motivo. La tarjeta lo mostrará como chip rojo.",
         lostReasonLabel: "Motivo",
@@ -167,7 +170,9 @@ function LeadsPreview() {
         colMenuMoveRight: "Mover a la derecha",
         colMenuAria: "Opciones columna {title}",
       }}
-      actions={{ moveCard: ok }}
+      notesStrings={buildNotesStrings("es")}
+      locale="es"
+      actions={{ moveCard: ok, addNote: ok, listNotes: ok, deleteNote: ok }}
       columnActions={{ createColumn: ok, updateColumn: ok, reorderColumns: ok, deleteColumn: ok }}
       onNewLead={() => {}}
       onNewCase={() => {}}

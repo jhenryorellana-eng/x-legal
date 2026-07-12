@@ -19,7 +19,6 @@
 import { requireActor, AuthzError } from "@/backend/modules/identity";
 import {
   moveCard,
-  updateCardNote,
   createColumn,
   updateColumn,
   reorderColumns,
@@ -61,22 +60,6 @@ export async function moveKanbanCardAction(input: {
   }
 }
 
-// ---------------------------------------------------------------------------
-// API-KAN-07 — update pinned note on a card
-// ---------------------------------------------------------------------------
-
-export async function updateKanbanCardNoteAction(input: {
-  cardId: string;
-  note: string | null;
-}): Promise<{ ok: boolean; error?: { code: string } }> {
-  try {
-    const actor = await requireActor();
-    await updateCardNote(actor, { cardId: input.cardId, pinnedNote: input.note });
-    return { ok: true };
-  } catch (err) {
-    return mapErr(err);
-  }
-}
 
 // ---------------------------------------------------------------------------
 // API-KAN-03 — create a new column

@@ -80,6 +80,7 @@ const TAB_META: Record<CaseTabId, TabMeta> = {
   formularios: { label: (tb, isAdmin) => (isAdmin ? tb.formularios : tb.informacion) },
   generaciones: { label: (tb) => tb.generaciones },
   traspaso: { label: (tb) => tb.traspaso },
+  notas: { label: (tb) => tb.notas },
   historial: { label: (tb) => tb.historial },
   pagos: { label: (tb) => tb.pagos },
   expediente: { label: (tb) => tb.expediente },

@@ -406,49 +406,6 @@ export async function moveCard(
 }
 
 // ---------------------------------------------------------------------------
-// API-KAN-07: updateCardNote
-// ---------------------------------------------------------------------------
-
-/**
- * @API-KAN-07
- */
-export async function updateCardNote(
-  actor: Actor,
-  input: { cardId: string; pinnedNote: string | null },
-): Promise<CardRow> {
-  const card = await repo.findCard(input.cardId);
-  if (!card) throw new KanbanError("CARD_NOT_FOUND");
-
-  const fromColumn = await repo.findColumn(card.column_id);
-  if (!fromColumn) throw new KanbanError("COLUMN_NOT_FOUND");
-
-  const client = createServiceClient();
-  const { data: boardRow, error: boardErr } = await client
-    .from("kanban_boards")
-    .select("*")
-    .eq("id", fromColumn.board_id)
-    .maybeSingle();
-  if (boardErr || !boardRow) throw new KanbanError("BOARD_NOT_FOUND");
-
-  can(actor, moduleKeyForKind(boardRow.board_kind as BoardKind), "edit");
-  requireBoardOwnerOrAdmin(actor, boardRow);
-
-  const updated = await repo.updateCard(input.cardId, {
-    pinned_note: input.pinnedNote,
-  });
-
-  await writeAudit(
-    actor,
-    "kanban.card.note_updated",
-    "kanban_cards",
-    input.cardId,
-    { after: { pinned_note: input.pinnedNote } },
-  );
-
-  return updated;
-}
-
-// ---------------------------------------------------------------------------
 // API-KAN-03: createColumn
 // ---------------------------------------------------------------------------
 

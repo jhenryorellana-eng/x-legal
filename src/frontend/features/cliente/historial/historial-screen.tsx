@@ -12,7 +12,7 @@ import { Icon, type IconName } from "@/frontend/components/brand/icon";
  * server-side in the user's timezone; the client just filters by category.
  */
 
-export type HistorialCategory = "todo" | "doc" | "cita" | "form" | "pago" | "msg";
+export type HistorialCategory = "todo" | "doc" | "cita" | "form" | "pago" | "msg" | "nota";
 
 export interface HistorialEvent {
   id: string;
@@ -40,6 +40,7 @@ export interface HistorialLabels {
   filterForms: string;
   filterPayments: string;
   filterMessages: string;
+  filterNotes: string;
   you: string;
   team: string;
   emptyFilter: string;
@@ -63,6 +64,7 @@ export function HistorialScreen({
     { id: "form", label: labels.filterForms },
     { id: "pago", label: labels.filterPayments },
     { id: "msg", label: labels.filterMessages },
+    { id: "nota", label: labels.filterNotes },
   ];
 
   const filtered = days

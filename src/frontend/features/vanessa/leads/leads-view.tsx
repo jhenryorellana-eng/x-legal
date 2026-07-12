@@ -25,6 +25,7 @@ import { Chip, sourceMeta } from "../shared/ui";
 import { LexBubble } from "../shared/lex";
 import { useToast } from "../shared/toast-bridge";
 import { Modal } from "@/frontend/components/desktop";
+import { NotesModal, type NoteView, type NoteVisibility, type NotesStrings } from "@/frontend/features/shared-case/notes";
 import {
   useKanbanColumns,
   ColumnMenu,
@@ -52,6 +53,10 @@ export interface LeadCardVM {
   uncontacted: boolean;
   ageLabel: string;
   lostReason: string | null;
+  /** notes visible to the actor for this lead (badge count). */
+  notesCount: number;
+  /** most recent note body (one-line preview), or null. */
+  latestNote: string | null;
 }
 
 /** One column of the leads board. Uses the shared kanban column VM. */
@@ -74,6 +79,8 @@ export interface LeadsStrings {
   whatsapp: string;
   agendar: string;
   createCaseTooltip: string;
+  notesLabel: string;
+  addNoteLabel: string;
   lostTitle: string;
   lostBody: string;
   lostReasonLabel: string;
@@ -101,6 +108,20 @@ export interface LeadsActions {
     leadId: string;
     channel: "call" | "whatsapp";
   }) => Promise<{ ok: boolean; error?: { code: string } }>;
+
+  addNote: (input: {
+    leadId: string;
+    body: string;
+    visibility: NoteVisibility;
+  }) => Promise<{ ok: boolean; note?: NoteView; error?: { code: string } }>;
+
+  listNotes: (input: {
+    leadId: string;
+  }) => Promise<{ ok: boolean; notes?: NoteView[]; error?: { code: string } }>;
+
+  deleteNote: (input: {
+    noteId: string;
+  }) => Promise<{ ok: boolean; error?: { code: string } }>;
 }
 
 export interface LeadsViewProps {
@@ -108,6 +129,9 @@ export interface LeadsViewProps {
   columns: LeadColumnVM[];
   cards: LeadCardVM[];
   strings: LeadsStrings;
+  /** Strings for the notes modal (shared with the case tab). */
+  notesStrings: NotesStrings;
+  locale: "es" | "en";
   columnStrings: KanbanColumnStrings;
   actions: LeadsActions;
   columnActions: KanbanColumnActions;
@@ -124,6 +148,8 @@ export function LeadsView({
   columns,
   cards: initialCards,
   strings,
+  notesStrings,
+  locale,
   columnStrings,
   actions,
   columnActions,
@@ -140,6 +166,24 @@ export function LeadsView({
   // after creating a lead or converting one to a case) so the board updates
   // without a full page reload.
   React.useEffect(() => { setCards(initialCards); }, [initialCards]);
+
+  // Notes modal (per lead card)
+  const [notesCard, setNotesCard] = React.useState<LeadCardVM | null>(null);
+  const patchCardNotes = (leadId: string, fn: (c: LeadCardVM) => LeadCardVM) =>
+    setCards((cs) => cs.map((c) => (c.leadId === leadId ? fn(c) : c)));
+  const handleAddNote = async (leadId: string, body: string, visibility: NoteVisibility): Promise<NoteView | null> => {
+    const res = await actions.addNote({ leadId, body, visibility });
+    if (res.ok && res.note) {
+      patchCardNotes(leadId, (c) => ({ ...c, notesCount: c.notesCount + 1, latestNote: res.note!.body }));
+      return res.note;
+    }
+    return null;
+  };
+  const handleDeleteNote = async (leadId: string, noteId: string): Promise<boolean> => {
+    const res = await actions.deleteNote({ noteId });
+    if (res.ok) patchCardNotes(leadId, (c) => ({ ...c, notesCount: Math.max(0, c.notesCount - 1) }));
+    return res.ok;
+  };
 
   // Column management (create/edit/reorder/delete-with-migration) — shared.
   const cols = useKanbanColumns({
@@ -387,6 +431,23 @@ export function LeadsView({
                           onClick={(e) => { e.stopPropagation(); onNewCase({ name: c.name, phone: c.phone, leadId: c.leadId }); }}>
                           <MSym name="create_new_folder" size={15} />
                         </button>
+                        <button type="button" className="kmini" style={{ position: "relative" }}
+                          title={c.notesCount > 0 ? strings.notesLabel : strings.addNoteLabel}
+                          aria-label={`${c.notesCount > 0 ? strings.notesLabel : strings.addNoteLabel} ${c.name ?? c.phone}`}
+                          onClick={(e) => { e.stopPropagation(); setNotesCard(c); }}>
+                          <MSym name="sticky_note_2" size={15} />
+                          {c.notesCount > 0 && (
+                            <span
+                              style={{
+                                position: "absolute", top: -4, right: -4, minWidth: 14, height: 14,
+                                padding: "0 3px", borderRadius: 999, background: "var(--accent)", color: "#fff",
+                                fontSize: 9, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center",
+                              }}
+                            >
+                              {c.notesCount}
+                            </span>
+                          )}
+                        </button>
                         <span className="kcard-age">{c.ageLabel}</span>
                       </div>
                     </div>
@@ -436,6 +497,24 @@ export function LeadsView({
 
       {/* Column create/edit + delete modals (shared) */}
       <ColumnModals cols={cols} strings={columnStrings} />
+
+      {/* Notes modal (per lead card) */}
+      {notesCard && (
+        <NotesModal
+          open={!!notesCard}
+          onOpenChange={(o) => !o && setNotesCard(null)}
+          title={notesCard.name ?? notesCard.phone}
+          subtitle={notesCard.serviceLabel}
+          strings={notesStrings}
+          locale={locale}
+          onLoad={async () => {
+            const res = await actions.listNotes({ leadId: notesCard.leadId });
+            return res.ok && res.notes ? res.notes : [];
+          }}
+          onAdd={(body, visibility) => handleAddNote(notesCard.leadId, body, visibility)}
+          onRemove={(noteId) => handleDeleteNote(notesCard.leadId, noteId)}
+        />
+      )}
     </div>
   );
 }

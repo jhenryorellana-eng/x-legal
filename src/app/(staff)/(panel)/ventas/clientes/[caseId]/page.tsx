@@ -27,6 +27,7 @@ import { getCaseTabAccess } from "@/backend/modules/case-tabs";
 import { getContractForCase } from "@/backend/modules/contracts";
 import { getRunsForCase } from "@/backend/modules/ai-engine";
 import { getCaseRuta } from "@/backend/modules/scheduling";
+import { getCaseNotes } from "@/backend/modules/notes";
 import { resolveI18n, type Locale } from "@/shared/i18n";
 import { SharedCaseView, buildCasosStrings } from "@/frontend/features/shared-case";
 import {
@@ -64,6 +65,8 @@ import {
   setDocumentTranslationNotRequiredAction,
   translateDocumentAction,
   getDocumentTranslationAction,
+  addCaseNoteAction,
+  deleteNoteAction,
 } from "../../../admin/casos/actions";
 import { getFormResponsePdfUrlAction } from "../../../admin/casos/form-actions";
 
@@ -93,7 +96,7 @@ export default async function VentasCasoDetailPage({
     throw err;
   }
 
-  const [documents, statement, contract, timeline, forms, runs, matrix, rutaRaw, priorPhasesRaw] = await Promise.all([
+  const [documents, statement, contract, timeline, forms, runs, matrix, rutaRaw, priorPhasesRaw, notes] = await Promise.all([
     getCaseDocuments(actor, caseId).catch(() => []),
     getAccountStatement(actor, caseId).catch(() => null),
     getContractForCase(actor, caseId).catch(() => null),
@@ -103,6 +106,7 @@ export default async function VentasCasoDetailPage({
     getDocumentsMatrix(actor, caseId, { includeHidden: true }).catch(() => null),
     getCaseRuta(actor, caseId).catch(() => null),
     getPriorPhaseMaterials(actor, caseId).catch(() => ({ phases: [] })),
+    getCaseNotes(actor, caseId).catch(() => []),
   ]);
 
   // Responsable / etapa (eje propio) — staff-only; degrade to null on failure.
@@ -259,6 +263,7 @@ export default async function VentasCasoDetailPage({
     validations: [],
     expedientes: [],
     priorPhases,
+    notes,
   };
 
   return (
@@ -287,6 +292,8 @@ export default async function VentasCasoDetailPage({
         setDocumentTranslationNotRequired: canManageDocs ? setDocumentTranslationNotRequiredAction : undefined,
         translateDocument: canManageDocs ? translateDocumentAction : undefined,
         getTranslation: canManageDocs ? getDocumentTranslationAction : undefined,
+        addNote: addCaseNoteAction,
+        deleteNote: deleteNoteAction,
       }}
       strings={strings}
       locale={lc}

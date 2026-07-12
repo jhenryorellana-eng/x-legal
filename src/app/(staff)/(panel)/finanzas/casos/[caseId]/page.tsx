@@ -23,6 +23,7 @@ import {
   getPriorPhaseMaterials,
   CaseError,
 } from "@/backend/modules/cases";
+import { getCaseNotes } from "@/backend/modules/notes";
 import { getAccountStatement } from "@/backend/modules/billing";
 import { getCaseTabAccess } from "@/backend/modules/case-tabs";
 import { getContractForCase } from "@/backend/modules/contracts";
@@ -66,6 +67,8 @@ import {
   setDocumentTranslationNotRequiredAction,
   translateDocumentAction,
   getDocumentTranslationAction,
+  addCaseNoteAction,
+  deleteNoteAction,
 } from "../../../admin/casos/actions";
 import { getFormResponsePdfUrlAction } from "../../../admin/casos/form-actions";
 
@@ -95,7 +98,7 @@ export default async function FinanzasCasoDetailPage({
     throw err;
   }
 
-  const [documents, statement, contract, timeline, forms, runs, matrix, rutaRaw, priorPhasesRaw] = await Promise.all([
+  const [documents, statement, contract, timeline, forms, runs, matrix, rutaRaw, priorPhasesRaw, notes] = await Promise.all([
     getCaseDocuments(actor, caseId).catch(() => []),
     getAccountStatement(actor, caseId).catch(() => null),
     getContractForCase(actor, caseId).catch(() => null),
@@ -105,6 +108,7 @@ export default async function FinanzasCasoDetailPage({
     getDocumentsMatrix(actor, caseId, { includeHidden: true }).catch(() => null),
     getCaseRuta(actor, caseId).catch(() => null),
     getPriorPhaseMaterials(actor, caseId).catch(() => ({ phases: [] })),
+    getCaseNotes(actor, caseId).catch(() => []),
   ]);
 
   // Responsable / etapa (eje propio) — staff-only; degrade to null on failure.
@@ -262,12 +266,15 @@ export default async function FinanzasCasoDetailPage({
     validations: [],
     expedientes: [],
     priorPhases,
+    notes,
   };
 
   return (
     <SharedCaseView
       vm={vm}
       actions={{
+        addNote: addCaseNoteAction,
+        deleteNote: deleteNoteAction,
         reviewDocument: reviewDocumentAction,
         getFilledPdfUrl: getFormResponsePdfUrlAction,
         setRequirementVisibility: canManageDocs ? setRequirementVisibilityAction : undefined,

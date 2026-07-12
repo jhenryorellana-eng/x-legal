@@ -41,6 +41,8 @@ export interface LeadsClientProps {
   columns: LeadColumnVM[];
   cards: LeadCardVM[];
   strings: LeadsStrings;
+  notesStrings: LeadsNotesStrings;
+  noteActions: LeadsNoteActions;
   newLeadStrings: NuevoLeadStrings;
   manageCatsStrings: CategoryManagerStrings;
   nuevaCitaStrings: NuevaCitaStrings;
@@ -69,6 +71,11 @@ export interface LeadsClientProps {
 
 type LeadsViewMove = React.ComponentProps<typeof LeadsView>["actions"]["moveCard"];
 type LeadsViewContact = NonNullable<React.ComponentProps<typeof LeadsView>["actions"]["contactLead"]>;
+type LeadsNotesStrings = React.ComponentProps<typeof LeadsView>["notesStrings"];
+type LeadsNoteActions = Pick<
+  React.ComponentProps<typeof LeadsView>["actions"],
+  "addNote" | "listNotes" | "deleteNote"
+>;
 type LeadsColumnActions = React.ComponentProps<typeof LeadsView>["columnActions"];
 type LeadsColumnStrings = React.ComponentProps<typeof LeadsView>["columnStrings"];
 type UpdateLead = NonNullable<React.ComponentProps<typeof NuevoLeadModal>["actions"]["updateLead"]>;
@@ -79,6 +86,8 @@ export function LeadsClient({
   columns,
   cards,
   strings,
+  notesStrings,
+  noteActions,
   newLeadStrings,
   manageCatsStrings,
   nuevaCitaStrings,
@@ -129,8 +138,16 @@ export function LeadsClient({
         columns={columns}
         cards={cards}
         strings={strings}
+        notesStrings={notesStrings}
+        locale={locale}
         columnStrings={columnStrings}
-        actions={{ moveCard: moveAction, contactLead: contactAction }}
+        actions={{
+          moveCard: moveAction,
+          contactLead: contactAction,
+          addNote: noteActions.addNote,
+          listNotes: noteActions.listNotes,
+          deleteNote: noteActions.deleteNote,
+        }}
         columnActions={columnActions}
         onNewLead={(columnId) => setLeadModal({ open: true, columnId })}
         onNewCase={(preset) => setCaseModal({ open: true, leadId: preset.leadId, name: preset.name, phone: preset.phone })}

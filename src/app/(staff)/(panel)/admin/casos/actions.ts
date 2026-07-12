@@ -76,6 +76,14 @@ import { addCaseAppointment, SchedulingError } from "@/backend/modules/schedulin
 import { ExpedienteError } from "@/backend/modules/expediente";
 import { IntegrationsError } from "@/backend/modules/integrations";
 import { linkLeadToCase } from "@/backend/modules/kanban";
+import {
+  addCaseNote,
+  editNote,
+  removeNote,
+  getCaseNotes,
+  NotesError,
+  type NoteVM,
+} from "@/backend/modules/notes";
 import { classifySaveError } from "@/frontend/features/form-wizard/classify-save-error";
 import { getLocale } from "next-intl/server";
 import { resolveI18n, type Locale } from "@/shared/i18n";
@@ -93,7 +101,8 @@ function mapErr(err: unknown): Err {
     err instanceof SchedulingError ||
     err instanceof AiEngineError ||
     err instanceof ExpedienteError ||
-    err instanceof IntegrationsError
+    err instanceof IntegrationsError ||
+    err instanceof NotesError
   ) {
     return { ok: false, error: { code: err.code } };
   }
@@ -932,6 +941,66 @@ export async function setDocumentTranslationNotRequiredAction(input: {
     const actor = await requireActor();
     await setDocumentTranslationNotRequired(actor, input);
     return { ok: true };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Notes (case) — shared by all staff case surfaces (admin/ventas/legal/finanzas)
+// ---------------------------------------------------------------------------
+
+/** Adds a note to a case with the chosen visibility (general/team/personal). */
+export async function addCaseNoteAction(input: {
+  caseId: string;
+  body: string;
+  visibility: string;
+}): Promise<Ok<{ note: NoteVM }> | Err> {
+  try {
+    const actor = await requireActor();
+    const note = await addCaseNote(actor, input);
+    return { ok: true, note };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+/** Edits a note's body/visibility (author or admin). */
+export async function editNoteAction(input: {
+  noteId: string;
+  body?: string;
+  visibility?: string;
+}): Promise<Ok<{ note: NoteVM }> | Err> {
+  try {
+    const actor = await requireActor();
+    const note = await editNote(actor, input);
+    return { ok: true, note };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+/** Deletes a note (author or admin). */
+export async function deleteNoteAction(input: {
+  noteId: string;
+}): Promise<{ ok: true } | Err> {
+  try {
+    const actor = await requireActor();
+    await removeNote(actor, input);
+    return { ok: true };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+/** Lists the notes visible to the actor for a case (case + originating-lead union). */
+export async function listCaseNotesAction(input: {
+  caseId: string;
+}): Promise<Ok<{ notes: NoteVM[] }> | Err> {
+  try {
+    const actor = await requireActor();
+    const notes = await getCaseNotes(actor, input.caseId);
+    return { ok: true, notes };
   } catch (err) {
     return mapErr(err);
   }

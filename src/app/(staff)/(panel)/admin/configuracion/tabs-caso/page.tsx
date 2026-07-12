@@ -36,6 +36,7 @@ const TAB_LABEL_KEY: Record<CaseTabId, string> = {
   fasesAnteriores: "fasesAnteriores",
   preMortem: "preMortem",
   traspaso: "traspaso",
+  notas: "notas",
   historial: "historial",
 };
 

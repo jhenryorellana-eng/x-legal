@@ -83,7 +83,6 @@ vi.mock("../repository.js", () => ({
   deleteCard: vi.fn().mockResolvedValue(undefined),
   moveCard: vi.fn().mockResolvedValue(undefined),
   maxCardPosition: mockMaxCardPosition,
-  updateCardNote: vi.fn().mockResolvedValue(undefined),
   findLead: vi.fn().mockResolvedValue(null),
   listLeads: vi.fn().mockResolvedValue([]),
   insertLead: vi.fn().mockResolvedValue({}),

@@ -12,6 +12,8 @@ import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import { getActor, getCurrentUserLocation } from "@/backend/modules/identity";
 import { getBoard, listLeads, listLeadCategories } from "@/backend/modules/kanban";
+import { getNotesSummaryForLeads } from "@/backend/modules/notes";
+import { buildNotesStrings } from "@/frontend/features/shared-case/notes";
 import { LeadsClient } from "./client";
 import { buildNewCaseModalData } from "../_lib/new-case-services";
 import { fmtRelative, type Locale } from "@/frontend/lib/datetime";
@@ -40,6 +42,9 @@ import {
   createProspectInlineAction,
   bookAppointmentAction,
   createProspectApptAction,
+  addLeadNoteAction,
+  listLeadNotesAction,
+  deleteNoteAction,
 } from "../actions";
 import {
   createCaseAction,
@@ -89,13 +94,20 @@ export default async function VentasLeadsPage() {
       position: c.position,
     }));
 
-  const cards: LeadCardVM[] = (board?.cards ?? [])
-    // A lead converted to a case (won_case_id set) leaves the leads board — it
-    // now lives in /ventas/casos. Also drop cards whose lead row is missing.
-    .filter((card) => {
-      const lead = leadsById.get(card.ref_id);
-      return lead != null && lead.won_case_id == null;
-    })
+  // A lead converted to a case (won_case_id set) leaves the leads board — it
+  // now lives in /ventas/casos. Also drop cards whose lead row is missing.
+  const visibleLeadCards = (board?.cards ?? []).filter((card) => {
+    const lead = leadsById.get(card.ref_id);
+    return lead != null && lead.won_case_id == null;
+  });
+  let notesSummary = new Map<string, { count: number; latestBody: string | null; latestAt: string | null }>();
+  try {
+    notesSummary = await getNotesSummaryForLeads(actor, visibleLeadCards.map((c) => c.ref_id));
+  } catch (err) {
+    console.error("[/ventas/leads] getNotesSummaryForLeads failed:", err);
+  }
+
+  const cards: LeadCardVM[] = visibleLeadCards
     .map((card) => {
       const lead = leadsById.get(card.ref_id)!;
       const sm = sourceMeta(lead.source ?? "web");
@@ -120,6 +132,8 @@ export default async function VentasLeadsPage() {
         uncontacted,
         ageLabel: lead.created_at ? fmtRelative(lead.created_at, locale) : "",
         lostReason: lead.lost_reason ?? null,
+        notesCount: notesSummary.get(card.ref_id)?.count ?? 0,
+        latestNote: notesSummary.get(card.ref_id)?.latestBody ?? null,
       };
     });
 
@@ -140,6 +154,8 @@ export default async function VentasLeadsPage() {
     whatsapp: t("whatsapp"),
     agendar: t("agendar"),
     createCaseTooltip: t("createCaseTooltip"),
+    notesLabel: t("notesLabel"),
+    addNoteLabel: t("addNoteLabel"),
     lostTitle: t("lostTitle"),
     lostBody: t("lostBody"),
     lostReasonLabel: t("lostReasonLabel"),
@@ -245,6 +261,12 @@ export default async function VentasLeadsPage() {
       columns={columns}
       cards={cards}
       strings={strings}
+      notesStrings={buildNotesStrings(locale === "en" ? "en" : "es")}
+      noteActions={{
+        addNote: addLeadNoteAction,
+        listNotes: listLeadNotesAction,
+        deleteNote: deleteNoteAction,
+      }}
       newLeadStrings={newLeadStrings}
       manageCatsStrings={manageCatsStrings}
       nuevaCitaStrings={nuevaCitaStrings}

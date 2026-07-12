@@ -3323,7 +3323,6 @@ export type Database = {
           column_id: string
           created_at: string
           id: string
-          pinned_note: string | null
           position: number
           ref_id: string
           ref_type: string
@@ -3333,7 +3332,6 @@ export type Database = {
           column_id: string
           created_at?: string
           id?: string
-          pinned_note?: string | null
           position: number
           ref_id: string
           ref_type: string
@@ -3343,7 +3341,6 @@ export type Database = {
           column_id?: string
           created_at?: string
           id?: string
-          pinned_note?: string | null
           position?: number
           ref_id?: string
           ref_type?: string
@@ -3775,6 +3772,71 @@ export type Database = {
             columns: ["sender_user_id"]
             isOneToOne: false
             referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      notes: {
+        Row: {
+          author_user_id: string
+          body: string
+          case_id: string | null
+          created_at: string
+          id: string
+          lead_id: string | null
+          org_id: string
+          updated_at: string
+          visibility: string
+        }
+        Insert: {
+          author_user_id: string
+          body: string
+          case_id?: string | null
+          created_at?: string
+          id?: string
+          lead_id?: string | null
+          org_id: string
+          updated_at?: string
+          visibility: string
+        }
+        Update: {
+          author_user_id?: string
+          body?: string
+          case_id?: string | null
+          created_at?: string
+          id?: string
+          lead_id?: string | null
+          org_id?: string
+          updated_at?: string
+          visibility?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notes_author_user_id_fkey"
+            columns: ["author_user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notes_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notes_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notes_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "orgs"
             referencedColumns: ["id"]
           },
         ]

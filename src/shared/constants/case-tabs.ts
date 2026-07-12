@@ -29,6 +29,7 @@ export const CASE_TAB_IDS = [
   "validacion",
   "fasesAnteriores",
   "traspaso",
+  "notas",
   "historial",
 ] as const;
 
@@ -59,6 +60,7 @@ export const CANONICAL_TAB_ORDER: readonly CaseTabId[] = [
   "validacion",
   "fasesAnteriores",
   "traspaso",
+  "notas",
   "historial",
 ];
 
@@ -78,6 +80,7 @@ export const ROLE_DEFAULT_TAB_ORDER: Record<StaffRole, CaseTabId[]> = {
     "formularios",
     "fasesAnteriores",
     "traspaso",
+    "notas",
     "historial",
   ],
   admin: [
@@ -93,6 +96,7 @@ export const ROLE_DEFAULT_TAB_ORDER: Record<StaffRole, CaseTabId[]> = {
     "traspaso",
     "pagos",
     "contrato",
+    "notas",
     "historial",
   ],
   paralegal: [
@@ -107,9 +111,10 @@ export const ROLE_DEFAULT_TAB_ORDER: Record<StaffRole, CaseTabId[]> = {
     "citas",
     "traspaso",
     "contrato",
+    "notas",
     "historial",
   ],
-  finance: ["resumen", "contrato", "pagos", "documentos", "historial"],
+  finance: ["resumen", "contrato", "pagos", "documentos", "notas", "historial"],
 };
 
 /** Tabs locked (padlock) while the case is not active — never admin-configurable. */

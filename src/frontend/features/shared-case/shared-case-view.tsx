@@ -28,6 +28,7 @@ import { ValidacionTab } from "./tabs/validacion-tab";
 import { ExpedienteTab } from "./tabs/expediente-tab";
 import { FasesAnterioresTab } from "./tabs/fases-anteriores-tab";
 import { PreMortemTab } from "./tabs/pre-mortem-tab";
+import { NotasTab } from "./tabs/notas-tab";
 import { buildChatActions, type RawChatActions } from "@/frontend/features/messaging/build-chat-actions";
 import { useMessagingController } from "@/frontend/features/messaging/messaging-controller";
 import { stageLabel } from "./stage-label";
@@ -340,6 +341,7 @@ export function SharedCaseView({
         {active === "validacion" && <ValidacionTab vm={vm} strings={strings} title={tb.validacion} />}
         {active === "fasesAnteriores" && <FasesAnterioresTab vm={vm} actions={actions} strings={strings} />}
         {active === "preMortem" && <PreMortemTab vm={vm} actions={actions} strings={strings} selectedTargetKey={preMortemTarget} onSelectTarget={setPreMortemTarget} />}
+        {active === "notas" && <NotasTab vm={vm} actions={actions} strings={strings} locale={locale} />}
         {active === "historial" && <HistorialTab vm={vm} strings={strings} locale={locale} />}
       </div>
     </div>

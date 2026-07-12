@@ -34,6 +34,7 @@ import { MSym } from "@/frontend/features/vanessa/shared/msym";
 import { Chip } from "@/frontend/features/vanessa/shared/ui";
 import { useToast } from "@/frontend/features/vanessa/shared/toast-bridge";
 import { Modal } from "@/frontend/components/desktop";
+import { NotesModal, type NoteView, type NoteVisibility, type NotesStrings } from "@/frontend/features/shared-case/notes";
 
 // ---------------------------------------------------------------------------
 // VM types (built by the RSC page; no backend imports here)
@@ -81,7 +82,10 @@ export interface CollectionCardVM {
   attemptNo: number;
   // Chip status label for "initial" kind
   statusChip: string | null;
-  pinnedNote: string | null;
+  /** notes visible to the actor for this case (badge count). */
+  notesCount: number;
+  /** most recent note body (one-line preview), or null. */
+  latestNote: string | null;
   /** fmtRelative(card.updated_at) — time in column */
   ageLabel: string;
   /** timeTier computed server-side */
@@ -122,7 +126,6 @@ export interface CobranzaKanbanStrings {
   newColumn: string;
   emptyCol: string;
   moveError: string;
-  noteError: string;
   orderError: string;
   deleteError: string;
   // column modal
@@ -147,8 +150,9 @@ export interface CobranzaKanbanStrings {
   actionCollect: string;
   actionRemind: string;
   actionView: string;
-  // card inline note
-  notePlaceholder: string;
+  // card note button
+  notesLabel: string;
+  addNoteLabel: string;
   // card chips
   chipPending: string;
   chipDone: string;
@@ -182,9 +186,18 @@ export interface CobranzaKanbanActions {
     toPosition: number;
   }) => Promise<{ ok: boolean; error?: { code: string } }>;
 
-  updateNote: (input: {
-    cardId: string;
-    note: string | null;
+  addNote: (input: {
+    caseId: string;
+    body: string;
+    visibility: NoteVisibility;
+  }) => Promise<{ ok: boolean; note?: NoteView; error?: { code: string } }>;
+
+  listNotes: (input: {
+    caseId: string;
+  }) => Promise<{ ok: boolean; notes?: NoteView[]; error?: { code: string } }>;
+
+  deleteNote: (input: {
+    noteId: string;
   }) => Promise<{ ok: boolean; error?: { code: string } }>;
 
   createColumn: (input: {
@@ -225,6 +238,9 @@ export interface CobranzaKanbanViewProps {
   cards: CollectionCardVM[];
   kpi: CollectionKpiVM | null;
   strings: CobranzaKanbanStrings;
+  /** Strings for the notes modal (shared with the case tab). */
+  notesStrings: NotesStrings;
+  locale: "es" | "en";
   actions: CobranzaKanbanActions;
 }
 
@@ -267,6 +283,8 @@ export function CobranzaKanbanView({
   cards: initialCards,
   kpi,
   strings,
+  notesStrings,
+  locale,
   actions,
 }: CobranzaKanbanViewProps) {
   const toast = useToast();
@@ -305,10 +323,8 @@ export function CobranzaKanbanView({
   // Delete column — migration target
   const [migrateTarget, setMigrateTarget] = React.useState("");
 
-  // Inline note editing
-  const [editingNoteId, setEditingNoteId] = React.useState<string | null>(null);
-  const [noteValue, setNoteValue] = React.useState("");
-  const [noteBusy, setNoteBusy] = React.useState(false);
+  // Notes modal (per card)
+  const [notesCard, setNotesCard] = React.useState<CollectionCardVM | null>(null);
 
   // -------------------------------------------------------------------------
   // Drag & drop handlers
@@ -335,25 +351,27 @@ export function CobranzaKanbanView({
   };
 
   // -------------------------------------------------------------------------
-  // Inline note save
+  // Notes modal — keep the card badge (count + latest preview) in sync
   // -------------------------------------------------------------------------
 
-  const saveNote = async (cardId: string) => {
-    if (noteBusy) return;
-    setNoteBusy(true);
-    const note = noteValue.trim() || null;
+  const patchCardNotes = (caseId: string, fn: (c: CollectionCardVM) => CollectionCardVM) =>
+    setCards((cs) => cs.map((c) => (c.caseId === caseId ? fn(c) : c)));
 
-    // Optimistic
-    const prev = cards;
-    setCards((cs) => cs.map((c) => c.id === cardId ? { ...c, pinnedNote: note } : c));
-    setEditingNoteId(null);
-
-    const res = await actions.updateNote({ cardId, note });
-    if (!res.ok) {
-      setCards(prev);
-      toast.error(strings.noteError);
+  const handleAddNote = async (caseId: string, body: string, visibility: NoteVisibility): Promise<NoteView | null> => {
+    const res = await actions.addNote({ caseId, body, visibility });
+    if (res.ok && res.note) {
+      patchCardNotes(caseId, (c) => ({ ...c, notesCount: c.notesCount + 1, latestNote: res.note!.body }));
+      return res.note;
     }
-    setNoteBusy(false);
+    return null;
+  };
+
+  const handleDeleteNote = async (caseId: string, noteId: string): Promise<boolean> => {
+    const res = await actions.deleteNote({ noteId });
+    if (res.ok) {
+      patchCardNotes(caseId, (c) => ({ ...c, notesCount: Math.max(0, c.notesCount - 1) }));
+    }
+    return res.ok;
   };
 
   // -------------------------------------------------------------------------
@@ -726,17 +744,10 @@ export function CobranzaKanbanView({
                     card={card}
                     colColor={tokenToVar(col.color)}
                     isDragging={dragId === card.id}
-                    editingNoteId={editingNoteId}
-                    noteValue={noteValue}
                     strings={strings}
                     onDragStart={() => setDragId(card.id)}
                     onDragEnd={() => { setDragId(null); setOverCol(null); }}
-                    onStartEditNote={() => {
-                      setEditingNoteId(card.id);
-                      setNoteValue(card.pinnedNote ?? "");
-                    }}
-                    onNoteChange={setNoteValue}
-                    onNoteBlur={() => saveNote(card.id)}
+                    onOpenNotes={() => setNotesCard(card)}
                     onRemind={() => handleRemind(card)}
                     reminding={remindingId === card.id}
                   />
@@ -867,6 +878,24 @@ export function CobranzaKanbanView({
           )}
         </Modal>
       )}
+
+      {/* ── Notes modal (per card) ── */}
+      {notesCard && (
+        <NotesModal
+          open={!!notesCard}
+          onOpenChange={(o) => !o && setNotesCard(null)}
+          title={notesCard.clientName}
+          subtitle={notesCard.caseNumber}
+          strings={notesStrings}
+          locale={locale}
+          onLoad={async () => {
+            const res = await actions.listNotes({ caseId: notesCard.caseId });
+            return res.ok && res.notes ? res.notes : [];
+          }}
+          onAdd={(body, visibility) => handleAddNote(notesCard.caseId, body, visibility)}
+          onRemove={(noteId) => handleDeleteNote(notesCard.caseId, noteId)}
+        />
+      )}
     </div>
   );
 }
@@ -879,33 +908,23 @@ function CollectionCard({
   card,
   colColor,
   isDragging,
-  editingNoteId,
-  noteValue,
   strings,
   onDragStart,
   onDragEnd,
-  onStartEditNote,
-  onNoteChange,
-  onNoteBlur,
+  onOpenNotes,
   onRemind,
   reminding,
 }: {
   card: CollectionCardVM;
   colColor: string;
   isDragging: boolean;
-  editingNoteId: string | null;
-  noteValue: string;
   strings: CobranzaKanbanStrings;
   onDragStart: () => void;
   onDragEnd: () => void;
-  onStartEditNote: () => void;
-  onNoteChange: (v: string) => void;
-  onNoteBlur: () => void;
+  onOpenNotes: () => void;
   onRemind: () => void;
   reminding: boolean;
 }) {
-  const isEditingNote = editingNoteId === card.id;
-
   return (
     <div
       className={`kcard${isDragging ? " dragging" : ""}`}
@@ -953,81 +972,55 @@ function CollectionCard({
       {/* Row 3: collection line (varies by card kind) */}
       <CollectionLine card={card} strings={strings} />
 
-      {/* Row 4: pinned note (inline editable) */}
-      {isEditingNote ? (
-        <textarea
-          className="kcard-note-edit"
-          rows={2}
-          autoFocus
-          value={noteValue}
-          onChange={(e) => onNoteChange(e.target.value)}
-          onBlur={onNoteBlur}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              onNoteBlur();
-            }
-            if (e.key === "Escape") onNoteBlur();
-          }}
-          style={{
-            width: "100%",
-            fontSize: 12,
-            fontStyle: "italic",
-            border: "1px solid var(--accent)",
-            borderRadius: 8,
-            padding: "4px 8px",
-            background: "var(--panel-2, var(--panel))",
-            resize: "none",
-            marginBottom: 8,
-            outline: "none",
-          }}
-        />
-      ) : card.pinnedNote ? (
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); onStartEditNote(); }}
-          style={{
-            width: "100%",
-            textAlign: "left",
-            background: "none",
-            border: "none",
-            padding: 0,
-            cursor: "text",
-            marginBottom: 8,
-            display: "flex",
-            alignItems: "flex-start",
-            gap: 5,
-            color: "var(--ink-2)",
-            fontSize: 12,
-            fontStyle: "italic",
-          }}
-        >
-          <MSym name="edit" size={13} style={{ marginTop: 1, flex: "none" }} />
-          <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {card.pinnedNote}
-          </span>
-        </button>
-      ) : (
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); onStartEditNote(); }}
-          style={{
-            background: "none",
-            border: "none",
-            padding: 0,
-            cursor: "text",
-            marginBottom: 8,
-            display: "flex",
-            alignItems: "center",
-            gap: 5,
-            color: "var(--ink-3)",
-            fontSize: 12,
-          }}
-        >
-          <MSym name="edit" size={13} />
-          <span style={{ fontStyle: "italic" }}>{strings.notePlaceholder}</span>
-        </button>
-      )}
+      {/* Row 4: notes button (count + latest preview) → opens the notes modal */}
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onOpenNotes(); }}
+        title={card.notesCount > 0 ? strings.notesLabel : strings.addNoteLabel}
+        style={{
+          width: "100%",
+          textAlign: "left",
+          background: "none",
+          border: "none",
+          padding: 0,
+          cursor: "pointer",
+          marginBottom: 8,
+          display: "flex",
+          alignItems: "center",
+          gap: 5,
+          color: card.notesCount > 0 ? "var(--ink-2)" : "var(--ink-3)",
+          fontSize: 12,
+        }}
+      >
+        <MSym name="edit" size={13} style={{ flex: "none" }} />
+        {card.notesCount > 0 ? (
+          <>
+            <span
+              style={{
+                flex: "none",
+                minWidth: 16,
+                height: 16,
+                padding: "0 4px",
+                borderRadius: 999,
+                background: "var(--accent)",
+                color: "#fff",
+                fontSize: 10,
+                fontWeight: 800,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              {card.notesCount}
+            </span>
+            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontStyle: "italic" }}>
+              {card.latestNote ?? strings.notesLabel}
+            </span>
+          </>
+        ) : (
+          <span style={{ fontStyle: "italic" }}>{strings.addNoteLabel}</span>
+        )}
+      </button>
 
       {/* Row 5: quick actions (shown on hover via CSS group) */}
       <div className="kcard-actions" style={{ display: "flex", gap: 4, marginBottom: 8 }}>

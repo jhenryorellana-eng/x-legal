@@ -10,6 +10,7 @@ import { notFound, redirect } from "next/navigation";
 import { getLocale, getTimeZone, getTranslations } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
 import { getTimeline } from "@/backend/modules/cases";
+import { getClientCaseNotes } from "@/backend/modules/notes";
 import { type IconName } from "@/frontend/components/brand/icon";
 import { pickLocale, coerceIcon, type Locale } from "@/frontend/features/cliente/shared/i18n";
 import {
@@ -72,6 +73,10 @@ export default async function HistorialPage({
     notFound();
   }
 
+  // General notes surface in the client's case history (RLS returns only general
+  // notes of a case the client belongs to). Degrade to none on failure.
+  const generalNotes = await getClientCaseNotes(actor, caseId).catch(() => []);
+
   const dayKeyFmt = new Intl.DateTimeFormat("en-CA", {
     timeZone: tz,
     year: "numeric",
@@ -94,38 +99,66 @@ export default async function HistorialPage({
   const today = dayKeyFmt.format(new Date());
   const yesterday = dayKeyFmt.format(new Date(Date.now() - 86400000));
 
-  // Group events by day key (in user TZ), preserving desc order.
-  const groups = new Map<string, HistorialDay>();
+  // Merge the client-visible timeline with general notes into one date-sorted
+  // stream, then group by day (in user TZ), preserving desc order.
+  const entries: { at: string; ev: HistorialEvent }[] = [];
+
   for (const row of page.items) {
-    const date = new Date(row.occurred_at);
+    entries.push({
+      at: row.occurred_at,
+      ev: {
+        id: row.id,
+        category: categoryFor(row.event_type),
+        icon: LUCIDE_TO_BRAND[row.icon] ?? coerceIcon(row.icon, "info"),
+        color: COLOR_MAP[row.color] ?? "var(--ink-3)",
+        text:
+          pickLocale(
+            {
+              es: (row.title_i18n as { es?: string })?.es ?? "",
+              en: (row.title_i18n as { en?: string })?.en ?? "",
+            },
+            locale,
+          ) || row.event_type,
+        body:
+          pickLocale(
+            {
+              es: (row.body_i18n as { es?: string })?.es ?? "",
+              en: (row.body_i18n as { en?: string })?.en ?? "",
+            },
+            locale,
+          ) || null,
+        time: timeFmt.format(new Date(row.occurred_at)),
+        team: row.actor_kind !== "client",
+      },
+    });
+  }
+
+  for (const n of generalNotes) {
+    entries.push({
+      at: n.createdAt,
+      ev: {
+        id: n.id,
+        category: "nota",
+        icon: "doc",
+        color: "var(--accent)",
+        text: n.body,
+        body: null,
+        time: timeFmt.format(new Date(n.createdAt)),
+        team: true,
+      },
+    });
+  }
+
+  entries.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+
+  const groups = new Map<string, HistorialDay>();
+  for (const { at, ev } of entries) {
+    const date = new Date(at);
     const key = dayKeyFmt.format(date);
     const label =
       key === today ? t("today") : key === yesterday ? t("yesterday") : dayLabelFmt.format(date);
     if (!groups.has(key)) groups.set(key, { label, events: [] });
-    groups.get(key)!.events.push({
-      id: row.id,
-      category: categoryFor(row.event_type),
-      icon: LUCIDE_TO_BRAND[row.icon] ?? coerceIcon(row.icon, "info"),
-      color: COLOR_MAP[row.color] ?? "var(--ink-3)",
-      text:
-        pickLocale(
-          {
-            es: (row.title_i18n as { es?: string })?.es ?? "",
-            en: (row.title_i18n as { en?: string })?.en ?? "",
-          },
-          locale,
-        ) || row.event_type,
-      body:
-        pickLocale(
-          {
-            es: (row.body_i18n as { es?: string })?.es ?? "",
-            en: (row.body_i18n as { en?: string })?.en ?? "",
-          },
-          locale,
-        ) || null,
-      time: timeFmt.format(date),
-      team: row.actor_kind !== "client",
-    });
+    groups.get(key)!.events.push(ev);
   }
 
   const days: HistorialDay[] = Array.from(groups.values());
@@ -144,6 +177,7 @@ export default async function HistorialPage({
         filterForms: t("filterForms"),
         filterPayments: t("filterPayments"),
         filterMessages: t("filterMessages"),
+        filterNotes: t("filterNotes"),
         you: t("you"),
         team: t("team"),
         emptyFilter: t("emptyFilter"),

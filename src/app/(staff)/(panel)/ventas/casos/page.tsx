@@ -22,6 +22,7 @@ import {
   getCaseBoardAlerts,
 } from "@/backend/modules/cases";
 import type { AdminCaseListItem, CaseBoardAlert } from "@/backend/modules/cases";
+import { getNotesSummaryForCases } from "@/backend/modules/notes";
 import { resolveI18n } from "@/shared/i18n";
 import type { Locale } from "@/shared/i18n";
 import { fmtRelative } from "@/frontend/lib/datetime";
@@ -32,14 +33,19 @@ import type {
   DianaKanbanStrings,
 } from "@/frontend/features/legal/kanban/diana-kanban-view";
 import { DianaKanbanView } from "@/frontend/features/legal/kanban/diana-kanban-view";
+import { buildNotesStrings } from "@/frontend/features/shared-case/notes";
 import {
   moveKanbanCardAction,
-  updateKanbanCardNoteAction,
   createKanbanColumnAction,
   updateKanbanColumnAction,
   reorderKanbanColumnsAction,
   deleteKanbanColumnAction,
 } from "./actions";
+import {
+  addCaseNoteAction,
+  listCaseNotesAction,
+  deleteNoteAction,
+} from "../../admin/casos/actions";
 
 export const dynamic = "force-dynamic";
 
@@ -56,6 +62,7 @@ export default async function VentasCasosPage() {
   let boardError = false;
   let myCases: AdminCaseListItem[] = [];
   let alertsMap: Record<string, CaseBoardAlert> = {};
+  let notesSummary = new Map<string, { count: number; latestBody: string | null; latestAt: string | null }>();
 
   try {
     myCases = await listCasesByOwner(actor);
@@ -73,6 +80,12 @@ export default async function VentasCasosPage() {
       alertsMap = await getCaseBoardAlerts(actor, caseIds);
     } catch (err) {
       console.error("[/ventas/casos] getCaseBoardAlerts failed:", err);
+    }
+
+    try {
+      notesSummary = await getNotesSummaryForCases(actor, caseIds);
+    } catch (err) {
+      console.error("[/ventas/casos] getNotesSummaryForCases failed:", err);
     }
   } catch (err) {
     console.error("[/ventas/casos] board load failed:", err);
@@ -141,7 +154,8 @@ export default async function VentasCasosPage() {
           rfeOverdue: alertsMap[card.ref_id]?.rfeOverdue ?? false,
           rfeInProgress: alertsMap[card.ref_id]?.rfeInProgress ?? false,
         },
-        pinnedNote: card.pinned_note ?? null,
+        notesCount: notesSummary.get(card.ref_id)?.count ?? 0,
+        latestNote: notesSummary.get(card.ref_id)?.latestBody ?? null,
         ageLabel,
         ageTier,
       };
@@ -164,7 +178,6 @@ export default async function VentasCasosPage() {
     newColumn: t("newColumn"),
     emptyCol: t("emptyCol"),
     moveError: t("moveError"),
-    noteError: t("noteError"),
     orderError: t("orderError"),
     deleteError: t("deleteError"),
     createError: t("createError"),
@@ -203,7 +216,8 @@ export default async function VentasCasosPage() {
     cancelledChip: t("cancelledChip"),
     emptyTitle: t("emptyTitle"),
     emptyBody: t("emptyBody"),
-    notePlaceholder: t("notePlaceholder"),
+    notesLabel: t("notesLabel"),
+    addNoteLabel: t("addNoteLabel"),
     rfeInProgress: t("rfeInProgress"),
     timeInColumn: t("timeInColumn"),
     colMenuEdit: t("colMenuEdit"),
@@ -234,9 +248,13 @@ export default async function VentasCasosPage() {
       totalDocsToReview={totalDocsToReview}
       caseBasePath="/ventas/clientes"
       strings={strings}
+      notesStrings={buildNotesStrings(locale === "en" ? "en" : "es")}
+      locale={locale === "en" ? "en" : "es"}
       actions={{
         moveCard: moveKanbanCardAction,
-        updateNote: updateKanbanCardNoteAction,
+        addNote: addCaseNoteAction,
+        listNotes: listCaseNotesAction,
+        deleteNote: deleteNoteAction,
         createColumn: createKanbanColumnAction,
         updateColumn: updateKanbanColumnAction,
         reorderColumns: reorderKanbanColumnsAction,

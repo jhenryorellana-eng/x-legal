@@ -21,7 +21,6 @@ export {
   updateColumn,
   reorderColumns,
   deleteColumn,
-  updateCardNote,
   createTask,
   toggleTaskDone,
   updateTask,
