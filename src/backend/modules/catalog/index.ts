@@ -37,6 +37,8 @@ export {
   upsertAppointmentSchedule,
   // Cronograma runtime read (client-facing timeline source)
   getServiceCronograma,
+  // Stage SLA — plazo por etapa (consumido por cases al activar/traspasar)
+  getStageSlaDays,
   // Form editor + datasets reads (DOC-53 §5 / §6 — page-initial RSC reads)
   getFormEditorData,
   getVersionPdfUrl,
@@ -83,4 +85,11 @@ export type {
   UpsertServicePartyRoleDto,
   ServiceAppointmentScheduleItem,
   UpsertAppointmentScheduleDto,
+  StageSlaKey,
+  StageSlaDays,
+  StageSlaItem,
+  UpsertStageSlasDto,
 } from "./domain";
+
+// Stage SLA — etapas con plazo (value export para el wizard admin)
+export { STAGE_SLA_KEYS } from "./domain";

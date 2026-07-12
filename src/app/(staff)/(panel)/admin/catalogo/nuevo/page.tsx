@@ -26,6 +26,7 @@ export default async function NewServicePage() {
       plans={[]}
       partyRoles={[]}
       phases={[]}
+      stageSlas={{ sales: null, legal: null, operations: null }}
       slugLocked={false}
       messages={buildCatalogStrings(tt)}
       listHref="/admin/catalogo"

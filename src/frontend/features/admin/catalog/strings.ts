@@ -36,6 +36,8 @@ export function buildCatalogStrings(tt: Translator): Record<string, string> {
     "apptScheduleTitle", "citaN", "citaWeek", "addCita", "processingWeeks",
     "objectivesLabel", "addObjective", "objectivePh",
     "cronogramaEmpty", "cronogramaTotal", "selectPhase",
+    "stageSlaTitle", "stageSlaSub", "stageSlaSales", "stageSlaLegal",
+    "stageSlaOperations", "stageSlaDays", "stageSlaTotal", "stageSlaSave",
     "docDocument", "docTip", "docCategory", "docRequired", "docPerParty", "docAiExtract",
     "docAdd", "docNeedName", "docSave", "docCancelEdit", "docEdit", "docActions", "docPartiesColumn",
     "docFormat", "docFormatPdf", "docFormatPng",

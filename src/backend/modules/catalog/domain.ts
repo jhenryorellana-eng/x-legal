@@ -289,6 +289,39 @@ export const UpsertAppointmentScheduleDtoSchema = z.object({
 export type UpsertAppointmentScheduleDto = z.infer<typeof UpsertAppointmentScheduleDtoSchema>;
 
 // ---------------------------------------------------------------------------
+// Stage SLA — plazo (cuenta regresiva) por etapa de responsabilidad.
+//
+// El admin configura, por servicio, cuántos DÍAS tiene cada etapa (sales/legal/
+// operations) para terminar su trabajo. La tarjeta kanban del responsable muestra
+// una cuenta regresiva contra ese deadline. El estimado total del servicio para
+// entregar el expediente es la SUMA de las etapas. Excluye 'done' (terminal).
+// ---------------------------------------------------------------------------
+
+/** Etapas de responsabilidad con plazo configurable (mirror de cases.current_stage sin 'done'). */
+export const STAGE_SLA_KEYS = ["sales", "legal", "operations"] as const;
+export type StageSlaKey = (typeof STAGE_SLA_KEYS)[number];
+
+/** Días por etapa, con las claves faltantes como null (etapa sin plazo). */
+export type StageSlaDays = Record<StageSlaKey, number | null>;
+
+export const StageSlaItemSchema = z.object({
+  stage: z.enum(STAGE_SLA_KEYS),
+  duration_days: z.number().int().min(1).max(365),
+});
+export type StageSlaItem = z.infer<typeof StageSlaItemSchema>;
+
+export const UpsertStageSlasDtoSchema = z.object({
+  service_id: z.string().uuid(),
+  items: z
+    .array(StageSlaItemSchema)
+    .refine(
+      (items) => new Set(items.map((i) => i.stage)).size === items.length,
+      { message: "DUPLICATE_STAGE" },
+    ),
+});
+export type UpsertStageSlasDto = z.infer<typeof UpsertStageSlasDtoSchema>;
+
+// ---------------------------------------------------------------------------
 // Service Party Role — the ADDITIONAL case parties a service declares
 // (besides the implicit applicant). DOC-41. role_key mirrors the
 // case_parties.party_role CHECK; cardinality single|multiple.

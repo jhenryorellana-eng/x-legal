@@ -229,6 +229,23 @@ export async function upsertAppointmentScheduleAction(
   }
 }
 
+/**
+ * Replaces the per-stage SLA (plazo de cuenta regresiva) of a service — días por
+ * etapa (Ventas/Expediente/Operaciones). El estimado total = suma de las etapas.
+ *
+ * @api-id API-CAT-37
+ */
+export async function upsertStageSlasAction(
+  input: Parameters<typeof svc.replaceStageSlas>[1],
+): Promise<ActionResult<Awaited<ReturnType<typeof svc.replaceStageSlas>>>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.replaceStageSlas(actor, input));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Milestones
 // ---------------------------------------------------------------------------

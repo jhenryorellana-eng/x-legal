@@ -47,6 +47,7 @@ import {
   resolveNextMilestone,
   resolveFirstMilestone,
   addWeeksToAnchorIso,
+  addDaysToAnchorIso,
   validateAnswerTypes,
   buildPartiesSnapshot,
   selectContractAdditionalParties,
@@ -1202,6 +1203,48 @@ export async function updateCaseParty(
 // ---------------------------------------------------------------------------
 
 /**
+ * Kanban countdown clock — snapshots the deadline of the stage a case is ENTERING.
+ *
+ * Returns `stage_entered_at` (t0) and `stage_due_at` (t0 + the service's per-stage
+ * SLA in días). Single point that computes the clock; called at every stage entry
+ * (activation, transferCase, expediente→operations, phase-restart) so the value is
+ * always consistent regardless of the transition path. Terminal stage 'done' or a
+ * stage with no configured SLA → `stage_due_at` null (no countdown). Reads the SLA
+ * via catalog module-pub (dynamic import, mirrors the first-phase lookup below).
+ *
+ * Exported for unit testing (see __tests__/stage-deadline-fields.test.ts); not part
+ * of the module's public API.
+ */
+export async function stageDeadlineFields(
+  serviceId: string,
+  stage: CaseStage,
+  enteredAtIso: string,
+): Promise<Pick<TablesUpdate<"cases">, "stage_entered_at" | "stage_due_at">> {
+  if (stage === "done") {
+    return { stage_entered_at: enteredAtIso, stage_due_at: null };
+  }
+  let days: number | null = null;
+  try {
+    const catalogModule = (await import("@/backend/modules/catalog")) as {
+      getStageSlaDays?: (serviceId: string) => Promise<Record<string, number | null>>;
+    };
+    if (typeof catalogModule.getStageSlaDays === "function") {
+      const map = await catalogModule.getStageSlaDays(serviceId);
+      days = map?.[stage] ?? null;
+    }
+  } catch (err) {
+    logger.warn(
+      { err, serviceId, stage },
+      "cases.stageDeadlineFields: SLA lookup failed — case enters without a countdown",
+    );
+  }
+  return {
+    stage_entered_at: enteredAtIso,
+    stage_due_at: days != null ? addDaysToAnchorIso(enteredAtIso, days) : null,
+  };
+}
+
+/**
  * Activates a case after downpayment is confirmed.
  *
  * Consumed via appEvents. Runs with service client (system actor).
@@ -1249,11 +1292,16 @@ export async function onDownpaymentConfirmed(payload: {
     );
   }
 
+  // Activation = t0 of the SALES countdown (the case is already stage 'sales',
+  // owned by Vanessa since createCaseFromContract). Anchor the clock on opened_at.
+  const openedAtIso = new Date().toISOString();
+  const salesDeadline = await stageDeadlineFields(caseRow.service_id, "sales", openedAtIso);
   await updateCase(caseRow.id, {
     status: "active",
-    opened_at: new Date().toISOString(),
+    opened_at: openedAtIso,
     current_phase_id: firstPhaseId,
     current_milestone_id: firstMilestoneId,
+    ...salesDeadline,
   });
 
   if (firstPhaseId) {
@@ -2098,11 +2146,15 @@ export async function advanceCasePhase(
 
   // ── Last phase: advancing completes the case ─────────────────────────────
   if (!target) {
+    const doneAtIso = new Date().toISOString();
     await updateCase(caseRow.id, {
       current_stage: "done",
       current_owner_id: null,
       status: "completed",
-      completed_at: new Date().toISOString(),
+      completed_at: doneAtIso,
+      // Terminal stage: no countdown.
+      stage_entered_at: doneAtIso,
+      stage_due_at: null,
     });
     await insertStageHistory({
       caseId: caseRow.id,
@@ -2176,12 +2228,16 @@ export async function advanceCasePhase(
   const labelI18n = asI18n(targetPhase.label_i18n);
   const phaseName = (l: "es" | "en") => (labelI18n ? (labelI18n[l] ?? "") : "");
 
+  // New phase cycle restarts at sales → fresh sales countdown for Vanessa.
+  const restartAtIso = new Date().toISOString();
+  const restartDeadline = await stageDeadlineFields(caseRow.service_id, "sales", restartAtIso);
   await updateCase(caseRow.id, {
     current_phase_id: target.id,
     current_stage: "sales",
     current_owner_id: salesOwnerId,
     assigned_sales_id: salesOwnerId,
     status: "active",
+    ...restartDeadline,
   });
   await insertPhaseHistory({
     caseId: caseRow.id,
@@ -2413,6 +2469,10 @@ export interface AdminCaseListItem {
   phaseCount: number;
   openedAt: string | null;
   createdAt: string;
+  /** Etapa de responsabilidad actual (sales|legal|operations|done). */
+  currentStage: string;
+  /** Deadline de la etapa actual (ISO) o null — fuente de la cuenta regresiva del kanban. */
+  stageDueAt: string | null;
 }
 
 export interface AdminCasesPage {
@@ -2474,6 +2534,8 @@ export async function listCasesAdmin(
         phaseCount: phases.length,
         openedAt: c.opened_at,
         createdAt: c.created_at,
+        currentStage: c.current_stage ?? "sales",
+        stageDueAt: c.stage_due_at ?? null,
       };
     }),
   );
@@ -5617,6 +5679,8 @@ export async function listCasesByOwner(
         phaseCount: phases.length,
         openedAt: c.opened_at,
         createdAt: c.created_at,
+        currentStage: c.current_stage ?? "sales",
+        stageDueAt: c.stage_due_at ?? null,
       };
     }),
   );
@@ -5929,9 +5993,14 @@ export async function transferCase(
 
   const fromOwnerId = caseRow.current_owner_id;
 
+  // The new owner's countdown starts now, against the toStage SLA (a fresh clock
+  // for the receiving member — e.g. Diana sees her full "7 días" on handoff).
+  const enteredAtIso = new Date().toISOString();
+  const stageDeadline = await stageDeadlineFields(caseRow.service_id, toStage, enteredAtIso);
   const fields: TablesUpdate<"cases"> = {
     current_stage: toStage,
     current_owner_id: toOwnerId,
+    ...stageDeadline,
   };
   // Keep the legacy paralegal pointer consistent when entering Legal.
   if (toStage === "legal") fields.assigned_paralegal_id = toOwnerId;
@@ -6261,7 +6330,8 @@ export async function onExpedienteSentToFinanceCase(payload: {
       // best-effort: missing operations owner → leave unassigned (admin assigns)
     }
     const fromOwnerId = caseRow.current_owner_id;
-    await updateCase(caseId, { current_stage: "operations", current_owner_id: toOwnerId });
+    const opsDeadline = await stageDeadlineFields(caseRow.service_id, "operations", new Date().toISOString());
+    await updateCase(caseId, { current_stage: "operations", current_owner_id: toOwnerId, ...opsDeadline });
     await insertStageHistory({
       caseId,
       fromStage: "legal",

@@ -2024,6 +2024,8 @@ export type Database = {
           rebooking_blocked_until: string | null
           service_id: string
           service_plan_id: string
+          stage_due_at: string | null
+          stage_entered_at: string | null
           status: string
           updated_at: string
         }
@@ -2045,6 +2047,8 @@ export type Database = {
           rebooking_blocked_until?: string | null
           service_id: string
           service_plan_id: string
+          stage_due_at?: string | null
+          stage_entered_at?: string | null
           status?: string
           updated_at?: string
         }
@@ -2066,6 +2070,8 @@ export type Database = {
           rebooking_blocked_until?: string | null
           service_id?: string
           service_plan_id?: string
+          stage_due_at?: string | null
+          stage_entered_at?: string | null
           status?: string
           updated_at?: string
         }
@@ -4991,6 +4997,41 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "service_plans_service_id_fkey"
+            columns: ["service_id"]
+            isOneToOne: false
+            referencedRelation: "services"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      service_stage_slas: {
+        Row: {
+          created_at: string
+          duration_days: number
+          id: string
+          service_id: string
+          stage: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          duration_days: number
+          id?: string
+          service_id: string
+          stage: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          duration_days?: number
+          id?: string
+          service_id?: string
+          stage?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "service_stage_slas_service_id_fkey"
             columns: ["service_id"]
             isOneToOne: false
             referencedRelation: "services"

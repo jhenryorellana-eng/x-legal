@@ -38,6 +38,7 @@ import {
   ColumnMenu,
   ColumnModals,
   tokenToVar,
+  StageCountdownBadge,
   type KanbanColumnVM,
   type KanbanColumnActions,
   type KanbanColumnStrings,
@@ -95,10 +96,12 @@ export interface CaseCardVM {
   notesCount: number;
   /** most recent note body (one-line preview), or null. */
   latestNote: string | null;
-  /** fmtRelative(card.updated_at) — time in column */
-  ageLabel: string;
-  /** timeTier computed server-side */
-  ageTier: "time-ok" | "time-warn" | "time-hot";
+  /**
+   * Deadline (ISO) of the responsible member's current stage — source of the
+   * countdown badge (cases.stage_due_at). Null = no countdown (payment_pending /
+   * done / stage with no SLA configured).
+   */
+  stageDueAt: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -128,6 +131,7 @@ export interface DianaKanbanStrings extends KanbanColumnStrings {
   statusOnHold: string;
   statusCancelled: string;
   withLawyer: string;
+  withoutLawyer: string;
   onHoldChip: string;
   cancelledChip: string;
   // empty state
@@ -215,21 +219,6 @@ function statusDotColor(status: string): string {
     case "on_hold":
     case "cancelled": return "var(--ink-3)";
     default: return "var(--ink-3)";
-  }
-}
-
-/** Human label for a case status (accessible pill + footer). */
-function caseStatusLabel(status: string, s: DianaKanbanStrings): string {
-  switch (status) {
-    case "active": return s.statusActive;
-    case "in_validation": return s.statusInValidation;
-    case "payment_pending": return s.statusPaymentPending;
-    case "ready_for_delivery": return s.statusReady;
-    case "delivered":
-    case "completed": return s.statusDelivered;
-    case "on_hold": return s.statusOnHold;
-    case "cancelled": return s.statusCancelled;
-    default: return s.statusActive;
   }
 }
 
@@ -504,6 +493,7 @@ export function DianaKanbanView({
                     caseHref={buildCaseHref(card.caseId)}
                     isDragging={dragId === card.id}
                     strings={strings}
+                    locale={locale}
                     onDragStart={() => setDragId(card.id)}
                     onDragEnd={() => { setDragId(null); setOverCol(null); }}
                     onOpenNotes={() => setNotesCard(card)}
@@ -548,6 +538,7 @@ function CaseCard({
   caseHref,
   isDragging,
   strings,
+  locale,
   onDragStart,
   onDragEnd,
   onOpenNotes,
@@ -556,18 +547,15 @@ function CaseCard({
   caseHref: string;
   isDragging: boolean;
   strings: DianaKanbanStrings;
+  locale: "es" | "en";
   onDragStart: () => void;
   onDragEnd: () => void;
   onOpenNotes: () => void;
 }) {
 
   const statusColor = statusDotColor(card.caseStatus);
-  const statusLabel = caseStatusLabel(card.caseStatus, strings);
   const railColor =
     card.alerts.rfeInProgress && !card.alerts.rfeOverdue ? "#f59e0b" : statusColor;
-  // Age is metadata, not an alert: muted by default, amber only when it has sat
-  // a long time. Red stays reserved for the real alert chips.
-  const ageColor = card.ageTier === "time-hot" ? "var(--gold-deep, #b5740b)" : "var(--ink-3)";
   const initial = card.clientName.trim().charAt(0).toUpperCase() || "?";
 
   return (
@@ -593,7 +581,7 @@ function CaseCard({
         }}
       />
 
-      {/* Eyebrow: case number + "with lawyer" */}
+      {/* Eyebrow: case number */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
         <span
           style={{
@@ -606,18 +594,6 @@ function CaseCard({
         >
           {card.caseNumber}
         </span>
-        {card.withLawyer && (
-          <span
-            className="kchip"
-            style={{
-              background: "color-mix(in srgb, var(--brand-gold, #FFC629) 16%, transparent)",
-              color: "var(--gold-deep, #b5740b)",
-              marginLeft: "auto",
-            }}
-          >
-            {strings.withLawyer}
-          </span>
-        )}
       </div>
 
       {/* Client identity — the card's anchor (monogram tinted by the service colour) */}
@@ -742,7 +718,7 @@ function CaseCard({
         )}
       </button>
 
-      {/* Footer: time-in-column + status pill, above the open CTA */}
+      {/* Footer: stage countdown + plan-type pill (con/sin abogado), above the CTA */}
       <div
         style={{
           display: "flex",
@@ -753,15 +729,9 @@ function CaseCard({
           borderTop: "1px solid var(--line)",
         }}
       >
+        <StageCountdownBadge dueAt={card.stageDueAt} locale={locale} />
         <span
-          title={strings.timeInColumn}
-          style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 700, color: ageColor }}
-        >
-          <MSym name="schedule" size={13} />
-          {card.ageLabel}
-        </span>
-        <span
-          aria-label={statusLabel}
+          aria-label={card.withLawyer ? strings.withLawyer : strings.withoutLawyer}
           style={{
             marginLeft: "auto",
             display: "inline-flex",
@@ -772,12 +742,14 @@ function CaseCard({
             borderRadius: 999,
             fontSize: 11,
             fontWeight: 800,
-            color: statusColor,
-            background: `color-mix(in srgb, ${statusColor} 13%, transparent)`,
+            color: card.withLawyer ? "var(--gold-deep, #b5740b)" : "var(--ink-3)",
+            background: card.withLawyer
+              ? "color-mix(in srgb, var(--brand-gold, #FFC629) 16%, transparent)"
+              : "color-mix(in srgb, var(--ink-3) 12%, transparent)",
           }}
         >
-          <span style={{ width: 6, height: 6, borderRadius: 999, background: statusColor, flex: "none" }} />
-          {statusLabel}
+          <MSym name={card.withLawyer ? "balance" : "person"} size={13} />
+          {card.withLawyer ? strings.withLawyer : strings.withoutLawyer}
         </span>
       </div>
 

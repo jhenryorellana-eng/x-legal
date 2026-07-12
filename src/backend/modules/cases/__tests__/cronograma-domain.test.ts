@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { addWeeksToAnchorIso } from "../domain";
+import { addWeeksToAnchorIso, addDaysToAnchorIso } from "../domain";
 
 describe("addWeeksToAnchorIso", () => {
   it("returns null when there is no anchor (case not active yet)", () => {
@@ -28,5 +28,23 @@ describe("addWeeksToAnchorIso", () => {
 
   it("week 0 → same instant", () => {
     expect(addWeeksToAnchorIso("2026-06-01T12:00:00.000Z", 0)).toBe("2026-06-01T12:00:00.000Z");
+  });
+});
+
+describe("addDaysToAnchorIso (stage deadline snapshot)", () => {
+  it("returns null when there is no anchor", () => {
+    expect(addDaysToAnchorIso(null, 7)).toBeNull();
+  });
+
+  it("returns null for an unparseable anchor", () => {
+    expect(addDaysToAnchorIso("nope", 7)).toBeNull();
+  });
+
+  it("adds N days to the anchor (7 días → +7 días)", () => {
+    expect(addDaysToAnchorIso("2026-06-30T17:43:16.000Z", 7)).toBe("2026-07-07T17:43:16.000Z");
+  });
+
+  it("day 1 → +1 día", () => {
+    expect(addDaysToAnchorIso("2026-06-01T00:00:00.000Z", 1)).toBe("2026-06-02T00:00:00.000Z");
   });
 });

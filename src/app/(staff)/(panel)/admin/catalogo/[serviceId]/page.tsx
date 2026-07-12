@@ -152,6 +152,11 @@ export default async function ServiceDetailPage({
       plans={plans}
       partyRoles={partyRoles}
       phases={phases}
+      stageSlas={{
+        sales: tree.stageSlas.sales,
+        legal: tree.stageSlas.legal,
+        operations: tree.stageSlas.operations,
+      }}
       slugLocked={false}
       messages={buildCatalogStrings(tt)}
       listHref="/admin/catalogo"

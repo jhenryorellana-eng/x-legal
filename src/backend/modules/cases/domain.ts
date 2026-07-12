@@ -569,6 +569,18 @@ export function addWeeksToAnchorIso(anchorIso: string | null, weeks: number): st
   return new Date(d.getTime() + weeks * 7 * 24 * 60 * 60 * 1000).toISOString();
 }
 
+/**
+ * Adds `days` days to an ISO anchor, returning an ISO string — or null when there
+ * is no anchor or it is unparseable. Pure; used to snapshot the stage deadline
+ * (cases.stage_due_at) at each stage entry for the kanban countdown.
+ */
+export function addDaysToAnchorIso(anchorIso: string | null, days: number): string | null {
+  if (!anchorIso) return null;
+  const d = new Date(anchorIso);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Date(d.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
+}
+
 // ---------------------------------------------------------------------------
 // FormResponse state machine
 // ---------------------------------------------------------------------------

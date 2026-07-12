@@ -144,6 +144,13 @@ export interface WizardService {
   translation_signature_path: string | null;
 }
 
+/** Plazo (días) por etapa de responsabilidad — fuente de la cuenta regresiva del kanban. */
+export interface WizardStageSlas {
+  sales: number | null;
+  legal: number | null;
+  operations: number | null;
+}
+
 export interface PublicationIssueVM {
   code: string;
   severity: "blocking" | "warning";
@@ -156,6 +163,8 @@ export interface CatalogWizardProps {
   plans: WizardPlan[];
   partyRoles: WizardPartyRole[];
   phases: WizardPhase[];
+  /** Plazo por etapa (días) — cuenta regresiva. Empty (all null) en modo creación. */
+  stageSlas: WizardStageSlas;
   slugLocked: boolean;
   messages: Record<string, string>;
   listHref: string;
@@ -173,6 +182,7 @@ export interface CatalogWizardProps {
     deletePhase: (id: string) => Promise<ActionRes<unknown>>;
     upsertPolicy: (input: Record<string, unknown>) => Promise<ActionRes<unknown>>;
     upsertSchedule: (input: Record<string, unknown>) => Promise<ActionRes<unknown>>;
+    saveStageSlas: (input: Record<string, unknown>) => Promise<ActionRes<unknown>>;
     upsertMilestones: (
       servicePhaseId: string,
       items: Array<Record<string, unknown>>,
@@ -226,6 +236,7 @@ export function CatalogWizard({
   plans: initialPlans,
   partyRoles: initialPartyRoles,
   phases: initialPhases,
+  stageSlas: initialStageSlas,
   slugLocked,
   messages: t,
   listHref,
@@ -263,6 +274,8 @@ export function CatalogWizard({
   // Step 4 phases
   const [phases, setPhases] = React.useState<WizardPhase[]>(initialPhases);
   const [activePhaseIdx, setActivePhaseIdx] = React.useState(0);
+  // Stage SLAs (plazo por etapa — cuenta regresiva del kanban). Service-level.
+  const [stageSlas, setStageSlas] = React.useState<WizardStageSlas>(initialStageSlas);
 
   // Step "contract" — per-service contract content
   const [contractObject, setContractObject] = React.useState<I18nValue>(
@@ -486,6 +499,8 @@ export function CatalogWizard({
             setPhases={setPhases}
             activeIdx={activePhaseIdx}
             setActiveIdx={setActivePhaseIdx}
+            stageSlas={stageSlas}
+            setStageSlas={setStageSlas}
             actions={actions}
             t={t}
           />
@@ -949,6 +964,8 @@ function PhasesStep({
   setPhases,
   activeIdx,
   setActiveIdx,
+  stageSlas,
+  setStageSlas,
   actions,
   t,
 }: {
@@ -957,10 +974,40 @@ function PhasesStep({
   setPhases: React.Dispatch<React.SetStateAction<WizardPhase[]>>;
   activeIdx: number;
   setActiveIdx: (i: number) => void;
+  stageSlas: WizardStageSlas;
+  setStageSlas: React.Dispatch<React.SetStateAction<WizardStageSlas>>;
   actions: CatalogWizardProps["actions"];
   t: Record<string, string>;
 }) {
   const [savingPhase, setSavingPhase] = React.useState(false);
+  const [savingSla, setSavingSla] = React.useState(false);
+
+  // Plazo por etapa (cuenta regresiva del kanban). Se guarda a nivel servicio;
+  // etapas en blanco/0 se borran (quedan sin cuenta regresiva).
+  const STAGE_SLA_ORDER = ["sales", "legal", "operations"] as const;
+  function setSla(stage: keyof WizardStageSlas, raw: string) {
+    const n = raw.trim() === "" ? null : Math.floor(Number(raw));
+    setStageSlas((prev) => ({ ...prev, [stage]: n != null && n > 0 ? n : null }));
+  }
+  const slaTotalDays =
+    (stageSlas.sales ?? 0) + (stageSlas.legal ?? 0) + (stageSlas.operations ?? 0);
+  const slaTotalWeeks = Math.round((slaTotalDays / 7) * 10) / 10;
+  async function saveStageSlasNow() {
+    if (!serviceId) {
+      toast.error("—");
+      return;
+    }
+    const items = STAGE_SLA_ORDER.map((stage) => ({ stage, duration_days: stageSlas[stage] }))
+      .filter(
+        (it): it is { stage: (typeof STAGE_SLA_ORDER)[number]; duration_days: number } =>
+          typeof it.duration_days === "number" && it.duration_days > 0,
+      );
+    setSavingSla(true);
+    const r = await actions.saveStageSlas({ service_id: serviceId, items });
+    setSavingSla(false);
+    if (r.success) toast.success(t.saved);
+    else toast.error(r.error?.message ?? "Error");
+  }
 
   async function addPhase() {
     if (!serviceId) {
@@ -1095,6 +1142,65 @@ function PhasesStep({
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", gap: 22 }}>
+      {/* Plazos por etapa — cuenta regresiva del kanban (nivel servicio) */}
+      <div
+        style={{
+          gridColumn: "1 / -1",
+          border: "1.5px solid var(--line)",
+          borderRadius: 14,
+          padding: 16,
+          background: "var(--panel-2, var(--card-alt))",
+        }}
+      >
+        <div style={{ fontWeight: 800, fontSize: 14, color: "var(--ink)" }}>{t.stageSlaTitle}</div>
+        <p style={{ fontSize: 12.5, color: "var(--ink-3)", margin: "4px 0 14px" }}>{t.stageSlaSub}</p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "flex-end" }}>
+          {([["sales", t.stageSlaSales], ["legal", t.stageSlaLegal], ["operations", t.stageSlaOperations]] as const).map(
+            ([stage, lbl]) => (
+              <label key={stage} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={subLabel}>{lbl}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <TextInput
+                    type="number"
+                    min={0}
+                    max={365}
+                    style={{ width: 88 }}
+                    value={stageSlas[stage] == null ? "" : String(stageSlas[stage])}
+                    onChange={(e) => setSla(stage, e.target.value)}
+                  />
+                  <span style={{ fontSize: 12, color: "var(--ink-3)" }}>{t.stageSlaDays}</span>
+                </div>
+              </label>
+            ),
+          )}
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 14 }}>
+            <span style={{ fontSize: 12.5, color: "var(--ink-2)", fontWeight: 700 }}>
+              {(t.stageSlaTotal ?? "")
+                .replace("{d}", String(slaTotalDays))
+                .replace("{w}", String(slaTotalWeeks))}
+            </span>
+            <button
+              type="button"
+              onClick={saveStageSlasNow}
+              disabled={savingSla || !serviceId}
+              style={{
+                padding: "8px 14px",
+                borderRadius: 10,
+                border: "none",
+                background: "var(--accent)",
+                color: "#fff",
+                fontWeight: 700,
+                fontSize: 13,
+                cursor: serviceId ? "pointer" : "not-allowed",
+                opacity: serviceId ? 1 : 0.5,
+              }}
+            >
+              {t.stageSlaSave}
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Phase list */}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {phases.map((ph, i) => {

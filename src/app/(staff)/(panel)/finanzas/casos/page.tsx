@@ -21,7 +21,6 @@ import type { AdminCaseListItem, CaseBoardAlert } from "@/backend/modules/cases"
 import { getNotesSummaryForCases } from "@/backend/modules/notes";
 import { resolveI18n } from "@/shared/i18n";
 import type { Locale } from "@/shared/i18n";
-import { fmtRelative } from "@/frontend/lib/datetime";
 import { resolveServiceColor } from "@/frontend/lib/service-color";
 import type {
   CaseCardVM,
@@ -113,7 +112,6 @@ export default async function FinanzasCasosPage() {
   );
 
   // ── Cards VM ─────────────────────────────────────────────────────────────
-  const now = new Date();
   const cardVMs: CaseCardVM[] = (board?.cards ?? [])
     // Only cards for cases this person currently owns (no orphan "—" cards).
     .filter((card) => card.ref_type === "case" && caseMap.has(card.ref_id))
@@ -124,14 +122,6 @@ export default async function FinanzasCasosPage() {
       const caseStatus = caseItem?.status ?? "active";
       const isInactive = caseStatus === "on_hold" || caseStatus === "cancelled";
       const withLawyer = caseItem?.planKind === "with_lawyer";
-
-      const ageFrom = card.updated_at ?? card.created_at ?? now.toISOString();
-      const ageLabel = fmtRelative(ageFrom, locale as "es" | "en");
-      const minutesInCol = (now.getTime() - new Date(ageFrom).getTime()) / 60_000;
-      const ageTier: CaseCardVM["ageTier"] =
-        minutesInCol > 60 * 48 ? "time-hot" :
-        minutesInCol > 60 * 24 ? "time-warn" :
-        "time-ok";
 
       return {
         id: card.id,
@@ -155,8 +145,7 @@ export default async function FinanzasCasosPage() {
         },
         notesCount: notesSummary.get(card.ref_id)?.count ?? 0,
         latestNote: notesSummary.get(card.ref_id)?.latestBody ?? null,
-        ageLabel,
-        ageTier,
+        stageDueAt: caseItem?.stageDueAt ?? null,
       };
     });
 
@@ -211,6 +200,7 @@ export default async function FinanzasCasosPage() {
     statusOnHold: t("statusOnHold"),
     statusCancelled: t("statusCancelled"),
     withLawyer: t("withLawyer"),
+    withoutLawyer: t("withoutLawyer"),
     onHoldChip: t("onHoldChip"),
     cancelledChip: t("cancelledChip"),
     emptyTitle: t("emptyTitle"),

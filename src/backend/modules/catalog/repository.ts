@@ -460,6 +460,45 @@ export async function setPhaseProcessingWeeks(phaseId: string, weeks: number): P
 }
 
 // ---------------------------------------------------------------------------
+// Stage SLAs — plazo (cuenta regresiva) por (servicio, etapa)
+// ---------------------------------------------------------------------------
+
+export type StageSlaRow = Tables<"service_stage_slas">;
+
+/** All stage SLA rows for a service (unordered; caller maps by stage). */
+export async function listStageSlas(serviceId: string): Promise<StageSlaRow[]> {
+  const { data, error } = await db()
+    .from("service_stage_slas")
+    .select("*")
+    .eq("service_id", serviceId);
+  if (error) throw new Error(`catalog.repo.listStageSlas: ${error.message}`);
+  return data ?? [];
+}
+
+/**
+ * Replaces all stage SLA rows of a service (delete → insert), mirroring
+ * replaceAppointmentSchedule. Non-atomic across the two calls, acceptable for an
+ * admin config editor (same trade-off as the availability rules editor).
+ */
+export async function replaceStageSlas(
+  serviceId: string,
+  items: TablesInsert<"service_stage_slas">[],
+): Promise<void> {
+  const del = await db()
+    .from("service_stage_slas")
+    .delete()
+    .eq("service_id", serviceId);
+  if (del.error) {
+    throw new Error(`catalog.repo.replaceStageSlas(delete): ${del.error.message}`);
+  }
+  if (items.length === 0) return;
+  const ins = await db().from("service_stage_slas").insert(items);
+  if (ins.error) {
+    throw new Error(`catalog.repo.replaceStageSlas(insert): ${ins.error.message}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Required documents
 // ---------------------------------------------------------------------------
 

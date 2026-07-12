@@ -13,6 +13,14 @@ export type { ColumnMenuProps } from "./column-menu";
 export { ColumnModals } from "./column-modals";
 export type { ColumnModalsProps } from "./column-modals";
 export { useKanbanColumns } from "./use-kanban-columns";
+export { StageCountdownBadge } from "./stage-countdown";
+export {
+  daysUntil,
+  countdownTier,
+  countdownLabel,
+  TIER_COLOR,
+  type CountdownTier,
+} from "./stage-countdown-logic";
 export type {
   ColModalMode,
   UseKanbanColumnsOptions,

@@ -36,6 +36,10 @@ import {
   CreateRequiredDocDtoSchema,
   UpsertServicePartyRoleDtoSchema,
   UpsertAppointmentScheduleDtoSchema,
+  UpsertStageSlasDtoSchema,
+  STAGE_SLA_KEYS,
+  type StageSlaDays,
+  type UpsertStageSlasDto,
   CreateFormDtoSchema,
   QuestionSchema,
   validateServicePublication,
@@ -2673,6 +2677,8 @@ export interface ServiceEditorTree {
   /** The additional case parties this service declares (besides the applicant). */
   partyRoles: ServicePartyRole[];
   phases: ServiceEditorPhase[];
+  /** Plazo (días) por etapa de responsabilidad — cuenta regresiva del kanban. */
+  stageSlas: StageSlaDays;
 }
 
 /**
@@ -2691,10 +2697,11 @@ export async function getServiceEditorTree(
   const service = await repo.findServiceById(serviceId);
   if (!service) return null;
 
-  const [plans, partyRoleRows, phaseRows] = await Promise.all([
+  const [plans, partyRoleRows, phaseRows, stageSlaRows] = await Promise.all([
     repo.listPlans(serviceId),
     repo.listServicePartyRoles(serviceId),
     repo.listPhases(serviceId),
+    repo.listStageSlas(serviceId),
   ]);
 
   const phases: ServiceEditorPhase[] = await Promise.all(
@@ -2737,7 +2744,66 @@ export async function getServiceEditorTree(
     plans: plans as unknown as ServicePlan[],
     partyRoles: partyRoleRows.map(mapPartyRoleRow),
     phases,
+    stageSlas: mapStageSlaRows(stageSlaRows),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Stage SLAs — plazo (cuenta regresiva) por (servicio, etapa). Config del wizard
+// + lectura runtime consumida por el módulo cases al activar/traspasar un caso.
+// ---------------------------------------------------------------------------
+
+/** Rows → mapa {sales,legal,operations} con null en las etapas sin plazo. */
+function mapStageSlaRows(rows: repo.StageSlaRow[]): StageSlaDays {
+  const map: StageSlaDays = { sales: null, legal: null, operations: null };
+  for (const r of rows) {
+    if ((STAGE_SLA_KEYS as readonly string[]).includes(r.stage)) {
+      map[r.stage as keyof StageSlaDays] = r.duration_days;
+    }
+  }
+  return map;
+}
+
+/**
+ * Días de plazo por etapa de un servicio. SIN gate (config runtime, como
+ * getServiceCronograma): el módulo cases la consume al activar/traspasar para
+ * snapshot-ear cases.stage_due_at. Etapas sin fila → null (sin cuenta regresiva).
+ *
+ * @api-id API-CAT-36
+ */
+export async function getStageSlaDays(serviceId: string): Promise<StageSlaDays> {
+  return mapStageSlaRows(await repo.listStageSlas(serviceId));
+}
+
+/**
+ * Reemplaza los plazos por etapa de un servicio (delete+insert). El estimado
+ * total del servicio es la suma de las etapas provistas. Etapas omitidas se
+ * borran (quedan sin cuenta regresiva).
+ *
+ * @api-id API-CAT-37 (admin catalog editor — DOC-53 §4.2)
+ */
+export async function replaceStageSlas(
+  actor: Actor,
+  input: UpsertStageSlasDto,
+): Promise<StageSlaDays> {
+  can(actor, "catalog", "edit");
+  const dto = UpsertStageSlasDtoSchema.parse(input);
+  await assertServiceInOrg(actor, dto.service_id);
+
+  await repo.replaceStageSlas(
+    dto.service_id,
+    dto.items.map((it) => ({
+      service_id: dto.service_id,
+      stage: it.stage,
+      duration_days: it.duration_days,
+    })),
+  );
+
+  await writeAudit(actor, "catalog.stage_slas.updated", "service_stage_slas", dto.service_id, {
+    after: { items: dto.items },
+  });
+
+  return getStageSlaDays(dto.service_id);
 }
 
 // ---------------------------------------------------------------------------

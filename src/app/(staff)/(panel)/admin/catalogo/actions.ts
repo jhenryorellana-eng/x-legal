@@ -27,6 +27,7 @@ import {
   createServicePartyRoleAction,
   updateServicePartyRoleAction,
   deleteServicePartyRoleAction,
+  upsertStageSlasAction,
   createFormDefinitionAction,
   updateFormDefinitionAction,
   proposeExtractionSchemaAction,
@@ -136,6 +137,14 @@ export async function upsertPolicyUi(input: Record<string, unknown>): Promise<Re
 export async function upsertScheduleUi(input: Record<string, unknown>): Promise<Res<unknown>> {
   const r = await upsertAppointmentScheduleAction(
     input as Parameters<typeof upsertAppointmentScheduleAction>[0],
+  );
+  return r.success ? { success: true, data: r.data } : { success: false, error: r.error };
+}
+
+/** Replaces the per-stage SLA (plazo de cuenta regresiva) of a service. */
+export async function upsertStageSlasUi(input: Record<string, unknown>): Promise<Res<unknown>> {
+  const r = await upsertStageSlasAction(
+    input as Parameters<typeof upsertStageSlasAction>[0],
   );
   return r.success ? { success: true, data: r.data } : { success: false, error: r.error };
 }
