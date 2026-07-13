@@ -1979,18 +1979,39 @@ export async function updateGenerationConfig(
   const sections = (input.sections ?? []).map((s) => GenerationSectionSchema.parse(s));
   const assembly = input.assembly ? GenerationAssemblySchema.parse(input.assembly) : null;
 
+  // Companion questionnaire (Etapa B) ALWAYS feeds its ai_letter, so its slug must
+  // live in input_form_slugs for the generation to read the client's answers. The
+  // editor's "input forms" picker lists only ai_letters (never questionnaires), and
+  // ensureCompanionQuestionnaire wires the slug only when a config already exists —
+  // so a letter configured AFTER its companion was created would silently drop the
+  // link. Guarantee it here on every save: fully admin-driven, order-independent, no
+  // manual/DB step ever required.
+  const companionId =
+    (form as { companion_questionnaire_id?: string | null }).companion_questionnaire_id ?? null;
+  const inputFormSlugs = [...(input.input_form_slugs ?? [])];
+  if (companionId) {
+    const companion = await repo.findFormDefinition(companionId);
+    if (companion && !inputFormSlugs.includes(companion.slug)) inputFormSlugs.push(companion.slug);
+  }
+
+  // pre_mortem_enabled mirrors the real Pre-Mortem toggle, whose source of truth is
+  // the guide card (saveFormFillGuide → form_fill_guides.enabled). The config flag has
+  // no editor switch of its own, so derive it from the guide to prevent drift.
+  const guide = await repo.findFormFillGuide(input.form_definition_id);
+  const preMortemEnabled = guide ? guide.enabled : (input.pre_mortem_enabled ?? false);
+
   const config = await repo.upsertGenerationConfig({
     form_definition_id: input.form_definition_id,
     system_prompt: input.system_prompt,
     input_document_slugs: input.input_document_slugs ?? [],
-    input_form_slugs: input.input_form_slugs ?? [],
+    input_form_slugs: inputFormSlugs,
     dataset_id: input.dataset_id ?? null,
     model: input.model ?? "claude-fable-5",
     max_output_tokens: input.max_output_tokens ?? 32000,
     output_format: input.output_format ?? "pdf",
     output_language: input.output_language ?? "en",
     web_search_enabled: input.web_search_enabled ?? false,
-    pre_mortem_enabled: input.pre_mortem_enabled ?? false,
+    pre_mortem_enabled: preMortemEnabled,
     web_search_max_uses: input.web_search_max_uses ?? 5,
     research_instructions: input.research_instructions ?? null,
     research_model: input.research_model ?? null,
@@ -2058,6 +2079,15 @@ export async function saveFormFillGuide(
     enabled: dto.enabled,
     updated_by: actor.userId,
   });
+
+  // Keep the ai_letter generation config's pre_mortem_enabled mirror in sync: the
+  // guide toggle is the single source of truth, so toggling it must reflect in the
+  // config without forcing a separate "Guardar configuración". No-op for forms
+  // without a generation config (e.g. pdf_automation).
+  const genCfg = await repo.findGenerationConfig(dto.form_definition_id);
+  if (genCfg && genCfg.pre_mortem_enabled !== dto.enabled) {
+    await repo.upsertGenerationConfig({ ...genCfg, pre_mortem_enabled: dto.enabled, updated_by: actor.userId });
+  }
 
   // Audit with redacted guide (length only, never the full text).
   await writeAudit(actor, "catalog.form_fill_guide.updated", "form_fill_guides", row.form_definition_id, {
