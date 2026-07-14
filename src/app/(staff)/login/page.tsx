@@ -20,6 +20,7 @@ export default async function StaffLoginPage() {
         passwordLabel: t("passwordLabel"),
         cta: t("cta"),
         forgotPassword: t("forgotPassword"),
+        clientAccess: t("clientAccess"),
         errorCredentials: t("errorCredentials"),
         errorRateLimit: t("errorRateLimit"),
         errorGeneric: t("errorGeneric"),

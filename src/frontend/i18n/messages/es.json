@@ -65,7 +65,8 @@
       "subtitle": "Aquí sigues tu caso paso a paso, con tu equipo siempre cerca.",
       "cta": "Ver mi caso",
       "noAccess": "No tengo acceso",
-      "trustBadge": "Tu información está protegida"
+      "trustBadge": "Tu información está protegida",
+      "staffAccess": "Acceso para empleados"
     },
     "noAccess": {
       "title": "Primero conversemos contigo",
@@ -685,6 +686,7 @@
       "passwordLabel": "Contraseña",
       "cta": "Entrar",
       "forgotPassword": "¿Olvidaste tu contraseña?",
+      "clientAccess": "Acceso para clientes",
       "errorCredentials": "Email o contraseña incorrectos.",
       "errorRateLimit": "Demasiados intentos. Espera 15 minutos.",
       "errorGeneric": "Algo salió mal. Intenta de nuevo."

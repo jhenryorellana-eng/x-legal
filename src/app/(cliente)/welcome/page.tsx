@@ -12,6 +12,7 @@ import { Logo } from "@/frontend/components/brand/logo";
 import { GradientBtn } from "@/frontend/components/brand/gradient-btn";
 import { GhostBtn } from "@/frontend/components/brand/ghost-btn";
 import { Icon } from "@/frontend/components/brand/icon";
+import { PortalSwitchLink } from "@/frontend/components/brand/portal-switch-link";
 
 export default async function WelcomePage() {
   const t = await getTranslations("cliente.welcome");
@@ -140,6 +141,9 @@ export default async function WelcomePage() {
             {t("trustBadge")}
           </span>
         </div>
+
+        {/* Cruce de portal: staff que abrió el link del cliente por error */}
+        <PortalSwitchLink href="/login" label={t("staffAccess")} />
       </div>
     </div>
   );

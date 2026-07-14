@@ -14,6 +14,7 @@ import { useRouter } from "next/navigation";
 import { GradientBtn } from "@/frontend/components/brand/gradient-btn";
 import { Icon } from "@/frontend/components/brand/icon";
 import { Logo } from "@/frontend/components/brand/logo";
+import { PortalSwitchLink } from "@/frontend/components/brand/portal-switch-link";
 import { signInStaffAction } from "@/backend/modules/identity/actions";
 
 interface StaffLoginScreenProps {
@@ -24,6 +25,7 @@ interface StaffLoginScreenProps {
     passwordLabel: string;
     cta: string;
     forgotPassword: string;
+    clientAccess: string;
     errorCredentials: string;
     errorRateLimit: string;
     errorGeneric: string;
@@ -227,6 +229,9 @@ export function StaffLoginScreen({ messages }: StaffLoginScreenProps) {
             {messages.forgotPassword}
           </Link>
         </div>
+
+        {/* Cruce de portal: cliente que abrió el login de staff por error */}
+        <PortalSwitchLink href="/welcome" label={messages.clientAccess} />
       </div>
     </div>
   );

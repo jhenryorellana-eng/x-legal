@@ -65,7 +65,8 @@
       "subtitle": "Follow your case step by step, with your team always close by.",
       "cta": "View my case",
       "noAccess": "I don't have access",
-      "trustBadge": "Your information is protected"
+      "trustBadge": "Your information is protected",
+      "staffAccess": "Staff access"
     },
     "noAccess": {
       "title": "Let's talk first",
@@ -685,6 +686,7 @@
       "passwordLabel": "Password",
       "cta": "Sign in",
       "forgotPassword": "Forgot your password?",
+      "clientAccess": "Client access",
       "errorCredentials": "Incorrect email or password.",
       "errorRateLimit": "Too many attempts. Please wait 15 minutes.",
       "errorGeneric": "Something went wrong. Please try again."

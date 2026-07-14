@@ -247,7 +247,7 @@ export default async function NoAccessPage() {
       {/* Zona 5 — Link de escape */}
       <div style={{ textAlign: "center" }}>
         <Link
-          href="/phone"
+          href="/entrar"
           style={{
             fontSize: 15,
             color: "var(--ink-2)",
