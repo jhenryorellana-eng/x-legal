@@ -58,6 +58,9 @@ export { countActiveEmployees } from "./service";
 // Per-user appearance (theme + text scale) — DOC-01 §4/§8.5
 export { setUserUiPrefs, getCurrentUserUiPrefs } from "./service";
 
+// First-visit Tutorial seen flag — read for the camino `firstVisit` gate (DOC-29 §34)
+export { hasSeenTutorial } from "./service";
+
 // Location (timezone + city/country) for the Configuración location card (DOC-23 §6.5)
 export { getCurrentUserLocation } from "./service";
 

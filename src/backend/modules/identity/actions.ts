@@ -31,6 +31,7 @@ import {
   setUserLocale,
   setUserTimezone,
   setUserLocation,
+  markTutorialSeen,
   IdentityError,
   type EmployeeRow,
 } from "./service";
@@ -203,6 +204,29 @@ export async function setUserLocationAction(raw: {
     }
     logger.error({ err }, "[setUserLocationAction] Unexpected error");
     return { ok: false, error: { code: "unknown", message: "No se pudo guardar la ubicación." } };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// markTutorialSeenAction — authenticated client (first-visit tour dismissed)
+// ---------------------------------------------------------------------------
+
+/**
+ * Persists that the current client dismissed the first-visit Tutorial so it
+ * never fires again (cross-device, DOC-29 §34). Idempotent and best-effort: the
+ * overlay closes client-side regardless of the result.
+ */
+export async function markTutorialSeenAction(): Promise<ActionResult> {
+  try {
+    const actor = await requireActor();
+    await markTutorialSeen(actor);
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof AuthzError) {
+      return { ok: false, error: { code: "unauthorized", message: "No autorizado." } };
+    }
+    logger.error({ err }, "[markTutorialSeenAction] Unexpected error");
+    return { ok: false, error: { code: "unknown", message: "No se pudo guardar." } };
   }
 }
 

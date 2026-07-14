@@ -163,7 +163,6 @@ export default function DesignShowcasePage() {
   const [confettiRun, setConfettiRun] = React.useState(false);
   const [tutorialOpen, setTutorialOpen] = React.useState(false);
   const [sigReady, setSigReady] = React.useState(false);
-  const tutorialTargetRef = React.useRef<HTMLDivElement>(null);
   const tm = useTranslations("design.mobile");
   const tNav = useTranslations("cliente.nav");
   const tTeam = useTranslations("cliente.team");
@@ -189,7 +188,7 @@ export default function DesignShowcasePage() {
     navCase: tNav("ariaCase"),
   };
   const tutorialSteps: TutorialStep[] = [
-    { title: tm("tutorialT1"), body: tm("tutorialB1"), targetRef: tutorialTargetRef },
+    { title: tm("tutorialT1"), body: tm("tutorialB1"), target: '[data-tour="design-demo"]' },
     { title: tm("tutorialT2"), body: tm("tutorialB2") },
     { title: tm("tutorialT3"), body: tm("tutorialB3") },
   ];
@@ -855,7 +854,7 @@ export default function DesignShowcasePage() {
               }}
             >
               <div
-                ref={tutorialTargetRef}
+                data-tour="design-demo"
                 style={{
                   background: "var(--card)",
                   borderRadius: "var(--r-md)",

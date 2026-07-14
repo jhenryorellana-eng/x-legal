@@ -72,6 +72,8 @@ import {
   findUserLocation,
   findUserUiPrefs,
   updateUserUiPrefs,
+  findClientTutorialSeen,
+  markClientTutorialSeen,
   type StaffProfileRow,
   type EmployeePermissionInput,
   type EmployeeRow,
@@ -219,6 +221,26 @@ export async function getCurrentUserUiPrefs(): Promise<{ theme: UiTheme; textSca
     theme: row.theme === "dark" ? "dark" : "light",
     textScale: scaleNumToKey(typeof row.text_scale === "number" ? row.text_scale : 1),
   };
+}
+
+// ---------------------------------------------------------------------------
+// First-visit Tutorial (coach-mark) — seen flag on client_profiles (DOC-29 §34)
+//
+// Persisting "seen" in the DB (not a query param / localStorage) makes the tour
+// fire until the client dismisses it, then never again — including on another
+// device. Non-client actors never see it → treated as already seen.
+// ---------------------------------------------------------------------------
+
+/** Whether the client actor already dismissed the first-visit Tutorial. */
+export async function hasSeenTutorial(actor: Actor): Promise<boolean> {
+  if (actor.kind !== "client") return true;
+  return findClientTutorialSeen(actor.userId);
+}
+
+/** Marks the client actor's first-visit Tutorial as seen (idempotent, best-effort). */
+export async function markTutorialSeen(actor: Actor): Promise<void> {
+  if (actor.kind !== "client") return;
+  await markClientTutorialSeen(actor.userId, new Date().toISOString());
 }
 
 // ---------------------------------------------------------------------------

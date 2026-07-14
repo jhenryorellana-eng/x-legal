@@ -739,6 +739,40 @@ export async function updateUserUiPrefs(
 }
 
 // ---------------------------------------------------------------------------
+// Client first-visit Tutorial flag — coach-mark gating (DOC-51 §O3 / DOC-29 §34)
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether the client already saw (and dismissed) the first-visit Tutorial.
+ * Backed by `client_profiles.tutorial_seen_at` so the tour never reappears —
+ * not even on another device. Fails safe to `true` (don't fire on read error).
+ */
+export async function findClientTutorialSeen(userId: string): Promise<boolean> {
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("client_profiles")
+    .select("tutorial_seen_at")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) return true;
+  return data?.tutorial_seen_at != null;
+}
+
+/**
+ * Marks the client's first-visit Tutorial as seen. Idempotent: only writes when
+ * the timestamp is still null, preserving the original first-seen moment.
+ */
+export async function markClientTutorialSeen(userId: string, seenAtIso: string): Promise<void> {
+  const supabase = createServiceClient();
+  const { error } = await supabase
+    .from("client_profiles")
+    .update({ tutorial_seen_at: seenAtIso })
+    .eq("user_id", userId)
+    .is("tutorial_seen_at", null);
+  if (error) throw new Error(`markClientTutorialSeen: ${error.message}`);
+}
+
+// ---------------------------------------------------------------------------
 // upsertPersonRecord repo helper (DOC-41 §3.1 — party provisioning)
 // ---------------------------------------------------------------------------
 

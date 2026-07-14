@@ -115,7 +115,7 @@ export function DisclaimerScreen({
       setError(labels.errGeneric);
       return;
     }
-    router.push(`/caso/${caseId}/camino?onboarded=1`);
+    router.push(`/caso/${caseId}/camino`);
   };
 
   return (

@@ -24,8 +24,11 @@
     --safe-top: env(safe-area-inset-top, 0px);
     --safe-bottom: env(safe-area-inset-bottom, 0px);
     /* Bottom clearance a scrollable cliente screen must reserve so its content
-     * never hides behind the fixed bottom nav (+ the device gesture bar). */
-    --screen-pb: calc(120px + var(--safe-bottom));
+     * never hides behind the fixed bottom chrome (+ the device gesture bar).
+     * Sized to clear the tallest floating element — the "Tu equipo" launcher
+     * (MessagingLauncher: bottom 104px + height 56px → top edge at 160px), not
+     * just the bottom nav (~90px). 176px = 160px + 16px of breathing room. */
+    --screen-pb: calc(176px + var(--safe-bottom));
   }
 
   * {

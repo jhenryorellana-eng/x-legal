@@ -3,13 +3,14 @@
  *
  * Server component. Reads the case workspace (service/phase/progress/parties) and
  * the documents matrix counts to drive the single "Tu siguiente paso" CTA, plus
- * the first milestone for the "Mi proceso" strip. The `?onboarded=1` query param
- * (set by the disclaimer on first accept) fires the Tutorial overlay.
+ * the first milestone for the "Mi proceso" strip. The first-visit Tutorial fires
+ * off the DB flag `client_profiles.tutorial_seen_at` (cross-device, DOC-29 §34).
  */
 
 import { notFound, redirect } from "next/navigation";
 import { getLocale, getTimeZone, getTranslations } from "next-intl/server";
-import { getActor } from "@/backend/modules/identity";
+import { getActor, hasSeenTutorial } from "@/backend/modules/identity";
+import { markTutorialSeenAction } from "@/backend/modules/identity/actions";
 import {
   getCaseWorkspace,
   getDocumentsGateStatus,
@@ -24,15 +25,17 @@ import { CaminoScreen } from "@/frontend/features/cliente/camino/camino-screen";
 
 export default async function CaminoPage({
   params,
-  searchParams,
 }: {
   params: Promise<{ caseId: string }>;
-  searchParams: Promise<{ onboarded?: string }>;
 }) {
   const { caseId } = await params;
-  const { onboarded } = await searchParams;
   const actor = await getActor();
   if (!actor || actor.kind !== "client") redirect("/welcome");
+
+  // First-visit tour: fires until the client dismisses it (persisted in the DB,
+  // cross-device — DOC-29 §34). Reaching /camino already implies the disclaimer
+  // was accepted, so "not seen yet" is a sufficient signal. Fail safe to "seen".
+  const firstVisit = !(await hasSeenTutorial(actor).catch(() => true));
 
   const locale = (await getLocale()) as Locale;
   const tz = await getTimeZone();
@@ -107,7 +110,7 @@ export default async function CaminoPage({
       docsPending={ws.pendingDocuments}
       formsPending={formsPending}
       docsComplete={docsComplete}
-      firstVisit={onboarded === "1"}
+      firstVisit={firstVisit}
       currentMilestoneLabel={currentMilestoneLabel}
       nextMeetingValue={nextMeetingValue}
       nextMeetingHref={nextMeetingHref}
@@ -147,6 +150,7 @@ export default async function CaminoPage({
         next: t("tutorial.next"),
         done: t("tutorial.done"),
       }}
+      onTutorialSeen={markTutorialSeenAction}
     />
   );
 }

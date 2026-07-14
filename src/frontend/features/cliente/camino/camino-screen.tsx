@@ -86,6 +86,8 @@ export interface CaminoScreenProps {
   deliveryLabel?: string | null;
   labels: CaminoLabels;
   tutorialLabels: CaminoTutorialLabels;
+  /** Persists that the first-visit tour was dismissed (cross-device, DOC-29 §34). */
+  onTutorialSeen?: () => Promise<{ ok: boolean }>;
 }
 
 export function CaminoScreen(props: CaminoScreenProps) {
@@ -112,37 +114,40 @@ export function CaminoScreen(props: CaminoScreenProps) {
     deliveryLabel,
     labels,
     tutorialLabels,
+    onTutorialSeen,
   } = props;
 
   const router = useRouter();
-  const containerRef = React.useRef<HTMLDivElement>(null);
-  const ctaRef = React.useRef<HTMLDivElement>(null);
   const [tutorialOpen, setTutorialOpen] = React.useState(false);
 
-  // First arrival after the disclaimer → tutorial (~480ms after mount, §13).
+  // First arrival (tutorial not yet seen) → tour ~480ms after mount (§13/§36).
   React.useEffect(() => {
     if (!firstVisit) return;
     const t = setTimeout(() => setTutorialOpen(true), 480);
     return () => clearTimeout(t);
   }, [firstVisit]);
 
+  // Skip / ¡Entendido! → close and persist "seen" so it never fires again
+  // (cross-device, DOC-29 §34). Best-effort: the overlay closes regardless.
+  const closeTutorial = React.useCallback(() => {
+    setTutorialOpen(false);
+    onTutorialSeen?.().catch(() => {});
+  }, [onTutorialSeen]);
+
   const nextHref = docsComplete
     ? `/caso/${caseId}/historia`
     : `/caso/${caseId}/documentos`;
 
+  // Targets resolved by selector so the tour can spotlight the fixed "Tu equipo"
+  // launcher, which lives in the case chrome (outside this screen's tree).
   const tutorialSteps = [
-    {
-      title: tutorialLabels.step1Title,
-      body: tutorialLabels.step1Body,
-      targetRef: ctaRef as React.RefObject<HTMLElement | null>,
-    },
-    { title: tutorialLabels.step2Title, body: tutorialLabels.step2Body },
-    { title: tutorialLabels.step3Title, body: tutorialLabels.step3Body },
+    { title: tutorialLabels.step1Title, body: tutorialLabels.step1Body, target: '[data-tour="next-step"]' },
+    { title: tutorialLabels.step2Title, body: tutorialLabels.step2Body, target: '[data-tour="progress-ring"]' },
+    { title: tutorialLabels.step3Title, body: tutorialLabels.step3Body, target: '[data-tour="team-launcher"]' },
   ];
 
   return (
     <div
-      ref={containerRef}
       style={{
         minHeight: "100dvh",
         padding: "54px 20px var(--screen-pb)",
@@ -231,7 +236,9 @@ export function CaminoScreen(props: CaminoScreenProps) {
           padding: 18,
         }}
       >
-        <ProgressRing pct={progress} size={84} stroke={10} />
+        <span data-tour="progress-ring" style={{ display: "inline-flex", flexShrink: 0 }}>
+          <ProgressRing pct={progress} size={84} stroke={10} />
+        </span>
         <div style={{ flex: 1 }}>
           {/* "Fase X de Y" only makes sense for multi-phase services; a
               single-phase service (e.g. Asilo) shows just the phase name below. */}
@@ -274,7 +281,7 @@ export function CaminoScreen(props: CaminoScreenProps) {
 
       {/* CTA "Tu siguiente paso" */}
       <div
-        ref={ctaRef}
+        data-tour="next-step"
         style={{
           position: "relative",
           overflow: "hidden",
@@ -545,8 +552,7 @@ export function CaminoScreen(props: CaminoScreenProps) {
           next: tutorialLabels.next,
           done: tutorialLabels.done,
         }}
-        containerRef={containerRef}
-        onClose={() => setTutorialOpen(false)}
+        onClose={closeTutorial}
       />
     </div>
   );

@@ -49,6 +49,7 @@ export function MessagingLauncher({
     <button
       type="button"
       onClick={onClick}
+      data-tour="team-launcher"
       style={{
         position: absolute ? "absolute" : "fixed",
         ...fixedAnchor("left", absolute),
