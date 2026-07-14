@@ -242,6 +242,10 @@ function CitasPreview() {
         noShowModalSub: "El cliente no se presentó. Esto aplica un bloqueo de reprogramación de 7 días.",
         noShowConfirm: "Confirmar no-show",
         noShowToast: "Cita marcada como no-show",
+        completeNotStartedWarn: "Esta cita aún no ha comenzado. Podrás completarla cuando llegue su hora.",
+        errApptNotStarted: "No puedes completar una cita que aún no ha comenzado.",
+        errApptInvalidTransition: "Esta cita ya no se puede modificar (su estado cambió).",
+        errGeneric: "No se pudo completar la acción. Inténtalo de nuevo.",
       }}
       detailFor={(id) => MOCK_DETAILS[id] ?? null}
       newApptModal={{

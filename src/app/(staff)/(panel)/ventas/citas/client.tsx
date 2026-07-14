@@ -40,10 +40,16 @@ export interface CitasClientProps {
       appointmentId: string;
       objectivesOutcome: { id: string; text: string; achieved: boolean }[];
       notes: string;
-    }) => Promise<{ ok: boolean }>;
-    reschedule: (input: { appointmentId: string; startsAtIso: string }) => Promise<{ ok: boolean }>;
-    cancel: (input: { appointmentId: string; reason: string }) => Promise<{ ok: boolean }>;
-    noShow: (input: { appointmentId: string }) => Promise<{ ok: boolean }>;
+    }) => Promise<{ ok: boolean; error?: { code: string } }>;
+    reschedule: (input: {
+      appointmentId: string;
+      startsAtIso: string;
+    }) => Promise<{ ok: boolean; error?: { code: string } }>;
+    cancel: (input: {
+      appointmentId: string;
+      reason: string;
+    }) => Promise<{ ok: boolean; error?: { code: string } }>;
+    noShow: (input: { appointmentId: string }) => Promise<{ ok: boolean; error?: { code: string } }>;
   };
 }
 

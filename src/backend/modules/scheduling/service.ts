@@ -1882,6 +1882,8 @@ export interface RutaCita {
   labelI18n: I18nText | null;
   kind: "video" | "phone" | "presencial";
   weekOffset: number;
+  /** Configured duration of this cita type (admin cronograma), in minutes. */
+  durationMinutes: number;
   /** "service" = from the shared cronograma; "case" = an extra added to this case. */
   origin: "service" | "case";
   /** completed = the booked instance is completed; current = next pending; rest upcoming. */
@@ -2031,6 +2033,7 @@ export async function getCaseRuta(
       labelI18n: entry.labelI18n,
       kind: entry.kind,
       weekOffset: entry.weekOffset,
+      durationMinutes: entry.durationMinutes,
       origin: entry.origin ?? "service",
       status,
       objectives,

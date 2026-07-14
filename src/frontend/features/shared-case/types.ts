@@ -291,6 +291,8 @@ export interface RutaCitaVM {
   /** Resolved label, or null → the UI falls back to "Cita N". */
   label: string | null;
   kind: string;
+  /** Configured duration of this cita type (admin cronograma), in minutes. */
+  durationMinutes: number;
   status: "completed" | "current" | "upcoming";
   /** "service" = shared cronograma; "case" = an extra added to this case. */
   origin: "service" | "case";

@@ -83,6 +83,23 @@ export interface CitasStrings {
   noShowModalSub: string;
   noShowConfirm: string;
   noShowToast: string;
+  // Complete gating + error feedback (silent-failure fix)
+  completeNotStartedWarn: string;
+  errApptNotStarted: string;
+  errApptInvalidTransition: string;
+  errGeneric: string;
+}
+
+/** Maps a scheduling error code to a user-facing message (never fail silently). */
+function apptErrorMsg(code: string | undefined, strings: CitasStrings): string {
+  switch (code) {
+    case "APPT_NOT_STARTED":
+      return strings.errApptNotStarted;
+    case "APPT_INVALID_TRANSITION":
+      return strings.errApptInvalidTransition;
+    default:
+      return strings.errGeneric;
+  }
 }
 
 export interface CitasViewProps {
@@ -98,10 +115,13 @@ export interface CitasViewProps {
     id: string;
     outcome: { id: string; text: string; achieved: boolean }[];
     notes: string;
-  }) => Promise<{ ok: boolean }>;
-  onReschedule: (input: { id: string; startsAtIso: string }) => Promise<{ ok: boolean }>;
-  onCancel: (input: { id: string; reason: string }) => Promise<{ ok: boolean }>;
-  onNoShow: (id: string) => Promise<{ ok: boolean }>;
+  }) => Promise<{ ok: boolean; error?: { code: string } }>;
+  onReschedule: (input: {
+    id: string;
+    startsAtIso: string;
+  }) => Promise<{ ok: boolean; error?: { code: string } }>;
+  onCancel: (input: { id: string; reason: string }) => Promise<{ ok: boolean; error?: { code: string } }>;
+  onNoShow: (id: string) => Promise<{ ok: boolean; error?: { code: string } }>;
   presetLeadId?: string | null;
 }
 
@@ -150,6 +170,10 @@ export function CitasView(props: CitasViewProps) {
   const visibleList = props.listItems.filter(passesFilter);
   const detail = openId ? props.detailFor(openId) : null;
   const completeDetail = completeId ? props.detailFor(completeId) : null;
+  // Gate: the backend rejects completing a cita before it starts (APPT_NOT_STARTED,
+  // DOC-43 §2.1). Reflect it in the UI so the action never fails silently.
+  const canComplete =
+    !completeDetail || new Date(completeDetail.startsAtIso).getTime() <= Date.now();
   const dayCount = mode === "day" ? 1 : props.calDays.length;
 
   const joinCall = (link: string | null) => {
@@ -177,6 +201,8 @@ export function CitasView(props: CitasViewProps) {
         setCompleteId(null);
         setOpenId(null);
         toast.success(strings.completedToast);
+      } else {
+        toast.error(apptErrorMsg(res.error?.code, strings));
       }
     } finally {
       setCompleteBusy(false);
@@ -193,6 +219,8 @@ export function CitasView(props: CitasViewProps) {
         setRescheduleId(null);
         setOpenId(null);
         toast.success(strings.rescheduledToast);
+      } else {
+        toast.error(apptErrorMsg(res.error?.code, strings));
       }
     } finally {
       setRescheduleBusy(false);
@@ -208,6 +236,8 @@ export function CitasView(props: CitasViewProps) {
         setCancelId(null);
         setOpenId(null);
         toast.success(strings.cancelledToast);
+      } else {
+        toast.error(apptErrorMsg(res.error?.code, strings));
       }
     } finally {
       setCancelBusy(false);
@@ -223,6 +253,8 @@ export function CitasView(props: CitasViewProps) {
         setNoShowId(null);
         setOpenId(null);
         toast.success(strings.noShowToast);
+      } else {
+        toast.error(apptErrorMsg(res.error?.code, strings));
       }
     } finally {
       setNoShowBusy(false);
@@ -474,7 +506,7 @@ export function CitasView(props: CitasViewProps) {
         footer={
           <>
             <button type="button" className="vbtn vbtn-ghost vbtn-sm" onClick={() => setCompleteId(null)}>{strings.cancel}</button>
-            <button type="button" className="vbtn vbtn-green vbtn-sm" disabled={completeBusy} onClick={submitComplete}>
+            <button type="button" className="vbtn vbtn-green vbtn-sm" disabled={completeBusy || !canComplete} onClick={submitComplete}>
               <MSym name="check_circle" size={18} />
               {strings.confirmComplete}
             </button>
@@ -483,6 +515,30 @@ export function CitasView(props: CitasViewProps) {
       >
         {completeDetail && (
           <>
+            {!canComplete && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 10,
+                  padding: "12px 14px",
+                  borderRadius: 12,
+                  background: "var(--gold-soft)",
+                  border: "1px solid color-mix(in srgb, var(--gold-deep) 35%, transparent)",
+                  marginBottom: 14,
+                }}
+              >
+                <MSym name="schedule" size={18} color="var(--gold-deep)" />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 800, color: "var(--gold-deep)", lineHeight: 1.45 }}>
+                    {strings.completeNotStartedWarn}
+                  </div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-2)", marginTop: 3 }}>
+                    {completeDetail.dayTime}
+                  </div>
+                </div>
+              </div>
+            )}
             <div style={{ fontSize: 12.5, color: "var(--ink-2)", fontWeight: 700, marginBottom: 14 }}>{strings.completeModalSub}</div>
             {completeDetail.objectives.length === 0 ? (
               <div style={{ fontSize: 13, color: "var(--ink-3)", fontWeight: 600, marginBottom: 8 }}>{strings.noObjectives}</div>

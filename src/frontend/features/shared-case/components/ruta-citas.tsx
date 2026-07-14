@@ -209,6 +209,22 @@ function CitaCard({ cita, strings }: { cita: RutaCitaVM; strings: CasosStrings }
               {cita.label}
             </div>
           )}
+          {cita.durationMinutes > 0 && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+                marginTop: 3,
+                fontSize: 11,
+                color: "var(--ink-3)",
+                fontWeight: 800,
+              }}
+            >
+              <Icon name="clock" size={12} color="var(--ink-3)" />
+              {interp(t.routeDurationMin, { n: String(cita.durationMinutes) })}
+            </div>
+          )}
         </div>
         {isCur && <Chip tone="blue">{t.routeEnCurso}</Chip>}
         {isDone && <Chip tone="green">{t.routeCompletada}</Chip>}

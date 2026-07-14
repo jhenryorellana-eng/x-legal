@@ -250,6 +250,7 @@ export default async function VentasCitasPage(
       isVideo: appt.kind === "video",
       videoLink: appt.videoLink,
       status: appt.status as CitaDetail["status"],
+      startsAtIso: new Date(appt.startsAt).toISOString(),
       lexHtml: "",
       clientNote: appt.clientNote,
       notes: appt.notes,
@@ -312,6 +313,10 @@ export default async function VentasCitasPage(
     noShowModalSub: t("noShowModalSub"),
     noShowConfirm: t("noShowConfirm"),
     noShowToast: t("noShowToast"),
+    completeNotStartedWarn: t("completeNotStartedWarn"),
+    errApptNotStarted: t("errApptNotStarted"),
+    errApptInvalidTransition: t("errApptInvalidTransition"),
+    errGeneric: t("errGeneric"),
   };
 
   const nuevaCitaStrings = await buildNuevaCitaStrings(staffTimezone, locale);

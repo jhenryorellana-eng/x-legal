@@ -146,6 +146,7 @@ export const MOCK_DETAILS: Record<string, CitaDetail> = {
     isVideo: true,
     videoLink: "https://us06web.zoom.us/j/0000000000",
     status: "scheduled",
+    startsAtIso: "2026-06-03T14:00:00.000Z",
     lexHtml: "<b>Lex:</b> Recuerda generar las cartas antes de terminar.",
     clientNote:
       "Quiero confirmar si necesito traer los originales de mis documentos o basta con las copias.",

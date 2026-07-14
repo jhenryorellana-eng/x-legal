@@ -39,6 +39,8 @@ export interface CitaDetail {
   /** Effective video-call link the staff opens; null when none configured. */
   videoLink: string | null;
   status: "scheduled" | "completed" | "cancelled" | "no_show" | "rescheduled";
+  /** Absolute start instant (ISO). Used client-side to gate "Completar" until the cita has started. */
+  startsAtIso: string;
   lexHtml: string;
   /** Note the client wrote when self-booking ("Nota para tu asesora"); null if none. */
   clientNote: string | null;
