@@ -1801,6 +1801,7 @@
         "contractSentToast": "Contrato enviado a firma",
         "viewContract": "Ver contrato completo",
         "awaitingSignature": "Esperando la firma del cliente.",
+        "copySigningLink": "Copiar link de firma",
         "pagosTitle": "Estado de cuenta",
         "planWeekly": "Plan semanal",
         "planMonthly": "Plan mensual",
@@ -2723,7 +2724,9 @@
     "contactPhone": "Llamar a la oficina",
     "successTitle": "¡Contrato firmado!",
     "successBody": "Te llegará el acceso a tu app cuando confirmes tu primer pago.",
-    "alreadyTitle": "Este contrato ya fue firmado"
+    "alreadyTitle": "Este contrato ya fue firmado",
+    "backHome": "Volver al inicio",
+    "redirecting": "Te llevamos al inicio en {n}s…"
   },
   "staff_validaciones": {
     "pageTitle": "Validaciones",

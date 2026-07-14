@@ -54,7 +54,6 @@ export interface LeadsClientProps {
   categories: CategoryOption[];
   newCaseServices: NewCaseService[];
   casosStrings: CasosStrings;
-  signingBaseUrl: string;
   boardId: string;
   moveAction: LeadsViewMove;
   contactAction: LeadsViewContact;
@@ -100,7 +99,6 @@ export function LeadsClient({
   categories,
   newCaseServices,
   casosStrings,
-  signingBaseUrl,
   boardId,
   moveAction,
   contactAction,
@@ -232,7 +230,6 @@ export function LeadsClient({
           searchClients: searchClientsAction,
           getClientCases: getClientCasesAction,
         }}
-        signingBaseUrl={signingBaseUrl}
         caseLinkBase="/ventas/clientes"
       />
     </LexPrefsProvider>

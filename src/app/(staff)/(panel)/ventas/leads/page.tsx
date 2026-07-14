@@ -282,7 +282,6 @@ export default async function VentasLeadsPage() {
       categories={categories}
       newCaseServices={newCaseServices}
       casosStrings={casosStrings}
-      signingBaseUrl={process.env.NEXT_PUBLIC_APP_URL ?? ""}
       boardId={boardId}
       moveAction={moveKanbanCardAction}
       contactAction={contactLeadAction}

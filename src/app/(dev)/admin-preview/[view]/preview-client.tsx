@@ -169,7 +169,11 @@ export function PreviewClient({ view }: { view: string }) {
             strings={casosStringsMock}
             detailBasePath="#"
             newCaseActions={{
-              createCase: async () => ({ ok: true, signingToken: "preview-token-demo-1234" }),
+              createCase: async () => ({
+                ok: true,
+                signingToken: "preview-token-demo-1234",
+                signingUrl: "https://x-legal.usalatinoprime.com/firma/preview-token-demo-1234",
+              }),
               searchClients: async () => ({
                 ok: true,
                 results: [
@@ -185,7 +189,6 @@ export function PreviewClient({ view }: { view: string }) {
               }),
               getClientCases: async () => ({ ok: true, cases: [] }),
             }}
-            signingBaseUrl="https://app.usalatinoprime.com"
           />
         </div>
       )}

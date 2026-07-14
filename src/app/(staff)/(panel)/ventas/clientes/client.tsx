@@ -31,7 +31,6 @@ export function ClientesClient({
   createCaseAction,
   searchClientsAction,
   getClientCasesAction,
-  signingBaseUrl,
 }: {
   cases: CaseRowVM[];
   strings: ClientesStrings;
@@ -42,7 +41,6 @@ export function ClientesClient({
   createCaseAction: NewCaseActions["createCase"];
   searchClientsAction: NewCaseActions["searchClients"];
   getClientCasesAction: NewCaseActions["getClientCases"];
-  signingBaseUrl: string;
 }) {
   const [caseModal, setCaseModal] = React.useState(false);
 
@@ -67,7 +65,6 @@ export function ClientesClient({
           searchClients: searchClientsAction,
           getClientCases: getClientCasesAction,
         }}
-        signingBaseUrl={signingBaseUrl}
         caseLinkBase="/ventas/clientes"
       />
     </LexPrefsProvider>

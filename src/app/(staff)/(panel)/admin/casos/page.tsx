@@ -129,8 +129,6 @@ export default async function AdminCasosPage({
     if (label) rows = rows.filter((r) => r.serviceLabel === label);
   }
 
-  const signingBaseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
-
   return (
     <CasosListView
       rows={rows}
@@ -145,7 +143,6 @@ export default async function AdminCasosPage({
         searchClients: searchClientsForCaseAction,
         getClientCases: getClientCasesForNewCaseAction,
       }}
-      signingBaseUrl={signingBaseUrl}
     />
   );
 }

@@ -1801,6 +1801,7 @@
         "contractSentToast": "Contract sent for signature",
         "viewContract": "View full contract",
         "awaitingSignature": "Waiting for the client's signature.",
+        "copySigningLink": "Copy signing link",
         "pagosTitle": "Account statement",
         "planWeekly": "Weekly plan",
         "planMonthly": "Monthly plan",
@@ -2723,7 +2724,9 @@
     "contactPhone": "Call the office",
     "successTitle": "Contract signed!",
     "successBody": "You'll receive access to your app once your first payment is confirmed.",
-    "alreadyTitle": "This contract was already signed"
+    "alreadyTitle": "This contract was already signed",
+    "backHome": "Back to home",
+    "redirecting": "Taking you home in {n}s…"
   },
   "staff_validaciones": {
     "pageTitle": "Validations",

@@ -470,6 +470,14 @@ export interface CaseDetailActions {
   resendSigningLink: (input: {
     contractId: string;
   }) => Promise<{ ok: boolean; error?: { code: string } }>;
+  /**
+   * Absolute, shareable signing link for a `sent` contract — lets staff copy the
+   * link to send by another channel. Returns CONTRACT_TOKEN_INVALID once signed.
+   * Optional — only staff case-detail surfaces inject it.
+   */
+  getSigningLink?: (input: {
+    contractId: string;
+  }) => Promise<{ ok: boolean; url?: string; error?: { code: string } }>;
   /** Send a draft contract for signing (draft → sent). */
   sendContract: (input: {
     contractId: string;

@@ -96,7 +96,6 @@ export default async function VentasClientesPage() {
       createCaseAction={createCaseAction}
       searchClientsAction={searchClientsForCaseAction}
       getClientCasesAction={getClientCasesForNewCaseAction}
-      signingBaseUrl={process.env.NEXT_PUBLIC_APP_URL ?? ""}
     />
   );
 }

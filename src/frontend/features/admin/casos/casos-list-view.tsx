@@ -61,7 +61,6 @@ export function CasosListView({
   strings,
   detailBasePath,
   newCaseActions,
-  signingBaseUrl,
 }: {
   rows: CaseRowVM[];
   total: number;
@@ -71,7 +70,6 @@ export function CasosListView({
   strings: CasosStrings;
   detailBasePath: string;
   newCaseActions: NewCaseActions;
-  signingBaseUrl: string;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -286,7 +284,6 @@ export function CasosListView({
         services={services}
         strings={strings}
         actions={newCaseActions}
-        signingBaseUrl={signingBaseUrl}
         caseLinkBase={detailBasePath}
       />
     </div>

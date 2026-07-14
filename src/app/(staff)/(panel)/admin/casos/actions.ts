@@ -42,6 +42,8 @@ import {
   getZelleProofViewUrl,
   BillingError,
 } from "@/backend/modules/billing";
+import { headers } from "next/headers";
+import { absoluteAppUrl, signingLinkPath } from "@/shared/urls";
 import {
   createCaseFromContract,
   listCaseSummariesForClient,
@@ -199,7 +201,7 @@ export interface CreateCaseUiInput {
  */
 export async function createCaseAction(
   input: CreateCaseUiInput,
-): Promise<Ok<{ signingToken: string; caseId: string }> | Err> {
+): Promise<Ok<{ signingToken: string; signingUrl: string; caseId: string }> | Err> {
   try {
     const actor = await requireActor();
 
@@ -314,6 +316,17 @@ export async function createCaseAction(
       return { ok: false, error: { code: "CONTRACT_TOKEN_INVALID" } };
     }
 
+    // Build the ABSOLUTE signing link server-side from the real request origin
+    // (falls back to the canonical prod origin, never localhost) so the copyable
+    // link in the modal works when pasted anywhere — not just on the dev machine.
+    const h = await headers();
+    const signingUrl = absoluteAppUrl(signingLinkPath(signingToken), {
+      forwardedHost: h.get("x-forwarded-host"),
+      forwardedProto: h.get("x-forwarded-proto"),
+      host: h.get("host"),
+      envUrl: process.env.NEXT_PUBLIC_APP_URL,
+    });
+
     // Attribute the originating lead (best-effort): set won_case_id so the lead
     // leaves the leads board and shows up as a case. Never fails case creation.
     if (input.leadId) {
@@ -324,7 +337,7 @@ export async function createCaseAction(
       }
     }
 
-    return { ok: true, signingToken, caseId };
+    return { ok: true, signingToken, signingUrl, caseId };
   } catch (err) {
     return mapErr(err);
   }
@@ -603,6 +616,34 @@ export async function sendContractAction(input: {
     const actor = await requireActor();
     await sendContractForSigning(actor, input.contractId);
     return { ok: true };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+/**
+ * Absolute, ready-to-share signing link for a `sent` contract (staff copy action).
+ * The token is only present while the contract is `sent`; a signed/cancelled
+ * contract (token nulled) returns CONTRACT_TOKEN_INVALID. The URL is built from the
+ * real request origin (canonical fallback) so it works when pasted anywhere.
+ */
+export async function getSigningLinkAction(input: {
+  contractId: string;
+}): Promise<{ ok: boolean; url?: string; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    const signingToken = await getSigningTokenForContract(actor, input.contractId);
+    if (!signingToken) {
+      return { ok: false, error: { code: "CONTRACT_TOKEN_INVALID" } };
+    }
+    const h = await headers();
+    const url = absoluteAppUrl(signingLinkPath(signingToken), {
+      forwardedHost: h.get("x-forwarded-host"),
+      forwardedProto: h.get("x-forwarded-proto"),
+      host: h.get("host"),
+      envUrl: process.env.NEXT_PUBLIC_APP_URL,
+    });
+    return { ok: true, url };
   } catch (err) {
     return mapErr(err);
   }

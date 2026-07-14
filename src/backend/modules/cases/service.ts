@@ -511,9 +511,27 @@ export async function createCaseFromContract(
   // Step 4a: case_number
   const caseNumber = await nextCaseNumber(actor.orgId);
 
-  // A sales actor owns the cases they create.
-  const assignedSalesId =
+  // Responsible (sales) resolution — a case must NEVER be created orphan, else it
+  // won't project onto any board and the client's onboarding stalls (bug: admin-
+  // created cases had no responsible). Order of precedence:
+  //  1. A sales actor owns the cases they create.
+  //  2. An explicit assignedSalesId passed by the caller (e.g. admin designating).
+  //  3. Safety net: the sales department's default owner (first eligible staff with
+  //     cases:edit on the 'sales' stage — today Vanessa). Role-agnostic so any
+  //     creator (admin or otherwise) yields a responsible.
+  // Only when the org has NO eligible sales staff does it stay null (logged).
+  let assignedSalesId =
     actor.role === "sales" ? actor.userId : (p.assignedSalesId ?? null);
+  if (!assignedSalesId) {
+    const salesOwners = await eligibleOwnersForStage(actor.orgId, "sales");
+    assignedSalesId = salesOwners[0]?.userId ?? null;
+    if (!assignedSalesId) {
+      logger.warn(
+        { orgId: actor.orgId, actorId: actor.userId },
+        "createCaseFromContract: no eligible sales owner — case created without a responsible",
+      );
+    }
+  }
 
   // Step 4b: Parties. The applicant is the principal party (role 'petitioner',
   // position 0); additional parties from the modal are validated against the

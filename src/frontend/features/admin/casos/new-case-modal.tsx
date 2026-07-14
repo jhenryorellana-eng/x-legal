@@ -121,7 +121,13 @@ export interface NewCaseInput {
 export interface NewCaseActions {
   createCase: (
     input: NewCaseInput,
-  ) => Promise<{ ok: boolean; signingToken?: string; error?: { code: string; message?: string } }>;
+  ) => Promise<{
+    ok: boolean;
+    signingToken?: string;
+    /** Absolute, ready-to-share signing link built server-side (canonical origin). */
+    signingUrl?: string;
+    error?: { code: string; message?: string };
+  }>;
   /** Step-1 picker search (RF-VAN-018) — empty query returns recent clients. */
   searchClients: (
     query: string,
@@ -138,7 +144,6 @@ export function NewCaseModal({
   services,
   strings,
   actions,
-  signingBaseUrl,
   leadId,
   presetName,
   presetPhone,
@@ -149,7 +154,6 @@ export function NewCaseModal({
   services: NewCaseService[];
   strings: CasosStrings;
   actions: NewCaseActions;
-  signingBaseUrl: string;
   /** When the modal is opened from a lead card, links the case back to the lead. */
   leadId?: string;
   /** Prefill step 1 from the originating lead (name/phone the lead already has). */
@@ -413,8 +417,9 @@ export function NewCaseModal({
         : {}),
     });
     setSubmitting(false);
-    if (res.ok && res.signingToken) {
-      setSigningLink(`${signingBaseUrl}/firma/${res.signingToken}`);
+    if (res.ok && res.signingUrl) {
+      // Absolute link built server-side (canonical origin) — copyable/shareable.
+      setSigningLink(res.signingUrl);
       setStep(4);
     } else {
       toast.error(res.error?.message ?? strings.errorTitle);

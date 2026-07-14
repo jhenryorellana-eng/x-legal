@@ -12,16 +12,12 @@
  */
 
 import { env } from "../env";
-
-/** Canonical public origin (no trailing slash). */
-const CANONICAL_ORIGIN = "https://x-legal.usalatinoprime.com";
-
-const LOOPBACK = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:\d+)?/i;
+import { CANONICAL_ORIGIN, isLoopbackOrigin } from "@/shared/urls";
 
 /** Resolves the origin to use in email links/assets (never a loopback host). */
 export function emailBaseUrl(): string {
   const configured = env.NEXT_PUBLIC_APP_URL;
-  if (!configured || LOOPBACK.test(configured)) return CANONICAL_ORIGIN;
+  if (isLoopbackOrigin(configured)) return CANONICAL_ORIGIN;
   return configured.replace(/\/$/, "");
 }
 

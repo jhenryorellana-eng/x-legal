@@ -34,7 +34,7 @@ export function ContratoTab({
   const status = vm.header.contractStatus;
   const contractId = vm.header.contractId;
   const caseId = vm.header.caseId;
-  const [busy, setBusy] = React.useState<"send" | "resend" | "contract" | "consent" | null>(null);
+  const [busy, setBusy] = React.useState<"send" | "resend" | "copy" | "contract" | "consent" | null>(null);
   const [sent, setSent] = React.useState(status);
 
   async function onSend() {
@@ -55,6 +55,18 @@ export function ContratoTab({
     setBusy(null);
     if (res.ok) toast.success(t.linkResent);
     else toast.error(strings.errorTitle);
+  }
+
+  async function onCopyLink() {
+    if (!contractId || !actions.getSigningLink) return;
+    setBusy("copy");
+    const res = await actions.getSigningLink({ contractId });
+    setBusy(null);
+    if (res.ok && res.url) {
+      const copied = await getBridge().share.copyText(res.url);
+      if (copied) toast.success(strings.copied);
+      else toast.error(strings.errorTitle);
+    } else toast.error(strings.errorTitle);
   }
 
   async function onDownloadContract() {
@@ -177,6 +189,11 @@ export function ContratoTab({
                 <Icon name="clock" size={18} color="var(--gold-deep)" />
                 <span style={{ fontSize: 13.5, fontWeight: 700, color: "var(--gold-deep)" }}>{t.awaitingSignature}</span>
               </div>
+              {contractId && actions.getSigningLink && (
+                <GradientBtn size="md" full icon="copy" disabled={busy === "copy"} onClick={onCopyLink}>
+                  {t.copySigningLink}
+                </GradientBtn>
+              )}
               {contractId && (
                 <GhostBtn size="md" full icon="send" disabled={busy === "resend"} onClick={onResend}>
                   {t.resendLink}

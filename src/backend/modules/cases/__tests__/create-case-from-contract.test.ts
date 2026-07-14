@@ -156,6 +156,10 @@ vi.mock("../repository", async (importOriginal) => {
     findPlanKind: vi.fn().mockResolvedValue(null),
     // createCaseFromContract now reads this to gate the welcome email (isFirstCase).
     getCaseSummariesByClient: vi.fn().mockResolvedValue([{ id: "case-1" }]),
+    // Safety net: when the creator is not a sales rep (e.g. an admin), the service
+    // resolves the default sales owner via eligibleOwnersForStage → this repo read.
+    // Default: no eligible sales staff ([]); individual tests override per-case.
+    listStaffWithModuleEdit: vi.fn().mockResolvedValue([]),
   };
 });
 
@@ -618,9 +622,11 @@ describe("createCaseFromContract", () => {
     expect(mockEmit).not.toHaveBeenCalledWith(expect.objectContaining({ type: "case.created" }));
   });
 
-  it("stores assigned_paralegal_id as preselection; no owner change when no sales is assigned", async () => {
-    // Admin actor, no sales rep → initial owner is null (admin assigns later).
-    // assigned_paralegal_id is kept only as the default owner for the Legal handoff.
+  it("stores assigned_paralegal_id as preselection; no owner change when there is no eligible sales staff", async () => {
+    // Admin actor, no explicit sales rep AND no eligible sales staff in the org
+    // (listStaffWithModuleEdit → []) → initial owner stays null (edge case; a warn
+    // is logged). assigned_paralegal_id is kept only as the default owner for the
+    // Legal handoff.
     await createCaseFromContract(ACTOR, {
       primaryClientId: CLIENT_ID,
       serviceId: SERVICE_ID,
@@ -632,8 +638,64 @@ describe("createCaseFromContract", () => {
 
     const payload = mockCreateCaseAtomic.mock.calls[0][0];
     expect(payload.case.assigned_paralegal_id).toBe("ffffffff-ffff-4fff-8fff-ffffffffffff");
+    expect(payload.case.assigned_sales_id).toBeNull();
     expect(mockEmit).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: "case.owner_changed" }),
+    );
+  });
+
+  it("safety net: an admin-created case defaults the responsible to the sales department owner (never orphan)", async () => {
+    // Bug A fix: a case created by an admin (no explicit assignedSalesId) must not
+    // be left without a responsible. The service resolves the first eligible sales
+    // owner (today Vanessa) and assigns it → sets assigned_sales_id + projects the
+    // card onto that owner's board (case.owner_changed).
+    const repo = await import("../repository");
+    vi.mocked(repo.listStaffWithModuleEdit).mockResolvedValueOnce([
+      { userId: "sales-default-1", displayName: "Vanessa", role: "sales" },
+    ]);
+
+    await createCaseFromContract(ACTOR, {
+      primaryClientId: CLIENT_ID,
+      serviceId: SERVICE_ID,
+      servicePlanId: PLAN_ID,
+      parties: [],
+      paymentPlan: VALID_PAYMENT_PLAN,
+    });
+
+    const payload = mockCreateCaseAtomic.mock.calls[0][0];
+    expect(payload.case.assigned_sales_id).toBe("sales-default-1");
+    expect(mockEmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "case.owner_changed",
+        payload: expect.objectContaining({ fromOwnerId: null, toOwnerId: "sales-default-1" }),
+      }),
+    );
+  });
+
+  it("does NOT override an explicit assignedSalesId with the department default", async () => {
+    // If the caller passes assignedSalesId, it wins — the safety net only fills a
+    // null. (Guards against the default clobbering an intentional choice.)
+    const repo = await import("../repository");
+    vi.mocked(repo.listStaffWithModuleEdit).mockResolvedValueOnce([
+      { userId: "sales-default-1", displayName: "Vanessa", role: "sales" },
+    ]);
+
+    await createCaseFromContract(ACTOR, {
+      primaryClientId: CLIENT_ID,
+      serviceId: SERVICE_ID,
+      servicePlanId: PLAN_ID,
+      assignedSalesId: "abababab-abab-4bab-8bab-abababababab",
+      parties: [],
+      paymentPlan: VALID_PAYMENT_PLAN,
+    });
+
+    const payload = mockCreateCaseAtomic.mock.calls[0][0];
+    expect(payload.case.assigned_sales_id).toBe("abababab-abab-4bab-8bab-abababababab");
+    expect(mockEmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "case.owner_changed",
+        payload: expect.objectContaining({ toOwnerId: "abababab-abab-4bab-8bab-abababababab" }),
+      }),
     );
   });
 
