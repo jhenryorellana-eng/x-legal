@@ -200,7 +200,6 @@ export function ProcesoScreen({
         onClose={() => setGlossary(null)}
         title={glossary?.term ?? ""}
         hideHeader
-        absolute
       >
         <div style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 12 }}>
           <div

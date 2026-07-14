@@ -147,7 +147,9 @@ export function BottomSheet({
           height,
           background: "var(--card)",
           borderRadius: "28px 28px 0 0",
-          padding: "12px 24px 36px",
+          // Bottom padding reserves the device gesture bar (safe-area) so the
+          // sheet's last control never sits flush against the screen edge.
+          padding: "12px 24px calc(44px + var(--safe-bottom))",
           overflowY: "auto",
           boxShadow: "0 -18px 50px rgba(7,17,33,0.28)",
           transform: drag ? `translateY(${drag}px)` : undefined,
