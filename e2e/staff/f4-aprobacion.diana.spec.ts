@@ -20,7 +20,7 @@ test.describe("F4 §4.3 — staff approval + PDF generation (Diana)", () => {
 
     await page.goto(`/admin/casos/${CASE_ID}/formularios`);
 
-    await expect(page.getByRole("heading", { name: /Formularios · ULP-2026-0002/i })).toBeVisible({
+    await expect(page.getByRole("heading", { name: /Formularios · U26-000002/i })).toBeVisible({
       timeout: 20_000,
     });
     await expect(page.getByText("Formulario I-589 (partes 1-5)")).toBeVisible();

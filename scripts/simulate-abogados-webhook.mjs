@@ -68,7 +68,7 @@ const body = JSON.stringify({
   validation_id: validationId,
   external_case_id: externalCaseId,
   source,
-  case_number: "ULP-E2E-0001",
+  case_number: "U26-E2E-0001",
   verdict,
   verdict_notes:
     verdict === "validated"

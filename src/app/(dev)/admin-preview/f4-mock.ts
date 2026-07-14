@@ -209,13 +209,13 @@ export const aiCostsMock: AiCostsVM = {
     series: [{ key: "cost", label: "Gasto del período", color: "var(--accent)" }],
   },
   ranking: [
-    { name: "1. ULP-2026-0011 · opus", value: 42.8, color: "var(--accent)" },
-    { name: "2. ULP-2026-0009 · opus", value: 31.5, color: "var(--brand-green)" },
+    { name: "1. U26-000011 · opus", value: 42.8, color: "var(--accent)" },
+    { name: "2. U26-000009 · opus", value: 31.5, color: "var(--brand-green)" },
     { name: "3. ASILO-OBJ-DEMO · sonnet", value: 24.1, color: "var(--gold)" },
   ],
   queries: [
-    { id: "q1", caseNumber: "ULP-2026-0011", source: "Generaciones", model: "claude-opus-4-7", tokens: "182,400", cost: "$42.80", status: "Completado", statusTone: "ok", date: "14/06/26 10:32" },
-    { id: "q2", caseNumber: "ULP-2026-0011", source: "Extracciones", model: "gemini-2.5-flash", tokens: "12,100", cost: "$0.74", status: "Completado", statusTone: "ok", date: "14/06/26 09:18" },
+    { id: "q1", caseNumber: "U26-000011", source: "Generaciones", model: "claude-opus-4-7", tokens: "182,400", cost: "$42.80", status: "Completado", statusTone: "ok", date: "14/06/26 10:32" },
+    { id: "q2", caseNumber: "U26-000011", source: "Extracciones", model: "gemini-2.5-flash", tokens: "12,100", cost: "$0.74", status: "Completado", statusTone: "ok", date: "14/06/26 09:18" },
     { id: "q3", caseNumber: "ASILO-OBJ-DEMO", source: "Generaciones", model: "claude-sonnet-4-6", tokens: "96,200", cost: "$24.10", status: "Fallido", statusTone: "bad", date: "13/06/26 16:44" },
   ],
   exportHref: "#",

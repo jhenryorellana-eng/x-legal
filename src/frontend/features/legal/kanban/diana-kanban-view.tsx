@@ -10,7 +10,7 @@
  *   4 En validación (purple) · 5 Listo (green, is_terminal_won)
  *
  * Tarjeta de caso (DOC-54 §1.3 PROMPT-DIA-01):
- *   - Fila superior: icono del servicio + ULP-… + chip "Con abogado"
+ *   - Fila superior: icono del servicio + U26-… + chip "Con abogado"
  *   - Nombre del cliente (bold)
  *   - Línea servicio · fase
  *   - Chips de alerta: por revisar / correcciones del abogado / generación

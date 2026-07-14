@@ -143,10 +143,10 @@ interface DemoCase {
 }
 
 const DEMO_CASES: DemoCase[] = [
-  { id: "1", number: "ULP-2026-0042", client: "María González", service: "Asilo Político", age: "hace 3 días" },
-  { id: "2", number: "ULP-2026-0041", client: "José Martínez", service: "Creación de LLC", age: "hace 5 días" },
-  { id: "3", number: "ULP-2026-0039", client: "Ana Ruiz", service: "Residencia familiar", age: "hace 8 días" },
-  { id: "4", number: "ULP-2026-0037", client: "Carlos Díaz", service: "Asilo Político", age: "hace 12 días" },
+  { id: "1", number: "U26-000042", client: "María González", service: "Asilo Político", age: "hace 3 días" },
+  { id: "2", number: "U26-000041", client: "José Martínez", service: "Creación de LLC", age: "hace 5 días" },
+  { id: "3", number: "U26-000039", client: "Ana Ruiz", service: "Residencia familiar", age: "hace 8 días" },
+  { id: "4", number: "U26-000037", client: "Carlos Díaz", service: "Asilo Político", age: "hace 12 días" },
 ];
 
 export default function DesignShowcasePage() {
@@ -1167,7 +1167,7 @@ export default function DesignShowcasePage() {
           open={modalOpen}
           onOpenChange={setModalOpen}
           title="Avanzar fase"
-          description="Caso ULP-2026-0042 · María González"
+          description="Caso U26-000042 · María González"
           footer={
             <>
               <GhostBtn size="md" full={false} onClick={() => setModalOpen(false)}>

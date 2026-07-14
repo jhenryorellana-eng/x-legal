@@ -1081,7 +1081,7 @@ describe("proposeFormSegmentation", () => {
 describe("proposeExpedienteAssembly", () => {
   const createMsg = (text: string) => ({ content: [{ type: "text", text }] });
   const baseInput = {
-    caseLabel: "ULP-2026-0001",
+    caseLabel: "U26-000001",
     serviceCategory: "Asilo Político",
     parties: [{ id: "p1", role: "minor", name: "Juan Pérez" }],
     strongDocs: [{ kind: "automated_form" as const, id: "f1", label: "Formulario I-589", partyId: null }],
@@ -1649,14 +1649,14 @@ describe("getAiCostsReport", () => {
     status: "completed",
     isTest: false,
     createdAt: "2026-06-15T10:00:00.000Z",
-    caseNumber: "ULP-1",
+    caseNumber: "U26-000001",
     serviceLabel: "Asilo",
     ...over,
   });
 
   const CURRENT: Row[] = [
     row({ id: "g1", costUsd: 0.5, inputTokens: 100, outputTokens: 200, cacheTokens: 50, model: "claude-sonnet-4-6" }),
-    row({ id: "g2", costUsd: 0.1, inputTokens: 10, outputTokens: 20, status: "failed", model: "claude-opus-4-7", caseNumber: "ULP-2" }),
+    row({ id: "g2", costUsd: 0.1, inputTokens: 10, outputTokens: 20, status: "failed", model: "claude-opus-4-7", caseNumber: "U26-000002" }),
     row({ id: "gt", costUsd: 0.99, inputTokens: 999, outputTokens: 999, isTest: true, model: "claude-sonnet-4-6" }),
     row({ id: "e1", source: "extractions", costUsd: 0.05, inputTokens: 30, outputTokens: 10, model: "gemini-2.5-flash" }),
     row({ id: "t1", source: "translations", costUsd: 0.03, inputTokens: 20, outputTokens: 5, model: "gemini-2.5-flash" }),

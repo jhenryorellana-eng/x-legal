@@ -73,7 +73,7 @@ describe("navForRole", () => {
 /**
  * Regression: sidebar reorg — the old "Catálogo" group became "Gerencia"
  * (management) and a new marketing "Catálogo" group holds the demo entry
- * renamed to "Servicios" (demoServices).
+ * labeled "Demos" (demoServices).
  */
 describe("STAFF_NAV structure", () => {
   it("orders the groups with Gerencia before the marketing Catálogo", () => {

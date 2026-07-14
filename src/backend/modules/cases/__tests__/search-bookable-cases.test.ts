@@ -46,7 +46,7 @@ const STAFF: Actor = {
 
 const row = (over: Record<string, unknown> = {}) => ({
   caseId: "c1",
-  caseNumber: "ULP-2026-0001",
+  caseNumber: "U26-000001",
   serviceId: "s1",
   primaryClientId: "u1",
   firstName: "Carlos",
@@ -62,7 +62,7 @@ beforeEach(() => vi.clearAllMocks());
 
 describe("searchBookableCases", () => {
   it("matches by client name (case-insensitive) and resolves the es label", async () => {
-    mockGetActiveCasesEnriched.mockResolvedValue([row(), row({ caseId: "c2", caseNumber: "ULP-2026-0002", firstName: "María", lastName: "González", phone: "+13055550002" })]);
+    mockGetActiveCasesEnriched.mockResolvedValue([row(), row({ caseId: "c2", caseNumber: "U26-000002", firstName: "María", lastName: "González", phone: "+13055550002" })]);
 
     const res = await searchBookableCases(STAFF, "carlos");
     expect(res).toEqual([

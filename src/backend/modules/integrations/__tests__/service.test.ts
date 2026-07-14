@@ -182,7 +182,7 @@ const VALID_VERDICT_PAYLOAD = {
   validation_id: "vid-0001",
   external_case_id: "11111111-1111-4111-8111-111111111111",
   source: "usalatinoprime-v2",
-  case_number: "ULP-2026-0042",
+  case_number: "U26-000042",
   verdict: "validated" as const,
   verdict_notes: "All good",
   verdict_findings: [],

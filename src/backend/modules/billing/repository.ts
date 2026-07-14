@@ -431,7 +431,7 @@ export async function getAccountStatement(
   };
 }
 
-/** Returns the human case number (ULP-YYYY-NNNN) for a case, or null. */
+/** Returns the human case number ({PREFIX}{YY}-{NNNNNN}) for a case, or null. */
 export async function findCaseNumberById(caseId: string): Promise<string | null> {
   const supabase = createServiceClient();
   const { data } = await supabase

@@ -26,7 +26,7 @@ export function slugify(input: string): string {
  * lowercases, strips diacritics, and removes every non-alphanumeric character.
  *   "José Pérez"        → "joseperez"
  *   "(305) 555-0142"    → "3055550142"
- *   "ULP-2026-0015"     → "ulp20260015"
+ *   "U26-000015"        → "u26000015"
  * So `normalizeForSearch(haystack).includes(normalizeForSearch(needle))` ignores
  * case, accents, spaces and punctuation.
  */

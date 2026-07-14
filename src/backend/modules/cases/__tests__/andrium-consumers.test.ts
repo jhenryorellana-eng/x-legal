@@ -75,7 +75,7 @@ vi.mock("../repository", async (importOriginal) => {
     // Ensure RLS-based findCaseById is NOT called (returns null → surfaces bugs)
     findCaseById: vi.fn().mockResolvedValue(null),
     findCaseByContractId: vi.fn().mockResolvedValue(null),
-    nextCaseNumber: vi.fn().mockResolvedValue("ULP-2026-TEST"),
+    nextCaseNumber: vi.fn().mockResolvedValue("U26-TEST"),
     insertCase: vi.fn(),
     upsertCaseMember: vi.fn(),
     insertPhaseHistory: vi.fn(),
@@ -128,7 +128,7 @@ type CaseStatus =
 const makeCase = (status: CaseStatus) => ({
   id: CASE_ID,
   org_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-  case_number: "ULP-2026-0001",
+  case_number: "U26-000001",
   status,
   service_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
   service_plan_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",

@@ -78,7 +78,7 @@ export async function findCaseByCaseId(
 
 /**
  * Calls the next_case_number() SQL function for an org.
- * Returns a string like 'ULP-2026-0001'.
+ * Returns a string like 'U26-000001' ({PREFIX}{YY}-{NNNNNN}; PREFIX from orgs.settings.case_prefix).
  */
 export async function nextCaseNumber(orgId: string): Promise<string> {
   const supabase = await createServiceClient();

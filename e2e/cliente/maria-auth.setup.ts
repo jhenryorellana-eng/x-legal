@@ -23,7 +23,7 @@
  * 1. Custom Access Token Hook must be active in Supabase (same as all staff setups).
  * 2. Seed 03 applied (`supabase db reset` applies all seeds).
  * 3. Dev server running on localhost:3000.
- * 4. María must have a case (ULP-2026-0001) with status='active' and
+ * 4. María must have a case (U26-000001) with status='active' and
  *    assigned_sales_id = Vanessa's user_id (both set by seed 03).
  *
  * LANDING URL

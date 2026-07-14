@@ -74,7 +74,7 @@ describe("listCaseSummariesForClient", () => {
     mockGetCaseSummariesByClient.mockResolvedValue([
       {
         id: "case-1",
-        case_number: "ULP-2026-0001",
+        case_number: "U26-000001",
         service_id: "svc-1",
         status: "active",
         service_label_i18n: { es: "Asilo político", en: "Political asylum" },
@@ -87,7 +87,7 @@ describe("listCaseSummariesForClient", () => {
     expect(res).toEqual([
       {
         caseId: "case-1",
-        caseNumber: "ULP-2026-0001",
+        caseNumber: "U26-000001",
         serviceId: "svc-1",
         serviceLabelI18n: { es: "Asilo político", en: "Political asylum" },
         status: "active",

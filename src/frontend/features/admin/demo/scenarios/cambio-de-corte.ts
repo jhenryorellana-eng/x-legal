@@ -310,7 +310,7 @@ export const cambioDeCorte: DemoScenario = {
   ],
 
   staff: {
-    caseNumber: "ULP-2026-0078",
+    caseNumber: "U26-000078",
     clientLegalName: "Andrés Villalba Suárez",
     clientPhone: "+1 (614) 555-0176",
     planLabel: "Cambio de Corte · Con abogado",
@@ -367,7 +367,7 @@ export const cambioDeCorte: DemoScenario = {
         { label: "País de origen", value: "Venezuela" },
         { label: "Servicio", value: "Cambio de Corte (EOIR-33 + Moción)" },
         { label: "Traslado", value: "El Paso, TX → Cleveland, OH" },
-        { label: "Número de caso", value: "ULP-2026-0078" },
+        { label: "Número de caso", value: "U26-000078" },
         { label: "Responsable", value: "Diana Torres · Paralegal" },
       ],
       chronology: [

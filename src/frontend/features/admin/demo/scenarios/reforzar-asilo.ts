@@ -296,7 +296,7 @@ export const reforzarAsilo: DemoScenario = {
   ],
 
   staff: {
-    caseNumber: "ULP-2026-0057",
+    caseNumber: "U26-000057",
     clientLegalName: "Yenifer Pacheco Morales",
     clientPhone: "+1 (713) 555-0186",
     planLabel: "Reforzar Asilo · Con abogado",
@@ -354,7 +354,7 @@ export const reforzarAsilo: DemoScenario = {
         { label: "País de origen", value: "El Salvador" },
         { label: "Servicio", value: "Reforzar Asilo (sobre I-589 ya presentado)" },
         { label: "Plan", value: "Reforzar Asilo · Con abogado" },
-        { label: "Número de caso", value: "ULP-2026-0057" },
+        { label: "Número de caso", value: "U26-000057" },
         { label: "Responsable", value: "Diana Torres · Paralegal" },
       ],
       chronology: [

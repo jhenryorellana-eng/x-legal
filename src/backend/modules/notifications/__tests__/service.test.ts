@@ -657,7 +657,7 @@ describe("notifyFromEvent('installment.paid') — receipt", () => {
       remainingAmountCents: 80000,
       nextDueDate: "2026-09-01",
       nextDueAmountCents: 20000,
-      caseNumber: "ULP-2026-0007",
+      caseNumber: "U26-000007",
       autopay: false,
       cardLast4: null,
     },
@@ -691,7 +691,7 @@ describe("notifyFromEvent('installment.paid') — receipt", () => {
       kind: "payment-receipt",
       amountCents: 20000,
       remainingCount: 4,
-      caseNumber: "ULP-2026-0007",
+      caseNumber: "U26-000007",
     });
   });
 });

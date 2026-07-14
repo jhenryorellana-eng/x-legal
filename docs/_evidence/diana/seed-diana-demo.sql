@@ -11,10 +11,10 @@
 --    several cards to organise across columns.
 update public.cases
 set current_owner_id = '00000000-0000-0000-0000-000000000003'
-where case_number in ('ULP-2026-0009', 'ULP-2026-0012', 'ULP-2026-0013')
+where case_number in ('U26-000009', 'U26-000012', 'U26-000013')
   and current_owner_id is null;
 
--- 2) Mark the two most recent documents of ULP-2026-0011 (already Diana's, has a
+-- 2) Mark the two most recent documents of U26-000011 (already Diana's, has a
 --    draft expediente) as 'uploaded' so the "Por revisar" banner/queue and the
 --    Mi día "Revisar documentos" pendiente have real data. Always the same two
 --    documents (ordered by created_at) → idempotent.

@@ -13,7 +13,7 @@ export const casosStringsMock = buildCasosStrings("es");
 export const casoRowsMock: CaseRowVM[] = [
   {
     id: "c1",
-    caseNumber: "ULP-2026-0042",
+    caseNumber: "U26-000042",
     clientName: "María González",
     serviceLabel: "Asilo Político",
     planKind: "with_lawyer",
@@ -27,7 +27,7 @@ export const casoRowsMock: CaseRowVM[] = [
   },
   {
     id: "c2",
-    caseNumber: "ULP-2026-0061",
+    caseNumber: "U26-000061",
     clientName: "Carlos Pérez",
     serviceLabel: "Visa Juvenil",
     planKind: "self",
@@ -41,7 +41,7 @@ export const casoRowsMock: CaseRowVM[] = [
   },
   {
     id: "c3",
-    caseNumber: "ULP-2026-0070",
+    caseNumber: "U26-000070",
     clientName: "Yeimi Castillo",
     serviceLabel: "Asilo Político",
     planKind: "with_lawyer",
@@ -55,7 +55,7 @@ export const casoRowsMock: CaseRowVM[] = [
   },
   {
     id: "c4",
-    caseNumber: "ULP-2025-0388",
+    caseNumber: "U25-000388",
     clientName: "Pedro Alvarado",
     serviceLabel: "Visa Juvenil",
     planKind: "self",
@@ -121,7 +121,7 @@ export const newCaseServicesMock: NewCaseService[] = [
 export const caseWorkspaceVmMock: CaseWorkspaceVM = {
   header: {
     caseId: "c1",
-    caseNumber: "ULP-2026-0042",
+    caseNumber: "U26-000042",
     clientName: "María González",
     clientPhone: "+1 305 555 0142",
     serviceLabel: "Asilo Político",

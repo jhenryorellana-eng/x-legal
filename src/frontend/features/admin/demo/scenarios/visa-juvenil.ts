@@ -726,7 +726,7 @@ export const visaJuvenil: DemoScenario = {
   ],
 
   staff: {
-    caseNumber: "ULP-2026-0031",
+    caseNumber: "U26-000031",
     clientLegalName: "Mateo Alejandro Rivas Cordero",
     clientPhone: "+1 (305) 555-0131",
     planLabel: "Visa Juvenil (SIJS) · Con abogado",
@@ -783,7 +783,7 @@ export const visaJuvenil: DemoScenario = {
         { label: "Tutora", value: "María Cordero Lanza (madre)" },
         { label: "Servicio", value: "Visa Juvenil (SIJS)" },
         { label: "Plan", value: "Visa Juvenil (SIJS) · Con abogado" },
-        { label: "Número de caso", value: "ULP-2026-0031" },
+        { label: "Número de caso", value: "U26-000031" },
         { label: "Responsable", value: "Diana Torres · Paralegal" },
       ],
       chronology: [

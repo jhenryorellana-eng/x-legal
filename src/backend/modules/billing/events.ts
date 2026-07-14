@@ -37,7 +37,7 @@ export interface PaymentReceiptFacts {
   /** Next due installment date (YYYY-MM-DD) or null when fully paid. */
   nextDueDate: string | null;
   nextDueAmountCents: number | null;
-  /** Human case number (ULP-YYYY-NNNN). */
+  /** Human case number ({PREFIX}{YY}-{NNNNNN}). */
   caseNumber: string | null;
   /** True when this payment was an automatic (off-session) card charge. */
   autopay: boolean;

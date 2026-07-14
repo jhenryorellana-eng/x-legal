@@ -52,7 +52,7 @@ const {
   return {
     mockCan: vi.fn(),
     mockFindCaseByContractId: vi.fn(),
-    mockNextCaseNumber: vi.fn().mockResolvedValue("ULP-2026-0001"),
+    mockNextCaseNumber: vi.fn().mockResolvedValue("U26-000001"),
     mockCreateCaseAtomic: vi.fn(),
     mockWriteAudit: vi.fn().mockResolvedValue(undefined),
     mockEmit: vi.fn(),
@@ -285,7 +285,7 @@ describe("createCaseFromContract", () => {
       { role_key: "minor", cardinality: "multiple", include_in_contract: true },
     ]);
     mockUpsertPersonRecord.mockResolvedValue("person-record-id-1");
-    mockNextCaseNumber.mockResolvedValue("ULP-2026-0001");
+    mockNextCaseNumber.mockResolvedValue("U26-000001");
     setupDbQueryMocks();
   });
 
@@ -378,7 +378,7 @@ describe("createCaseFromContract", () => {
     expect(payload.case).toEqual(
       expect.objectContaining({
         org_id: ACTOR.orgId,
-        case_number: "ULP-2026-0001",
+        case_number: "U26-000001",
         status: "payment_pending",
         primary_client_id: CLIENT_ID,
       }),

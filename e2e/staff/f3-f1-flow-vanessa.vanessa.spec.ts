@@ -437,9 +437,9 @@ test.describe("F3-F1 Staff: S8 — clients view post-activation", () => {
 
   test("renders client list / cases overview without errors", async ({ page }) => {
     await expect(page.locator("body")).not.toContainText("Internal Server Error");
-    // The demo cases (ULP-2026-0001, ULP-2026-0002) should appear in some form.
+    // The demo cases (U26-000001, U26-000002) should appear in some form.
     // If the page lists case numbers or client names, assert one of them.
-    const maryMention = page.getByText(/María González|ULP-2026-0001/i).first();
+    const maryMention = page.getByText(/María González|U26-000001/i).first();
     const caseCountEl = page.getByText(/\d+ caso|\d+ case/i).first();
 
     const hasCaseData = (await maryMention.isVisible({ timeout: 5_000 }).catch(() => false)) ||

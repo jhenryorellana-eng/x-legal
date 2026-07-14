@@ -480,7 +480,7 @@ function ConfiguracionPreview() {
 function ClientesPreview() {
   const rows: CaseRowVM[] = MOCK_CASES.map((c, i) => ({
     id: c.id,
-    caseNumber: `ULP-2026-${String(1000 + i)}`,
+    caseNumber: `U26-${String(1000 + i).padStart(6, "0")}`,
     clientName: c.name,
     phone: "+1 (305) 555-01" + String(10 + i),
     serviceLabel: c.service,

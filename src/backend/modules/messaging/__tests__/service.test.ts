@@ -302,7 +302,7 @@ describe("listConversations (staff inbox: Clientes vs Equipo)", () => {
   it("groups by scope and enriches snippet/initials/color", async () => {
     mockRepo.listConversationsForUser.mockResolvedValue([
       {
-        conversationId: "c-case", scope: "case", title: null, caseId: CASE, caseNumber: "ULP-2026-0002", serviceChip: "Visa Juvenil",
+        conversationId: "c-case", scope: "case", title: null, caseId: CASE, caseNumber: "U26-000002", serviceChip: "Visa Juvenil",
         peerName: "Sofía Cabrera", lastMessageAt: "2026-06-16T09:41:00Z", unread: 2,
         lastMessage: { kind: "text", body: "Recibido", senderUserId: "staff-9", senderName: "Diana Ruiz", attachmentName: null },
       },
@@ -316,7 +316,7 @@ describe("listConversations (staff inbox: Clientes vs Equipo)", () => {
     expect(r.clients).toHaveLength(1);
     expect(r.team).toHaveLength(1);
     expect(r.clients[0]).toMatchObject({
-      name: "Sofía Cabrera", initials: "SC", serviceChip: "Visa Juvenil", caseNumber: "ULP-2026-0002", unread: 2, snippet: "Diana: Recibido",
+      name: "Sofía Cabrera", initials: "SC", serviceChip: "Visa Juvenil", caseNumber: "U26-000002", unread: 2, snippet: "Diana: Recibido",
     });
     expect(r.team[0]).toMatchObject({ name: "Equipo UsaLatinoPrime", snippet: "Andrium: Reunión el viernes" });
   });
@@ -326,8 +326,8 @@ describe("listClientCaseChats (client: one chat per case)", () => {
   it("returns one row per case enriched with service + conversation preview", async () => {
     mockCases.getCasesForClient.mockResolvedValue({
       items: [
-        { id: "case-1", service_id: "svc-1", case_number: "ULP-0001" },
-        { id: "case-2", service_id: "svc-2", case_number: "ULP-0002" },
+        { id: "case-1", service_id: "svc-1", case_number: "U26-000001" },
+        { id: "case-2", service_id: "svc-2", case_number: "U26-000002" },
       ],
       nextCursor: null,
     });
@@ -349,14 +349,14 @@ describe("listClientCaseChats (client: one chat per case)", () => {
     const asilo = r.find((x) => x.caseId === "case-1")!;
     expect(asilo).toMatchObject({
       serviceName: "Asilo Político", serviceColor: "#E4002B", serviceIcon: "scale",
-      caseNumber: "ULP-0001", conversationId: "conv-1", unread: 2, snippet: "Diana: Hola",
+      caseNumber: "U26-000001", conversationId: "conv-1", unread: 2, snippet: "Diana: Hola",
     });
     const visa = r.find((x) => x.caseId === "case-2")!;
     expect(visa).toMatchObject({ conversationId: null, snippet: "", unread: 0, serviceName: "Visa Juvenil" });
   });
 
   it("keeps a case with no conversation yet (empty preview)", async () => {
-    mockCases.getCasesForClient.mockResolvedValue({ items: [{ id: "case-9", service_id: "svc-9", case_number: "ULP-0009" }], nextCursor: null });
+    mockCases.getCasesForClient.mockResolvedValue({ items: [{ id: "case-9", service_id: "svc-9", case_number: "U26-000009" }], nextCursor: null });
     mockRepo.getServicesInfo.mockResolvedValue(new Map([["svc-9", { name: "Ciudadanía", color: "#1BB673", icon: "shield" }]]));
     mockRepo.getCaseChatPreview.mockResolvedValue({ conversationId: null, lastMessage: null, unread: 0, lastMessageAt: null });
     const r = await listClientCaseChats(CLIENT);

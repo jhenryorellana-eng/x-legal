@@ -19,7 +19,7 @@
  * ══════════════════
  * Seed 03 creates:
  *   - María González: user_id 00000000-0000-0000-0000-000000000101
- *   - Case ULP-2026-0001: visa-juvenil, with_lawyer, status='active'
+ *   - Case U26-000001: visa-juvenil, with_lawyer, status='active'
  *     assigned_sales_id = Vanessa's user_id
  *     current_phase_id = 'custodia'
  *   - Appointment 901: status='scheduled', +2 days from seed time (future)
@@ -77,13 +77,13 @@ test.describe("F3-F1 Client: S1 — client home", () => {
     console.log(`[F3-F1 Client S1] Home rendered at: ${page.url()}`);
   });
 
-  test("case ULP-2026-0001 link or card is visible on home", async ({ page }) => {
+  test("case U26-000001 link or card is visible on home", async ({ page }) => {
     await page.goto("/home");
     await page.waitForLoadState("domcontentloaded", { timeout: 20_000 });
 
     // The home page should show the active case in some form.
     const caseIndicator = page
-      .getByText(/ULP-2026-0001|visa juvenil|Visa Juvenil/i)
+      .getByText(/U26-000001|visa juvenil|Visa Juvenil/i)
       .first()
       .or(page.getByRole("link", { name: /caso|case/i }).first());
 

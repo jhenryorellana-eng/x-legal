@@ -368,7 +368,7 @@ export const asiloPolitico: DemoScenario = {
   ],
 
   staff: {
-    caseNumber: "ULP-2026-0042",
+    caseNumber: "U26-000042",
     clientLegalName: "Karelis Rondón Salazar",
     clientPhone: "+1 (305) 555-0142",
     planLabel: "Asilo Político · Con abogado",
@@ -425,7 +425,7 @@ export const asiloPolitico: DemoScenario = {
         { label: "Dependientes", value: "Alexander, Kamila y Amanda Rondón" },
         { label: "Servicio", value: "Asilo Político (I-589)" },
         { label: "Plan", value: "Asilo Político · Con abogado" },
-        { label: "Número de caso", value: "ULP-2026-0042" },
+        { label: "Número de caso", value: "U26-000042" },
         { label: "Responsable", value: "Diana Torres · Paralegal" },
       ],
       chronology: [

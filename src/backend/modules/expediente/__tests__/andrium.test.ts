@@ -120,7 +120,7 @@ vi.mock("../repository", () => ({
 
 vi.mock("@/backend/modules/cases", () => ({
   getCaseWorkspace: vi.fn().mockResolvedValue({
-    caseNumber: "ULP-2026-0001",
+    caseNumber: "U26-000001",
     service: { labelI18n: { es: "Visa de Trabajo", en: "Work Visa" } },
     parties: [{ id: "00000000-0000-0000-0000-0000000000a1", role: "petitioner", name: "María García" }],
   }),

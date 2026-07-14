@@ -425,7 +425,7 @@ export interface CreateCaseFromContractResult {
  * ATOMICITY: the writes go through the create_case_atomic RPC (one transaction),
  * so a failure mid-creation rolls back everything — a partially-created case
  * (payment_pending with no contract/plan) can no longer be orphaned (this replaced
- * the old sequential-insert flow that left exactly such orphans, e.g. ULP-2026-0002).
+ * the old sequential-insert flow that left exactly such orphans, e.g. U26-000002).
  * person_records are still resolved in TS before the RPC; a stray person_record on
  * a rolled-back case is harmless (no case references it).
  *

@@ -181,11 +181,11 @@ export const auditRowsMock: AuditRow[] = [
   },
   {
     id: "a3", created_at: "2026-06-11T20:18:00Z", actor_user_id: "11111111-1111-1111-1111-111111111111",
-    action: "billing.zelle.confirmed", entity_type: "payments", entity_id: "ULP-2026-0061", ip: "64.20.118.42", diff: {},
+    action: "billing.zelle.confirmed", entity_type: "payments", entity_id: "U26-000061", ip: "64.20.118.42", diff: {},
   },
   {
     id: "a4", created_at: "2026-06-11T18:02:00Z", actor_user_id: null,
-    action: "integrations.validation.verdict_received", entity_type: "cases", entity_id: "ULP-2026-0042", ip: null, diff: {},
+    action: "integrations.validation.verdict_received", entity_type: "cases", entity_id: "U26-000042", ip: null, diff: {},
   },
   {
     id: "a5", created_at: "2026-06-10T15:30:00Z", actor_user_id: "55555555-5555-5555-5555-555555555555",

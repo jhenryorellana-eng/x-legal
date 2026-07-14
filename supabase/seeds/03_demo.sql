@@ -116,8 +116,8 @@ on conflict (id) do nothing;
 
 -- ---------------------------------------------------------------------------
 -- Demo cases
--- ULP-2026-0001: visa-juvenil, with_lawyer, phase=custodia, active
--- ULP-2026-0002: asilo-politico, self, phase=principal, active
+-- U26-000001: visa-juvenil, with_lawyer, phase=custodia, active
+-- U26-000002: asilo-politico, self, phase=principal, active
 -- ---------------------------------------------------------------------------
 
 -- Case 0001
@@ -129,7 +129,7 @@ insert into public.cases (
 select
   '00000000-0000-0000-0000-000000000301'::uuid,
   o.id,
-  'ULP-2026-0001',
+  'U26-000001',
   s.id,
   pl.id,
   ph.id,
@@ -156,7 +156,7 @@ insert into public.cases (
 select
   '00000000-0000-0000-0000-000000000302'::uuid,
   o.id,
-  'ULP-2026-0002',
+  'U26-000002',
   s.id,
   pl.id,
   ph.id,
@@ -173,6 +173,13 @@ join public.staff_profiles diana on diana.role = 'paralegal'
 join public.staff_profiles vane  on vane.role  = 'sales'
 where o.name = 'UsaLatinoPrime'
 on conflict (case_number) do nothing;
+
+-- Keep the case-number counter in sync with the seeded cases so the first case
+-- created by the app (next_case_number) does not collide with U26-000001/000002.
+insert into public._case_number_counters (org_id, year, last_seq)
+select o.id, 2026, 2 from public.orgs o where o.name = 'UsaLatinoPrime'
+on conflict (org_id, year) do update
+  set last_seq = greatest(public._case_number_counters.last_seq, excluded.last_seq);
 
 -- ---------------------------------------------------------------------------
 -- case_members

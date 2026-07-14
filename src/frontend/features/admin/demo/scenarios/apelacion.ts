@@ -326,7 +326,7 @@ export const apelacion: DemoScenario = {
   ],
 
   staff: {
-    caseNumber: "ULP-2026-0061",
+    caseNumber: "U26-000061",
     clientLegalName: "Diego Ramírez Salinas",
     clientPhone: "+1 (832) 555-0164",
     planLabel: "Apelación BIA · Con abogado",
@@ -383,7 +383,7 @@ export const apelacion: DemoScenario = {
         { label: "País de origen", value: "Honduras" },
         { label: "Servicio", value: "Apelación ante la BIA (EOIR-26)" },
         { label: "Plan", value: "Apelación BIA · Con abogado" },
-        { label: "Número de caso", value: "ULP-2026-0061" },
+        { label: "Número de caso", value: "U26-000061" },
         { label: "Responsable", value: "Diana Torres · Paralegal" },
       ],
       chronology: [

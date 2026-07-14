@@ -1,7 +1,7 @@
 /**
  * Mis datos del caso — `/caso/[caseId]/datos` · nivel CASO (pestaña "Más") — DOC-51 §24.
  *
- * Server component, read-only. Service, case number (ULP-YYYY-NNNN), current
+ * Server component, read-only. Service, case number ({PREFIX}{YY}-{NNNNNN}), current
  * phase, account holder + a row per party, and the user's timezone label.
  */
 

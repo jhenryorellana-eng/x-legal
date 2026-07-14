@@ -145,13 +145,13 @@ describe("renderTransactionalEmail — rich templates (data-driven)", () => {
         remainingAmountCents: 80000,
         nextDueDate: "2026-09-01",
         nextDueAmountCents: 20000,
-        caseNumber: "ULP-2026-0007",
+        caseNumber: "U26-000007",
       },
     });
     expect(subject).toBe("Recibo de tu pago — cuota 2 de 6");
     expect(html).toContain("$200.00"); // amount
     expect(html).toContain("Zelle"); // method label
-    expect(html).toContain("ULP-2026-0007"); // case number
+    expect(html).toContain("U26-000007"); // case number
     expect(html).toContain("Ver mis pagos"); // CTA
   });
 
@@ -176,7 +176,7 @@ describe("renderTransactionalEmail — rich templates (data-driven)", () => {
         remainingAmountCents: 150000,
         nextDueDate: null,
         nextDueAmountCents: null,
-        caseNumber: "ULP-2026-0008",
+        caseNumber: "U26-000008",
       },
     });
     expect(subject).toBe("Recibo de tu cuota inicial"); // downpayment subject

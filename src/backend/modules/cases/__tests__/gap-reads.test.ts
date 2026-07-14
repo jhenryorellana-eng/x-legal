@@ -109,7 +109,7 @@ vi.mock("../repository", async (importOriginal) => {
     findCaseById: vi.fn().mockResolvedValue(null),
     findCaseByCaseId: vi.fn().mockResolvedValue(null),
     findCaseByContractId: vi.fn().mockResolvedValue(null),
-    nextCaseNumber: vi.fn().mockResolvedValue("ULP-2026-TEST"),
+    nextCaseNumber: vi.fn().mockResolvedValue("U26-TEST"),
     insertCase: vi.fn(),
     upsertCaseMember: vi.fn(),
     insertPhaseHistory: vi.fn(),
@@ -166,7 +166,7 @@ const CLIENT_ID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 const makeCase = (id: string) => ({
   id,
   org_id: ACTOR.orgId,
-  case_number: `ULP-2026-000${id[0]}`,
+  case_number: `U26-00000${id[0]}`,
   status: "active" as const,
   service_id: SERVICE_ID,
   service_plan_id: PLAN_ID,
@@ -242,7 +242,7 @@ describe("cases: listCasesByOwner", () => {
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({
       id: CASE_ID_1,
-      caseNumber: expect.stringContaining("ULP-2026"),
+      caseNumber: expect.stringContaining("U26-"),
       status: "active",
       clientName: "Maria Lopez",
       planKind: "standard",
