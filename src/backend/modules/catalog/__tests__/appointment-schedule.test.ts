@@ -21,7 +21,8 @@ const mocks = vi.hoisted(() => {
   const can = vi.fn();
   const writeAudit = vi.fn();
   const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-  return { repo, can, writeAudit, logger };
+  const completeI18n = vi.fn();
+  return { repo, can, writeAudit, logger, completeI18n };
 });
 
 // service.ts does `import * as repo` — provide the fns it touches in these paths.
@@ -43,6 +44,7 @@ vi.mock("@/backend/modules/ai-engine", () => ({
   proposeExtractionSchema: vi.fn(),
   startGeneration: vi.fn(),
   extractRawTextFromStorage: vi.fn().mockResolvedValue(null),
+  completeI18n: mocks.completeI18n,
 }));
 vi.mock("@/backend/platform/storage", () => ({
   validateUploadedObject: vi.fn(),
@@ -113,6 +115,10 @@ describe("upsertAppointmentSchedule", () => {
     mocks.repo.replaceAppointmentSchedule.mockResolvedValue(undefined);
     mocks.repo.setPhaseProcessingWeeks.mockResolvedValue(undefined);
     mocks.repo.listAppointmentSchedule.mockResolvedValue([{ id: "row-1" }]);
+    mocks.completeI18n.mockImplementation(async ({ es }: { es?: string; en?: string }) => ({
+      es: es ?? "",
+      en: `EN[${es}]`,
+    }));
   });
 
   it("maps items with position, persists processing weeks, returns refreshed rows", async () => {
@@ -134,6 +140,72 @@ describe("upsertAppointmentSchedule", () => {
     ]);
     expect(mocks.repo.setPhaseProcessingWeeks).toHaveBeenCalledWith(PHASE_ID, 2);
     expect(result).toEqual([{ id: "row-1" }]);
+  });
+
+  it("auto-fills English for es-only objectives on save, leaving translated ones untouched", async () => {
+    await upsertAppointmentSchedule(ACTOR, {
+      service_phase_id: PHASE_ID,
+      processing_weeks: 0,
+      items: [
+        {
+          sequence_number: 1,
+          duration_minutes: 30,
+          kind: "video",
+          week_offset: 1,
+          objectives: [
+            { id: "o1", text: { es: "Bienvenida", en: "" } }, // es-only → translate
+            { id: "o2", text: { es: "Explicar plazo", en: "Explain deadline" } }, // has en → keep
+          ],
+        },
+      ],
+    });
+
+    expect(mocks.completeI18n).toHaveBeenCalledTimes(1);
+    expect(mocks.completeI18n).toHaveBeenCalledWith({ es: "Bienvenida", en: "" });
+
+    const [, itemsArg] = mocks.repo.replaceAppointmentSchedule.mock.calls[0];
+    expect(itemsArg[0].objectives_i18n).toEqual([
+      { id: "o1", text: { es: "Bienvenida", en: "EN[Bienvenida]" } },
+      { id: "o2", text: { es: "Explicar plazo", en: "Explain deadline" } },
+    ]);
+  });
+
+  it("skips the AI translation when every objective already has both languages", async () => {
+    await upsertAppointmentSchedule(ACTOR, {
+      service_phase_id: PHASE_ID,
+      processing_weeks: 0,
+      items: [
+        {
+          sequence_number: 1,
+          duration_minutes: 30,
+          kind: "video",
+          week_offset: 1,
+          objectives: [{ id: "o1", text: { es: "Hola", en: "Hi" } }],
+        },
+      ],
+    });
+    expect(mocks.completeI18n).not.toHaveBeenCalled();
+  });
+
+  it("does not block the save when translation fails (keeps es-only)", async () => {
+    mocks.completeI18n.mockRejectedValueOnce(new Error("gemini down"));
+    await upsertAppointmentSchedule(ACTOR, {
+      service_phase_id: PHASE_ID,
+      processing_weeks: 0,
+      items: [
+        {
+          sequence_number: 1,
+          duration_minutes: 30,
+          kind: "video",
+          week_offset: 1,
+          objectives: [{ id: "o1", text: { es: "Bienvenida", en: "" } }],
+        },
+      ],
+    });
+    const [, itemsArg] = mocks.repo.replaceAppointmentSchedule.mock.calls[0];
+    expect(itemsArg[0].objectives_i18n).toEqual([
+      { id: "o1", text: { es: "Bienvenida", en: "" } },
+    ]);
   });
 
   it("rejects when the phase belongs to another org", async () => {

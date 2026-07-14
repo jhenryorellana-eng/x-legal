@@ -2963,9 +2963,12 @@ export async function upsertAppointmentSchedule(
   if (!phase) throw catalogError("CATALOG_PHASE_NOT_FOUND");
   await assertServiceInOrg(actor, phase.service_id);
 
+  // Auto-fill the English of es-only objectives on save (admin writes Spanish only).
+  const items = await autoTranslateScheduleObjectives(dto.items);
+
   await repo.replaceAppointmentSchedule(
     dto.service_phase_id,
-    dto.items.map((it, idx) => ({
+    items.map((it, idx) => ({
       service_phase_id: dto.service_phase_id,
       sequence_number: it.sequence_number,
       duration_minutes: it.duration_minutes,
@@ -2987,6 +2990,46 @@ export async function upsertAppointmentSchedule(
   );
 
   return repo.listAppointmentSchedule(dto.service_phase_id);
+}
+
+/**
+ * Auto-fills the English of es-only objectives via Gemini when the schedule is
+ * saved, so the admin only writes Spanish and both locales get persisted. Runs
+ * only for objectives that have `es` but no `en`; objectives already translated
+ * are left untouched (manual overrides win). Best-effort: a translation failure
+ * never blocks the save — the objective stays es-only and resolveI18n degrades to
+ * Spanish at read time. Skips the AI import entirely when nothing needs work.
+ */
+async function autoTranslateScheduleObjectives(
+  items: UpsertAppointmentScheduleDto["items"],
+): Promise<UpsertAppointmentScheduleDto["items"]> {
+  const missing = items.some((it) =>
+    (it.objectives ?? []).some(
+      (o) => (o.text.es?.trim() ?? "") !== "" && (o.text.en?.trim() ?? "") === "",
+    ),
+  );
+  if (!missing) return items;
+
+  const { completeI18n } = await import("@/backend/modules/ai-engine");
+  return Promise.all(
+    items.map(async (it) => {
+      if (!it.objectives?.length) return it;
+      const objectives = await Promise.all(
+        it.objectives.map(async (o) => {
+          const es = o.text.es?.trim() ?? "";
+          const en = o.text.en?.trim() ?? "";
+          if (es === "" || en !== "") return o;
+          try {
+            const text = await completeI18n({ es, en: "" });
+            return { ...o, text };
+          } catch {
+            return o; // leave es-only; resolveI18n falls back to es
+          }
+        }),
+      );
+      return { ...it, objectives };
+    }),
+  );
 }
 
 export interface ServiceCronogramaCita {

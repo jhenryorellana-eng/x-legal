@@ -23,6 +23,10 @@ import { buildCatalogStrings } from "@/frontend/features/admin/catalog/strings";
 import { catalogWizardActions } from "../wizard-actions";
 import type { I18nValue } from "@/frontend/features/admin/shared/i18n-field";
 
+// Saving the schedule auto-translates es-only objectives via Gemini; give the
+// server action headroom over the platform default for the (rare) large phase.
+export const maxDuration = 60;
+
 function i18n(v: unknown): I18nValue {
   const o = (v ?? {}) as { es?: string; en?: string };
   return { es: o.es ?? "", en: o.en ?? "" };
