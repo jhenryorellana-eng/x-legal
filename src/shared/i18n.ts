@@ -32,15 +32,19 @@ function isI18nLabel(value: unknown): value is I18nLabel {
 /**
  * Resolves a `{es, en}` jsonb to the requested locale.
  * Fallback chain (DOC-23 §3.1): locale → es → en → first non-empty value → ''.
+ * Empty strings count as absent, so a partial translation (e.g. `en: ""`)
+ * degrades to the available language instead of rendering blank.
  * Accepts `unknown` so raw jsonb from the DB can be passed without casting;
  * anything that is not an i18n object resolves to ''.
  */
 export function resolveI18n(label: unknown, locale: Locale): string {
   if (!isI18nLabel(label)) return "";
+  const nonEmpty = (v: unknown): string | undefined =>
+    typeof v === "string" && v.length > 0 ? v : undefined;
   return (
-    label[locale] ??
-    label.es ??
-    label.en ??
+    nonEmpty(label[locale]) ??
+    nonEmpty(label.es) ??
+    nonEmpty(label.en) ??
     Object.values(label).find((v) => typeof v === "string" && v.length > 0) ??
     ""
   );

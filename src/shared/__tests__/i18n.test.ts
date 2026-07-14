@@ -30,6 +30,14 @@ describe("resolveI18n (DOC-23 §3.1 fallback chain)", () => {
       "Hi",
     );
   });
+
+  it("treats empty strings as missing (partial translation degrades to the available language)", () => {
+    expect(resolveI18n({ es: "Agendar cita 2", en: "" }, "en")).toBe(
+      "Agendar cita 2",
+    );
+    expect(resolveI18n({ es: "", en: "Only EN" }, "es")).toBe("Only EN");
+    expect(resolveI18n({ es: "", en: "" }, "en")).toBe("");
+  });
 });
 
 describe("isLocale", () => {
