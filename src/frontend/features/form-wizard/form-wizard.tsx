@@ -62,6 +62,14 @@ export interface FormWizardProps {
    * update action) using the same durable autosave engine as the client.
    */
   editable?: boolean;
+  /**
+   * Staff fill-on-behalf: when the staff opens a still-editable client form (draft/
+   * rejected) with edit rights, render the SAME stepped wizard the client uses so
+   * staff can fill AND submit on the client's behalf (RF-ADM-010 / RF-VAN-043),
+   * instead of the flat read-only/correction surface. Only the fill route sets this;
+   * the "Revisión" split-screen leaves it false so its behavior is unchanged.
+   */
+  allowStaffSubmit?: boolean;
   /** Show Lex "atento" + listening chip at the top (Mi Historia). */
   withLex?: boolean;
   lexChip?: string;
@@ -107,6 +115,7 @@ export function FormWizard({
   labels,
   audience = "client",
   editable = false,
+  allowStaffSubmit = false,
   withLex = false,
   lexChip,
   partyName,
@@ -117,10 +126,24 @@ export function FormWizard({
   onExit,
 }: FormWizardProps) {
   const groups = form.groups;
+  // Staff fill-on-behalf: an editable client form that is NOT yet locked
+  // (draft/rejected) → render the full stepped client wizard so staff can fill AND
+  // submit for the client (RF-ADM-010 / RF-VAN-043). Only the fill route opts in via
+  // `allowStaffSubmit`; the "Revisión" split-screen never does, so it is unaffected.
+  const staffFillOnBehalf =
+    audience === "staff" &&
+    allowStaffSubmit &&
+    editable &&
+    form.filledBy === "client" &&
+    !isReadOnly(form.status);
   // Staff review surface: a form the staff opens that is already submitted/approved,
   // or that the client fills. It's rendered FLAT (all groups) — read-only ("Ver") or
-  // editable ("Revisión" with formEdit). The client never lands here.
-  const staffReview = audience === "staff" && (isReadOnly(form.status) || form.filledBy === "client");
+  // editable correction ("Revisión" / "Ver" with formEdit). Excludes the fill-on-behalf
+  // case above. The client never lands here.
+  const staffReview =
+    audience === "staff" &&
+    (isReadOnly(form.status) || form.filledBy === "client") &&
+    !staffFillOnBehalf;
   // Client read-only confirmation ("¡Listo! Lo recibimos") — client audience only.
   const clientLocked = audience === "client" && isReadOnly(form.status);
   // Autosave is active for the stepped wizard (client / staff-fillable draft) and for
@@ -365,7 +388,7 @@ export function FormWizard({
             }}
           >
             <Icon name="info" size={16} color="var(--accent)" />
-            <span>{labels.reviewClientBanner}</span>
+            <span>{editable ? labels.reviewClientEditBanner : labels.reviewClientBanner}</span>
           </div>
         )}
 
@@ -659,6 +682,31 @@ export function FormWizard({
         >
           <Icon name="info" size={14} color="var(--gold-deep)" />
           <span>{labels.offlineBanner}</span>
+        </div>
+      )}
+
+      {/* Staff fill-on-behalf banner — this is the client's form being completed BY
+          staff (RF-ADM-010 / RF-VAN-043). Same durable autosave as the client. */}
+      {audience === "staff" && (
+        <div
+          role="note"
+          className="anim-fade-in"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "10px 14px",
+            marginBottom: 12,
+            background: "var(--blue-soft)",
+            color: "var(--accent)",
+            borderRadius: 12,
+            fontSize: 13,
+            fontWeight: 700,
+            lineHeight: 1.4,
+          }}
+        >
+          <Icon name="info" size={16} color="var(--accent)" />
+          <span>{labels.reviewClientEditBanner}</span>
         </div>
       )}
 

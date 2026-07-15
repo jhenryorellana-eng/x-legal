@@ -649,6 +649,7 @@
       "submittedBody": "Your team is reviewing it.",
       "approvedPill": "Approved",
       "reviewClientBanner": "This form is filled in by the client. Missing something? Ask them by message.",
+      "reviewClientEditBanner": "You're filling in this form on behalf of the client. Changes save automatically.",
       "rejectionTitle": "A correction is needed",
       "rejectionDueLabel": "Due by: {date}"
     },

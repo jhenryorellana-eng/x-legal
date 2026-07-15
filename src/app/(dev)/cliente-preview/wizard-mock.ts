@@ -43,6 +43,7 @@ export const wizardLabelsMock: WizardLabels = {
   submittedBody: "Tu equipo lo está revisando.",
   approvedPill: "Aprobado",
   reviewClientBanner: "Este formulario lo responde el cliente. ¿Falta algo? Pídeselo por mensaje.",
+  reviewClientEditBanner: "Estás llenando este formulario en nombre del cliente. Los cambios se guardan solos.",
   rejectionTitle: "Necesita una corrección",
   rejectionDueLabel: "Fecha límite: {date}",
 };

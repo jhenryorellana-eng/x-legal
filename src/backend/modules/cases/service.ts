@@ -4606,7 +4606,21 @@ export async function staffUpdateFormAnswers(
   input: SaveFormDraftInput,
 ): Promise<CaseFormResponseRow> {
   can(actor, "formEdit", "edit"); // AuthzError('forbidden_module') if denied
-  return saveFormDraftImpl(actor, input, /* staffEdit */ true);
+  const updated = await saveFormDraftImpl(actor, input, /* staffEdit */ true);
+  // Audit the staff mutation over the client's answers (RF-TRX-023; canonical action
+  // per RF-ADM-010). PII-safe (RNF-020): record ONLY which question ids changed +
+  // ids + status — NEVER the answer VALUES (a diff of answers can carry SSN/A-number).
+  // Non-fatal by design (writeAudit never throws).
+  await writeAudit(actor, "case.form_response.updated", "case_form_responses", updated.id, {
+    after: {
+      caseId: input.caseId,
+      formDefinitionId: input.formDefinitionId,
+      partyId: input.partyId ?? null,
+      status: updated.status,
+      changedQuestionIds: Object.keys(input.patch ?? {}),
+    },
+  });
+  return updated;
 }
 
 /**

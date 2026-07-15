@@ -75,6 +75,10 @@ function previewLabels(lang: "es" | "en"): WizardLabels {
       "Este formulario lo responde el cliente. ¿Falta algo? Pídeselo por mensaje.",
       "This form is filled in by the client. Missing something? Ask them by message.",
     ),
+    reviewClientEditBanner: t(
+      "Estás llenando este formulario en nombre del cliente. Los cambios se guardan solos.",
+      "You're filling in this form on behalf of the client. Changes save automatically.",
+    ),
     rejectionTitle: t("Necesita una corrección", "A correction is needed"),
     rejectionDueLabel: t("Fecha límite: {date}", "Due by: {date}"),
   };

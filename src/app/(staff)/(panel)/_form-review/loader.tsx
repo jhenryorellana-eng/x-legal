@@ -11,7 +11,7 @@
 
 import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
-import { getActor, allows } from "@/backend/modules/identity";
+import { getActor } from "@/backend/modules/identity";
 import { getFormForClient, getCaseDocuments, getCaseWorkspace, CaseError } from "@/backend/modules/cases";
 import { type WizardForm, type Locale, resolveWizardLabels } from "@/frontend/features/form-wizard";
 import {
@@ -19,8 +19,8 @@ import {
   type ReviewDocOption,
   type FormReviewStrings,
 } from "@/frontend/features/legal/revision/form-review-screen";
+import { resolveStaffFormEditability } from "@/app/(staff)/(panel)/_case-forms/editability";
 import {
-  saveFormDraftAction,
   submitFormResponseAction,
   translateFormAnswersAction,
   getDocumentUrlAction,
@@ -30,7 +30,6 @@ import {
   rejectFormResponseAction,
   generateFilledPdfAction,
   getFormResponsePdfUrlAction,
-  staffUpdateFormAnswersAction,
 } from "@/app/(staff)/(panel)/admin/casos/form-actions";
 
 export async function FormReviewLoader({
@@ -81,17 +80,8 @@ export async function FormReviewLoader({
   const form = dto as WizardForm;
   const labels = resolveWizardLabels(tWizard as unknown as (key: string) => string);
 
-  // Editability of the review answers:
-  //  - a staff-fillable DRAFT (filled_by staff/both, still draft) → the normal fill
-  //    flow, editable with case access → route to the client saveFormDraftAction.
-  //  - anything else (submitted/approved, or a client-filled form) → a staff CORRECTION,
-  //    gated by the `formEdit` permission → route to staffUpdateFormAnswersAction.
-  // Admin bypasses; Diana (paralegal) has formEdit by preset; e.g. sales does not.
-  const isEditableStaffDraft =
-    (form.status === "draft" || form.status === null) && form.filledBy !== "client";
-  const canFormEdit = allows(actor, "formEdit", "edit");
-  const editable = isEditableStaffDraft || canFormEdit;
-  const saveDraft = isEditableStaffDraft ? saveFormDraftAction : staffUpdateFormAnswersAction;
+  // Editability of the review answers (shared rule — see resolveStaffFormEditability).
+  const { editable, saveDraft } = resolveStaffFormEditability(actor, form);
 
   const strings: FormReviewStrings = {
     officialTitle: t("reviewOfficialTitle"),

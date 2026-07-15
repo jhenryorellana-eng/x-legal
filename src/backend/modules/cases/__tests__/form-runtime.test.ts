@@ -724,6 +724,32 @@ describe("staffUpdateFormAnswers", () => {
     expect(mockUpdateFormResponse).not.toHaveBeenCalled();
   });
 
+  it("writes a PII-safe audit entry (case.form_response.updated) — question ids, never values (RF-TRX-023 / RNF-020)", async () => {
+    mockFindFormResponse.mockResolvedValue(submittedResponse);
+    mockFindFormResponseById.mockResolvedValue({ ...submittedResponse, answers: { q1: "123-45-6789" } });
+
+    await staffUpdateFormAnswers(staffActor, {
+      caseId: CASE_ID, formDefinitionId: FORM_DEF_ID, partyId: null, patch: { q1: "123-45-6789" },
+    });
+
+    expect(mockWriteAudit).toHaveBeenCalledWith(
+      staffActor,
+      "case.form_response.updated",
+      "case_form_responses",
+      RESPONSE_ID,
+      expect.objectContaining({
+        after: expect.objectContaining({
+          caseId: CASE_ID,
+          formDefinitionId: FORM_DEF_ID,
+          status: "submitted",
+          changedQuestionIds: ["q1"],
+        }),
+      }),
+    );
+    // PII guard: the audit payload must NOT carry the answer value anywhere.
+    expect(JSON.stringify(mockWriteAudit.mock.calls)).not.toContain("123-45-6789");
+  });
+
   it("edits an APPROVED response (stays approved)", async () => {
     mockFindFormResponse.mockResolvedValue(approvedResponse);
     mockFindFormResponseById.mockResolvedValue({ ...approvedResponse, answers: { q1: "fix" } });

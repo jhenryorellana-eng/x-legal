@@ -7,6 +7,12 @@
  * staff use this thin wrapper instead: it points onSubmitted / onExit back to the
  * case workspace (`backHref`). Save/submit/translate are the staff server actions
  * (authorized by case access — staff allowed).
+ *
+ * `editable` + `allowStaffSubmit` are resolved by the fill loader
+ * (resolveStaffFormEditability): with edit rights the staff can fill/correct the
+ * client's answers (and, on a not-yet-submitted form, complete + submit on their
+ * behalf) using the SAME durable autosave engine as the client. Without them the
+ * screen stays read-only ("Ver").
  */
 
 import { useRouter } from "next/navigation";
@@ -27,6 +33,8 @@ export function StaffFormScreen({
   form,
   locale,
   labels,
+  editable = false,
+  allowStaffSubmit = false,
   saveDraft,
   submitForm,
   translateAnswers,
@@ -38,6 +46,10 @@ export function StaffFormScreen({
   form: WizardForm;
   locale: Locale;
   labels: WizardLabels;
+  /** Enable editing the answers (formEdit / staff-fillable draft). Default read-only. */
+  editable?: boolean;
+  /** Allow completing + submitting a not-yet-submitted client form on their behalf. */
+  allowStaffSubmit?: boolean;
   saveDraft: SaveDraftFn;
   submitForm: SubmitFormFn;
   translateAnswers?: TranslateAnswersFn;
@@ -53,6 +65,8 @@ export function StaffFormScreen({
       locale={locale}
       labels={labels}
       audience="staff"
+      editable={editable}
+      allowStaffSubmit={allowStaffSubmit}
       saveDraft={saveDraft}
       submitForm={submitForm}
       translateAnswers={translateAnswers}

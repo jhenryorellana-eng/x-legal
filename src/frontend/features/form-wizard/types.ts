@@ -202,6 +202,7 @@ export interface WizardLabels {
   // Staff read-only review (audience="staff")
   approvedPill: string; // "Aprobado" — pill for an approved response in the staff review
   reviewClientBanner: string; // "Este formulario lo responde el cliente. ¿Falta algo? Pídeselo por mensaje."
+  reviewClientEditBanner: string; // "Estás llenando/editando este formulario en nombre del cliente. Los cambios se guardan solos."
   // Rejection / correction (client, status='rejected' — amber, never red)
   rejectionTitle: string; // "Necesita una corrección"
   rejectionDueLabel: string; // "Fecha límite: {date}"

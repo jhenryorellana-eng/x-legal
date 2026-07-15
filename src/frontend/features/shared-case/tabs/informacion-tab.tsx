@@ -144,7 +144,8 @@ export function InformacionTab({
                   {m.label}
                 </Chip>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  {/* Ver — the questions + answers in the client's read-only view. */}
+                  {/* Ver — the client's form. Read-only by default; editable (fill/correct
+                      + submit on the client's behalf) when the actor has formEdit. */}
                   <GhostBtn size="md" full={false} icon="doc" onClick={() => router.push(viewHref(f))}>
                     {t.viewForm}
                   </GhostBtn>

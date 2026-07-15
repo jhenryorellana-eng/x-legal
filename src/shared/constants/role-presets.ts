@@ -44,9 +44,11 @@ const MATRIX: Record<ModuleKey, { sales: Cell; paralegal: Cell; finance: Cell }>
   referrals: { sales: "-", paralegal: "-", finance: "E" },
   reviews: { sales: "-", paralegal: "-", finance: "E" },
   retention: { sales: "-", paralegal: "-", finance: "E" },
-  // Editar respuestas de formularios/generaciones enviados o aprobados (Diana por
-  // defecto; el admin puede concederlo a quien quiera). Solo el toggle Editar cuenta.
-  formEdit: { sales: "-", paralegal: "E", finance: "-" },
+  // Llenar/editar respuestas de formularios del cliente en su nombre, y corregir las
+  // enviadas o aprobadas. Ventas (Vanessa, captura asistida RF-VAN-043) y paralegal
+  // (Diana) por defecto; el admin puede concederlo/quitarlo a quien quiera. Finance no.
+  // Solo el toggle Editar cuenta. (Decisión Henry 2026-07-08 + 2026-07-14.)
+  formEdit: { sales: "E", paralegal: "E", finance: "-" },
 };
 
 function presetFor(role: "sales" | "paralegal" | "finance"): RolePreset {

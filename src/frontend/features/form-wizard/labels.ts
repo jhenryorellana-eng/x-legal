@@ -49,6 +49,7 @@ export function resolveWizardLabels(t: (key: string) => string): WizardLabels {
     submittedBody: t("submittedBody"),
     approvedPill: t("approvedPill"),
     reviewClientBanner: t("reviewClientBanner"),
+    reviewClientEditBanner: t("reviewClientEditBanner"),
     rejectionTitle: t("rejectionTitle"),
     rejectionDueLabel: tWithValues("rejectionDueLabel", { date: "{date}" }),
   };
