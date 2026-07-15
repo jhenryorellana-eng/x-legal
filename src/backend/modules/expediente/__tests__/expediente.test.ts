@@ -1177,6 +1177,23 @@ describe("service: autoAssembleWithAi", () => {
     const coverCall = mockRenderCoverPdf.mock.calls[0][0];
     expect(coverCall.subtitle).toBe("María García");
   });
+
+  it("falls back to a deterministic draft when the AI planner fails (never leaves an empty draft)", async () => {
+    // A generated letter + a document, and the AI planner throws (non-deterministic
+    // invalid output — seen in prod for services with no strong form). The assembly must
+    // NOT hard-fail: the safety nets build a complete draft from the known material.
+    mockListGenerationRunsForMaterial.mockResolvedValue([
+      { refId: "gen1", title: "Credible Fear Memorandum", partyId: null },
+    ]);
+    mockProposeExpedienteAssembly.mockRejectedValue(new Error("AI_OUTPUT_INVALID"));
+
+    const res = await autoAssembleWithAi(staffActor, CASE_ID);
+
+    expect(res.itemsCreated).toBeGreaterThan(0);
+    const types = mockInsertItem.mock.calls.map((c) => (c[0] as { item_type: string }).item_type);
+    expect(types).toContain("ai_generation"); // the memo, placed by the safety net
+    expect(types).toContain("client_document"); // the leftover document
+  });
 });
 
 // ---------------------------------------------------------------------------

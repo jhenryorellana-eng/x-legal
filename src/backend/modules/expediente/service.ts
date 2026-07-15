@@ -486,23 +486,38 @@ export async function autoAssembleWithAi(
   const validForm = new Set(forms.map((f) => f.refId));
   const validGen = new Set(gens.map((g) => g.refId));
 
-  // 3. Ask the AI planner (via ai-engine module-pub; R3).
+  // 3. Ask the AI planner (via ai-engine module-pub; R3). The planner is a non-deterministic
+  //    LLM call that occasionally returns output failing schema validation (observed in prod
+  //    for services with no strong form — only a generated letter + documents — e.g. Reforzar
+  //    Asilo). A planner failure must NEVER abort the assembly and leave an empty draft: fall
+  //    back to an empty plan so the safety nets (step 5) still build a complete, canonically
+  //    ordered draft from the known material. The paralegal can reorder — a deterministic
+  //    draft always beats an empty draft plus an error toast.
   const { proposeExpedienteAssembly } = await import("@/backend/modules/ai-engine");
-  const plan = await proposeExpedienteAssembly({
-    caseLabel: ctx.caseNumber,
-    serviceCategory: ctx.serviceLabel,
-    parties: ctx.parties.map((p) => ({ id: p.id, role: p.role, name: p.name ?? "—" })),
-    strongDocs: [
-      ...forms.map((f) => ({ kind: "automated_form" as const, id: f.refId, label: f.title, partyId: f.partyId })),
-      ...gens.map((g) => ({ kind: "ai_generation" as const, id: g.refId, label: g.title, partyId: g.partyId })),
-    ],
-    documents: docs.map((d) => ({
-      caseDocumentId: d.refId,
-      fileName: d.displayName ?? d.originalFilename,
-      partyId: d.partyId,
-      requirementLabel: d.requirementLabel?.es ?? d.requirementLabel?.en ?? null,
-    })),
-  });
+  let plan: Awaited<ReturnType<typeof proposeExpedienteAssembly>>;
+  try {
+    plan = await proposeExpedienteAssembly({
+      caseLabel: ctx.caseNumber,
+      serviceCategory: ctx.serviceLabel,
+      parties: ctx.parties.map((p) => ({ id: p.id, role: p.role, name: p.name ?? "—" })),
+      strongDocs: [
+        ...forms.map((f) => ({ kind: "automated_form" as const, id: f.refId, label: f.title, partyId: f.partyId })),
+        ...gens.map((g) => ({ kind: "ai_generation" as const, id: g.refId, label: g.title, partyId: g.partyId })),
+      ],
+      documents: docs.map((d) => ({
+        caseDocumentId: d.refId,
+        fileName: d.displayName ?? d.originalFilename,
+        partyId: d.partyId,
+        requirementLabel: d.requirementLabel?.es ?? d.requirementLabel?.en ?? null,
+      })),
+    });
+  } catch (err) {
+    logger.warn(
+      { err, caseId },
+      "expediente.autoAssemble: AI planner failed — falling back to deterministic assembly via safety nets",
+    );
+    plan = { sections: [] };
+  }
 
   // 4. Build, re-validating every id against the gathered context.
   let position = await maxItemPositionForExpediente(draft.id);
