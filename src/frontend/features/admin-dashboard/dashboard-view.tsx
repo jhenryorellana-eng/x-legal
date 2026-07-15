@@ -15,6 +15,7 @@ import {
   type SeriesSpec,
   type FunnelStageVM,
 } from "@/frontend/components/dashboard";
+import { LexBoardBubble, type LexBubbleVM } from "@/frontend/features/lex";
 
 /**
  * Admin dashboard view (DOC-53 §1) — real KPIs.
@@ -54,9 +55,12 @@ export interface AdminDashboardStrings {
 export function DashboardView({
   data,
   strings,
+  lex = null,
 }: {
   data: AdminDashboardData;
   strings: AdminDashboardStrings;
+  /** Deterministic Lex insight for the org dashboard (P-52-07). */
+  lex?: LexBubbleVM | null;
 }) {
   return (
     <div className="anim-fade-in-up" style={{ padding: "28px clamp(18px, 3vw, 36px) 64px", maxWidth: 1320 }}>
@@ -79,6 +83,8 @@ export function DashboardView({
         </div>
         <DateRangeFilter labels={strings.filter} />
       </div>
+
+      <LexBoardBubble vm={lex} orb={34} />
 
       {/* KPI row */}
       <div

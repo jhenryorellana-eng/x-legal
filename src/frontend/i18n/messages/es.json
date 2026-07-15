@@ -924,6 +924,39 @@
       "tzLocation": "Ubicación",
       "tzUnavailable": "No pudimos obtener tu ubicación. Elige tu zona manualmente."
     },
+    "lex": {
+      "sales": {
+        "priority": "<b>Tu prioridad #1 hoy:</b> {n, plural, one {# lead lleva} other {# leads llevan}} demasiado tiempo sin respuesta. Empieza por <b>{name}</b> — cada minuto cuenta.",
+        "clear": "Sin leads pendientes por contactar 🎉 Buen momento para preparar tus próximas citas."
+      },
+      "legal": {
+        "rfeOverdue": "<b>{n, plural, one {# caso tiene} other {# casos tienen}}</b> una RFE vencida. Priorízalos hoy.",
+        "corrections": "El abogado devolvió <b>{n, plural, one {# corrección} other {# correcciones}}</b> por aplicar.",
+        "docsToReview": "Tienes <b>{n, plural, one {# documento} other {# documentos}}</b> por revisar en <b>{cases, plural, one {# caso} other {# casos}}</b>.",
+        "failedGen": "<b>{n, plural, one {# generación falló} other {# generaciones fallaron}}</b> y {n, plural, one {necesita} other {necesitan}} reintento.",
+        "clear": "Sin alertas en tus casos. <b>{active, plural, one {# caso activo} other {# casos activos}}</b> en marcha."
+      },
+      "finance": {
+        "overdue": "Tienes <b>{n, plural, one {# caso} other {# casos}}</b> con cuotas vencidas (<b>{amount}</b>). ¿Empezamos por el más antiguo?",
+        "print": "Hay <b>{n, plural, one {# expediente listo} other {# expedientes listos}}</b> para imprimir y despachar.",
+        "collected": "Llevas <b>{amount}</b> cobrados este mes ({trend}).",
+        "clear": "Cartera al día 🎉 Sin cuotas vencidas por ahora."
+      },
+      "admin": {
+        "overdue": "Hay <b>{amount}</b> en morosidad en <b>{n, plural, one {# caso} other {# casos}}</b>. ¿Revisamos cobranza?",
+        "leak": "Tu mayor fuga de conversión está en <b>{from} → {to}</b> (−{drop}%). Conversión: <b>{conv}</b>.",
+        "clear": "<b>{active, plural, one {# caso activo} other {# casos activos}}</b> y conversión de <b>{conv}</b>. Todo en orden hoy."
+      },
+      "actions": {
+        "contactLead": "Contactar a {name}",
+        "openMessaging": "Abrir mensajería",
+        "viewCases": "Ver casos",
+        "openReviewQueue": "Abrir cola",
+        "viewOverdue": "Ver morosidad",
+        "viewPrintQueue": "Ver cola de impresión",
+        "viewFinance": "Ver finanzas"
+      }
+    },
     "dashboard": {
       "greeting": "Buen día",
       "greetingName": "Buen día, {name}",
@@ -1986,8 +2019,6 @@
         "kpiReview": "Clientes esperando revisión",
         "kpiClosings": "Cierres esta semana",
         "kpiTrend": "+{n} vs sem. previa",
-        "lexBriefHtml": "<b>Tu prioridad #1 hoy:</b> {n} leads llevan demasiado tiempo sin respuesta. Empieza por <b>{name}</b> — cada minuto cuenta.",
-        "lexContact": "Contactar a {name}",
         "lexMessaging": "Abrir mensajería"
       },
       "leads": {
@@ -2149,9 +2180,7 @@
         "typeC1": "Cita 1 · Inducción",
         "typeC2": "Cita 2 · Verificación y cartas",
         "typeC3": "Cita 3 · Validación y traspaso",
-        "typeCall": "Llamada informativa",
-        "lexC2": "<b>Lex:</b> Recuerda generar las cartas antes de terminar.",
-        "lexDefault": "<b>Lex:</b> Objetivo de esta cita listo abajo."
+        "typeCall": "Llamada informativa"
       },
       "nuevaCita": {
         "title": "Nueva cita",
@@ -2264,7 +2293,8 @@
         "thisWeek": "Esta semana",
         "month": "Mes",
         "custom": "Personalizado",
-        "lexTipHtml": "Buen progreso: tu conversión subió a <b>{conv}</b>. El mayor escape está en <b>Contactado → Cita agendada</b>.",
+        "lexTipLeak": "Tu conversión Lead→Contrato es de <b>{conv}</b>. Tu mayor fuga está en <b>{from} → {to}</b> (−{drop}%).",
+        "lexTipConv": "Tu conversión Lead→Contrato es de <b>{conv}</b>. Aún no hay suficientes datos del embudo para señalar una fuga.",
         "funnelTitle": "Embudo de conversión",
         "activityTitle": "Actividad de la semana",
         "clientsTitle": "Clientes en proceso",
@@ -2317,23 +2347,6 @@
         "spanish": "Español",
         "english": "English",
         "saved": "✓ Cambios guardados"
-      },
-      "lex": {
-        "greetMiDia": "Buenos días, Vanessa ✨ Tienes <b>{n} leads nuevos</b> sin contactar. ¿Empezamos por el más caliente?",
-        "greetLeads": "Estás en el tablero. Detecté <b>{n} leads</b> sin contactar en \"Nuevo\". ¿Quieres que los priorice por antigüedad?",
-        "greetCitas": "Hoy tienes <b>{n} citas</b>. Te recuerdo preparar las que lo necesiten.",
-        "greetMetricas": "Tu conversión Lead→Contrato es <b>{conv}</b>. El cuello de botella está en \"Cita agendada\". ¿Lo revisamos?",
-        "greetClientes": "Tienes <b>{n} clientes</b> en acompañamiento. {name} ya está lista para traspasar a Diana.",
-        "greetDisponibilidad": "Tus clientes ven tu agenda en su propia zona horaria. Esta semana tienes <b>{n} espacios</b> libres reservables.",
-        "greetConfig": "Aquí ajustas tu cuenta, el tema y mi presencia. ¿Te activo el modo oscuro para las sesiones largas?",
-        "qWhatFirst": "¿Qué atiendo primero?",
-        "qTodaySummary": "Resumen de hoy",
-        "qPrioritize": "Prioriza mis leads",
-        "qWhereLose": "¿Dónde pierdo leads?",
-        "qWhoReady": "¿Quién está listo?",
-        "qHowManySlots": "¿Cuántos huecos tengo?",
-        "qDarkMode": "Activa modo oscuro",
-        "aGeneric": "Lo reviso sobre tus datos reales y te marco la siguiente mejor acción."
       },
       "preview": {
         "title": "Panel de Vanessa — vista previa",

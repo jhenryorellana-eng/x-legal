@@ -14,12 +14,18 @@
 import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import { formatInTimeZone } from "date-fns-tz";
-import { getActor, getCurrentUserLocation } from "@/backend/modules/identity";
+import { getActor, getCurrentUserLocation, getCurrentStaffProfile } from "@/backend/modules/identity";
 import { listLeads, listMyTasks } from "@/backend/modules/kanban";
 import { getSalesToday } from "@/backend/modules/analytics";
 import { listContractableServices } from "@/backend/modules/catalog";
 import { resolveI18n } from "@/shared/i18n";
 import { MiDiaView } from "@/frontend/features/vanessa";
+import {
+  buildLexInsight,
+  composeLexBubble,
+  lexTranslators,
+  type SalesHomeContext,
+} from "@/frontend/features/lex";
 import { fmtHeaderDate, fmtRelative, tzLabel, type Locale } from "@/frontend/lib/datetime";
 import { sourceMeta } from "@/frontend/features/vanessa/shared/source-meta";
 import { MiDiaClientShell } from "./client-shell";
@@ -36,6 +42,9 @@ export default async function MiDiaPage() {
   // Render the date + greeting + chip in the STAFF's own timezone (DOC-23 §6.5):
   // Vanessa (Colombia) and Henry (US) each see their own local time.
   const staffTz = (await getCurrentUserLocation(actor)).timezone;
+  // Greet the logged-in rep by their real name (was hardcoded "Vanessa").
+  const profile = await getCurrentStaffProfile();
+  const firstName = (profile?.displayName ?? "").split(" ")[0];
 
   // Uncontacted leads (oldest first) → "Por atender ahora"
   const leadsPage = await listLeads(actor, { uncontacted: true }).catch(() => null);
@@ -76,7 +85,7 @@ export default async function MiDiaPage() {
         : "greetingEvening";
 
   const strings = {
-    greeting: t(greetKey, { name: "Vanessa" }),
+    greeting: t(greetKey, { name: firstName }),
     dateLine: t("dateLine", { date: fmtHeaderDate(now, staffTz, locale) }),
     tzChip: t("tzChip", { region: tzLabel(staffTz, locale) }),
     attendTitle: t("attendTitle"),
@@ -90,15 +99,21 @@ export default async function MiDiaPage() {
     call: t("call"),
     whatsapp: t("whatsapp"),
     schedule: t("schedule"),
-    lexBriefHtml: t.markup("lexBriefHtml", {
-      b: (c) => `<b>${c}</b>`,
-      n: String(uncontactedCount),
-      name: attend[0]?.title ?? "—",
-    }),
-    lexContactLabel: t("lexContact", { name: attend[0]?.title ?? "—" }),
     lexMessagingLabel: t("lexMessaging"),
-    lexEnabled: true,
   };
+
+  // ── Lex proactive insight (deterministic — DOC-52 §0.5, P-52-07) ──────────
+  // Same "uncontacted" count + top lead the "Por atender" card shows (RF-TRX-004):
+  // priority nudge (warn) when there are uncontacted leads, else all-clear.
+  const salesCtx: SalesHomeContext = {
+    role: "sales",
+    uncontacted: uncontactedCount,
+    topLeadName: attend[0]?.title ?? null,
+  };
+  const lex = composeLexBubble(
+    lexTranslators(await getTranslations("staff.lex")),
+    buildLexInsight(salesCtx),
+  );
 
   const kpis = [
     {
@@ -127,6 +142,7 @@ export default async function MiDiaPage() {
         }))}
         totalUncontacted={uncontactedCount}
         strings={strings}
+        lex={lex}
         actions={{ contactLead: contactLeadAction, toggleTask: toggleTaskDoneAction }}
       />
     </MiDiaClientShell>

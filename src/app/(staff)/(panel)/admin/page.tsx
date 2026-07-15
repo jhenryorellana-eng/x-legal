@@ -32,6 +32,12 @@ import {
   type AdminDashboardData,
   type AdminDashboardStrings,
 } from "@/frontend/features/admin-dashboard/dashboard-view";
+import {
+  buildLexInsight,
+  composeLexBubble,
+  lexTranslators,
+  type AdminHomeContext,
+} from "@/frontend/features/lex";
 
 export const dynamic = "force-dynamic";
 
@@ -220,5 +226,29 @@ export default async function AdminDashboardPage({
     empty: t("empty"),
   };
 
-  return <DashboardView data={data} strings={strings} />;
+  // ── Lex proactive insight (deterministic — DOC-52 §0.5, P-52-07) ──────────
+  // Built from the same overview the KPIs render: org morosidad (danger), the
+  // biggest real funnel leak (warn), else all-in-order. Numbers are identical to
+  // the KPIs above (RF-TRX-004).
+  const tLex = lexTranslators(await getTranslations("staff.lex"));
+  const lexCtx: AdminHomeContext = {
+    role: "admin",
+    overdueCases: overview.overdue.cases,
+    overdueAmount: fmtMoneyCents(overview.overdue.cents),
+    activeCases: overview.activeCases,
+    conversionLabel: fmtPct(overview.conversionPct.value),
+    funnel: {
+      newLeads: overview.funnel.newLeads,
+      contacted: overview.funnel.contacted,
+      won: overview.funnel.won,
+    },
+    stageLabels: {
+      leads: t("funnelStage.leads"),
+      contacted: t("funnelStage.contacted"),
+      won: t("funnelStage.won"),
+    },
+  };
+  const lex = composeLexBubble(tLex, buildLexInsight(lexCtx));
+
+  return <DashboardView data={data} strings={strings} lex={lex} />;
 }

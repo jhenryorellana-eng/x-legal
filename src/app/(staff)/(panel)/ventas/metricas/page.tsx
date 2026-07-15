@@ -24,6 +24,7 @@ import {
   type SecondaryCard,
 } from "@/frontend/features/vanessa";
 import { MetricasClient } from "./client";
+import { biggestFunnelLeak } from "@/frontend/features/lex";
 
 export const dynamic = "force-dynamic";
 
@@ -160,6 +161,12 @@ export default async function VentasMetricasPage({
     });
   }
 
+  // ─── Biggest funnel leak (computed, not hardcoded) ──────────────────────
+  // Replaces the fixed "Contactado → Cita agendada" claim: the largest
+  // consecutive-stage drop in the REAL funnel wins (shared helper — same logic
+  // the admin dashboard uses, P-52-07 coherence).
+  const leak = biggestFunnelLeak(funnel.map((s) => ({ label: s.label, count: s.count })));
+
   // ─── Week bars ────────────────────────────────────────────────────────────
 
   const todayIso = new Date().toISOString().slice(0, 10);
@@ -268,10 +275,18 @@ export default async function VentasMetricasPage({
     thisWeek: t("thisWeek"),
     month: t("month"),
     custom: t("custom"),
-    lexTipHtml: t.markup("lexTipHtml", {
-      b: (c) => `<b>${c}</b>`,
-      conv: fmt(metrics?.conversionPct, "%"),
-    }),
+    lexTipHtml: leak
+      ? t.markup("lexTipLeak", {
+          b: (c) => `<b>${c}</b>`,
+          conv: fmt(metrics?.conversionPct, "%"),
+          from: leak.from,
+          to: leak.to,
+          drop: leak.drop,
+        })
+      : t.markup("lexTipConv", {
+          b: (c) => `<b>${c}</b>`,
+          conv: fmt(metrics?.conversionPct, "%"),
+        }),
     funnelTitle: t("funnelTitle"),
     activityTitle: t("activityTitle"),
     clientsTitle: t("clientsTitle"),

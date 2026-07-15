@@ -40,6 +40,12 @@ import type {
 import { CobranzaKanbanView } from "@/frontend/features/andrium/cobranza/cobranza-kanban-view";
 import { buildNotesStrings } from "@/frontend/features/shared-case/notes";
 import {
+  buildLexInsight,
+  composeLexBubble,
+  lexTranslators,
+  type FinanceHomeContext,
+} from "@/frontend/features/lex";
+import {
   moveKanbanCardAction,
   createKanbanColumnAction,
   updateKanbanColumnAction,
@@ -368,6 +374,23 @@ export default async function FinanzasPage() {
     retry: t("retry"),
   };
 
+  // ── Lex proactive insight (deterministic — DOC-55 §0.6, P-52-07) ──────────
+  // Same numbers as the KPI strip (RF-TRX-004): overdue cases (danger) → print
+  // queue (warn) → collected-this-month (info) → clean ledger.
+  const financeCtx: FinanceHomeContext = {
+    role: "finance",
+    overdueCases: overdueByCase.size,
+    overdueAmount: metrics ? usd(metrics.overdue.montoCents) : "—",
+    printQueue: printByCase.size,
+    collectedCents: metrics?.collectedMonthCents ?? 0,
+    collectedAmount: metrics ? usd(metrics.collectedMonthCents) : "—",
+    collectedTrendLabel: collectedTrend.label === "—" ? null : collectedTrend.label,
+  };
+  const lex = composeLexBubble(
+    lexTranslators(await getTranslations("staff.lex")),
+    buildLexInsight(financeCtx),
+  );
+
   // ── Error state (non-500) ────────────────────────────────────────────────
   if (boardError) {
     return (
@@ -387,6 +410,7 @@ export default async function FinanzasPage() {
       kpi={kpi}
       strings={strings}
       viewingAs={dept?.displayName ?? null}
+      lex={lex}
       notesStrings={buildNotesStrings(locale === "en" ? "en" : "es")}
       locale={locale === "en" ? "en" : "es"}
       actions={{

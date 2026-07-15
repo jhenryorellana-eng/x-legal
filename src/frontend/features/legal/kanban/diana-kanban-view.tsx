@@ -44,6 +44,7 @@ import {
   type KanbanColumnStrings,
 } from "@/frontend/features/shared-kanban";
 import { NotesModal, type NoteView, type NoteVisibility, type NotesStrings } from "@/frontend/features/shared-case/notes";
+import { LexBoardBubble, type LexBubbleVM } from "@/frontend/features/lex";
 
 // Service icons are configured by the admin from the brand `Icon` set
 // (catalog wizard ICON_CHOICES), NOT Material Symbols — render them with the
@@ -197,6 +198,9 @@ export interface DianaKanbanViewProps {
   caseBasePath?: string;
   /** When an admin is viewing an employee's board, their name (for the banner). */
   viewingAs?: string | null;
+  /** Deterministic Lex insight (P-52-07). Only the legal home board passes it;
+   *  the sales/finance reuses of this view leave it null → no bubble. */
+  lex?: LexBubbleVM | null;
   strings: DianaKanbanStrings;
   /** Strings for the notes modal (shared with the case tab). */
   notesStrings: NotesStrings;
@@ -234,6 +238,7 @@ export function DianaKanbanView({
   reviewQueueHref,
   caseBasePath = "/legal/caso",
   viewingAs,
+  lex = null,
   strings,
   notesStrings,
   locale,
@@ -347,6 +352,9 @@ export function DianaKanbanView({
           {strings.newColumn}
         </button>
       </div>
+
+      {/* ── Lex proactive insight (deterministic — P-52-07) ── */}
+      <LexBoardBubble vm={lex} />
 
       {/* ── "Viewing as" banner (admin sees an employee's board) ── */}
       {viewingAs && (

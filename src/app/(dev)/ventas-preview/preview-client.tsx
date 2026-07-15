@@ -96,11 +96,15 @@ function MiDiaPreview() {
         call: "Llamar",
         whatsapp: "WhatsApp",
         schedule: "Agendar",
-        lexBriefHtml:
-          "<b>Tu prioridad #1 hoy:</b> 2 leads llevan demasiado tiempo sin respuesta. Empieza por <b>Lucía Hernández</b> (TikTok) — cada minuto cuenta.",
-        lexContactLabel: "Contactar a Lucía Hernández",
         lexMessagingLabel: "Abrir mensajería",
-        lexEnabled: true,
+      }}
+      lex={{
+        dismissKey: "preview-sales-priority",
+        html: "<b>Tu prioridad #1 hoy:</b> 2 leads llevan demasiado tiempo sin respuesta. Empieza por <b>Lucía Hernández</b> — cada minuto cuenta.",
+        actions: [
+          { id: "contactTopLead", label: "Contactar a Lucía Hernández", icon: "call" },
+          { id: "openMessaging", label: "Abrir mensajería", icon: "forum", ghost: true },
+        ],
       }}
       actions={{ contactLead: ok, toggleTask: ok }}
       onScheduleLead={() => {}}
@@ -429,7 +433,7 @@ function MetricasPreview() {
         month: "Mes",
         custom: "Personalizado",
         lexTipHtml:
-          "Buen progreso: tu conversión subió a <b>24%</b> (+3 pts). El mayor escape está en <b>Contactado → Cita agendada (-29%)</b>.",
+          "Tu conversión Lead→Contrato es de <b>24%</b>. Tu mayor fuga está en <b>Contactado → Cita agendada</b> (−29%).",
         funnelTitle: "Embudo de conversión",
         activityTitle: "Actividad de la semana",
         clientsTitle: "Clientes en proceso",

@@ -35,6 +35,12 @@ import type {
 import { DianaKanbanView } from "@/frontend/features/legal/kanban/diana-kanban-view";
 import { buildNotesStrings } from "@/frontend/features/shared-case/notes";
 import {
+  buildLexInsight,
+  composeLexBubble,
+  lexTranslators,
+  type LegalHomeContext,
+} from "@/frontend/features/lex";
+import {
   moveKanbanCardAction,
   createKanbanColumnAction,
   updateKanbanColumnAction,
@@ -238,6 +244,25 @@ export default async function LegalPage() {
     openCase: t("openCase"),
   };
 
+  // ── Lex proactive insight (deterministic — DOC-54 §0.5, P-52-07) ──────────
+  // Derived from the same board alerts that drive the card chips + banner
+  // (RF-TRX-004): overdue RFE (danger) → lawyer corrections → docs to review →
+  // failed generations (warn) → all-clear.
+  const alertValues = Object.values(alertsMap);
+  const legalCtx: LegalHomeContext = {
+    role: "legal",
+    docsToReview: totalDocsToReview,
+    docsCases: alertValues.filter((a) => a.needsReview > 0).length,
+    corrections: alertValues.filter((a) => a.lawyerCorrections).length,
+    failedGen: alertValues.filter((a) => a.generationFailed).length,
+    rfeOverdue: alertValues.filter((a) => a.rfeOverdue).length,
+    activeCases: cardVMs.length,
+  };
+  const lex = composeLexBubble(
+    lexTranslators(await getTranslations("staff.lex")),
+    buildLexInsight(legalCtx),
+  );
+
   // ── Error state (non-500) ────────────────────────────────────────────────
   if (boardError) {
     return (
@@ -257,6 +282,7 @@ export default async function LegalPage() {
       totalDocsToReview={totalDocsToReview}
       reviewQueueHref="/legal/por-revisar"
       viewingAs={dept?.displayName ?? null}
+      lex={lex}
       strings={strings}
       notesStrings={buildNotesStrings(locale === "en" ? "en" : "es")}
       locale={locale === "en" ? "en" : "es"}

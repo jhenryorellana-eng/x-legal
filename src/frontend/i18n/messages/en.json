@@ -924,6 +924,39 @@
       "tzLocation": "Location",
       "tzUnavailable": "We couldn't get your location. Pick your zone manually."
     },
+    "lex": {
+      "sales": {
+        "priority": "<b>Your #1 priority today:</b> {n, plural, one {# lead has} other {# leads have}} gone too long without a reply. Start with <b>{name}</b> — every minute counts.",
+        "clear": "No leads waiting to be contacted 🎉 A good moment to prep your upcoming appointments."
+      },
+      "legal": {
+        "rfeOverdue": "<b>{n, plural, one {# case has} other {# cases have}}</b> an overdue RFE. Prioritize them today.",
+        "corrections": "The lawyer returned <b>{n, plural, one {# correction} other {# corrections}}</b> to apply.",
+        "docsToReview": "You have <b>{n, plural, one {# document} other {# documents}}</b> to review across <b>{cases, plural, one {# case} other {# cases}}</b>.",
+        "failedGen": "<b>{n, plural, one {# generation} other {# generations}}</b> failed and {n, plural, one {needs} other {need}} a retry.",
+        "clear": "No alerts on your cases. <b>{active, plural, one {# active case} other {# active cases}}</b> in progress."
+      },
+      "finance": {
+        "overdue": "You have <b>{n, plural, one {# case} other {# cases}}</b> with overdue installments (<b>{amount}</b>). Start with the oldest?",
+        "print": "There {n, plural, one {is <b># case file</b>} other {are <b># case files</b>}} ready to print for dispatch.",
+        "collected": "You've collected <b>{amount}</b> this month ({trend}).",
+        "clear": "Ledger's clean 🎉 No overdue installments right now."
+      },
+      "admin": {
+        "overdue": "There's <b>{amount}</b> in overdue balances across <b>{n, plural, one {# case} other {# cases}}</b>. Review collections?",
+        "leak": "Your biggest conversion leak is <b>{from} → {to}</b> (−{drop}%). Conversion: <b>{conv}</b>.",
+        "clear": "<b>{active, plural, one {# active case} other {# active cases}}</b> and <b>{conv}</b> conversion. All in order today."
+      },
+      "actions": {
+        "contactLead": "Contact {name}",
+        "openMessaging": "Open messaging",
+        "viewCases": "View cases",
+        "openReviewQueue": "Open queue",
+        "viewOverdue": "View overdue",
+        "viewPrintQueue": "View print queue",
+        "viewFinance": "View finances"
+      }
+    },
     "dashboard": {
       "greeting": "Good morning",
       "greetingName": "Good morning, {name}",
@@ -1986,8 +2019,6 @@
         "kpiReview": "Clients awaiting review",
         "kpiClosings": "Closings this week",
         "kpiTrend": "+{n} vs prev. week",
-        "lexBriefHtml": "<b>Your #1 priority today:</b> {n} leads have gone too long without a reply. Start with <b>{name}</b> — every minute counts.",
-        "lexContact": "Contact {name}",
         "lexMessaging": "Open messaging"
       },
       "leads": {
@@ -2149,9 +2180,7 @@
         "typeC1": "Appt 1 · Onboarding",
         "typeC2": "Appt 2 · Verification & letters",
         "typeC3": "Appt 3 · Validation & handoff",
-        "typeCall": "Info call",
-        "lexC2": "<b>Lex:</b> Remember to generate the letters before finishing.",
-        "lexDefault": "<b>Lex:</b> This appointment's objective is below."
+        "typeCall": "Info call"
       },
       "nuevaCita": {
         "title": "New appointment",
@@ -2264,7 +2293,8 @@
         "thisWeek": "This week",
         "month": "Month",
         "custom": "Custom",
-        "lexTipHtml": "Good progress: your conversion rose to <b>{conv}</b>. The biggest leak is <b>Contacted → Appointment scheduled</b>.",
+        "lexTipLeak": "Your Lead→Contract conversion is <b>{conv}</b>. Your biggest leak is <b>{from} → {to}</b> (−{drop}%).",
+        "lexTipConv": "Your Lead→Contract conversion is <b>{conv}</b>. Not enough funnel data yet to point to a leak.",
         "funnelTitle": "Conversion funnel",
         "activityTitle": "This week's activity",
         "clientsTitle": "Clients in process",
@@ -2317,23 +2347,6 @@
         "spanish": "Spanish",
         "english": "English",
         "saved": "✓ Changes saved"
-      },
-      "lex": {
-        "greetMiDia": "Good morning, Vanessa ✨ You have <b>{n} new leads</b> to contact. Shall we start with the hottest one?",
-        "greetLeads": "You're on the board. I found <b>{n} leads</b> uncontacted in \"New\". Want me to prioritize them by age?",
-        "greetCitas": "Today you have <b>{n} appointments</b>. I'll remind you to prep the ones that need it.",
-        "greetMetricas": "Your Lead→Contract conversion is <b>{conv}</b>. The bottleneck is \"Appointment scheduled\". Shall we review it?",
-        "greetClientes": "You have <b>{n} clients</b> in progress. {name} is ready to hand off to Diana.",
-        "greetDisponibilidad": "Your clients see your agenda in their own timezone. This week you have <b>{n} bookable</b> open slots.",
-        "greetConfig": "Here you tune your account, theme and my presence. Want me to turn on dark mode for long sessions?",
-        "qWhatFirst": "What do I handle first?",
-        "qTodaySummary": "Today's summary",
-        "qPrioritize": "Prioritize my leads",
-        "qWhereLose": "Where do I lose leads?",
-        "qWhoReady": "Who is ready?",
-        "qHowManySlots": "How many slots do I have?",
-        "qDarkMode": "Turn on dark mode",
-        "aGeneric": "I review it on your real data and flag the next best action."
       },
       "preview": {
         "title": "Vanessa Panel — preview",

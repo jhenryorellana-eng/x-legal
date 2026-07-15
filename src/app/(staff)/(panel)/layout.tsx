@@ -51,6 +51,7 @@ import {
 } from "@/frontend/features/staff-shell/staff-shell";
 import type { SidebarGroup } from "@/frontend/components/desktop/sidebar";
 import { MaterialSymbolsFont } from "@/frontend/features/vanessa";
+import { LexPrefsProvider } from "@/frontend/features/lex";
 
 /** Fallback role labels (used when no title_i18n is set). */
 const ROLE_LABEL_KEY: Record<string, string> = {
@@ -181,7 +182,9 @@ export default async function StaffPanelLayout({
           },
         }}
       >
-        {children}
+        {/* Lex bubble preferences (RF-VAN-005 CA3): one provider for all four
+            panels so the config toggle governs every board's bubbles. */}
+        <LexPrefsProvider>{children}</LexPrefsProvider>
       </StaffShell>
     </>
   );

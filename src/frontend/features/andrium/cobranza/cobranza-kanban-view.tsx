@@ -35,6 +35,7 @@ import { Chip } from "@/frontend/features/vanessa/shared/ui";
 import { useToast } from "@/frontend/features/vanessa/shared/toast-bridge";
 import { Modal } from "@/frontend/components/desktop";
 import { NotesModal, type NoteView, type NoteVisibility, type NotesStrings } from "@/frontend/features/shared-case/notes";
+import { LexBoardBubble, type LexBubbleVM } from "@/frontend/features/lex";
 
 // ---------------------------------------------------------------------------
 // VM types (built by the RSC page; no backend imports here)
@@ -240,6 +241,8 @@ export interface CobranzaKanbanViewProps {
   strings: CobranzaKanbanStrings;
   /** When an admin views an employee's board, their name (for the banner). */
   viewingAs?: string | null;
+  /** Deterministic Lex insight (P-52-07). */
+  lex?: LexBubbleVM | null;
   /** Strings for the notes modal (shared with the case tab). */
   notesStrings: NotesStrings;
   locale: "es" | "en";
@@ -286,6 +289,7 @@ export function CobranzaKanbanView({
   kpi,
   strings,
   viewingAs,
+  lex = null,
   notesStrings,
   locale,
   actions,
@@ -495,6 +499,9 @@ export function CobranzaKanbanView({
           {strings.manageColumns}
         </button>
       </div>
+
+      {/* ── Lex proactive insight (deterministic — P-52-07) ── */}
+      <LexBoardBubble vm={lex} />
 
       {viewingAs && (
         <div

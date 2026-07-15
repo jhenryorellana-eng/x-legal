@@ -14,8 +14,7 @@ import { useRouter } from "next/navigation";
 import { getBridge } from "@/frontend/platform-bridge";
 import { MSym } from "../shared/msym";
 import { Chip, sourceMeta, timeTier } from "../shared/ui";
-import { LexBubble } from "../shared/lex";
-import { useLexPrefs } from "../shared/lex-prefs";
+import { LexBoardBubble, type LexBubbleVM } from "@/frontend/features/lex";
 import { useToast } from "../shared/toast-bridge";
 
 export interface MiDiaKpi {
@@ -74,10 +73,8 @@ export interface MiDiaStrings {
   call: string;
   whatsapp: string;
   schedule: string;
-  lexBriefHtml: string;
-  lexContactLabel: string;
+  /** Toast label shown when the Lex "open messaging" action is used. */
   lexMessagingLabel: string;
-  lexEnabled: boolean;
 }
 
 export interface MiDiaActions {
@@ -99,6 +96,8 @@ export interface MiDiaViewProps {
   tasks: MiDiaTask[];
   totalUncontacted: number;
   strings: MiDiaStrings;
+  /** Deterministic Lex insight for the sales home board (P-52-07). */
+  lex?: LexBubbleVM | null;
   actions: MiDiaActions;
   /**
    * Optional override for the "schedule this lead" affordance. Omitted by the
@@ -116,6 +115,7 @@ export function MiDiaView({
   tasks: initialTasks,
   totalUncontacted,
   strings,
+  lex = null,
   actions,
   onScheduleLead,
 }: MiDiaViewProps) {
@@ -125,7 +125,6 @@ export function MiDiaView({
   // when none is provided we route to Citas with the lead preselected.
   const scheduleLead =
     onScheduleLead ?? ((leadId: string) => router.push(`/ventas/citas?lead=${leadId}`));
-  const { bubbles } = useLexPrefs();
   const [tasks, setTasks] = React.useState(initialTasks);
   const [rows, setRows] = React.useState(attend);
   const onOpenLeads = () => router.push("/ventas/leads");
@@ -172,24 +171,13 @@ export function MiDiaView({
         </Chip>
       </div>
 
-      <LexBubble
-        dismissKey="mi-dia-brief"
+      <LexBoardBubble
+        vm={lex}
         orb={34}
-        enabled={strings.lexEnabled && bubbles}
-        html={strings.lexBriefHtml}
-        actions={[
-          {
-            label: strings.lexContactLabel,
-            icon: "call",
-            onClick: () => rows[0] && contact(rows[0], "call"),
-          },
-          {
-            label: strings.lexMessagingLabel,
-            icon: "forum",
-            ghost: true,
-            onClick: onOpenMessaging,
-          },
-        ]}
+        handlers={{
+          contactTopLead: () => rows[0] && contact(rows[0], "call"),
+          openMessaging: onOpenMessaging,
+        }}
       />
 
       {/* KPIs */}
