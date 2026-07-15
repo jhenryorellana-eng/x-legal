@@ -284,9 +284,9 @@ describe("computeAnthropicCost", () => {
     expect(computeAnthropicCost(baseUsage, "claude-fable-5")).toBe(0.035);
   });
 
-  it("computes opus-4-7 cost (15/MTok in, 75/MTok out)", () => {
-    // 1000 × 15/M + 500 × 75/M = 0.015 + 0.0375 = 0.0525
-    expect(computeAnthropicCost(baseUsage, "claude-opus-4-7")).toBe(0.0525);
+  it("computes opus-4-7 cost (5/MTok in, 25/MTok out)", () => {
+    // 1000 × 5/M + 500 × 25/M = 0.005 + 0.0125 = 0.0175
+    expect(computeAnthropicCost(baseUsage, "claude-opus-4-7")).toBe(0.0175);
   });
 
   it("computes haiku-4-5 cost (1/MTok in, 5/MTok out)", () => {

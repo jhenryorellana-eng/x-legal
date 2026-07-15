@@ -51,10 +51,20 @@ export interface ExtractionCompletedPayload {
 // Typed event emitter helpers
 // ---------------------------------------------------------------------------
 
-export function emitGenerationCompleted(
+/**
+ * Emitted from finalizeRun, which runs inside a Vercel QStash invocation that is
+ * FROZEN the instant it returns 200. A fire-and-forget `emit` here dropped the
+ * consumer's in-flight work: exhibit capture (`captureFromRun` — case_exhibits insert
+ * + fetch-exhibit enqueue) silently never persisted, so annexes never attached in prod
+ * even though the pipeline works when driven synchronously. `emitAndWait` keeps that
+ * light work (insert + enqueue) on the invocation's critical path; the heavy renders
+ * still run in their own fetch-exhibit jobs. Any future generation.completed consumer
+ * (notifications/timeline/kanban) inherits the same guarantee. Callers MUST await.
+ */
+export async function emitGenerationCompleted(
   payload: GenerationCompletedPayload,
-): void {
-  appEvents.emit({
+): Promise<void> {
+  await appEvents.emitAndWait({
     type: "generation.completed",
     payload,
     occurredAt: new Date(),

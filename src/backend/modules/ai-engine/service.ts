@@ -705,7 +705,9 @@ async function finalizeRun(args: {
     return "skipped";
   }
 
-  emitGenerationCompleted({
+  // Awaited (not fire-and-forget): finalizeRun runs in a Vercel invocation frozen on
+  // return, so the exhibit-capture + notification consumers must finish before we return.
+  await emitGenerationCompleted({
     caseId: run.case_id,
     runId: run.id,
     formDefinitionId: run.form_definition_id,

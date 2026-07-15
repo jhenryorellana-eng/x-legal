@@ -304,10 +304,12 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
     cacheReadMul: 0.1,
     cacheWriteMul: 1.25,
   },
-  // claude-opus-4-7: F4-1 premium option per Henry; if invalid at runtime, ops uses claude-opus-4-8
+  // claude-opus-4-7: premium (asylum-memo research). $5/$25 per MTok per Anthropic's
+  // official pricing (verified 2026-07-15) — was previously $15/$75, which inflated the
+  // recorded cost_usd ~3× and the /admin/ai-costs budget alerts.
   "claude-opus-4-7": {
-    inputPerMTok: 15.0,
-    outputPerMTok: 75.0,
+    inputPerMTok: 5.0,
+    outputPerMTok: 25.0,
     cacheReadMul: 0.1,
     cacheWriteMul: 1.25,
   },
