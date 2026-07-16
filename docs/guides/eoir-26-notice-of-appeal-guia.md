@@ -339,3 +339,15 @@ Estas reglas cruzan el formulario contra las EXTRACCIONES de los 3 documentos de
 5. **Fecha del ítem #5 — oral vs escrita:** cruza con `is_oral_decision` de la extracción. Si la decisión fue ORAL, la fecha que corre es la de la audiencia en que se dictó (NO la del memo enviado por correo). El plazo de 30 días es de RECEPCIÓN en la BIA. Fecha del formulario distinta a `decision_date` extraída = crítico.
 6. **Co-apelantes solo confirmados:** los familiares del I-589 Part A.II (`family_members_line`) NO van automáticamente en el ítem #1 — solo si se confirmó que también apelan y estuvieron en el caso consolidado. Un familiar en el #1 sin confirmación, o un familiar del caso consolidado ausente sin explicación = crítico (pierde su derecho a apelar).
 7. **Coherencia de la casilla del ítem #5:** si `is_bond_decision=true` en la extracción y el formulario marca "merits" (o viceversa), o `decision_outcome` no corresponde a la casilla marcada = discordancia crítica.
+
+
+---
+
+## 11. ⚖️ Calibración del veredicto para el AUTOLLENADO (documento pre-firma)
+
+El artefacto que estás validando es el PDF **AUTOLLENADO, ANTES de imprimirse y firmarse**. Calibra así:
+
+1. **Firmas manuscritas** (ítem #9 "Sign Here" + "Date", e ítem #12 "SIGN HERE"): SIEMPRE se estampan A MANO después de imprimir. Su ausencia en el PDF autollenado es CORRECTA por diseño → repórtalas como severidad **sugerencia** (recordatorio de firmar antes de presentar), NUNCA como hallazgo crítico ni motivo para bajar el veredicto del autollenado.
+2. **Adjuntos físicos del paquete** (recibo de pago del EOIR Payment Portal o Form EOIR-26A, copia de la decisión del juez, traducciones certificadas): no son campos del PDF; se agregan al armar el paquete. Si la checklist los marca, asume que el equipo los adjuntará → repórtalos como recordatorio (sugerencia), no como crítico.
+3. **Criterio de aprobación del autollenado**: si los ítems #1–#8 y #10 están completos y coherentes con los documentos del caso, el ítem #12 tiene fecha/destinatario/dirección (o la casilla ECAS marcada) y la checklist está marcada, y las únicas pendencias son las firmas manuscritas y los adjuntos físicos → el documento SÍ tiene calidad para aprobarse: `verdict=would_approve`, `semaforo=green` (o amber si hay hallazgos moderados), **score ≥ 75**, con las firmas/adjuntos como recordatorios finales.
+4. Lo que SÍ sigue siendo crítico aunque todo lo demás esté bien: fecha del ítem #5 incorrecta o fuera del plazo de 30 días, razones vagas o placeholders en el #6, A-Number/nombre discordantes con los documentos, casilla del #5 equivocada, ítem #12 completamente vacío, o familiares mal incluidos/omitidos en el #1.
