@@ -237,9 +237,11 @@ export function PdfViewer({
                 }}
                 style={{ display: "block", width: dim.width, height: dim.height }}
               />
-              {pageFields.map((f) => (
+              {/* Radio groups repeat the same field name once per option widget, so the
+                  page-local index is required for a unique key. */}
+              {pageFields.map((f, i) => (
                 <FieldOverlay
-                  key={f.name}
+                  key={`${f.name}#${i}`}
                   placed={f}
                   state={
                     selectedField === f.name

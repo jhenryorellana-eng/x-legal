@@ -749,9 +749,24 @@ export async function listQuestions(groupId: string): Promise<QuestionRow[]> {
 export async function upsertQuestionGroup(
   row: TablesInsert<"form_question_groups"> & { id?: string },
 ): Promise<QuestionGroupRow> {
+  // Partial updates (the group-rename menu sends only id + title_i18n) must not reach
+  // the INSERT arm of the upsert: Postgres evaluates the inserted tuple BEFORE conflict
+  // resolution, so a missing NOT NULL column (position) aborts the whole statement.
+  let payload = row;
+  if (row.id) {
+    const { data: existing } = await db()
+      .from("form_question_groups")
+      .select("*")
+      .eq("id", row.id)
+      .maybeSingle();
+    if (existing) {
+      const { created_at: _c, updated_at: _u, ...base } = existing as QuestionGroupRow;
+      payload = { ...(base as TablesInsert<"form_question_groups">), ...row };
+    }
+  }
   const { data, error } = await db()
     .from("form_question_groups")
-    .upsert(row, { onConflict: "id" })
+    .upsert(payload, { onConflict: "id" })
     .select()
     .single();
   return throwOnError(data, error, "upsertQuestionGroup");
