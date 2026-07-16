@@ -825,8 +825,14 @@ export async function listDocumentExtractionsForCase(caseId: string): Promise<Ar
   return data.map((row) => {
     const rec = row as unknown as Record<string, unknown>;
     const rdt = rec["required_document_types"] as { slug?: string } | null;
-    const ext = rec["document_extractions"] as Array<{ status?: string; payload?: unknown }> | null;
-    const extraction = Array.isArray(ext) ? ext[0] : null;
+    // document_extractions is 1:1 with case_documents (UNIQUE on case_document_id), so
+    // PostgREST embeds it as an OBJECT, not an array. Accept both shapes: treating it
+    // as array-only left every payload null (the Pre-Mortem context saw no extractions).
+    const ext = rec["document_extractions"] as
+      | { status?: string; payload?: unknown }
+      | Array<{ status?: string; payload?: unknown }>
+      | null;
+    const extraction = Array.isArray(ext) ? (ext[0] ?? null) : ext;
     return {
       caseDocumentId: row.id,
       requirementSlug: rdt?.slug ?? null,
