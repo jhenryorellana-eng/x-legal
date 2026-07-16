@@ -49,6 +49,7 @@ import {
   addWeeksToAnchorIso,
   addDaysToAnchorIso,
   validateAnswerTypes,
+  isAiImproveEnabled,
   buildPartiesSnapshot,
   selectContractAdditionalParties,
   findCardinalityViolation,
@@ -3936,6 +3937,12 @@ export interface FormQuestionDto {
   currentAnswer: unknown;
   /** Conditional visibility (show/lock/require). NULL = unconditional. */
   condition: QuestionCondition | null;
+  /**
+   * "Mejorar con IA" available for this question (migration 0086). Boolean ONLY —
+   * the improve instruction never travels to the client; the server action loads
+   * it by questionId (ai-engine.improveFormAnswerText).
+   */
+  aiImproveEnabled: boolean;
 }
 
 export interface FormGroupDto {
@@ -4023,6 +4030,8 @@ function schemaToWizardGroups(
             isPrefilled: false,
             currentAnswer: answers[q.id] ?? null,
             condition: parseConditionOrNull(q.condition),
+            // Ola 3 generated questionnaires carry no per-question catalog config.
+            aiImproveEnabled: false,
           } as FormQuestionDto;
         })
         .sort((a, b) => a.position - b.position),
@@ -4075,6 +4084,7 @@ export async function getFormForClient(
       source_ref: unknown;
       validation: unknown;
       condition: unknown;
+      ai_improve: unknown;
     }>>;
   };
 
@@ -4140,6 +4150,7 @@ export async function getFormForClient(
           isPrefilled,
           currentAnswer: answers[q.id] ?? null,
           condition: parseConditionOrNull(q.condition),
+          aiImproveEnabled: isAiImproveEnabled(q.ai_improve),
         };
       }));
 

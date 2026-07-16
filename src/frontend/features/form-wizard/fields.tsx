@@ -39,6 +39,12 @@ export interface FieldProps {
   labels: WizardLabels;
   onChange: (value: unknown) => void;
   onBlur: () => void;
+  /**
+   * "Mejorar con IA": rewrites the current text server-side (per-question
+   * instruction). Present only when the question has it enabled AND the surface
+   * injected the action — absent = no button (admin preview, disabled fields).
+   */
+  onImprove?: (text: string) => Promise<{ ok: boolean; improvedText?: string; error?: { code: string } }>;
 }
 
 function originLabel(source: string, labels: WizardLabels): string {
@@ -148,6 +154,152 @@ const cardBase: React.CSSProperties = {
   transition: "border-color 0.2s ease, box-shadow 0.2s ease",
 };
 
+// --- "Mejorar con IA" (per-question AI rewrite) -------------------------------
+
+type ImproveState = "idle" | "loading" | "undo" | "error";
+
+/**
+ * State machine for the improve button. Best-effort by design: a failure keeps
+ * the client's text untouched; a response that arrives after the user kept
+ * typing is discarded (stale). "undo" restores the pre-improve text and clears
+ * itself as soon as the user edits again.
+ */
+function useImprove({
+  value,
+  onChange,
+  onImprove,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onImprove: NonNullable<FieldProps["onImprove"]>;
+}): { state: ImproveState; improve: () => void; undo: () => void } {
+  const [state, setState] = React.useState<ImproveState>("idle");
+  const prevRef = React.useRef<string>("");
+  const resultRef = React.useRef<string | null>(null);
+  const valueRef = React.useRef(value);
+  valueRef.current = value;
+
+  // Any manual edit dissolves the undo/error affordance.
+  React.useEffect(() => {
+    if (state === "undo" && value !== resultRef.current) setState("idle");
+    if (state === "error" && value !== prevRef.current) setState("idle");
+  }, [value, state]);
+
+  const improve = React.useCallback(() => {
+    const text = valueRef.current;
+    if (!text.trim()) return;
+    prevRef.current = text;
+    setState("loading");
+    onImprove(text)
+      .then((r) => {
+        // Stale: the user kept editing while the request was in flight.
+        if (valueRef.current !== text) {
+          setState("idle");
+          return;
+        }
+        if (r.ok && typeof r.improvedText === "string" && r.improvedText.trim()) {
+          resultRef.current = r.improvedText;
+          onChange(r.improvedText);
+          setState("undo");
+        } else {
+          setState("error");
+        }
+      })
+      .catch(() => {
+        setState(valueRef.current === text ? "error" : "idle");
+      });
+  }, [onChange, onImprove]);
+
+  const undo = React.useCallback(() => {
+    resultRef.current = null;
+    onChange(prevRef.current);
+    setState("idle");
+  }, [onChange]);
+
+  return { state, improve, undo };
+}
+
+/** The gold pill rendered INSIDE the text box (bottom/right corner). */
+function ImprovePill({
+  state,
+  hasText,
+  labels,
+  onImprove,
+  onUndo,
+}: {
+  state: ImproveState;
+  hasText: boolean;
+  labels: WizardLabels;
+  onImprove: () => void;
+  onUndo: () => void;
+}) {
+  const isUndo = state === "undo";
+  const loading = state === "loading";
+  const label = loading ? labels.improveLoading : isUndo ? labels.improveUndo : labels.improveIdle;
+  const disabled = loading || (!isUndo && !hasText);
+  return (
+    <button
+      type="button"
+      onClick={isUndo ? onUndo : onImprove}
+      disabled={disabled}
+      aria-busy={loading || undefined}
+      aria-label={label}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        height: 34,
+        padding: "0 13px",
+        borderRadius: 999,
+        border: "none",
+        cursor: disabled ? "default" : "pointer",
+        background: isUndo ? "var(--card)" : "var(--gold)",
+        color: isUndo ? "var(--ink-2)" : "var(--navy)",
+        boxShadow: isUndo
+          ? "inset 0 0 0 1.5px var(--line)"
+          : "0 4px 14px color-mix(in srgb, var(--gold) 45%, transparent)",
+        opacity: disabled && !loading ? 0.45 : 1,
+        fontFamily: "var(--font-title)",
+        fontSize: 12.5,
+        fontWeight: 800,
+        whiteSpace: "nowrap",
+        transition: "background 0.2s ease, opacity 0.2s ease",
+      }}
+    >
+      <Icon
+        name={isUndo ? "arrowL" : "sparkle"}
+        size={14}
+        color={isUndo ? "var(--ink-2)" : "var(--navy)"}
+      />
+      {label}
+    </button>
+  );
+}
+
+/** Soft error note under the box when an improve attempt failed (never red). */
+function ImproveErrorNote({ state, labels }: { state: ImproveState; labels: WizardLabels }) {
+  if (state !== "error") return null;
+  return (
+    <div
+      role="status"
+      className="anim-fade-in-up"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 7,
+        marginTop: 9,
+        color: "var(--ink-2)",
+        fontSize: 13,
+        fontWeight: 600,
+        lineHeight: 1.35,
+      }}
+    >
+      <Icon name="info" size={15} color="var(--ink-2)" />
+      {labels.improveError}
+    </div>
+  );
+}
+
 function inputBorder(focused: boolean, hasError: boolean): React.CSSProperties {
   if (hasError) return { borderColor: "color-mix(in srgb, var(--gold-deep) 55%, transparent)" };
   if (focused)
@@ -163,7 +315,14 @@ function inputBorder(focused: boolean, hasError: boolean): React.CSSProperties {
 function TextField(props: FieldProps) {
   const [focused, setFocused] = React.useState(false);
   const v = typeof props.value === "string" ? props.value : props.value == null ? "" : String(props.value);
-  return (
+  const noopImprove = React.useCallback(async () => ({ ok: false }), []);
+  const improve = useImprove({
+    value: v,
+    onChange: props.onChange,
+    onImprove: props.onImprove ?? noopImprove,
+  });
+  const withImprove = !!props.onImprove;
+  const input = (
     <input
       type="text"
       value={v}
@@ -177,12 +336,30 @@ function TextField(props: FieldProps) {
       style={{
         ...cardBase,
         height: 64,
-        padding: "0 18px",
+        padding: withImprove ? "0 150px 0 18px" : "0 18px",
         fontSize: 17,
         fontWeight: 600,
         ...inputBorder(focused, !!props.error),
       }}
     />
+  );
+  if (!withImprove) return input;
+  return (
+    <div>
+      <div style={{ position: "relative" }}>
+        {input}
+        <div style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)" }}>
+          <ImprovePill
+            state={improve.state}
+            hasText={!!v.trim()}
+            labels={props.labels}
+            onImprove={improve.improve}
+            onUndo={improve.undo}
+          />
+        </div>
+      </div>
+      <ImproveErrorNote state={improve.state} labels={props.labels} />
+    </div>
   );
 }
 
@@ -404,38 +581,60 @@ function TextareaField(props: FieldProps & { showDictation?: boolean }) {
     },
   });
 
+  const noopImprove = React.useCallback(async () => ({ ok: false }), []);
+  const improve = useImprove({
+    value: v,
+    onChange: props.onChange,
+    onImprove: props.onImprove ?? noopImprove,
+  });
+  const withImprove = !!props.onImprove;
+
   const recording = dictation.isListening;
   const showDictation = props.showDictation !== false;
 
   return (
     <div>
-      <textarea
-        value={v}
-        onChange={(e) => props.onChange(e.target.value)}
-        onFocus={() => setFocused(true)}
-        onBlur={() => {
-          setFocused(false);
-          props.onBlur();
-        }}
-        placeholder={props.labels.textareaPlaceholder}
-        style={{
-          ...cardBase,
-          minHeight: 132,
-          width: "100%",
-          padding: "16px 18px",
-          fontSize: 16.5,
-          fontWeight: 500,
-          lineHeight: 1.55,
-          resize: "vertical",
-          fontFamily: "var(--font-title)",
-          ...(recording
-            ? {
-                borderColor: "var(--accent)",
-                boxShadow: "0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent)",
-              }
-            : inputBorder(focused, !!props.error)),
-        }}
-      />
+      <div style={{ position: "relative" }}>
+        <textarea
+          value={v}
+          onChange={(e) => props.onChange(e.target.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => {
+            setFocused(false);
+            props.onBlur();
+          }}
+          placeholder={props.labels.textareaPlaceholder}
+          style={{
+            ...cardBase,
+            minHeight: withImprove ? 152 : 132,
+            width: "100%",
+            padding: withImprove ? "16px 18px 58px" : "16px 18px",
+            fontSize: 16.5,
+            fontWeight: 500,
+            lineHeight: 1.55,
+            resize: "vertical",
+            fontFamily: "var(--font-title)",
+            ...(recording
+              ? {
+                  borderColor: "var(--accent)",
+                  boxShadow: "0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent)",
+                }
+              : inputBorder(focused, !!props.error)),
+          }}
+        />
+        {withImprove && (
+          <div style={{ position: "absolute", right: 10, bottom: 14 }}>
+            <ImprovePill
+              state={improve.state}
+              hasText={!!v.trim()}
+              labels={props.labels}
+              onImprove={improve.improve}
+              onUndo={improve.undo}
+            />
+          </div>
+        )}
+      </div>
+      {withImprove && <ImproveErrorNote state={improve.state} labels={props.labels} />}
 
       {showDictation && (
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginTop: 18, gap: 9 }}>

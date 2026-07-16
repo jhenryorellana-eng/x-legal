@@ -26,6 +26,8 @@ export {
   translateText,
   translateAnswerText,
   translateAnswersBatch,
+  // T5 "Mejorar con IA" (consumed by client/staff form server actions)
+  improveFormAnswerText,
   // ai_field resolution (consumed by cases module — Etapa B)
   interpretDocumentFields,
   synthesizeLetterFields,
@@ -86,6 +88,8 @@ export type {
   QuestionnaireMode,
   AiFieldRequest,
   DocumentLegibilityVerdict,
+  // T5 "Mejorar con IA"
+  ImproveFormAnswerResult,
   // Expediente assembly planner (consumed by expediente module)
   ExpedienteAssemblyInput,
   ExpedienteAssemblyPlan,

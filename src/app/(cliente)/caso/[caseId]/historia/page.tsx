@@ -19,6 +19,7 @@ import { resolveWizardLabels } from "@/frontend/features/form-wizard";
 import { HistoriaScreen } from "@/frontend/features/cliente/historia/historia-screen";
 import { EmptyCase } from "@/frontend/features/cliente/shared/empty-case";
 import { saveDraftAction, submitFormAction } from "./actions";
+import { improveAnswerAction } from "../formulario/[formId]/improve-actions";
 
 export default async function HistoriaPage({
   params,
@@ -120,6 +121,7 @@ export default async function HistoriaPage({
       lexChip={tHist("listeningChip")}
       saveDraft={saveDraftAction}
       submitForm={submitFormAction}
+      improveAnswer={improveAnswerAction}
     />
   );
 }

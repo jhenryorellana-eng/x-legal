@@ -620,6 +620,17 @@ export interface QuestionValidationRule {
   condition?: unknown;
 }
 
+/**
+ * True when a question's `ai_improve` jsonb (migration 0086) enables the
+ * client-facing "Mejorar con IA" button. The instruction itself is server-only;
+ * the client DTO carries just this boolean.
+ */
+export function isAiImproveEnabled(raw: unknown): boolean {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return false;
+  const instruction = (raw as { instruction?: unknown }).instruction;
+  return typeof instruction === "string" && instruction.trim().length > 0;
+}
+
 export interface AnswerValidationError {
   questionId: string;
   code: "required" | "regex" | "min" | "max" | "type";

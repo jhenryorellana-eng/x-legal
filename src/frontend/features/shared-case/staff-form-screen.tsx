@@ -24,6 +24,7 @@ import {
   type SaveDraftFn,
   type SubmitFormFn,
   type TranslateAnswersFn,
+  type ImproveAnswerFn,
 } from "@/frontend/features/form-wizard";
 
 export function StaffFormScreen({
@@ -38,6 +39,7 @@ export function StaffFormScreen({
   saveDraft,
   submitForm,
   translateAnswers,
+  improveAnswer,
   backHref,
 }: {
   caseId: string;
@@ -53,6 +55,8 @@ export function StaffFormScreen({
   saveDraft: SaveDraftFn;
   submitForm: SubmitFormFn;
   translateAnswers?: TranslateAnswersFn;
+  /** "Mejorar con IA" server action (per-question gating via aiImproveEnabled). */
+  improveAnswer?: ImproveAnswerFn;
   backHref: string;
 }) {
   const router = useRouter();
@@ -70,6 +74,7 @@ export function StaffFormScreen({
       saveDraft={saveDraft}
       submitForm={submitForm}
       translateAnswers={translateAnswers}
+      improveAnswer={improveAnswer}
       onSubmitted={() => router.push(backHref)}
       onExit={() => router.push(backHref)}
     />

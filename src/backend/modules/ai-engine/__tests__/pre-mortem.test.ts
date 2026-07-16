@@ -121,6 +121,12 @@ vi.mock("@/backend/platform/embeddings", () => ({
 
 vi.mock("@/backend/platform/anthropic", () => ({
   getAnthropicClient: mocks.getAnthropicClient,
+  DEFAULT_UI_MODEL: "claude-haiku-4-5",
+}));
+
+// Required by the module import graph (improveFormAnswerText); not exercised here.
+vi.mock("@/backend/platform/ratelimit", () => ({
+  limitAiImprove: vi.fn().mockResolvedValue({ allowed: true, reset: 0 }),
 }));
 
 vi.mock("@/backend/platform/gemini", () => ({

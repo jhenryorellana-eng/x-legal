@@ -136,6 +136,12 @@ export const FORM_EDITOR_STRINGS_ES: FormEditorStrings = {
   aiFieldModelAuto: "Automático",
   aiFieldInstruction: "Instrucción para la IA (qué escribir en este campo)",
   aiFieldInstructionHint: "Ej. Redacta la narrativa de persecución de la Parte B a partir del memorándum.",
+  // "Mejorar con IA" (per-question client rewrite)
+  aiImproveSection: "Mejorar con IA (cliente)",
+  aiImproveEnable: "Ofrecer el botón \"Mejorar con IA\" en este campo",
+  aiImproveInstruction: "Instrucción de mejora (formato requerido, reglas del campo)",
+  aiImproveInstructionHint: "Ej. Una persona por línea con formato APELLIDO(S), Nombre(s) - A###-###-###.",
+  aiImprovePublishedNote: "Editable aunque la versión esté publicada. Corrige ortografía/formato sin inventar información; la instrucción nunca se muestra al cliente.",
   companionTitle: "Cuestionario complementario",
   companionHint: "Preguntas para nutrir la redacción de alta calidad. Sus respuestas alimentan esta generación.",
   companionOpen: "Abrir cuestionario",

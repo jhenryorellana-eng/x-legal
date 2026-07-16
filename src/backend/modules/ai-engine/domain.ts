@@ -279,6 +279,131 @@ export function maskPii(text: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Reversible PII masking (T5 "Mejorar con IA")
+// ---------------------------------------------------------------------------
+//
+// The lossy maskPii above destroys the value (last-4 only) — fine for prompt
+// CONTEXT, fatal for a rewrite flow where the model's output replaces the
+// client's answer (an EOIR-26 A-Number must survive verbatim). Here each PII
+// match becomes an opaque token the model is instructed to preserve, and the
+// caller restores the originals after the response. If the model drops a
+// token, validateImprovedText rejects the output and the answer is untouched.
+
+export interface ReversiblePiiMask {
+  masked: string;
+  /** token (⟦PII_n⟧) → original value */
+  tokens: Map<string, string>;
+}
+
+// Order matters: more specific patterns first, so e.g. a grouped A-Number is
+// tokenized before the bare-digits passport pattern can bite a fragment of it.
+// Includes the grouped A### ### ### / A###-###-### form the compact
+// A_NUMBER_RE above does not catch.
+const REVERSIBLE_PII_PATTERNS: RegExp[] = [
+  /\bA[- ]?\d{3}[- ]\d{3}[- ]\d{3}\b/gi, // A-Number, grouped (A312-654-987)
+  /\bA-?\d{7,9}\b/gi, // A-Number, compact (A312654987)
+  /\b\d{3}[- ]?\d{2}[- ]?\d{4}\b/g, // SSN
+  /\b(?:[A-Z]{1,2}\d{5,8}|\d{8,9})\b/g, // passport-like
+];
+
+// ASCII token on purpose: models reproduce [[PII_n]] far more reliably than
+// exotic unicode brackets (a live haiku run dropped a ⟦PII_n⟧ token).
+export function maskPiiReversible(text: string): ReversiblePiiMask {
+  const tokens = new Map<string, string>();
+  if (!text) return { masked: text, tokens };
+
+  const tokenByValue = new Map<string, string>();
+  let counter = 0;
+  let masked = text;
+
+  for (const pattern of REVERSIBLE_PII_PATTERNS) {
+    masked = masked.replace(pattern, (match) => {
+      const existing = tokenByValue.get(match);
+      if (existing) return existing;
+      counter += 1;
+      const token = `[[PII_${counter}]]`;
+      tokenByValue.set(match, token);
+      tokens.set(token, match);
+      return token;
+    });
+  }
+
+  return { masked, tokens };
+}
+
+export function restorePii(text: string, tokens: Map<string, string>): string {
+  let result = text;
+  for (const [token, original] of tokens) {
+    result = result.replaceAll(token, original);
+  }
+  return result;
+}
+
+const PII_TOKEN_RE = /\[\[PII_\d+\]\]/g;
+
+// A-Number canonical format for the improve flow (Henry, 2026-07-16): `A-` +
+// 9 digits (pad an 8-digit number with a leading zero). DETERMINISTIC — the
+// model never sees the digits (they travel as ⟦PII_n⟧ tokens), so the required
+// format is applied here in code after restorePii. Only A-prefixed values are
+// touched: bare digit runs stay verbatim (they could be a passport/SSN — never
+// guess). Digits are NEVER altered, only separators/prefix.
+const A_NUMBER_ANYFORM_RE = /\bA[-\s]?\d(?:[-\s]?\d){7,8}\b/gi;
+
+export function normalizeANumbersInText(text: string): string {
+  if (!text) return text;
+  return text.replace(A_NUMBER_ANYFORM_RE, (match) => {
+    const digits = match.replace(/\D/g, "");
+    if (digits.length !== 8 && digits.length !== 9) return match;
+    return `A-${digits.padStart(9, "0")}`;
+  });
+}
+
+/**
+ * Validates (and lightly normalizes) the model output of an improve call,
+ * BEFORE PII restoration. Fail-safe: any rejection means the client's text
+ * stays untouched.
+ */
+export function validateImprovedText(
+  maskedInput: string,
+  output: string,
+): { ok: true; text: string } | { ok: false; reason: string } {
+  let text = (output ?? "").trim();
+
+  // Strip a wrapping markdown code fence (```…``` with optional language tag).
+  const fence = text.match(/^```[a-z]*\n([\s\S]*?)\n?```$/i);
+  if (fence) text = fence[1].trim();
+
+  // Strip a single pair of wrapping quotes ([\s\S] instead of the dotAll flag —
+  // the TS target predates es2018).
+  const quoted = text.match(/^["“]([\s\S]*)["”]$/);
+  if (quoted) text = quoted[1].trim();
+
+  // Drop a chatty one-line preamble ("Aquí está el texto corregido:", "Here is…:").
+  // No \b after the keyword: JS \b misfires on non-ASCII letters like "í".
+  const lines = text.split("\n");
+  if (lines.length > 1 && /^(aquí|aqui|here|claro|sure)[\s,].*:\s*$/i.test(lines[0].trim())) {
+    text = lines.slice(1).join("\n").trim();
+  }
+
+  if (!text) return { ok: false, reason: "empty" };
+
+  // Every PII token in the input must survive verbatim.
+  const inputTokens = maskedInput.match(PII_TOKEN_RE) ?? [];
+  for (const token of new Set(inputTokens)) {
+    if (!text.includes(token)) return { ok: false, reason: `missing_token:${token}` };
+  }
+
+  // Sanity on size: a rewrite should stay in the same order of magnitude.
+  // (+200 gives headroom for format expansion of very short inputs.)
+  const len = maskedInput.length;
+  if (text.length < Math.floor(len / 4) || text.length > len * 4 + 200) {
+    return { ok: false, reason: "length_out_of_bounds" };
+  }
+
+  return { ok: true, text };
+}
+
+// ---------------------------------------------------------------------------
 // Cost computation (DOC-74 §5.2)
 // ---------------------------------------------------------------------------
 

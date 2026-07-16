@@ -204,6 +204,16 @@ export function StructureEditor({
     else if (r.error) toast.error(r.error.code);
   }
 
+  // "Mejorar con IA": its OWN save path (updateQuestionAiImprove) — never part of
+  // patchQuestion's full-row upsert, and allowed even on a PUBLISHED version.
+  async function patchQuestionAiImprove(q: QuestionVM, aiImprove: { instruction: string } | null) {
+    const next = { ...q, ai_improve: aiImprove };
+    setGroups((gs) => gs.map((g) => (g.id === q.group_id ? { ...g, questions: g.questions.map((x) => (x.id === q.id ? next : x)) } : g)));
+    const r = await actions.updateQuestionAiImprove({ question_id: q.id, ai_improve: aiImprove });
+    if (r.success) flashSaved();
+    else if (r.error) toast.error(r.error.code);
+  }
+
   async function deleteQuestion(q: QuestionVM) {
     const r = await actions.deleteQuestion(q.id);
     if (!r.success) return toast.error(r.error?.code ?? "Error");
@@ -355,11 +365,13 @@ export function StructureEditor({
                     .map((x) => ({ id: x.id, label: x.question_i18n.es || x.question_i18n.en || x.pdf_field_name || "Pregunta" }))}
                   strings={strings}
                   readOnly={readOnly}
+                  aiImproveEditable={(vm.openVersion?.version.status ?? "draft") !== "archived"}
                   onToggle={() => {
                     setExpandedQ((e) => (e === q.id ? null : q.id));
                     setSelectedField(q.pdf_field_name);
                   }}
                   onChange={(patch) => patchQuestion(q, patch)}
+                  onAiImproveChange={(aiImprove) => patchQuestionAiImprove(q, aiImprove)}
                   onDelete={() => deleteQuestion(q)}
                   onMoveToGroup={(gid) => moveQuestion(q, gid)}
                   onFocusField={setSelectedField}

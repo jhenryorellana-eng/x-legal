@@ -54,6 +54,7 @@ import {
   assertNoIssues,
   isFkViolation,
   nextVersionNumber,
+  AiImproveSchema,
   GenerationSectionSchema,
   GenerationAssemblySchema,
   QuestionnaireGenerationConfigSchema,
@@ -64,8 +65,19 @@ import { z } from "zod";
 
 // Q-1: Zod schema for upsertQuestion input.
 // id is optional (absent = INSERT, present = UPDATE/upsert).
-const UpsertQuestionSchema = QuestionSchema.partial({ id: true, position: true }).extend({
-  group_id: z.string().uuid(),
+// ai_improve is OMITTED on purpose: the editor autosave sends the full row and
+// Zod materializes defaults for absent keys — if ai_improve were accepted here
+// it would be wiped on every unrelated save. Its only write path is
+// updateQuestionAiImprove below (which also allows published versions).
+const UpsertQuestionSchema = QuestionSchema.omit({ ai_improve: true })
+  .partial({ id: true, position: true })
+  .extend({
+    group_id: z.string().uuid(),
+  });
+
+const UpdateQuestionAiImproveSchema = z.object({
+  question_id: z.string().uuid(),
+  ai_improve: AiImproveSchema.nullable(),
 });
 
 import type {
@@ -1595,6 +1607,38 @@ export async function deleteQuestion(actor: Actor, questionId: string): Promise<
 
   await repo.deleteQuestion(questionId);
   await writeAudit(actor, "catalog.form_questions.updated", "form_questions", questionId, {});
+}
+
+/**
+ * "Mejorar con IA" per-question config — the ONLY write path for ai_improve.
+ *
+ * Controlled exception to version immutability: unlike upsertQuestion, this
+ * accepts DRAFT and PUBLISHED versions (precedent: form_fill_guides). It only
+ * touches the ai_improve column, so the legal structure of a published form
+ * (questions, PDF mapping, sources) stays immutable. Archived versions are
+ * rejected — clients pinned to an archived version keep the instruction they
+ * had (accepted edge case).
+ *
+ * @api-id API-CAT-54
+ */
+export async function updateQuestionAiImprove(
+  actor: Actor,
+  input: { question_id: string; ai_improve: { instruction: string } | null },
+): Promise<void> {
+  can(actor, "catalog", "edit");
+
+  const dto = UpdateQuestionAiImproveSchema.parse(input);
+
+  const version = await repo.findVersionByQuestion(dto.question_id);
+  if (!version) throw catalogError("CATALOG_FORM_NOT_FOUND");
+  if (version.status === "archived") {
+    throw catalogError("CATALOG_VERSION_PUBLISHED_IMMUTABLE");
+  }
+
+  await repo.updateQuestionAiImprove(dto.question_id, dto.ai_improve);
+  await writeAudit(actor, "catalog.form_questions.updated", "form_questions", dto.question_id, {
+    after: { ai_improve: dto.ai_improve },
+  });
 }
 
 /**

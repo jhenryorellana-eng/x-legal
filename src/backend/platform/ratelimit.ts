@@ -397,6 +397,29 @@ export async function limitBillingCheckout(userId: string): Promise<RateLimitRes
   }
 }
 
+// ai:improve — 20/10min per userId (T5 "Mejorar con IA" button in client forms)
+let _aiImprove: Ratelimit | undefined;
+function aiImprove(): Ratelimit {
+  return (_aiImprove ??= makeLimiter(redis(), 20, "10 m", "rl:ai:improve"));
+}
+
+/**
+ * Checks the "Mejorar con IA" tier (20/10min per userId). Applied inside
+ * ai-engine.improveFormAnswerText, after requireCaseAccess.
+ *
+ * Fail mode: open (authenticated endpoint — same rationale as limitBillingCheckout;
+ * the per-call cost with haiku is negligible, availability wins).
+ */
+export async function limitAiImprove(userId: string): Promise<RateLimitResult> {
+  try {
+    const r = await aiImprove().limit(userId);
+    return { allowed: r.success, reset: r.reset };
+  } catch (err) {
+    logger.warn({ err }, "Rate limiter error (ai:improve) — allowing (open fail mode)");
+    return { allowed: true, reset: 0 };
+  }
+}
+
 /**
  * Checks billing upload-url tier (10/min per userId, DOC-71 §7 HIGH-3).
  *

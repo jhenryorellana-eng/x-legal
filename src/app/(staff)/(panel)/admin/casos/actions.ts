@@ -68,6 +68,7 @@ import {
 } from "@/backend/modules/cases";
 import {
   translateAnswerText,
+  improveFormAnswerText,
   translateDocument,
   getDocumentTranslation,
   assessPreMortemRisk,
@@ -903,6 +904,32 @@ export async function translateFormAnswersAction(input: {
     return { ok: true, translations };
   } catch {
     return { ok: false, error: { code: "TRANSLATE_FAILED" } };
+  }
+}
+
+/**
+ * "Mejorar con IA" for staff fill-on-behalf — same T5 rewrite the client uses
+ * (ai-engine loads the per-question instruction server-side). Best-effort.
+ */
+export async function improveFormAnswerAction(input: {
+  caseId: string;
+  formDefinitionId: string;
+  partyId: string | null;
+  questionId: string;
+  text: string;
+}): Promise<{ ok: boolean; improvedText?: string; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    const r = await improveFormAnswerText(actor, {
+      caseId: input.caseId,
+      formDefinitionId: input.formDefinitionId,
+      questionId: input.questionId,
+      text: input.text,
+    });
+    return { ok: true, improvedText: r.improvedText };
+  } catch (e) {
+    if (e instanceof AiEngineError) return { ok: false, error: { code: e.code } };
+    return { ok: false, error: { code: "IMPROVE_FAILED" } };
   }
 }
 

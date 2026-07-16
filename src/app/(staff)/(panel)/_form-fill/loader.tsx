@@ -20,6 +20,7 @@ import { resolveStaffFormEditability } from "@/app/(staff)/(panel)/_case-forms/e
 import {
   submitFormResponseAction,
   translateFormAnswersAction,
+  improveFormAnswerAction,
 } from "@/app/(staff)/(panel)/admin/casos/actions";
 
 export async function StaffFormFillLoader({
@@ -69,6 +70,7 @@ export async function StaffFormFillLoader({
       saveDraft={saveDraft}
       submitForm={submitFormResponseAction}
       translateAnswers={translateFormAnswersAction}
+      improveAnswer={improveFormAnswerAction}
       backHref={backHref}
     />
   );

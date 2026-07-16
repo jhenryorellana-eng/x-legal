@@ -27,6 +27,7 @@ import { FormularioScreen } from "@/frontend/features/cliente/formulario/formula
 import { EmptyCase } from "@/frontend/features/cliente/shared/empty-case";
 import { saveDraftAction, submitFormAction } from "./actions";
 import { translateAnswersAction } from "./translate-actions";
+import { improveAnswerAction } from "./improve-actions";
 
 export default async function FormularioPage({
   params,
@@ -114,6 +115,7 @@ export default async function FormularioPage({
       saveDraft={saveDraftAction}
       submitForm={submitFormAction}
       translateAnswers={translateAnswersAction}
+      improveAnswer={improveAnswerAction}
       exitHref={`/caso/${caseId}/camino`}
     />
   );

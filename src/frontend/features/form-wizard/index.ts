@@ -30,6 +30,7 @@ export type {
   SaveDraftFn,
   SubmitFormFn,
   TranslateAnswersFn,
+  ImproveAnswerFn,
   SaveDraftResult,
   SubmitFormResult,
   AnswersMap,

@@ -796,6 +796,16 @@ export async function updateQuestionCondition(questionId: string, condition: unk
   if (error) throw new Error(`catalog.repo.updateQuestionCondition: ${error.message}`);
 }
 
+// Column added in migration 0086 — not in the generated types yet (same
+// situation as empty_policy/no_translate from 0070), hence the cast.
+export async function updateQuestionAiImprove(questionId: string, aiImprove: unknown): Promise<void> {
+  const { error } = await db()
+    .from("form_questions")
+    .update({ ai_improve: aiImprove } as never)
+    .eq("id", questionId);
+  if (error) throw new Error(`catalog.repo.updateQuestionAiImprove: ${error.message}`);
+}
+
 export async function deleteQuestion(questionId: string): Promise<void> {
   const { error } = await db().from("form_questions").delete().eq("id", questionId);
   if (error) throw error;

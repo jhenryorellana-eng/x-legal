@@ -449,6 +449,19 @@ export async function upsertQuestionAction(
   }
 }
 
+/** @api-id API-CAT-54 */
+export async function updateQuestionAiImproveAction(
+  input: Parameters<typeof svc.updateQuestionAiImprove>[1],
+): Promise<ActionResult<void>> {
+  try {
+    const actor = await requireActor();
+    await svc.updateQuestionAiImprove(actor, input);
+    return ok(undefined);
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 /** @api-id API-CAT-39 */
 export async function deleteQuestionAction(questionId: string): Promise<ActionResult<void>> {
   try {

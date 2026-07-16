@@ -50,6 +50,12 @@ export interface WizardQuestion {
   currentAnswer: unknown;
   /** Conditional visibility (show/lock/require). NULL/absent = unconditional. */
   condition?: QuestionCondition | null;
+  /**
+   * "Mejorar con IA" available for this question. Boolean only — the improve
+   * instruction lives server-side (catalog `ai_improve`) and never reaches the
+   * client. Optional so older DTOs / mocks / the admin preview stay valid.
+   */
+  aiImproveEnabled?: boolean;
 }
 
 export interface WizardGroup {
@@ -129,6 +135,17 @@ export type TranslateAnswersFn = (input: {
   to: Locale;
 }) => Promise<{ ok: boolean; translations?: Record<string, string>; error?: { code: string } }>;
 
+/** "Mejorar con IA": server action that rewrites ONE answer (spelling/punctuation/
+ *  required format) using the question's server-side instruction. Best-effort —
+ *  on { ok:false } the wizard leaves the text untouched. */
+export type ImproveAnswerFn = (input: {
+  caseId: string;
+  formDefinitionId: string;
+  partyId: string | null;
+  questionId: string;
+  text: string;
+}) => Promise<{ ok: boolean; improvedText?: string; error?: { code: string } }>;
+
 // ---------------------------------------------------------------------------
 // Wizard runtime state (UI-only — never the source of truth)
 // ---------------------------------------------------------------------------
@@ -195,6 +212,11 @@ export interface WizardLabels {
   dictateIdle: string; // "Tocar para hablar"
   dictateActive: string; // "Escuchando… toca para parar"
   dictateUnsupported: string; // "El dictado no está disponible aquí. Puedes escribir."
+  // "Mejorar con IA" (per-question, gated by aiImproveEnabled)
+  improveIdle: string; // "Mejorar con IA"
+  improveLoading: string; // "Mejorando…"
+  improveUndo: string; // "Deshacer"
+  improveError: string; // "No se pudo mejorar. Tu texto sigue igual."
   // Submitted (read-only)
   submittedPill: string; // "Enviado"
   submittedTitle: string; // "Esto ya está enviado"

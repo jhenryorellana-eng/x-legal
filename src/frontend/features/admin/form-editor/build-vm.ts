@@ -82,6 +82,7 @@ export function buildFormEditorVM(data: RawFormEditorData, datasets: RawDataset[
     empty_policy: (q.empty_policy as QuestionVM["empty_policy"]) ?? "inherit",
     empty_placeholder: (q.empty_placeholder as string | null) ?? null,
     no_translate: (q.no_translate as boolean) ?? false,
+    ai_improve: (q.ai_improve as { instruction: string } | null) ?? null,
   });
 
   const groups: QuestionGroupVM[] = (data.openVersion?.groups ?? []).map((g) => ({

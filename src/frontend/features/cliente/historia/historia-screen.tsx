@@ -9,6 +9,7 @@ import type {
   Locale,
   SaveDraftFn,
   SubmitFormFn,
+  ImproveAnswerFn,
 } from "@/frontend/features/form-wizard";
 
 /**
@@ -27,6 +28,8 @@ export interface HistoriaScreenProps {
   lexChip: string;
   saveDraft: SaveDraftFn;
   submitForm: SubmitFormFn;
+  /** "Mejorar con IA" server action (per-question gating via aiImproveEnabled). */
+  improveAnswer?: ImproveAnswerFn;
 }
 
 export function HistoriaScreen({
@@ -39,6 +42,7 @@ export function HistoriaScreen({
   lexChip,
   saveDraft,
   submitForm,
+  improveAnswer,
 }: HistoriaScreenProps) {
   const router = useRouter();
   return (
@@ -53,6 +57,7 @@ export function HistoriaScreen({
       lexChip={lexChip}
       saveDraft={saveDraft}
       submitForm={submitForm}
+      improveAnswer={improveAnswer}
       onSubmitted={() => router.replace(`/caso/${caseId}/exito?from=historia`)}
       onExit={() => router.push(`/caso/${caseId}/camino`)}
     />

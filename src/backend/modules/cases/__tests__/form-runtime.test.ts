@@ -15,6 +15,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   canTransitionFormResponse,
   validateAnswerTypes,
+  isAiImproveEnabled,
   type FormResponseStatus,
   type QuestionValidationRule,
 } from "../domain";
@@ -304,6 +305,23 @@ describe("canTransitionFormResponse", () => {
 // ---------------------------------------------------------------------------
 // Domain: validateAnswerTypes
 // ---------------------------------------------------------------------------
+
+describe("isAiImproveEnabled", () => {
+  it("true only for an object with a non-empty instruction", () => {
+    expect(isAiImproveEnabled({ instruction: "Una persona por línea." })).toBe(true);
+  });
+
+  it("false for null / undefined / empty instruction / garbage", () => {
+    expect(isAiImproveEnabled(null)).toBe(false);
+    expect(isAiImproveEnabled(undefined)).toBe(false);
+    expect(isAiImproveEnabled({ instruction: "" })).toBe(false);
+    expect(isAiImproveEnabled({ instruction: "   " })).toBe(false);
+    expect(isAiImproveEnabled({ instruction: 42 })).toBe(false);
+    expect(isAiImproveEnabled("instruction")).toBe(false);
+    expect(isAiImproveEnabled(["instruction"])).toBe(false);
+    expect(isAiImproveEnabled({})).toBe(false);
+  });
+});
 
 describe("validateAnswerTypes", () => {
   const makeQuestion = (overrides?: Partial<QuestionValidationRule>): QuestionValidationRule => ({

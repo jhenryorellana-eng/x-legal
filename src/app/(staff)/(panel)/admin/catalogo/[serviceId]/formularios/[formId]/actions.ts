@@ -20,6 +20,7 @@ import {
   upsertQuestionGroupAction,
   deleteQuestionGroupAction,
   upsertQuestionAction,
+  updateQuestionAiImproveAction,
   deleteQuestionAction,
   generateTestPdfAction,
   publishVersionAction,
@@ -106,6 +107,14 @@ export async function upsertQuestionUi(input: Record<string, unknown>): Promise<
 
 export async function deleteQuestionUi(questionId: string): Promise<Res<unknown>> {
   return envelope(await deleteQuestionAction(questionId));
+}
+
+/** "Mejorar con IA" — dedicated path; also editable on PUBLISHED versions. */
+export async function updateQuestionAiImproveUi(input: {
+  question_id: string;
+  ai_improve: { instruction: string } | null;
+}): Promise<Res<unknown>> {
+  return envelope(await updateQuestionAiImproveAction(input));
 }
 
 // --- Stage 3: Preview ------------------------------------------------------

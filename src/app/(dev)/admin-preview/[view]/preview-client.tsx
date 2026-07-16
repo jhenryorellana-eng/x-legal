@@ -259,6 +259,7 @@ const formEditorNoopActions: FormEditorActions = {
   upsertGroup: async () => ({ success: true, data: { id: "g-new" } }),
   deleteGroup: async () => ({ success: true }),
   upsertQuestion: async () => ({ success: true, data: { id: "q-new" } }),
+  updateQuestionAiImprove: async () => ({ success: true }),
   deleteQuestion: async () => ({ success: true }),
   generateTestPdf: async () => ({ success: true, data: { pdfBase64: "", gaps: [] } }),
   publish: async () => ({ success: true, data: { ok: false, issues: [{ code: "CATALOG_PDF_FIELD_UNMAPPED", severity: "warning", detail: "Pt3Line1_Signature · pág. 3 sin pregunta" }] } }),

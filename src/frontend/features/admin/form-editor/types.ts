@@ -53,6 +53,10 @@ export interface QuestionVM {
   empty_placeholder?: string | null;
   /** Write the answer to the PDF verbatim — never machine-translated nor PII-masked. */
   no_translate?: boolean;
+  /** "Mejorar con IA": null/absent = off; { instruction } = the client sees the
+   *  improve button on this field. Editable also on PUBLISHED versions (its own
+   *  save path — updateQuestionAiImprove — never the full-row upsert). */
+  ai_improve?: { instruction: string } | null;
   /** True while the question came from an AI proposal and has not been confirmed/edited. */
   proposed?: boolean;
 }
@@ -191,6 +195,8 @@ export interface FormEditorActions {
   upsertGroup: (input: { id?: string; automation_version_id: string; title_i18n?: Record<string, string>; position?: number; do_not_fill?: boolean }) => Promise<Res<{ id: string }>>;
   deleteGroup: (groupId: string) => Promise<Res<unknown>>;
   upsertQuestion: (input: Record<string, unknown>) => Promise<Res<{ id: string }>>;
+  /** "Mejorar con IA" — dedicated save path; also allowed on PUBLISHED versions. */
+  updateQuestionAiImprove: (input: { question_id: string; ai_improve: { instruction: string } | null }) => Promise<Res<unknown>>;
   deleteQuestion: (questionId: string) => Promise<Res<unknown>>;
   generateTestPdf: (input: { version_id: string; sample_answers: Record<string, unknown> }) => Promise<Res<{ pdfBase64: string; gaps: Array<{ question_id: string; pdf_field_name: string }> }>>;
   publish: (input: { version_id: string; acknowledge_unmapped?: boolean }) => Promise<Res<{ ok: boolean; issues: Array<{ code: string; severity: "blocking" | "warning"; detail: string }> }>>;

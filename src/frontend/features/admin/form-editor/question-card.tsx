@@ -50,8 +50,13 @@ export interface QuestionCardProps {
   siblingQuestions: { id: string; label: string }[];
   strings: FormEditorStrings;
   readOnly: boolean;
+  /** "Mejorar con IA" stays editable on draft AND published versions (own save
+   *  path) — only archived versions lock it. Independent of `readOnly`. */
+  aiImproveEditable: boolean;
   onToggle: () => void;
   onChange: (patch: Partial<QuestionVM>) => void;
+  /** Persist ai_improve via its dedicated action (never part of onChange). */
+  onAiImproveChange: (aiImprove: { instruction: string } | null) => void;
   onDelete: () => void;
   onMoveToGroup: (groupId: string) => void;
   onFocusField: (name: string | null) => void;
@@ -69,8 +74,10 @@ export function QuestionCard({
   siblingQuestions,
   strings,
   readOnly,
+  aiImproveEditable,
   onToggle,
   onChange,
+  onAiImproveChange,
   onDelete,
   onMoveToGroup,
   onFocusField,
@@ -318,6 +325,11 @@ export function QuestionCard({
             )}
           </div>
 
+          {/* "Mejorar con IA" (text/textarea only) — own save path, editable on published */}
+          {(q.field_type === "text" || q.field_type === "textarea") && (
+            <AiImproveEditor q={q} strings={strings} editable={aiImproveEditable} onSave={onAiImproveChange} />
+          )}
+
           {/* Validation (advanced) */}
           <ValidationPopover q={q} strings={strings} readOnly={readOnly} onChange={onChange} />
 
@@ -542,6 +554,85 @@ interface PickerProps {
   strings: FormEditorStrings;
   readOnly: boolean;
   onChange: (patch: Partial<QuestionVM>) => void;
+}
+
+/**
+ * "Mejorar con IA" per-question config. Persists through its OWN action
+ * (updateQuestionAiImprove) so a published version stays editable here while
+ * the rest of the card is read-only. Toggle OFF saves null immediately; the
+ * instruction saves on blur (a toggled-on field with an empty instruction is
+ * not persisted — the button never shows without an instruction).
+ */
+function AiImproveEditor({
+  q,
+  strings,
+  editable,
+  onSave,
+}: {
+  q: QuestionVM;
+  strings: FormEditorStrings;
+  editable: boolean;
+  onSave: (aiImprove: { instruction: string } | null) => void;
+}) {
+  const saved = q.ai_improve?.instruction ?? "";
+  const [enabled, setEnabled] = React.useState(!!saved.trim());
+  const [text, setText] = React.useState(saved);
+
+  // Re-sync when the card re-renders for another question / an external update.
+  React.useEffect(() => {
+    const s = q.ai_improve?.instruction ?? "";
+    setEnabled(!!s.trim());
+    setText(s);
+  }, [q.id, q.ai_improve]);
+
+  const toggle = (c: boolean) => {
+    setEnabled(c);
+    if (!c) {
+      if (saved.trim()) onSave(null);
+    } else if (text.trim()) {
+      onSave({ instruction: text.trim() });
+    }
+  };
+
+  const commit = () => {
+    if (!enabled) return;
+    const t = text.trim();
+    if (t && t !== saved) onSave({ instruction: t });
+  };
+
+  return (
+    <div style={{ borderRadius: 12, border: "1.5px solid var(--line)", padding: 12, display: "grid", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 13, fontWeight: 800, color: "var(--ink)" }}>
+          <Icon name="sparkle" size={15} color="var(--accent)" /> {strings.aiImproveSection}
+        </span>
+        <Switch
+          checked={enabled}
+          onCheckedChange={toggle}
+          disabled={!editable}
+          aria-label={strings.aiImproveEnable}
+        />
+      </div>
+      {enabled && (
+        <div>
+          <FieldLabel>{strings.aiImproveInstruction}</FieldLabel>
+          <textarea
+            value={text}
+            disabled={!editable}
+            aria-label={strings.aiImproveInstruction}
+            placeholder={strings.aiImproveInstructionHint}
+            maxLength={4000}
+            onChange={(e) => setText(e.target.value)}
+            onBlur={commit}
+            style={{ width: "100%", minHeight: 84, borderRadius: 10, border: "1.5px solid var(--line)", background: "var(--panel-2, var(--card-alt))", padding: 10, fontSize: 12.5, color: "var(--ink)", resize: "vertical", boxSizing: "border-box" }}
+          />
+          <p style={{ margin: "6px 0 0", fontSize: 11.5, color: "var(--ink-3)", lineHeight: 1.4 }}>
+            {strings.aiImprovePublishedNote}
+          </p>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ValidationPopover({ q, strings, readOnly, onChange }: { q: QuestionVM; strings: FormEditorStrings; readOnly: boolean; onChange: (patch: Partial<QuestionVM>) => void }) {

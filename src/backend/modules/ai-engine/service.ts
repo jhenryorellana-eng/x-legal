@@ -31,7 +31,8 @@ import { z } from "zod";
 import { can, requireCaseAccess, AuthzError } from "@/backend/platform/authz";
 import type { Actor } from "@/backend/platform/authz";
 import { enqueueJob } from "@/backend/platform/qstash";
-import { getAnthropicClient } from "@/backend/platform/anthropic";
+import { getAnthropicClient, DEFAULT_UI_MODEL } from "@/backend/platform/anthropic";
+import { limitAiImprove } from "@/backend/platform/ratelimit";
 import { getGeminiModels, DEFAULT_GEMINI_MODEL } from "@/backend/platform/gemini";
 import { isAiStubEnabled } from "@/backend/platform/ai-stub";
 import {
@@ -73,6 +74,10 @@ import {
   computeAnthropicCost,
   computeGeminiCost,
   maskPii,
+  maskPiiReversible,
+  restorePii,
+  normalizeANumbersInText,
+  validateImprovedText,
   buildWebSearchTool,
   countWords,
   lastWords,
@@ -166,6 +171,7 @@ import {
   updateQuestionnaireInstance,
   findSubmittedFormSlugs,
   listPublishedQuestionTexts,
+  findQuestionForImprove,
   type QuestionnaireInstanceRow,
   type QuestionnaireGenConfigRow,
   type GenerationRunRow,
@@ -195,6 +201,10 @@ export class AiEngineError extends Error {
       | "AI_PROVIDER_UNAVAILABLE"
       | "AI_OUTPUT_INVALID"
       | "AI_DOCUMENT_TOO_LARGE"
+      | "AI_IMPROVE_NOT_ENABLED"
+      | "AI_IMPROVE_RATE_LIMITED"
+      | "AI_IMPROVE_TEXT_TOO_LONG"
+      | "AI_IMPROVE_OUTPUT_INVALID"
       | "PREMORTEM_NO_ELIGIBLE_RUN"
       | "PREMORTEM_NO_TARGET"
       | "PREMORTEM_NO_GUIDE",
@@ -2072,6 +2082,149 @@ export async function translateAnswerText(input: {
     fieldLabel: input.fieldLabel,
   });
   return { text };
+}
+
+// ---------------------------------------------------------------------------
+// T5 — "Mejorar con IA" (per-question rewrite, DOC-74 §1 task T5)
+// ---------------------------------------------------------------------------
+
+const AI_IMPROVE_TIMEOUT_MS = 30_000;
+const AI_IMPROVE_MAX_INPUT_CHARS = 10_000;
+
+// Fixed guardrails live HERE, in code — the per-question instruction (catalog
+// config) only carries the field-specific FORMAT rules. Kept stable on purpose.
+const IMPROVE_SYSTEM_PROMPT = [
+  "Eres un corrector de respuestas de formularios legales de inmigración.",
+  "Tu única tarea es reescribir el texto del usuario corrigiendo ortografía, puntuación, mayúsculas y coherencia, y aplicando EXACTAMENTE el formato que pida la instrucción del campo.",
+  "Reglas estrictas:",
+  "- NO inventes, añadas ni elimines información: hechos, nombres, fechas, números, cantidades y lugares se conservan tal cual.",
+  "- Si una fecha está incompleta (solo el año, o solo mes y año), consérvala incompleta: NUNCA inventes el día ni el mes para completar un formato.",
+  "- Conserva el idioma original del texto (si está en español, responde en español; si está en inglés, en inglés).",
+  "- Los tokens con forma [[PII_n]] son datos protegidos: consérvalos carácter por carácter (incluidos los corchetes dobles), colocados donde corresponda en el texto final. NUNCA los omitas ni los reescribas.",
+  "- Si el texto ya es correcto, devuélvelo con los cambios mínimos necesarios.",
+  "- Devuelve SOLO el texto final: sin preámbulos, sin explicaciones, sin comillas y sin markdown.",
+].join("\n");
+
+export interface ImproveFormAnswerResult {
+  improvedText: string;
+}
+
+/**
+ * Rewrites a client's form answer (spelling/punctuation/casing/required format)
+ * per the question's `ai_improve.instruction` (catalog config, server-only —
+ * NEVER accepted from the client). Synchronous, haiku-class model, best-effort:
+ * every failure throws a typed AiEngineError and the caller leaves the client's
+ * text untouched.
+ *
+ * PII: reversible tokenization (⟦PII_n⟧) instead of the lossy maskPii — the
+ * output REPLACES the answer, so A-Numbers/SSNs/passports must survive verbatim
+ * (DOC-74 §7.1 still holds: raw PII never reaches the provider).
+ */
+export async function improveFormAnswerText(
+  actor: Actor,
+  input: { caseId: string; formDefinitionId: string; questionId: string; text: string },
+): Promise<ImproveFormAnswerResult> {
+  await requireCaseAccess(actor, input.caseId);
+
+  const rl = await limitAiImprove(actor.userId);
+  if (!rl.allowed) throw new AiEngineError("AI_IMPROVE_RATE_LIMITED");
+
+  // The question must belong to the form the client is filling and to a
+  // non-draft version. Archived is accepted on purpose: a client's in-progress
+  // response stays pinned to its version even after a re-publish.
+  const question = await findQuestionForImprove(input.questionId);
+  if (
+    !question ||
+    question.version.form_definition_id !== input.formDefinitionId ||
+    question.version.status === "draft"
+  ) {
+    throw new AiEngineError("AI_IMPROVE_NOT_ENABLED");
+  }
+  const instruction = question.ai_improve?.instruction?.trim();
+  if (!instruction) throw new AiEngineError("AI_IMPROVE_NOT_ENABLED");
+
+  const text = input.text.trim();
+  if (!text) return { improvedText: input.text };
+  if (text.length > AI_IMPROVE_MAX_INPUT_CHARS) {
+    throw new AiEngineError("AI_IMPROVE_TEXT_TOO_LONG");
+  }
+
+  // E2E / CI: deterministic short-circuit BEFORE any provider work (the stub
+  // Anthropic client answers with the legal-memo fixture, useless here).
+  if (isAiStubEnabled()) {
+    return { improvedText: `${text} [mejorado-stub]` };
+  }
+
+  const { masked, tokens } = maskPiiReversible(text);
+  const label = question.question_i18n?.es ?? question.question_i18n?.en ?? "";
+  const user = [
+    label ? `Campo del formulario: "${label}"` : null,
+    `Instrucción del campo: ${instruction}`,
+    "",
+    "Texto del usuario:",
+    masked,
+  ]
+    .filter((l): l is string => l !== null)
+    .join("\n");
+
+  const model = process.env.AI_UI_MODEL ?? DEFAULT_UI_MODEL;
+  const maxTokens = Math.min(4096, Math.max(512, Math.ceil(masked.length / 2)));
+
+  // One retry on an invalid output (e.g. the model dropped a [[PII_n]] token),
+  // with an explicit reminder appended. Still fail-safe: two misses → typed
+  // error and the client's text stays untouched.
+  let validated: ReturnType<typeof validateImprovedText> = { ok: false, reason: "not_run" };
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    let result: AnthropicCallResult;
+    try {
+      result = await callAnthropic(getAnthropicClient(), {
+        model,
+        system: IMPROVE_SYSTEM_PROMPT,
+        user:
+          attempt === 1
+            ? user
+            : `${user}\n\nIMPORTANTE: tu respuesta anterior perdió un token protegido. Conserva CADA token [[PII_n]] del texto EXACTAMENTE como aparece, sin omitirlo ni modificarlo.`,
+        maxTokens,
+        timeoutMs: AI_IMPROVE_TIMEOUT_MS,
+      });
+    } catch (err) {
+      throw new AiEngineError("AI_PROVIDER_UNAVAILABLE", err);
+    }
+
+    validated = validateImprovedText(masked, result.text);
+    if (validated.ok) {
+      // T5 cost: log-only (see note below).
+      const costUsd = computeAnthropicCost(result.usage, result.model);
+      logger.info(
+        {
+          caseId: input.caseId,
+          questionId: input.questionId,
+          model: result.model,
+          usage: result.usage,
+          costUsd,
+          attempt,
+        },
+        "ai-engine: improveFormAnswerText",
+      );
+      break;
+    }
+    logger.warn(
+      { questionId: input.questionId, reason: validated.reason, attempt },
+      "ai-engine: improveFormAnswerText output rejected",
+    );
+  }
+  if (!validated.ok) {
+    throw new AiEngineError("AI_IMPROVE_OUTPUT_INVALID", validated.reason);
+  }
+
+  // Restore PII verbatim, then apply the DETERMINISTIC A-Number canonical
+  // format (A-#########) — the model can't do it (it only sees tokens).
+  // T5 cost: log-only (inside the loop). getCostsSummary aggregates the
+  // T1/T3/T4 tables; at ~$0.001-0.005/click (haiku) a BD row is not yet
+  // warranted. TODO(T5-costs): persist to a small usage table if volume grows.
+  const improvedText = normalizeANumbersInText(restorePii(validated.text, tokens));
+
+  return { improvedText };
 }
 
 // ---------------------------------------------------------------------------

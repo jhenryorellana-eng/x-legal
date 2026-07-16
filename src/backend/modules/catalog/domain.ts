@@ -525,6 +525,16 @@ export const SourceRefSchema = z.discriminatedUnion("source", [
   }),
 ]);
 
+// Per-question "Mejorar con IA" config (migration 0086). null = the client
+// never sees the improve button; { instruction } = enabled, the instruction
+// carries the field-specific FORMAT rules (the anti-invention guardrails live
+// in ai-engine's fixed system prompt, not here). The instruction is server-only:
+// the client DTO exposes just a boolean.
+export const AiImproveSchema = z.object({
+  instruction: z.string().min(1).max(4000),
+});
+export type AiImproveConfig = z.infer<typeof AiImproveSchema>;
+
 export const QuestionSchema = z.object({
   id: z.string().uuid(),
   group_id: z.string().uuid(),
@@ -561,6 +571,12 @@ export const QuestionSchema = z.object({
   // (A-Numbers, SSNs, passports, names, cities). Keeps `maskPii` output off the
   // federal form. Default false. See migration 0070.
   no_translate: z.boolean().default(false),
+  // "Mejorar con IA" (migration 0086). Deliberately `.optional()` WITHOUT a
+  // default: the editor autosave upserts the full row with Zod-materialized
+  // defaults, and a default here would wipe the config on every unrelated save.
+  // Writes go exclusively through updateQuestionAiImprove (omitted from the
+  // upsert schema in service.ts).
+  ai_improve: AiImproveSchema.nullable().optional(),
 });
 export type Question = z.infer<typeof QuestionSchema>;
 

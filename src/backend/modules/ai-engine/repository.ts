@@ -226,6 +226,60 @@ export async function listPublishedQuestionTexts(formDefinitionId: string): Prom
   return rows.map((r) => r.question_i18n?.es ?? r.question_i18n?.en ?? "").filter(Boolean);
 }
 
+/** A question + its version, loaded for the T5 "Mejorar con IA" flow. Read-only
+ *  consumption of catalog config (same precedent as resolveAiFields). */
+export interface QuestionForImprove {
+  id: string;
+  question_i18n: { es?: string; en?: string } | null;
+  field_type: string;
+  ai_improve: { instruction?: string } | null;
+  version: { id: string; status: string; form_definition_id: string };
+}
+
+export async function findQuestionForImprove(questionId: string): Promise<QuestionForImprove | null> {
+  const client = createServiceClient();
+  const { data, error } = await client
+    .from("form_questions")
+    .select(
+      "id, question_i18n, field_type, ai_improve, form_question_groups!inner(form_automation_versions!inner(id, status, form_definition_id))",
+    )
+    .eq("id", questionId)
+    .maybeSingle();
+
+  if (error) {
+    logger.error({ err: error, questionId }, "ai-engine: findQuestionForImprove failed");
+    return null;
+  }
+  if (!data) return null;
+
+  // PostgREST returns 1:1 embeds as objects, but be tolerant of array shape
+  // (same defense as the cases module — see commit 30515ea).
+  const row = data as unknown as {
+    id: string;
+    question_i18n: { es?: string; en?: string } | null;
+    field_type: string;
+    ai_improve: { instruction?: string } | null;
+    form_question_groups:
+      | { form_automation_versions: QuestionForImprove["version"] | QuestionForImprove["version"][] }
+      | Array<{ form_automation_versions: QuestionForImprove["version"] | QuestionForImprove["version"][] }>;
+  };
+  const group = Array.isArray(row.form_question_groups)
+    ? row.form_question_groups[0]
+    : row.form_question_groups;
+  const version = Array.isArray(group?.form_automation_versions)
+    ? group.form_automation_versions[0]
+    : group?.form_automation_versions;
+  if (!version) return null;
+
+  return {
+    id: row.id,
+    question_i18n: row.question_i18n,
+    field_type: row.field_type,
+    ai_improve: row.ai_improve,
+    version,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Generation runs
 // ---------------------------------------------------------------------------

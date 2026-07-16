@@ -1,4 +1,4 @@
-/**
+﻿/**
  * ai-engine domain — comprehensive TDD tests.
  *
  * No I/O, no mocks needed (pure functions only).
@@ -22,6 +22,10 @@ import {
   canTransitionRun,
   nextVersion,
   maskPii,
+  maskPiiReversible,
+  restorePii,
+  normalizeANumbersInText,
+  validateImprovedText,
   computeAnthropicCost,
   computeGeminiCost,
   evaluateBudget,
@@ -989,5 +993,127 @@ describe("curateInternalFields", () => {
     const { kept, dropped } = curateInternalFields(fields);
     expect(dropped).toBe(3);
     expect(kept).toHaveLength(50);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 12. maskPiiReversible / restorePii / validateImprovedText (T5 improve)
+// ---------------------------------------------------------------------------
+
+describe("maskPiiReversible / restorePii", () => {
+  it("round-trips A-Number (compact + grouped), SSN and passport verbatim", () => {
+    const original =
+      "Soy PEREZ, Diego A312654987, mi hermana tiene A312-654-988, SSN 123-45-6789 y pasaporte AB1234567.";
+    const { masked, tokens } = maskPiiReversible(original);
+
+    expect(masked).not.toContain("A312654987");
+    expect(masked).not.toContain("A312-654-988");
+    expect(masked).not.toContain("123-45-6789");
+    expect(masked).not.toContain("AB1234567");
+    expect(masked).toMatch(/\[\[PII_\d+\]\]/);
+    expect(tokens.size).toBe(4);
+
+    expect(restorePii(masked, tokens)).toBe(original);
+  });
+
+  it("assigns the SAME token to a repeated value", () => {
+    const { masked, tokens } = maskPiiReversible("A312654987 aparece dos veces: A312654987.");
+    expect(tokens.size).toBe(1);
+    const token = [...tokens.keys()][0];
+    expect(masked.split(token).length - 1).toBe(2);
+  });
+
+  it("leaves text without PII untouched (no tokens)", () => {
+    const text = "Mi nombre es Juan y vivo en Houston desde 2020.";
+    const { masked, tokens } = maskPiiReversible(text);
+    expect(masked).toBe(text);
+    expect(tokens.size).toBe(0);
+  });
+
+  it("survives a model that reorders and reformats around the tokens", () => {
+    const { tokens } = maskPiiReversible("diego armando perez gomez a312654987");
+    const token = [...tokens.keys()][0];
+    const modelOutput = `PEREZ GOMEZ, Diego Armando - ${token}`;
+    expect(restorePii(modelOutput, tokens)).toBe(
+      "PEREZ GOMEZ, Diego Armando - a312654987",
+    );
+  });
+});
+
+describe("validateImprovedText", () => {
+  it("accepts a clean rewrite", () => {
+    const r = validateImprovedText("hola como estas", "Hola, ¿cómo estás?");
+    expect(r).toEqual({ ok: true, text: "Hola, ¿cómo estás?" });
+  });
+
+  it("strips a wrapping code fence and wrapping quotes", () => {
+    expect(validateImprovedText("abc def", "```\nAbc def.\n```")).toEqual({
+      ok: true,
+      text: "Abc def.",
+    });
+    expect(validateImprovedText("abc def", '"Abc def."')).toEqual({ ok: true, text: "Abc def." });
+  });
+
+  it("drops a chatty one-line preamble", () => {
+    const r = validateImprovedText("abc def", "Aquí está el texto corregido:\nAbc def.");
+    expect(r).toEqual({ ok: true, text: "Abc def." });
+  });
+
+  it("rejects empty output", () => {
+    expect(validateImprovedText("abc", "   ").ok).toBe(false);
+  });
+
+  it("rejects output that lost a PII token", () => {
+    const r = validateImprovedText("nombre [[PII_1]] listo", "Nombre listo.");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toContain("missing_token");
+  });
+
+  it("accepts output that kept every PII token", () => {
+    const r = validateImprovedText("nombre [[PII_1]] listo", "PEREZ, Juan - [[PII_1]]");
+    expect(r.ok).toBe(true);
+  });
+
+  it("rejects a disproportionate rewrite (runaway generation)", () => {
+    const input = "x".repeat(100);
+    expect(validateImprovedText(input, "y".repeat(1000)).ok).toBe(false);
+    expect(validateImprovedText(input, "y".repeat(10)).ok).toBe(false);
+  });
+
+  it("gives short inputs headroom to expand into the required format", () => {
+    const r = validateImprovedText(
+      "juan perez a1",
+      "PEREZ, Juan - A1 (formato aplicado correctamente)",
+    );
+    expect(r.ok).toBe(true);
+  });
+});
+
+describe("normalizeANumbersInText (formato canónico A-#########)", () => {
+  it("normaliza todas las variantes con prefijo A a A- + 9 dígitos", () => {
+    expect(normalizeANumbersInText("a312654987")).toBe("A-312654987");
+    expect(normalizeANumbersInText("A312-654-987")).toBe("A-312654987");
+    expect(normalizeANumbersInText("a 298 445 123")).toBe("A-298445123");
+    expect(normalizeANumbersInText("A-301112233")).toBe("A-301112233");
+  });
+
+  it("rellena con cero a la izquierda un número de 8 dígitos", () => {
+    expect(normalizeANumbersInText("A12345678")).toBe("A-012345678");
+  });
+
+  it("NO toca dígitos sueltos sin prefijo A (podrían ser pasaporte/SSN)", () => {
+    expect(normalizeANumbersInText("mi numero es 312654988")).toBe("mi numero es 312654988");
+  });
+
+  it("normaliza varios en la misma respuesta multi-línea", () => {
+    const input = "PEREZ, Diego - a312654987\nLOPEZ, Maria - a298 445 123";
+    expect(normalizeANumbersInText(input)).toBe(
+      "PEREZ, Diego - A-312654987\nLOPEZ, Maria - A-298445123",
+    );
+  });
+
+  it("no altera texto sin A-numbers", () => {
+    const t = "Vivo en Houston desde 2020 y mi caso empezó en 2024.";
+    expect(normalizeANumbersInText(t)).toBe(t);
   });
 });

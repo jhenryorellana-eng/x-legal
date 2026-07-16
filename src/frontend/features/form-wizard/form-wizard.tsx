@@ -21,6 +21,7 @@ import type {
   SaveDraftFn,
   SubmitFormFn,
   TranslateAnswersFn,
+  ImproveAnswerFn,
   FieldErrorCode,
   SaveState,
 } from "./types";
@@ -79,6 +80,9 @@ export interface FormWizardProps {
   submitForm: SubmitFormFn;
   /** Server-side translator fallback (Gemini) for the answer-translation flow. */
   translateAnswers?: TranslateAnswersFn;
+  /** "Mejorar con IA" server action. Only questions with `aiImproveEnabled` show
+   *  the button; absent = feature off for the whole surface (admin preview). */
+  improveAnswer?: ImproveAnswerFn;
   /** Called after a successful submit (cliente navigates to /exito). */
   onSubmitted?: () => void;
   /** Back affordance from step 0 (cliente → Camino / list). */
@@ -122,6 +126,7 @@ export function FormWizard({
   saveDraft,
   submitForm,
   translateAnswers,
+  improveAnswer,
   onSubmitted,
   onExit,
 }: FormWizardProps) {
@@ -197,6 +202,20 @@ export function FormWizard({
   React.useEffect(() => {
     scrollRef.current?.scrollTo({ top: 0, behavior: "auto" });
   }, [step]);
+
+  // "Mejorar con IA": per-question closure over the injected server action.
+  // undefined (no config / no action) = the field renders no button.
+  const makeImprove = (q: { id: string; aiImproveEnabled?: boolean }) =>
+    improveAnswer && q.aiImproveEnabled
+      ? (text: string) =>
+          improveAnswer({
+            caseId,
+            formDefinitionId: form.formDefinitionId,
+            partyId,
+            questionId: q.id,
+            text,
+          })
+      : undefined;
 
   const setAnswer = (questionId: string, value: unknown) => {
     setAnswers((prev) => ({ ...prev, [questionId]: value }));
@@ -474,6 +493,7 @@ export function FormWizard({
                           labels={labels}
                           onChange={editable ? (v) => setAnswer(q.id, v) : () => {}}
                           onBlur={editable ? () => autosave.flush() : () => {}}
+                          onImprove={editable ? makeImprove(q) : undefined}
                           showDictation={false}
                           disabled={!editable}
                           hidePrefillChip
@@ -867,6 +887,7 @@ export function FormWizard({
                 labels={labels}
                 onChange={(v) => setAnswer(q.id, v)}
                 onBlur={() => autosave.flush()}
+                onImprove={cond.disabled ? undefined : makeImprove(q)}
                 showDictation={isTextarea}
                 disabled={cond.disabled}
                 lockMessage={lockMessage}
