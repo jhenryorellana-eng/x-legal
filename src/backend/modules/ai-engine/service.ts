@@ -4017,9 +4017,12 @@ const PREMORTEM_CONTEXT_BUDGET = 30_000;
  * Chars of the generated memo (ai_letter) injected into the validator prompt. A
  * court-grade credible-fear memo can reach ~250 pages (>500k chars). We keep a
  * head+tail slice (the tail carries the perjury declaration) and log when we clip
- * — never a silent cap. Single-pass validation stays within the Opus context.
+ * — never a silent cap. Single-pass validation stays within the model context.
+ * 260k covers a ~100-page appeal brief WHOLE — at 120k the head-tail clip hid the
+ * middle sections (the Motion to Remand) from QA and it penalized the document
+ * for text it could not see.
  */
-const PREMORTEM_MEMO_BUDGET = 120_000;
+const PREMORTEM_MEMO_BUDGET = 260_000;
 /**
  * Chars of the SOURCE material (questionnaire answers + declaración + evidencias,
  * with OCR) injected so the validator can catch contradictions / incoherence /

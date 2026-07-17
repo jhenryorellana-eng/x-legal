@@ -92,7 +92,6 @@ const ASSEMBLY = {
       { label: "Immigration Judge", value: "{{judge_name}}" },
       { label: "Decision appealed (date)", value: "{{decision_date}}" },
       { label: "Country of nationality", value: "{{nationality}}" },
-      { label: "Principal grounds on appeal", value: "{{principal_theory}}" },
     ],
   },
 };

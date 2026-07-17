@@ -396,7 +396,7 @@ describe("assessPreMortemRisk", () => {
   });
 
   it("ai_letter: truncates a giant memo to budget with a visible marker (no silent cap)", async () => {
-    mocks.repo.findRunById.mockResolvedValue({ ...BASE_RUN, output_text: "A".repeat(200_000) });
+    mocks.repo.findRunById.mockResolvedValue({ ...BASE_RUN, output_text: "A".repeat(300_000) });
 
     await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter", runId: RUN_ID } });
 
@@ -409,9 +409,9 @@ describe("assessPreMortemRisk", () => {
   });
 
   it("ai_letter: masks PII BEFORE truncating a giant memo (a boundary cut must not leak raw PII)", async () => {
-    // ~180k chars of repeated SSNs → exceeds PREMORTEM_MEMO_BUDGET (120k) → truncates.
+    // ~306k chars of repeated SSNs → exceeds PREMORTEM_MEMO_BUDGET (260k) → truncates.
     // If masking ran AFTER truncation, the SSN straddling the cut would leak raw digits.
-    const giant = "relleno con SSN 123-45-6789 aqui. ".repeat(6000);
+    const giant = "relleno con SSN 123-45-6789 aqui. ".repeat(9000);
     mocks.repo.findRunById.mockResolvedValue({ ...BASE_RUN, output_text: giant });
 
     await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter", runId: RUN_ID } });
