@@ -655,7 +655,8 @@
       "reviewClientBanner": "This form is filled in by the client. Missing something? Ask them by message.",
       "reviewClientEditBanner": "You're filling in this form on behalf of the client. Changes save automatically.",
       "rejectionTitle": "A correction is needed",
-      "rejectionDueLabel": "Due by: {date}"
+      "rejectionDueLabel": "Due by: {date}",
+      "staleEvidenceBanner": "You uploaded new evidence after these questions were prepared. You can keep answering; your team can refresh the questionnaire to include it."
     },
     "formularios": {
       "eyebrow": "Your case",

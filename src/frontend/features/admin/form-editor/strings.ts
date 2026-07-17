@@ -136,6 +136,9 @@ export const FORM_EDITOR_STRINGS_ES: FormEditorStrings = {
   aiFieldModelAuto: "Automático",
   aiFieldInstruction: "Instrucción para la IA (qué escribir en este campo)",
   aiFieldInstructionHint: "Ej. Redacta la narrativa de persecución de la Parte B a partir del memorándum.",
+  aiFieldContextDocs: "Documentos de contexto (opcional, máx. 5)",
+  aiFieldContextDocsHint:
+    "La IA también los lee para corroborar y fundamentar, pero la instrucción se aplica sobre el documento principal.",
   // "Mejorar con IA" (per-question client rewrite)
   aiImproveSection: "Mejorar con IA (cliente)",
   aiImproveEnable: "Ofrecer el botón \"Mejorar con IA\" en este campo",

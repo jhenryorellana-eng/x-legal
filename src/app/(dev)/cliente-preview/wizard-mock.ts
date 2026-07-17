@@ -50,6 +50,8 @@ export const wizardLabelsMock: WizardLabels = {
   reviewClientEditBanner: "Estás llenando este formulario en nombre del cliente. Los cambios se guardan solos.",
   rejectionTitle: "Necesita una corrección",
   rejectionDueLabel: "Fecha límite: {date}",
+  staleEvidenceBanner:
+    "Subiste evidencia nueva después de que preparamos estas preguntas. Puedes seguir respondiendo; tu equipo puede actualizar el cuestionario para incluirla.",
 };
 
 /** Generic PDF form — "Datos del menor", 3 steps, all 6 field types + prefill. */

@@ -169,6 +169,47 @@ export async function createQuestionnaireInstance(
   return data;
 }
 
+/**
+ * Meta the on_new_evidence watcher needs about an uploaded document: its
+ * requirement slug + party. Accepts both PostgREST embed shapes (object or
+ * array — lesson of `30515ea`). Returns null when the document is gone or is a
+ * free upload (no requirement).
+ */
+export async function findCaseDocumentMeta(
+  caseDocumentId: string,
+): Promise<{ requirementSlug: string | null; partyId: string | null } | null> {
+  const client = createServiceClient();
+  const { data } = await client
+    .from("case_documents")
+    .select("party_id, required_document_types(slug)")
+    .eq("id", caseDocumentId)
+    .maybeSingle();
+  if (!data) return null;
+  const rel = (data as { required_document_types?: { slug?: string } | Array<{ slug?: string }> | null })
+    .required_document_types;
+  const requirementSlug = (Array.isArray(rel) ? rel[0]?.slug : rel?.slug) ?? null;
+  return { requirementSlug, partyId: (data as { party_id: string | null }).party_id ?? null };
+}
+
+/** Current READY questionnaire instances of a case — the ones a newly uploaded
+ *  input document can turn stale. */
+export async function listCurrentReadyQuestionnaireInstances(
+  caseId: string,
+): Promise<QuestionnaireInstanceRow[]> {
+  const client = createServiceClient();
+  const { data, error } = await client
+    .from("case_questionnaire_instances")
+    .select("*")
+    .eq("case_id", caseId)
+    .eq("is_current", true)
+    .eq("status", "ready");
+  if (error) {
+    logger.error({ err: error, caseId }, "ai-engine: listCurrentReadyQuestionnaireInstances failed");
+    return [];
+  }
+  return (data ?? []) as QuestionnaireInstanceRow[];
+}
+
 export async function updateQuestionnaireInstance(
   id: string,
   patch: TablesUpdate<"case_questionnaire_instances">,
@@ -1186,6 +1227,7 @@ export async function loadResolvedInputs(snapshot: ConfigSnapshot): Promise<{
     slug: string;
     extractionPayload: Record<string, unknown>;
     rawText: string;
+    label?: string;
   }>;
   forms: Array<{
     slug: string;
@@ -1204,10 +1246,24 @@ export async function loadResolvedInputs(snapshot: ConfigSnapshot): Promise<{
       .maybeSingle();
 
     if (data) {
+      // File label so an allow_multiple slug's N documents stay distinguishable
+      // in the prompt ("[n/N] — label"). Best-effort: a deleted row → no label.
+      const { data: docRow } = await client
+        .from("case_documents")
+        .select("display_name, original_filename")
+        .eq("id", docRef.case_document_id)
+        .maybeSingle();
+      const label =
+        (docRow as { display_name?: string | null; original_filename?: string | null } | null)
+          ?.display_name ??
+        (docRow as { original_filename?: string | null } | null)?.original_filename ??
+        undefined;
+
       documents.push({
         slug: docRef.slug,
         extractionPayload: (data.payload as Record<string, unknown>) ?? {},
         rawText: data.raw_text ?? "",
+        ...(label ? { label } : {}),
       });
     }
   }
@@ -1245,12 +1301,17 @@ export async function loadResolvedInputs(snapshot: ConfigSnapshot): Promise<{
  *
  * - forms: the client's `case_form_responses` for each `input_form_slug`, matched
  *   by party (a per-party letter falls back to a case-level questionnaire).
- * - documents: the latest active `case_document` for each requirement slug + its
- *   completed extraction (mirrors cases.resolveBySource's document path).
+ * - documents: ALL active `case_documents` for each requirement slug (upload
+ *   order), each with its completed extraction. allow_multiple requirements
+ *   (e.g. evidencias-sustentatorias) upload several coexisting files and every
+ *   one must reach the prompt — resolving only the newest silently dropped the
+ *   rest. Capped at MAX_DOCS_PER_INPUT_SLUG (keeps the newest, warns).
  *
  * Degrades gracefully: an unmatched slug is simply omitted (letter generates with
  * whatever resolved), never throws.
  */
+const MAX_DOCS_PER_INPUT_SLUG = 10;
+
 export async function resolveGenerationInputs(
   caseId: string,
   partyId: string | null,
@@ -1280,7 +1341,8 @@ export async function resolveGenerationInputs(
     }
   }
 
-  // DOCUMENTS — latest active case_document by requirement slug + completed extraction.
+  // DOCUMENTS — every active case_document per requirement slug (upload order)
+  // + each one's latest completed extraction.
   for (const slug of docSlugs) {
     let q = client
       .from("case_documents")
@@ -1288,21 +1350,29 @@ export async function resolveGenerationInputs(
       .eq("case_id", caseId)
       .eq("required_document_types.slug", slug)
       .in("status", ["uploaded", "approved"])
-      .order("created_at", { ascending: false })
-      .limit(1);
+      .order("created_at", { ascending: true });
     q = partyId ? q.eq("party_id", partyId) : q.is("party_id", null);
     const { data: docs } = await q;
-    const caseDocumentId = (docs?.[0] as { id?: string } | undefined)?.id;
-    if (!caseDocumentId) continue;
-    const { data: ext } = await client
-      .from("document_extractions")
-      .select("id")
-      .eq("case_document_id", caseDocumentId)
-      .eq("status", "completed")
-      .order("created_at", { ascending: false })
-      .limit(1);
-    const extractionId = (ext?.[0] as { id?: string } | undefined)?.id;
-    if (extractionId) documents.push({ slug, case_document_id: caseDocumentId, extraction_id: extractionId });
+    let rows = (docs ?? []) as Array<{ id?: string }>;
+    if (rows.length > MAX_DOCS_PER_INPUT_SLUG) {
+      logger.warn(
+        { caseId, slug, count: rows.length, cap: MAX_DOCS_PER_INPUT_SLUG },
+        "ai-engine: input documents exceed cap; keeping the newest",
+      );
+      rows = rows.slice(rows.length - MAX_DOCS_PER_INPUT_SLUG);
+    }
+    for (const row of rows) {
+      if (!row.id) continue;
+      const { data: ext } = await client
+        .from("document_extractions")
+        .select("id")
+        .eq("case_document_id", row.id)
+        .eq("status", "completed")
+        .order("created_at", { ascending: false })
+        .limit(1);
+      const extractionId = (ext?.[0] as { id?: string } | undefined)?.id;
+      if (extractionId) documents.push({ slug, case_document_id: row.id, extraction_id: extractionId });
+    }
   }
 
   return { documents, forms };

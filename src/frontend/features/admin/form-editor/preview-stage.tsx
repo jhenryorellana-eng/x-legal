@@ -85,6 +85,10 @@ function previewLabels(lang: "es" | "en"): WizardLabels {
     ),
     rejectionTitle: t("Necesita una corrección", "A correction is needed"),
     rejectionDueLabel: t("Fecha límite: {date}", "Due by: {date}"),
+    staleEvidenceBanner: t(
+      "Subiste evidencia nueva después de que preparamos estas preguntas. Puedes seguir respondiendo; tu equipo puede actualizar el cuestionario para incluirla.",
+      "You uploaded new evidence after these questions were prepared. You can keep answering; your team can refresh the questionnaire to include it.",
+    ),
   };
 }
 

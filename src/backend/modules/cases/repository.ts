@@ -12,6 +12,7 @@ import {
   createServerClient,
   createServiceClient,
 } from "@/backend/platform/supabase";
+import { logger } from "@/backend/platform/logger";
 import type { Tables, TablesInsert, TablesUpdate } from "@/shared/database.types";
 
 // ---------------------------------------------------------------------------
@@ -759,6 +760,87 @@ export async function downloadDocumentBytesBySlug(
   if (!file) return null;
   const bytes = new Uint8Array(await file.arrayBuffer());
   return { bytes, mimeType: row.mime_type };
+}
+
+/** Per-file/total byte guardrails for ai_field CONTEXT downloads (Gemini limits
+ *  the WHOLE inline request — primary document included — around 20MB of the
+ *  base64 payload; these budgets count RAW bytes, so 15MB raw ≈ 20MB base64.
+ *  The service subtracts the primary's size and threads the remainder across slugs). */
+const AI_FIELD_CONTEXT_MAX_FILE_BYTES = 12 * 1024 * 1024;
+export const AI_FIELD_CONTEXT_MAX_TOTAL_BYTES = 15 * 1024 * 1024;
+
+/**
+ * Downloads EVERY active (uploaded/approved) document of a requirement slug, in
+ * upload order, each with its human file label — the ai_field multi-document
+ * CONTEXT (e.g. all supporting evidences behind EOIR-26 item #6). Caps the count
+ * and skips/stops on oversized payloads (warn, never silent). `opts.maxTotalBytes`
+ * is the REMAINING shared inline budget (Gemini limits the whole request — primary
+ * document included — so the caller subtracts what it already spent). Best-effort:
+ * a failed download is skipped; returns [] when nothing resolves.
+ */
+export async function downloadAllDocumentBytesBySlug(
+  caseId: string,
+  requirementSlug: string,
+  partyId: string | null,
+  opts?: { cap?: number; maxTotalBytes?: number },
+): Promise<Array<{ bytes: Uint8Array; mimeType: string; label?: string }>> {
+  const cap = opts?.cap ?? 6;
+  const maxTotalBytes = opts?.maxTotalBytes ?? AI_FIELD_CONTEXT_MAX_TOTAL_BYTES;
+  const supabase = createServiceClient();
+  let query = supabase
+    .from("case_documents")
+    .select("storage_path, mime_type, display_name, original_filename, required_document_types!inner(slug)")
+    .eq("case_id", caseId)
+    .eq("required_document_types.slug", requirementSlug)
+    .in("status", ["uploaded", "approved"])
+    .order("created_at", { ascending: true });
+
+  if (partyId) {
+    query = query.eq("party_id", partyId);
+  } else {
+    query = query.is("party_id", null);
+  }
+
+  const { data } = await query;
+  const rows = (data ?? []) as unknown as Array<{
+    storage_path: string;
+    mime_type: string;
+    display_name: string | null;
+    original_filename: string | null;
+  }>;
+  if (rows.length > cap) {
+    logger.warn(
+      { caseId, slug: requirementSlug, count: rows.length, cap },
+      "cases: ai_field context documents exceed cap; keeping the newest",
+    );
+  }
+  const kept = rows.length > cap ? rows.slice(rows.length - cap) : rows;
+
+  const out: Array<{ bytes: Uint8Array; mimeType: string; label?: string }> = [];
+  let totalBytes = 0;
+  for (const row of kept) {
+    const { data: file } = await supabase.storage.from("case-documents").download(row.storage_path);
+    if (!file) continue;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (bytes.byteLength > AI_FIELD_CONTEXT_MAX_FILE_BYTES) {
+      logger.warn(
+        { caseId, slug: requirementSlug, path: row.storage_path, bytes: bytes.byteLength },
+        "cases: ai_field context document too large; skipped",
+      );
+      continue;
+    }
+    if (totalBytes + bytes.byteLength > maxTotalBytes) {
+      logger.warn(
+        { caseId, slug: requirementSlug, totalBytes, next: bytes.byteLength, maxTotalBytes },
+        "cases: ai_field context payload budget reached; remaining documents skipped",
+      );
+      break;
+    }
+    totalBytes += bytes.byteLength;
+    const label = row.display_name ?? row.original_filename ?? undefined;
+    out.push({ bytes, mimeType: row.mime_type, ...(label ? { label } : {}) });
+  }
+  return out;
 }
 
 /**

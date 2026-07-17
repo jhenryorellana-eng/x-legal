@@ -215,6 +215,9 @@ export interface ResolvedInputs {
     slug: string;
     extractionPayload: Record<string, unknown>;
     rawText: string;
+    /** Human file label (display_name/original_filename) — distinguishes the N
+     *  coexisting documents of an allow_multiple slug in the prompt. */
+    label?: string;
   }>;
   forms: Array<{
     slug: string;
@@ -592,7 +595,8 @@ export function selectDatasetItems(
   // Score each item
   const scored = items.map((item) => {
     const intersection = item.tags.filter((t) => contextTags.includes(t)).length;
-    const outcomeScore = item.outcome === "granted" ? 1 : 0;
+    // Favorable = granted (asylum wins) or remanded (appeal wins at the BIA/circuit).
+    const outcomeScore = item.outcome === "granted" || item.outcome === "remanded" ? 1 : 0;
     return { item, intersection, outcomeScore };
   });
 
@@ -724,14 +728,67 @@ function buildDatasetXml(items: DatasetItem[]): string {
  * (buildUserMessage) and the per-case questionnaire generator
  * (buildQuestionGenContext) so both read the case the exact same way.
  */
+/** Raw-text budget for the single document of a slug (the core record — e.g. the
+ *  full asylum package — must arrive near-whole). */
+export const GENERATION_DOC_CHAR_BUDGET = 300_000;
+/** Raw-text budget per document when a slug carries several (allow_multiple
+ *  evidences): keeps asilo + decisión + N evidencias inside every section call. */
+export const GENERATION_MULTI_DOC_CHAR_BUDGET = 80_000;
+
+/** Head+tail truncation with a visible marker — never a silent cap (the model
+ *  must know it saw a partial document). Shared by the generation context
+ *  (budgetDocText) and the Pre-Mortem (service's budgetTextHeadTail adds logging). */
+export function headTailClip(text: string, budget: number, markerLabel: string): string {
+  if (text.length <= budget) return text;
+  const head = Math.floor(budget * 0.7);
+  const tail = budget - head;
+  const omitted = text.length - budget;
+  return (
+    text.slice(0, head) +
+    `\n\n[... ${markerLabel} truncado por presupuesto: ${omitted} chars omitidos ...]\n\n` +
+    text.slice(text.length - tail)
+  );
+}
+
+function budgetDocText(text: string, budget: number): string {
+  return headTailClip(text, budget, "documento");
+}
+
+/** Sanitizes a client-typed file label (case_documents.display_name) before it is
+ *  interpolated next to prompt delimiters: strips newlines/quotes and collapses
+ *  `---` runs so a malicious or unlucky filename can't forge document boundaries. */
+export function sanitizeDocLabel(label: string): string {
+  return label
+    .replace(/[\r\n]+/g, " ")
+    .replace(/["“”]/g, "'")
+    .replace(/-{3,}/g, "–")
+    .trim()
+    .slice(0, 120);
+}
+
 export function buildCaseContextBlocks(inputs: ResolvedInputs): string[] {
   const parts: string[] = [];
+
+  // Per-doc heading + budget: a slug with N>1 coexisting documents (allow_multiple)
+  // renders each as `slug [n/N] — "label"` with the smaller per-doc budget; a
+  // single-doc slug keeps the legacy `slug` heading byte-identical.
+  const countBySlug = new Map<string, number>();
+  for (const d of inputs.documents) countBySlug.set(d.slug, (countBySlug.get(d.slug) ?? 0) + 1);
+  const seenBySlug = new Map<string, number>();
+  const docMeta = inputs.documents.map((d) => {
+    const n = countBySlug.get(d.slug) ?? 1;
+    const i = (seenBySlug.get(d.slug) ?? 0) + 1;
+    seenBySlug.set(d.slug, i);
+    const heading = n <= 1 ? d.slug : `${d.slug} [${i}/${n}]${d.label ? ` — "${sanitizeDocLabel(d.label)}"` : ""}`;
+    const budget = n <= 1 ? GENERATION_DOC_CHAR_BUDGET : GENERATION_MULTI_DOC_CHAR_BUDGET;
+    return { heading, budget };
+  });
 
   // 1. CASE CONTEXT — extractions payload (field-by-field, labeled by slug)
   if (inputs.documents.length > 0) {
     parts.push("## DATOS EXTRAÍDOS DE DOCUMENTOS");
-    for (const doc of inputs.documents) {
-      parts.push(`\n### Documento: ${doc.slug}`);
+    for (const [idx, doc] of inputs.documents.entries()) {
+      parts.push(`\n### Documento: ${docMeta[idx].heading}`);
       const maskedPayload = maskObjectValues(doc.extractionPayload);
       for (const [key, value] of Object.entries(maskedPayload)) {
         parts.push(`- **${key}**: ${String(value)}`);
@@ -754,10 +811,10 @@ export function buildCaseContextBlocks(inputs: ResolvedInputs): string[] {
   // 3. FULL DOCUMENT TEXTS (raw_text)
   if (inputs.documents.length > 0) {
     parts.push("\n## TEXTO COMPLETO DE DOCUMENTOS");
-    for (const doc of inputs.documents) {
-      parts.push(`\n--- INICIO DOCUMENTO: ${doc.slug} ---`);
-      parts.push(maskPii(doc.rawText));
-      parts.push(`--- FIN DOCUMENTO: ${doc.slug} ---`);
+    for (const [idx, doc] of inputs.documents.entries()) {
+      parts.push(`\n--- INICIO DOCUMENTO: ${docMeta[idx].heading} ---`);
+      parts.push(budgetDocText(maskPii(doc.rawText), docMeta[idx].budget));
+      parts.push(`--- FIN DOCUMENTO: ${docMeta[idx].heading} ---`);
     }
   }
 
@@ -1781,7 +1838,8 @@ export function datasetToJurisprudence(items: DatasetItem[], analysis: ResearchA
     .map(({ it, cas }) => ({
       cas,
       overlap: it.tags.map(normTag).filter((t) => ctx.includes(t)).length,
-      granted: it.outcome === "granted" ? 1 : 0,
+      // Favorable = granted or remanded (appeal wins are remands, not grants).
+      granted: it.outcome === "granted" || it.outcome === "remanded" ? 1 : 0,
       created: it.created_at,
     }));
   scored.sort((a, b) => b.overlap - a.overlap || b.granted - a.granted || b.created.localeCompare(a.created));

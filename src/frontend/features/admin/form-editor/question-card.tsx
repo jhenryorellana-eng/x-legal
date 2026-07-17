@@ -493,15 +493,24 @@ function ProfilePicker({ q, sources, strings, readOnly, onChange }: PickerProps)
  */
 function AiFieldPicker({ q, sources, strings, readOnly, onChange }: PickerProps) {
   const ref = (q.source_ref ?? {}) as {
-    connected?: { kind?: string; slug?: string };
+    connected?: { kind?: string; slug?: string; context_slugs?: string[] };
     instruction?: string;
     model?: string | null;
   };
   const kind: "document" | "ai_letter" = ref.connected?.kind === "ai_letter" ? "ai_letter" : "document";
   const slug = ref.connected?.slug ?? "";
+  const contextSlugs = kind === "document" ? (ref.connected?.context_slugs ?? []) : [];
   const options = kind === "document" ? sources.documents.map((d) => d.slug) : sources.forms;
   const setKind = (k: "document" | "ai_letter") => onChange({ source_ref: { ...ref, connected: { kind: k, slug: "" } } });
-  const setSlug = (s: string) => onChange({ source_ref: { ...ref, connected: { kind, slug: s } } });
+  const setSlug = (s: string) => {
+    // Keep the context set when the primary changes; the new primary can't be its own context.
+    const nextCtx = contextSlugs.filter((x) => x !== s);
+    onChange({ source_ref: { ...ref, connected: { kind, slug: s, ...(nextCtx.length ? { context_slugs: nextCtx } : {}) } } });
+  };
+  const toggleContext = (s: string) => {
+    const next = contextSlugs.includes(s) ? contextSlugs.filter((x) => x !== s) : [...contextSlugs, s];
+    onChange({ source_ref: { ...ref, connected: { kind, slug, ...(next.length ? { context_slugs: next } : {}) } } });
+  };
   return (
     <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
       <div role="radiogroup" aria-label={strings.aiFieldConnect} style={{ display: "inline-flex", gap: 4, padding: 4, borderRadius: 10, background: "var(--chip)", width: "fit-content" }}>
@@ -533,6 +542,31 @@ function AiFieldPicker({ q, sources, strings, readOnly, onChange }: PickerProps)
           </div>
         )}
       </div>
+      {kind === "document" && sources.documents.length > 1 && (
+        <div>
+          <FieldLabel>{strings.aiFieldContextDocs}</FieldLabel>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {sources.documents.filter((d) => d.slug !== slug).map((d) => {
+              const on = contextSlugs.includes(d.slug);
+              const full = !on && contextSlugs.length >= 5;
+              return (
+                <button
+                  key={d.slug}
+                  type="button"
+                  role="checkbox"
+                  aria-checked={on}
+                  disabled={readOnly || full}
+                  onClick={() => toggleContext(d.slug)}
+                  style={{ height: 28, padding: "0 10px", borderRadius: 999, border: `1.5px solid ${on ? "var(--accent)" : "var(--line)"}`, cursor: readOnly || full ? "default" : "pointer", background: on ? "var(--accent-soft)" : "transparent", color: on ? "var(--accent)" : "var(--ink-2)", fontWeight: 600, fontSize: 12, opacity: full ? 0.5 : 1 }}
+                >
+                  {d.slug}
+                </button>
+              );
+            })}
+          </div>
+          <p style={{ margin: "6px 0 0", fontSize: 11.5, color: "var(--ink-2)" }}>{strings.aiFieldContextDocsHint}</p>
+        </div>
+      )}
       <div>
         <FieldLabel>{strings.aiFieldInstruction}</FieldLabel>
         <textarea

@@ -56,5 +56,6 @@ export function resolveWizardLabels(t: (key: string) => string): WizardLabels {
     reviewClientEditBanner: t("reviewClientEditBanner"),
     rejectionTitle: t("rejectionTitle"),
     rejectionDueLabel: tWithValues("rejectionDueLabel", { date: "{date}" }),
+    staleEvidenceBanner: t("staleEvidenceBanner"),
   };
 }

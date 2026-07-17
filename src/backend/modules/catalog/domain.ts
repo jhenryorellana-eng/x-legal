@@ -516,7 +516,14 @@ export const SourceRefSchema = z.discriminatedUnion("source", [
   z.object({
     source: z.literal("ai_field"),
     source_ref: z.object({
-      connected: z.object({ kind: AiFieldConnectedKindSchema, slug: z.string() }),
+      connected: z.object({
+        kind: AiFieldConnectedKindSchema,
+        slug: z.string(),
+        // Additional requirement documents the interpreter also reads (kind:
+        // document only) — e.g. EOIR-26 #6 reads the decision PLUS the asylum
+        // package + evidences. Capped: the whole set travels inline to Gemini.
+        context_slugs: z.array(z.string()).max(5).optional(),
+      }),
       instruction: z.string(),
       // Optional per-field model override; falls back to the per-flavor default
       // (Gemini for documents, Anthropic for ai_letter synthesis).
@@ -1094,26 +1101,55 @@ export function validateSourceRef(q: Question, ctx: VersionCtx): PublicationIssu
     }
     case "ai_field": {
       const ref = q.source_ref as
-        | { connected?: { kind?: string; slug?: string }; instruction?: string }
+        | {
+            connected?: { kind?: string; slug?: string; context_slugs?: string[] };
+            instruction?: string;
+          }
         | null;
       const slug = ref?.connected?.slug ?? "";
       const kind = ref?.connected?.kind;
+      const contextSlugs = ref?.connected?.context_slugs ?? [];
       if (!slug || !ref?.instruction?.trim()) {
         return [
           blocking("CATALOG_SOURCE_REF_INVALID", "ai_field requiere connected.slug e instruction."),
         ];
       }
       if (kind === "document") {
-        return ctx.allDocumentSlugs.includes(slug)
+        if (!ctx.allDocumentSlugs.includes(slug)) {
+          return [
+            blocking(
+              "CATALOG_SOURCE_REF_INVALID",
+              `documento "${slug}" no es un requirement del servicio.`,
+            ),
+          ];
+        }
+        if (contextSlugs.includes(slug)) {
+          return [
+            blocking(
+              "CATALOG_SOURCE_REF_INVALID",
+              "el documento principal no puede repetirse como documento de contexto.",
+            ),
+          ];
+        }
+        const badCtx = contextSlugs.filter((s) => !ctx.allDocumentSlugs.includes(s));
+        return badCtx.length === 0
           ? []
           : [
               blocking(
                 "CATALOG_SOURCE_REF_INVALID",
-                `documento "${slug}" no es un requirement del servicio.`,
+                `documento(s) de contexto "${badCtx.join('", "')}" no es/son requirement(s) del servicio.`,
               ),
             ];
       }
       if (kind === "ai_letter") {
+        if (contextSlugs.length > 0) {
+          return [
+            blocking(
+              "CATALOG_SOURCE_REF_INVALID",
+              "context_slugs solo aplica a conexiones de documento.",
+            ),
+          ];
+        }
         return ctx.aiLetterSlugs.includes(slug)
           ? []
           : [

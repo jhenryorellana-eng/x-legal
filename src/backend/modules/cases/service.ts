@@ -110,6 +110,8 @@ import {
   findDocumentExtractionByCaseDocId,
   findCompletedGenerationByFormSlug,
   downloadDocumentBytesBySlug,
+  downloadAllDocumentBytesBySlug,
+  AI_FIELD_CONTEXT_MAX_TOTAL_BYTES,
   findClientProfileForForm,
   findUserContactFields,
   listDocumentExtractionsForCase,
@@ -3743,12 +3745,23 @@ export async function resolveBySource(
   }
 
   if (source === "ai_field") {
-    const connected = sourceRef["connected"] as { kind?: string; slug?: string } | undefined;
+    const connected = sourceRef["connected"] as
+      | { kind?: string; slug?: string; context_slugs?: string[] }
+      | undefined;
     const instruction = sourceRef["instruction"] as string | undefined;
     const model = (sourceRef["model"] as string | undefined) ?? null;
     if (!connected?.kind || !connected?.slug || !instruction) return null;
     const map = await resolveAiFields(caseId, partyId, [
-      { id: question.id, connected: { kind: connected.kind, slug: connected.slug }, instruction, model },
+      {
+        id: question.id,
+        connected: {
+          kind: connected.kind,
+          slug: connected.slug,
+          ...(connected.context_slugs?.length ? { context_slugs: connected.context_slugs } : {}),
+        },
+        instruction,
+        model,
+      },
     ]);
     return map[question.id] ?? null;
   }
@@ -3838,7 +3851,10 @@ function formatProfileValue(value: unknown, format: string | undefined): unknown
 /** A single ai_field to resolve: question id + its connected source + per-field prompt. */
 export interface AiFieldResolveInput {
   id: string;
-  connected: { kind: string; slug: string };
+  /** context_slugs (kind: document only): additional requirement documents the
+   *  interpreter also reads — e.g. EOIR-26 #6 reads the decision PLUS the asylum
+   *  package and the supporting evidences. */
+  connected: { kind: string; slug: string; context_slugs?: string[] };
   instruction: string;
   model?: string | null;
 }
@@ -3864,7 +3880,8 @@ export async function resolveAiFields(
   const groups = new Map<string, AiFieldResolveInput[]>();
   for (const f of fields) {
     if (!f.connected?.kind || !f.connected?.slug || !f.instruction) continue;
-    const key = `${f.connected.kind}::${f.connected.slug}::${f.model ?? ""}`;
+    const ctxKey = (f.connected.context_slugs ?? []).join("|");
+    const key = `${f.connected.kind}::${f.connected.slug}::${ctxKey}::${f.model ?? ""}`;
     const arr = groups.get(key) ?? [];
     arr.push(f);
     groups.set(key, arr);
@@ -3875,6 +3892,7 @@ export async function resolveAiFields(
     interpretDocumentFields: (i: {
       fileBase64: string;
       mimeType: string;
+      contextFiles?: Array<{ fileBase64: string; mimeType: string; label?: string }>;
       fields: Array<{ id: string; instruction: string }>;
       model?: string | null;
     }) => Promise<Record<string, string>>;
@@ -3895,7 +3913,45 @@ export async function resolveAiFields(
         const doc = await downloadDocumentBytesBySlug(caseId, first.connected.slug, partyId);
         if (!doc) continue;
         const fileBase64 = Buffer.from(doc.bytes).toString("base64");
-        Object.assign(out, await aiEngine.interpretDocumentFields({ fileBase64, mimeType: doc.mimeType, fields: reqs, model }));
+        // Context documents (best-effort): every active file of each context slug,
+        // labeled, so the interpreter can corroborate against the wider record.
+        // Gemini bounds the WHOLE inline request (primary included), so the budget
+        // starts minus the primary's size and is threaded across the slugs.
+        const ctxSlugs = (first.connected.context_slugs ?? []).filter((s) => s && s !== first.connected.slug);
+        let contextFiles: Array<{ fileBase64: string; mimeType: string; label?: string }> | undefined;
+        if (ctxSlugs.length > 0) {
+          let remaining = AI_FIELD_CONTEXT_MAX_TOTAL_BYTES - doc.bytes.byteLength;
+          if (remaining <= 0) {
+            logger.warn(
+              { caseId, slug: first.connected.slug, primaryBytes: doc.bytes.byteLength },
+              "resolveAiFields: primary document consumes the whole inline budget; context skipped",
+            );
+          }
+          const files: Array<{ fileBase64: string; mimeType: string; label?: string }> = [];
+          for (const slug of ctxSlugs) {
+            if (remaining <= 0) break;
+            const docs = await downloadAllDocumentBytesBySlug(caseId, slug, partyId, { maxTotalBytes: remaining });
+            for (const d of docs) {
+              remaining -= d.bytes.byteLength;
+              files.push({
+                fileBase64: Buffer.from(d.bytes).toString("base64"),
+                mimeType: d.mimeType,
+                ...(d.label ? { label: d.label } : {}),
+              });
+            }
+          }
+          if (files.length > 0) contextFiles = files;
+        }
+        Object.assign(
+          out,
+          await aiEngine.interpretDocumentFields({
+            fileBase64,
+            mimeType: doc.mimeType,
+            ...(contextFiles ? { contextFiles } : {}),
+            fields: reqs,
+            model,
+          }),
+        );
       } else if (first.connected.kind === "ai_letter") {
         const run = await findCompletedGenerationByFormSlug(caseId, first.connected.slug, partyId);
         if (!run?.outputText) continue;
@@ -3985,6 +4041,10 @@ export interface FormForClientDto {
   questionnaireGate?: "pending_prereqs" | "generating" | "failed" | null;
   /** Prerequisite form slugs still missing when questionnaireGate==='pending_prereqs'. */
   missingPrereqs?: { forms: string[]; documents: string[] } | null;
+  /** on_new_evidence: true when the generated questions predate newly uploaded
+   *  evidence (instance flagged `stale`). The wizard still works; the UI shows
+   *  an amber notice so the client/staff know a regeneration is warranted. */
+  questionnaireStale?: boolean;
 }
 
 /**
@@ -4170,6 +4230,7 @@ export async function getFormForClient(
   // above stay and the generated ones are appended; in automatic they replace them.
   let questionnaireGate: FormForClientDto["questionnaireGate"] = null;
   let missingPrereqs: FormForClientDto["missingPrereqs"] = null;
+  let questionnaireStale = false;
   if (formDef.kind === "questionnaire") {
     const aiEngine = (await import("@/backend/modules/ai-engine" as string)) as {
       getQuestionnaireClientState: (caseId: string, formDefinitionId: string, partyId: string | null) => Promise<{ isDynamic: boolean; mode: string; autoTrigger: boolean; instance: { status: string; schema: unknown } | null; prereqs: { ok: boolean; missingForms: string[]; missingDocuments: string[] } | null }>;
@@ -4196,6 +4257,7 @@ export async function getFormForClient(
       const answers = (existingResponse?.answers ?? {}) as Record<string, unknown>;
       const status = instance?.status ?? "pending_prereqs";
       if (status === "ready" || status === "stale") {
+        questionnaireStale = status === "stale";
         const generated = schemaToWizardGroups(instance?.schema, answers, groups.length);
         groups = state.mode === "hybrid" ? [...groups, ...generated] : generated;
       } else {
@@ -4226,6 +4288,7 @@ export async function getFormForClient(
     groups,
     questionnaireGate,
     missingPrereqs,
+    questionnaireStale,
   };
 }
 
@@ -5292,14 +5355,18 @@ async function resolveFormResponseFieldsCore(
     const own0 = answers[q.id];
     if (own0 !== undefined && own0 !== null && own0 !== "") continue;
     const ref = (q.source_ref ?? {}) as {
-      connected?: { kind?: string; slug?: string };
+      connected?: { kind?: string; slug?: string; context_slugs?: string[] };
       instruction?: string;
       model?: string | null;
     };
     if (!ref.connected?.kind || !ref.connected?.slug || !ref.instruction) continue;
     aiFieldReqs.push({
       id: q.id,
-      connected: { kind: ref.connected.kind, slug: ref.connected.slug },
+      connected: {
+        kind: ref.connected.kind,
+        slug: ref.connected.slug,
+        ...(ref.connected.context_slugs?.length ? { context_slugs: ref.connected.context_slugs } : {}),
+      },
       instruction: ref.instruction,
       model: ref.model ?? null,
     });

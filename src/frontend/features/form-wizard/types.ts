@@ -85,6 +85,9 @@ export interface WizardForm {
   /** Language of the official PDF (pdf_automation). Drives answer translation. */
   sourceLanguage: Locale;
   groups: WizardGroup[];
+  /** on_new_evidence: the generated questions predate newly uploaded evidence —
+   *  show the amber notice (the wizard itself keeps working). */
+  questionnaireStale?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -228,4 +231,6 @@ export interface WizardLabels {
   // Rejection / correction (client, status='rejected' — amber, never red)
   rejectionTitle: string; // "Necesita una corrección"
   rejectionDueLabel: string; // "Fecha límite: {date}"
+  // on_new_evidence (questionnaire instance flagged stale — amber notice)
+  staleEvidenceBanner: string; // "Subiste evidencia nueva después de que preparamos estas preguntas…"
 }

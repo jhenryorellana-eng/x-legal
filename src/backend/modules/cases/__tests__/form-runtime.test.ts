@@ -37,6 +37,7 @@ const {
   mockFindDocumentExtractionByCaseDocId,
   mockFindCompletedGenerationByFormSlug,
   mockDownloadDocumentBytesBySlug,
+  mockDownloadAllDocumentBytesBySlug,
   mockFindClientProfileForForm,
   mockFindUserContactFields,
   mockListDocumentExtractionsForCase,
@@ -54,6 +55,7 @@ const {
   mockInterpretDocumentFields,
   mockSynthesizeLetterFields,
   mockGetCurrentQuestionnaireInstance,
+  mockGetQuestionnaireClientState,
   // audit mocks
   mockWriteAudit,
   mockAppendCaseTimeline,
@@ -71,6 +73,7 @@ const {
   mockFindDocumentExtractionByCaseDocId: vi.fn(),
   mockFindCompletedGenerationByFormSlug: vi.fn(),
   mockDownloadDocumentBytesBySlug: vi.fn(),
+  mockDownloadAllDocumentBytesBySlug: vi.fn().mockResolvedValue([]),
   mockFindClientProfileForForm: vi.fn(),
   mockFindUserContactFields: vi.fn(),
   mockListDocumentExtractionsForCase: vi.fn(),
@@ -86,6 +89,7 @@ const {
   mockInterpretDocumentFields: vi.fn().mockResolvedValue({}),
   mockSynthesizeLetterFields: vi.fn().mockResolvedValue({}),
   mockGetCurrentQuestionnaireInstance: vi.fn().mockResolvedValue(null),
+  mockGetQuestionnaireClientState: vi.fn(),
   mockWriteAudit: vi.fn().mockResolvedValue(undefined),
   mockAppendCaseTimeline: vi.fn().mockResolvedValue(undefined),
   mockEmit: vi.fn(),
@@ -159,6 +163,9 @@ vi.mock("../repository", () => ({
   findDocumentExtractionByCaseDocId: mockFindDocumentExtractionByCaseDocId,
   findCompletedGenerationByFormSlug: mockFindCompletedGenerationByFormSlug,
   downloadDocumentBytesBySlug: mockDownloadDocumentBytesBySlug,
+  downloadAllDocumentBytesBySlug: mockDownloadAllDocumentBytesBySlug,
+  // Tiny shared inline budget so the threading math is visible in tests.
+  AI_FIELD_CONTEXT_MAX_TOTAL_BYTES: 100,
   findClientProfileForForm: mockFindClientProfileForForm,
   findUserContactFields: mockFindUserContactFields,
   listDocumentExtractionsForCase: mockListDocumentExtractionsForCase,
@@ -192,6 +199,7 @@ vi.mock("@/backend/modules/ai-engine", () => ({
   interpretDocumentFields: mockInterpretDocumentFields,
   synthesizeLetterFields: mockSynthesizeLetterFields,
   getCurrentQuestionnaireInstance: mockGetCurrentQuestionnaireInstance,
+  getQuestionnaireClientState: mockGetQuestionnaireClientState,
 }));
 
 vi.mock("@/backend/platform/crypto", () => ({
@@ -455,7 +463,7 @@ describe("validateAnswerTypes", () => {
 // Service: saveFormDraft
 // ---------------------------------------------------------------------------
 
-import { saveFormDraft, staffUpdateFormAnswers, submitFormResponse, approveFormResponse, generateFilledPdf, resolveFormResponseFieldValues, resolveBySource, getCaseExtractions } from "../service";
+import { saveFormDraft, staffUpdateFormAnswers, submitFormResponse, approveFormResponse, generateFilledPdf, resolveFormResponseFieldValues, resolveBySource, resolveAiFields, getCaseExtractions, getFormForClient } from "../service";
 
 describe("saveFormDraft", () => {
   beforeEach(() => {
@@ -700,6 +708,49 @@ describe("saveFormDraft", () => {
     });
 
     expect(mockUpdateFormResponse).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getFormForClient — questionnaire `stale` flag (on_new_evidence, ola Apelación)
+// ---------------------------------------------------------------------------
+
+describe("getFormForClient — questionnaire stale flag", () => {
+  const QN_DEF = { ...activeFormDef, kind: "questionnaire" };
+
+  function dynamicState(instanceStatus: string) {
+    return {
+      isDynamic: true,
+      mode: "automatic",
+      hybridLayout: "append_group",
+      autoTrigger: false,
+      allowClientTrigger: false,
+      instance: { status: instanceStatus, schema: { groups: [] } },
+      prereqs: null,
+    };
+  }
+
+  it("surfaces questionnaireStale=true when the current instance predates new evidence", async () => {
+    mockFindFormDefinitionById.mockResolvedValue(QN_DEF);
+    mockFindFormResponse.mockResolvedValue(null);
+    mockGetPublishedAutomationVersion.mockResolvedValue(null);
+    mockGetQuestionnaireClientState.mockResolvedValue(dynamicState("stale"));
+
+    const dto = await getFormForClient(clientActor, { caseId: CASE_ID, formDefinitionId: FORM_DEF_ID, partyId: null });
+
+    expect(dto.questionnaireStale).toBe(true);
+    expect(dto.questionnaireGate).toBeNull();
+  });
+
+  it("keeps questionnaireStale falsy for a fresh (ready) instance", async () => {
+    mockFindFormDefinitionById.mockResolvedValue(QN_DEF);
+    mockFindFormResponse.mockResolvedValue(null);
+    mockGetPublishedAutomationVersion.mockResolvedValue(null);
+    mockGetQuestionnaireClientState.mockResolvedValue(dynamicState("ready"));
+
+    const dto = await getFormForClient(clientActor, { caseId: CASE_ID, formDefinitionId: FORM_DEF_ID, partyId: null });
+
+    expect(dto.questionnaireStale).toBeFalsy();
   });
 });
 
@@ -1810,6 +1861,182 @@ describe("resolveBySource", () => {
     );
     expect(result).toBeNull();
     expect(mockInterpretDocumentFields).not.toHaveBeenCalled();
+  });
+
+  // --- ai_field multi-documento (ola Apelación: el #6 del EOIR-26 lee decisión + asilo + evidencias) ---
+  it("attaches connected.context_slugs documents as context files for the interpreter", async () => {
+    mockDownloadDocumentBytesBySlug.mockResolvedValue({
+      bytes: new Uint8Array([1, 2, 3]),
+      mimeType: "application/pdf",
+    });
+    mockDownloadAllDocumentBytesBySlug.mockImplementation(async (_caseId: string, slug: string) =>
+      slug === "asilo-presentado-completo-con-anexos"
+        ? [{ bytes: new Uint8Array([4]), mimeType: "application/pdf", label: "Asilo completo.pdf" }]
+        : [
+            { bytes: new Uint8Array([5]), mimeType: "application/pdf", label: "Evidencia 1.pdf" },
+            { bytes: new Uint8Array([6]), mimeType: "application/pdf", label: "Evidencia 2.pdf" },
+          ],
+    );
+    mockInterpretDocumentFields.mockResolvedValue({ q1: "Razones fundamentadas en el expediente." });
+
+    const result = await resolveBySource(
+      {
+        id: "q1",
+        source: "ai_field",
+        source_ref: {
+          connected: {
+            kind: "document",
+            slug: "decision-y-orden-del-juez-de-inmigracion",
+            context_slugs: ["asilo-presentado-completo-con-anexos", "evidencias-sustentatorias"],
+          },
+          instruction: "Redacta las razones de la apelación.",
+        },
+      },
+      {},
+      CASE_ID,
+      null,
+    );
+
+    expect(result).toBe("Razones fundamentadas en el expediente.");
+    const call = mockInterpretDocumentFields.mock.calls[0][0] as {
+      fileBase64: string;
+      contextFiles?: Array<{ fileBase64: string; mimeType: string; label?: string }>;
+    };
+    expect(call.fileBase64).toBe(Buffer.from([1, 2, 3]).toString("base64"));
+    expect(call.contextFiles).toHaveLength(3);
+    expect(call.contextFiles![0].label).toBe("Asilo completo.pdf");
+    expect(call.contextFiles![1].label).toBe("Evidencia 1.pdf");
+    expect(call.contextFiles![2].label).toBe("Evidencia 2.pdf");
+  });
+
+  it("keeps the single-document ai_field call shape when no context_slugs (regression)", async () => {
+    mockDownloadDocumentBytesBySlug.mockResolvedValue({
+      bytes: new Uint8Array([1, 2, 3]),
+      mimeType: "application/pdf",
+    });
+    mockInterpretDocumentFields.mockResolvedValue({ q1: "ok" });
+
+    await resolveBySource(
+      {
+        id: "q1",
+        source: "ai_field",
+        source_ref: {
+          connected: { kind: "document", slug: "declaracion-jurada" },
+          instruction: "Resume.",
+        },
+      },
+      {},
+      CASE_ID,
+      null,
+    );
+
+    expect(mockDownloadAllDocumentBytesBySlug).not.toHaveBeenCalled();
+    const call = mockInterpretDocumentFields.mock.calls[0][0] as { contextFiles?: unknown };
+    expect(call.contextFiles).toBeUndefined();
+  });
+
+  it("resolves best-effort when the context documents are missing (no context files)", async () => {
+    mockDownloadDocumentBytesBySlug.mockResolvedValue({
+      bytes: new Uint8Array([1]),
+      mimeType: "application/pdf",
+    });
+    mockDownloadAllDocumentBytesBySlug.mockResolvedValue([]);
+    mockInterpretDocumentFields.mockResolvedValue({ q1: "solo primario" });
+
+    const result = await resolveBySource(
+      {
+        id: "q1",
+        source: "ai_field",
+        source_ref: {
+          connected: { kind: "document", slug: "decision-y-orden-del-juez-de-inmigracion", context_slugs: ["evidencias-sustentatorias"] },
+          instruction: "Redacta.",
+        },
+      },
+      {},
+      CASE_ID,
+      null,
+    );
+
+    expect(result).toBe("solo primario");
+    const call = mockInterpretDocumentFields.mock.calls[0][0] as { contextFiles?: unknown[] };
+    expect(call.contextFiles ?? []).toHaveLength(0);
+  });
+
+  it("threads the shared inline budget (minus the primary) across context slugs", async () => {
+    // The mocked repository exposes a tiny budget (100 bytes) so the math is visible:
+    // primary=3 → first slug sees 97; its 4-byte file → second slug sees 93.
+    mockDownloadDocumentBytesBySlug.mockResolvedValue({ bytes: new Uint8Array(3), mimeType: "application/pdf" });
+    mockDownloadAllDocumentBytesBySlug
+      .mockResolvedValueOnce([{ bytes: new Uint8Array(4), mimeType: "application/pdf", label: "A.pdf" }])
+      .mockResolvedValueOnce([]);
+    mockInterpretDocumentFields.mockResolvedValue({});
+
+    await resolveAiFields(CASE_ID, null, [
+      {
+        id: "q1",
+        connected: {
+          kind: "document",
+          slug: "decision-y-orden-del-juez-de-inmigracion",
+          context_slugs: ["asilo-presentado-completo-con-anexos", "evidencias-sustentatorias"],
+        },
+        instruction: "x",
+      },
+    ]);
+
+    expect(mockDownloadAllDocumentBytesBySlug).toHaveBeenNthCalledWith(
+      1, CASE_ID, "asilo-presentado-completo-con-anexos", null, { maxTotalBytes: 97 },
+    );
+    expect(mockDownloadAllDocumentBytesBySlug).toHaveBeenNthCalledWith(
+      2, CASE_ID, "evidencias-sustentatorias", null, { maxTotalBytes: 93 },
+    );
+  });
+
+  it("skips the context downloads when the primary alone exceeds the shared budget", async () => {
+    mockDownloadDocumentBytesBySlug.mockResolvedValue({ bytes: new Uint8Array(101), mimeType: "application/pdf" });
+    mockInterpretDocumentFields.mockResolvedValue({ q1: "ok" });
+
+    const out = await resolveAiFields(CASE_ID, null, [
+      {
+        id: "q1",
+        connected: { kind: "document", slug: "decision-y-orden-del-juez-de-inmigracion", context_slugs: ["evidencias-sustentatorias"] },
+        instruction: "x",
+      },
+    ]);
+
+    expect(mockDownloadAllDocumentBytesBySlug).not.toHaveBeenCalled();
+    const call = mockInterpretDocumentFields.mock.calls[0][0] as { contextFiles?: unknown };
+    expect(call.contextFiles).toBeUndefined();
+    expect(out).toEqual({ q1: "ok" });
+  });
+
+  it("groups ai_fields by context set so different contexts get separate interpreter calls", async () => {
+    mockDownloadDocumentBytesBySlug.mockResolvedValue({
+      bytes: new Uint8Array([1]),
+      mimeType: "application/pdf",
+    });
+    mockDownloadAllDocumentBytesBySlug.mockResolvedValue([
+      { bytes: new Uint8Array([2]), mimeType: "application/pdf", label: "Asilo.pdf" },
+    ]);
+    mockInterpretDocumentFields.mockResolvedValue({});
+
+    await resolveAiFields(CASE_ID, null, [
+      {
+        id: "q1",
+        connected: { kind: "document", slug: "decision-y-orden-del-juez-de-inmigracion" },
+        instruction: "a",
+      },
+      {
+        id: "q2",
+        connected: {
+          kind: "document",
+          slug: "decision-y-orden-del-juez-de-inmigracion",
+          context_slugs: ["asilo-presentado-completo-con-anexos"],
+        },
+        instruction: "b",
+      },
+    ]);
+
+    expect(mockInterpretDocumentFields).toHaveBeenCalledTimes(2);
   });
 
   it("resolves profile.first_name from client profile (non-PII)", async () => {

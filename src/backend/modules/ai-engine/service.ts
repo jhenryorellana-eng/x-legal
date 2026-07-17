@@ -79,6 +79,8 @@ import {
   normalizeANumbersInText,
   validateImprovedText,
   buildWebSearchTool,
+  sanitizeDocLabel,
+  headTailClip,
   countWords,
   lastWords,
   buildSectionUserMessage,
@@ -166,6 +168,8 @@ import {
   findLatestEligibleRunForPreMortem,
   findQuestionnaireGenerationConfig,
   findCurrentQuestionnaireInstance,
+  findCaseDocumentMeta,
+  listCurrentReadyQuestionnaireInstances,
   nextQuestionnaireInstanceVersion,
   createQuestionnaireInstance,
   updateQuestionnaireInstance,
@@ -2290,6 +2294,9 @@ function buildAiFieldList(fields: AiFieldRequest[]): string {
 export async function interpretDocumentFields(input: {
   fileBase64: string;
   mimeType: string;
+  /** Additional documents the interpreter READS as supporting context (labeled);
+   *  the instruction still applies to the PRIMARY document. */
+  contextFiles?: Array<{ fileBase64: string; mimeType: string; label?: string }>;
   fields: AiFieldRequest[];
   model?: string | null;
 }): Promise<Record<string, string>> {
@@ -2298,23 +2305,43 @@ export async function interpretDocumentFields(input: {
     return Object.fromEntries(input.fields.map((f) => [f.id, `[stub-doc: ${f.instruction.slice(0, 60)}]`]));
   }
   const model = input.model || process.env.AI_GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
+  const ctxFiles = input.contextFiles ?? [];
+  const contextNote =
+    ctxFiles.length > 0
+      ? "\n\nSe adjuntan además documentos de contexto (rotulados): úsalos para corroborar y " +
+        "fundamentar, pero la instrucción se aplica sobre el DOCUMENTO PRINCIPAL. Si ninguno " +
+        "de los documentos respalda un dato, devuelve cadena vacía (NO inventes)."
+      : "";
   const prompt =
     "Eres un asistente legal que INTERPRETA un documento (no extraes un dato literal: " +
     "lees, comprendes y redactas). Para cada campo, produce el texto solicitado basándote " +
     "ÚNICAMENTE en el contenido real del documento. Si el documento no lo respalda, devuelve " +
-    "cadena vacía para ese id (NO inventes).\n\nCampos:\n" +
+    "cadena vacía para ese id (NO inventes)." +
+    contextNote +
+    "\n\nCampos:\n" +
     buildAiFieldList(input.fields) +
     '\n\nResponde en JSON: {"answers":[{"id":"<id>","value":"<texto>"}]}.';
+  // Without context files the part shape stays EXACTLY [document, prompt]
+  // (regression-safe for every existing single-document ai_field).
+  const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> =
+    ctxFiles.length === 0
+      ? [{ inlineData: { mimeType: input.mimeType, data: input.fileBase64 } }, { text: prompt }]
+      : [
+          { text: "DOCUMENTO PRINCIPAL (la instrucción se aplica sobre este documento):" },
+          { inlineData: { mimeType: input.mimeType, data: input.fileBase64 } },
+          ...ctxFiles.flatMap((c, i) => [
+            { text: `DOCUMENTO DE CONTEXTO ${i + 1}${c.label ? ` — "${sanitizeDocLabel(c.label)}"` : ""}:` },
+            { inlineData: { mimeType: c.mimeType, data: c.fileBase64 } },
+          ]),
+          { text: prompt },
+        ];
   try {
     const response = await getGeminiModels().generateContent({
       model,
       contents: [
         {
           role: "user",
-          parts: [
-            { inlineData: { mimeType: input.mimeType, data: input.fileBase64 } },
-            { text: prompt },
-          ],
+          parts,
         },
       ],
       config: {
@@ -2723,6 +2750,50 @@ export async function evaluateQuestionnairePrereqs(
     missingDocuments = config.prerequisite_document_slugs.filter((s) => !present.has(s));
   }
   return { ok: missingForms.length === 0 && missingDocuments.length === 0, missingForms, missingDocuments };
+}
+
+/**
+ * document.uploaded watcher — the `on_new_evidence` consumer. When a NEW
+ * document lands on a slug that feeds a per-case questionnaire whose current
+ * instance is already READY, mark that instance `stale` (config `flag`). The
+ * wizard keeps working — cases treats ready|stale alike — the flag just tells
+ * staff/client the questions predate the newest evidence and a regeneration is
+ * warranted. `auto` regeneration is not wired yet: degrades to flag with a warn.
+ * `never` leaves the instance untouched. Best-effort: never throws (event path).
+ */
+export async function flagQuestionnairesOnNewEvidence(
+  caseId: string,
+  caseDocumentId: string,
+): Promise<void> {
+  try {
+    const meta = await findCaseDocumentMeta(caseDocumentId);
+    if (!meta?.requirementSlug) return;
+    const instances = await listCurrentReadyQuestionnaireInstances(caseId);
+    for (const inst of instances) {
+      if ((inst.party_id ?? null) !== (meta.partyId ?? null)) continue;
+      const config = await findQuestionnaireGenerationConfig(inst.form_definition_id);
+      if (!config || config.mode === "global" || config.on_new_evidence === "never") continue;
+      if (!config.input_document_slugs.includes(meta.requirementSlug)) continue;
+      const snapshot = (inst.inputs_snapshot ?? {}) as {
+        documents?: Array<{ case_document_id?: string }>;
+      };
+      const known = new Set((snapshot.documents ?? []).map((d) => d.case_document_id));
+      if (known.has(caseDocumentId)) continue;
+      if (config.on_new_evidence === "auto") {
+        logger.warn(
+          { caseId, instanceId: inst.id },
+          "ai-engine: on_new_evidence=auto not wired; flagging stale instead",
+        );
+      }
+      await updateQuestionnaireInstance(inst.id, { status: "stale", updated_at: new Date().toISOString() });
+      logger.info(
+        { caseId, instanceId: inst.id, slug: meta.requirementSlug, caseDocumentId },
+        "ai-engine: questionnaire instance flagged stale (new evidence)",
+      );
+    }
+  } catch (err) {
+    logger.warn({ err, caseId, caseDocumentId }, "ai-engine: flagQuestionnairesOnNewEvidence failed (non-fatal)");
+  }
 }
 
 /** Reads the current questionnaire instance (consumed by cases.getFormForClient). */
@@ -4030,18 +4101,11 @@ async function resolveMemoText(outputText: string | null, outputPath: string | n
  */
 function budgetTextHeadTail(text: string, budget: number, label: string, caseId: string): string {
   if (text.length <= budget) return text;
-  const head = Math.floor(budget * 0.7);
-  const tail = budget - head;
-  const omitted = text.length - budget;
   logger.info(
-    { job: "assessPreMortemRisk", caseId, label, originalChars: text.length, budget, omitted },
+    { job: "assessPreMortemRisk", caseId, label, originalChars: text.length, budget, omitted: text.length - budget },
     "ai-engine: pre-mortem context truncated to budget",
   );
-  return (
-    text.slice(0, head) +
-    `\n\n[... ${label} truncado por presupuesto: ${omitted} chars omitidos ...]\n\n` +
-    text.slice(text.length - tail)
-  );
+  return headTailClip(text, budget, label);
 }
 
 /**

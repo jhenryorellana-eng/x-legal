@@ -772,6 +772,29 @@ export function FormWizard({
         </div>
       )}
 
+      {/* on_new_evidence — the generated questions predate newly uploaded evidence.
+          Amber informational notice (never blocks the wizard). */}
+      {form.questionnaireStale && step === 0 && (
+        <div
+          role="status"
+          className="anim-fade-in"
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 10,
+            padding: "12px 14px",
+            marginBottom: 12,
+            background: "var(--gold-soft)",
+            border: "1px solid var(--gold)",
+            borderRadius: 12,
+            lineHeight: 1.4,
+          }}
+        >
+          <Icon name="info" size={16} color="var(--gold-deep)" />
+          <span style={{ fontSize: 13, color: "var(--ink-2)" }}>{labels.staleEvidenceBanner}</span>
+        </div>
+      )}
+
       {/* Autosave indicator */}
       <div style={{ minHeight: 20, display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
         {saveLabel(autosave.saveState, autosave.blockedCode, labels) && (

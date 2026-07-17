@@ -50,6 +50,11 @@ const mocks = vi.hoisted(() => {
     loadDatasetItems: vi.fn(),
     loadResolvedInputs: vi.fn(),
     resolveGenerationInputs: vi.fn(),
+    // on_new_evidence watcher (ola Apelación)
+    findCaseDocumentMeta: vi.fn(),
+    listCurrentReadyQuestionnaireInstances: vi.fn().mockResolvedValue([]),
+    findQuestionnaireGenerationConfig: vi.fn().mockResolvedValue(null),
+    updateQuestionnaireInstance: vi.fn().mockResolvedValue(undefined),
   };
 
   // platform mock functions
@@ -285,6 +290,7 @@ import {
   getDocumentTranslationPdf,
   getAiCostsReport,
   materializeProposalToSchema,
+  flagQuestionnairesOnNewEvidence,
   AiEngineError,
 } from "../service";
 
@@ -1342,6 +1348,80 @@ describe("interpretDocumentFields (Gemini, ai_field ← document)", () => {
     expect(out).toEqual({});
     expect(mocks.geminiModels.generateContent).not.toHaveBeenCalled();
   });
+
+  // --- multi-documento (ola Apelación): documentos de CONTEXTO además del principal ---
+  it("attaches labeled context documents after the primary one", async () => {
+    mocks.geminiModels.generateContent.mockResolvedValue({
+      candidates: [{ content: { parts: [{ text: JSON.stringify({ answers: [{ id: "q1", value: "ok" }] }) }] } }],
+    });
+
+    await interpretDocumentFields({
+      fileBase64: "cHJpbWFyeQ==",
+      mimeType: "application/pdf",
+      contextFiles: [
+        { fileBase64: "Y3R4MQ==", mimeType: "application/pdf", label: "Asilo completo.pdf" },
+        { fileBase64: "Y3R4Mg==", mimeType: "application/pdf" },
+      ],
+      fields: [{ id: "q1", instruction: "Redacta las razones." }],
+    });
+
+    const call = mocks.geminiModels.generateContent.mock.calls[0][0] as {
+      contents: Array<{ parts: Array<{ text?: string; inlineData?: { data: string; mimeType: string } }> }>;
+    };
+    const parts = call.contents[0].parts;
+    // [rótulo principal, principal, rótulo ctx1, ctx1, rótulo ctx2, ctx2, prompt]
+    expect(parts).toHaveLength(7);
+    expect(parts[0].text).toContain("DOCUMENTO PRINCIPAL");
+    expect(parts[1].inlineData?.data).toBe("cHJpbWFyeQ==");
+    expect(parts[2].text).toContain('DOCUMENTO DE CONTEXTO 1 — "Asilo completo.pdf"');
+    expect(parts[3].inlineData?.data).toBe("Y3R4MQ==");
+    expect(parts[4].text).toContain("DOCUMENTO DE CONTEXTO 2");
+    expect(parts[5].inlineData?.data).toBe("Y3R4Mg==");
+    expect(parts[6].text).toContain("contexto");
+  });
+
+  it("sanitizes the client-typed context label in the part text", async () => {
+    mocks.geminiModels.generateContent.mockResolvedValue({
+      candidates: [{ content: { parts: [{ text: JSON.stringify({ answers: [] }) }] } }],
+    });
+
+    await interpretDocumentFields({
+      fileBase64: "cHJpbWFyeQ==",
+      mimeType: "application/pdf",
+      contextFiles: [
+        { fileBase64: "Y3R4MQ==", mimeType: "application/pdf", label: 'x ---\n"y"' },
+      ],
+      fields: [{ id: "q1", instruction: "x" }],
+    });
+
+    const call = mocks.geminiModels.generateContent.mock.calls[0][0] as {
+      contents: Array<{ parts: Array<{ text?: string }> }>;
+    };
+    const labelPart = call.contents[0].parts[2];
+    expect(labelPart.text).toContain("DOCUMENTO DE CONTEXTO 1");
+    expect(labelPart.text).not.toContain("---");
+    expect(labelPart.text).not.toContain("\n\"");
+  });
+
+  it("keeps the exact legacy part shape without context files (regression)", async () => {
+    mocks.geminiModels.generateContent.mockResolvedValue({
+      candidates: [{ content: { parts: [{ text: JSON.stringify({ answers: [] }) }] } }],
+    });
+
+    await interpretDocumentFields({
+      fileBase64: "ZmFrZQ==",
+      mimeType: "application/pdf",
+      fields: [{ id: "q1", instruction: "x" }],
+    });
+
+    const call = mocks.geminiModels.generateContent.mock.calls[0][0] as {
+      contents: Array<{ parts: Array<{ text?: string; inlineData?: { data: string } }> }>;
+    };
+    const parts = call.contents[0].parts;
+    expect(parts).toHaveLength(2);
+    expect(parts[0].inlineData?.data).toBe("ZmFrZQ==");
+    expect(typeof parts[1].text).toBe("string");
+  });
 });
 
 describe("synthesizeLetterFields (Anthropic, ai_field ← ai_letter)", () => {
@@ -1764,5 +1844,99 @@ describe("materializeProposalToSchema", () => {
       groups: [{ title_i18n: { es: "G", en: "G" }, questions: [{ key: "q1", question_i18n: { es: "x", en: "x" }, field_type: "textarea", condition: { when: { question: "ghost", op: "equals", value: "y" }, action: "show" } }] }],
     });
     expect(schema.groups[0].questions[0].condition).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// on_new_evidence watcher (ola Apelación): document.uploaded → instancia stale
+// ---------------------------------------------------------------------------
+
+describe("flagQuestionnairesOnNewEvidence", () => {
+  const CASE = "case-nw-1";
+  const NEW_DOC = "doc-new-1";
+
+  const readyInstance = (over: Record<string, unknown> = {}) => ({
+    id: "inst-1",
+    form_definition_id: "fd-q",
+    party_id: null,
+    status: "ready",
+    inputs_snapshot: {
+      documents: [{ slug: "evidencias-sustentatorias", case_document_id: "doc-old", extraction_id: "e1" }],
+      forms: [],
+    },
+    ...over,
+  });
+
+  const flagConfig = (over: Record<string, unknown> = {}) => ({
+    mode: "hybrid",
+    on_new_evidence: "flag",
+    input_document_slugs: ["asilo-presentado-completo-con-anexos", "evidencias-sustentatorias"],
+    input_form_slugs: [],
+    ...over,
+  });
+
+  beforeEach(() => {
+    mocks.repo.findCaseDocumentMeta.mockReset();
+    mocks.repo.listCurrentReadyQuestionnaireInstances.mockReset().mockResolvedValue([]);
+    mocks.repo.findQuestionnaireGenerationConfig.mockReset().mockResolvedValue(null);
+    mocks.repo.updateQuestionnaireInstance.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("flags a ready instance as stale when new evidence arrives for one of its input slugs", async () => {
+    mocks.repo.findCaseDocumentMeta.mockResolvedValue({ requirementSlug: "evidencias-sustentatorias", partyId: null });
+    mocks.repo.listCurrentReadyQuestionnaireInstances.mockResolvedValue([readyInstance()]);
+    mocks.repo.findQuestionnaireGenerationConfig.mockResolvedValue(flagConfig());
+
+    await flagQuestionnairesOnNewEvidence(CASE, NEW_DOC);
+
+    expect(mocks.repo.updateQuestionnaireInstance).toHaveBeenCalledWith(
+      "inst-1",
+      expect.objectContaining({ status: "stale" }),
+    );
+  });
+
+  it("does nothing when the config says on_new_evidence=never", async () => {
+    mocks.repo.findCaseDocumentMeta.mockResolvedValue({ requirementSlug: "evidencias-sustentatorias", partyId: null });
+    mocks.repo.listCurrentReadyQuestionnaireInstances.mockResolvedValue([readyInstance()]);
+    mocks.repo.findQuestionnaireGenerationConfig.mockResolvedValue(flagConfig({ on_new_evidence: "never" }));
+
+    await flagQuestionnairesOnNewEvidence(CASE, NEW_DOC);
+
+    expect(mocks.repo.updateQuestionnaireInstance).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the uploaded document is already in the instance snapshot", async () => {
+    mocks.repo.findCaseDocumentMeta.mockResolvedValue({ requirementSlug: "evidencias-sustentatorias", partyId: null });
+    mocks.repo.listCurrentReadyQuestionnaireInstances.mockResolvedValue([readyInstance()]);
+    mocks.repo.findQuestionnaireGenerationConfig.mockResolvedValue(flagConfig());
+
+    await flagQuestionnairesOnNewEvidence(CASE, "doc-old");
+
+    expect(mocks.repo.updateQuestionnaireInstance).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the slug does not feed the questionnaire", async () => {
+    mocks.repo.findCaseDocumentMeta.mockResolvedValue({ requirementSlug: "pasaporte-del-apelante", partyId: null });
+    mocks.repo.listCurrentReadyQuestionnaireInstances.mockResolvedValue([readyInstance()]);
+    mocks.repo.findQuestionnaireGenerationConfig.mockResolvedValue(flagConfig());
+
+    await flagQuestionnairesOnNewEvidence(CASE, NEW_DOC);
+
+    expect(mocks.repo.updateQuestionnaireInstance).not.toHaveBeenCalled();
+  });
+
+  it("skips instances of a different party", async () => {
+    mocks.repo.findCaseDocumentMeta.mockResolvedValue({ requirementSlug: "evidencias-sustentatorias", partyId: "party-1" });
+    mocks.repo.listCurrentReadyQuestionnaireInstances.mockResolvedValue([readyInstance({ party_id: null })]);
+    mocks.repo.findQuestionnaireGenerationConfig.mockResolvedValue(flagConfig());
+
+    await flagQuestionnairesOnNewEvidence(CASE, NEW_DOC);
+
+    expect(mocks.repo.updateQuestionnaireInstance).not.toHaveBeenCalled();
+  });
+
+  it("never throws (best-effort event consumer)", async () => {
+    mocks.repo.findCaseDocumentMeta.mockRejectedValue(new Error("db down"));
+    await expect(flagQuestionnairesOnNewEvidence(CASE, NEW_DOC)).resolves.toBeUndefined();
   });
 });

@@ -49,6 +49,8 @@ export {
   getQuestionnaireClientState,
   evaluateQuestionnairePrereqs,
   materializeProposalToSchema,
+  // on_new_evidence watcher (consumed by register-consumers on document.uploaded)
+  flagQuestionnairesOnNewEvidence,
   // Job entrypoints (consumed by jobs/ layer)
   executeGenerationJob,
   executeExtractionJob,

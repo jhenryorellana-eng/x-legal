@@ -23,7 +23,7 @@ import {
 } from "@/backend/modules/kanban";
 import { onContractSigned as onContractSignedBilling } from "@/backend/modules/billing";
 import { ensureCaseConversation, syncCaseParticipants, postSystemMessage } from "@/backend/modules/messaging";
-import { registerAiEngineConsumers } from "@/backend/modules/ai-engine";
+import { registerAiEngineConsumers, flagQuestionnairesOnNewEvidence } from "@/backend/modules/ai-engine";
 import { captureFromRun } from "@/backend/modules/exhibits";
 import { attachReadyExhibits } from "@/backend/modules/expediente";
 import { registerIntegrationsConsumers } from "@/backend/modules/integrations";
@@ -93,8 +93,14 @@ export function registerConsumers(): void {
   });
 
   // document.uploaded → notify the case's asesora (sales), client uploads only
+  // + on_new_evidence watcher: a new input document turns READY per-case
+  //   questionnaires `stale` so staff/client see the questions predate it.
   appEvents.on("document.uploaded", async (event) => {
     await notifyFromEvent(event);
+    const p = (event.payload ?? {}) as { caseId?: string; documentId?: string };
+    if (p.caseId && p.documentId) {
+      await flagQuestionnairesOnNewEvidence(p.caseId, p.documentId);
+    }
   });
 
   // document.approved → notify client
