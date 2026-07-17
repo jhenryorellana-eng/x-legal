@@ -46,7 +46,6 @@ export type Database = {
           content: string | null
           created_at: string
           dataset_id: string
-          /** pgvector(768) serialized as string, e.g. "[0.1,0.2,...]". Null until backfilled. */
           embedding: string | null
           file_path: string | null
           id: string
@@ -161,7 +160,10 @@ export type Database = {
       ai_generation_configs: {
         Row: {
           assembly: Json | null
+          attach_sources_enabled: boolean
+          attach_sources_kinds: string[]
           created_at: string
+          curated_sources: Json
           dataset_id: string | null
           form_definition_id: string
           input_document_slugs: string[]
@@ -170,7 +172,6 @@ export type Database = {
           model: string
           output_format: string
           output_language: string
-          /** When true, the Pre-Mortem critic tab is enabled for runs of this form. */
           pre_mortem_enabled: boolean
           research_instructions: string | null
           research_model: string | null
@@ -182,13 +183,13 @@ export type Database = {
           updated_by: string | null
           web_search_enabled: boolean
           web_search_max_uses: number
-          attach_sources_enabled: boolean
-          attach_sources_kinds: string[]
-          curated_sources: Json
         }
         Insert: {
           assembly?: Json | null
+          attach_sources_enabled?: boolean
+          attach_sources_kinds?: string[]
           created_at?: string
+          curated_sources?: Json
           dataset_id?: string | null
           form_definition_id: string
           input_document_slugs?: string[]
@@ -208,13 +209,13 @@ export type Database = {
           updated_by?: string | null
           web_search_enabled?: boolean
           web_search_max_uses?: number
-          attach_sources_enabled?: boolean
-          attach_sources_kinds?: string[]
-          curated_sources?: Json
         }
         Update: {
           assembly?: Json | null
+          attach_sources_enabled?: boolean
+          attach_sources_kinds?: string[]
           created_at?: string
+          curated_sources?: Json
           dataset_id?: string | null
           form_definition_id?: string
           input_document_slugs?: string[]
@@ -234,9 +235,6 @@ export type Database = {
           updated_by?: string | null
           web_search_enabled?: boolean
           web_search_max_uses?: number
-          attach_sources_enabled?: boolean
-          attach_sources_kinds?: string[]
-          curated_sources?: Json
         }
         Relationships: [
           {
@@ -261,126 +259,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
-      }
-      case_exhibits: {
-        Row: {
-          accessed_at: string | null
-          attempts: number
-          canonical_url: string
-          case_id: string
-          cite_order: number
-          content_sha256: string | null
-          created_at: string
-          exhibit_label: string | null
-          fetch_method: string | null
-          final_url: string | null
-          id: string
-          last_error: string | null
-          page_count: number | null
-          pdf_path: string | null
-          published_date: string | null
-          publisher: string | null
-          run_id: string
-          source_kind: string
-          source_url: string
-          status: string
-          supports: string | null
-          title: string | null
-          updated_at: string
-          url_hash: string
-        }
-        Insert: {
-          accessed_at?: string | null
-          attempts?: number
-          canonical_url: string
-          case_id: string
-          cite_order: number
-          content_sha256?: string | null
-          created_at?: string
-          exhibit_label?: string | null
-          fetch_method?: string | null
-          final_url?: string | null
-          id?: string
-          last_error?: string | null
-          page_count?: number | null
-          pdf_path?: string | null
-          published_date?: string | null
-          publisher?: string | null
-          run_id: string
-          source_kind: string
-          source_url: string
-          status?: string
-          supports?: string | null
-          title?: string | null
-          updated_at?: string
-          url_hash: string
-        }
-        Update: {
-          accessed_at?: string | null
-          attempts?: number
-          canonical_url?: string
-          case_id?: string
-          cite_order?: number
-          content_sha256?: string | null
-          created_at?: string
-          exhibit_label?: string | null
-          fetch_method?: string | null
-          final_url?: string | null
-          id?: string
-          last_error?: string | null
-          page_count?: number | null
-          pdf_path?: string | null
-          published_date?: string | null
-          publisher?: string | null
-          run_id?: string
-          source_kind?: string
-          source_url?: string
-          status?: string
-          supports?: string | null
-          title?: string | null
-          updated_at?: string
-          url_hash?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "case_exhibits_case_id_fkey"
-            columns: ["case_id"]
-            isOneToOne: false
-            referencedRelation: "cases"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "case_exhibits_run_id_fkey"
-            columns: ["run_id"]
-            isOneToOne: false
-            referencedRelation: "ai_generation_runs"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      exhibit_domain_health: {
-        Row: {
-          consecutive_failures: number
-          domain: string
-          last_request_at: string | null
-          open_until: string | null
-          updated_at: string
-        }
-        Insert: {
-          consecutive_failures?: number
-          domain: string
-          last_request_at?: string | null
-          open_until?: string | null
-          updated_at?: string
-        }
-        Update: {
-          consecutive_failures?: number
-          domain?: string
-          last_request_at?: string | null
-          open_until?: string | null
-          updated_at?: string
-        }
-        Relationships: []
       }
       ai_generation_runs: {
         Row: {
@@ -1026,147 +904,6 @@ export type Database = {
           },
         ]
       }
-      case_pre_mortem_assessments: {
-        Row: {
-          case_id: string
-          cost_usd: number | null
-          created_at: string
-          created_by: string
-          findings: Json
-          form_definition_id: string | null
-          id: string
-          input_tokens: number | null
-          model: string | null
-          output_tokens: number | null
-          response_id: string | null
-          run_id: string | null
-          score: number | null
-          semaforo: string | null
-          summary: string | null
-          target_kind: string
-          verdict: string | null
-        }
-        Insert: {
-          case_id: string
-          cost_usd?: number | null
-          created_at?: string
-          created_by: string
-          findings?: Json
-          form_definition_id?: string | null
-          id?: string
-          input_tokens?: number | null
-          model?: string | null
-          output_tokens?: number | null
-          response_id?: string | null
-          run_id?: string | null
-          score?: number | null
-          semaforo?: string | null
-          summary?: string | null
-          target_kind: string
-          verdict?: string | null
-        }
-        Update: {
-          case_id?: string
-          cost_usd?: number | null
-          created_at?: string
-          created_by?: string
-          findings?: Json
-          form_definition_id?: string | null
-          id?: string
-          input_tokens?: number | null
-          model?: string | null
-          output_tokens?: number | null
-          response_id?: string | null
-          run_id?: string | null
-          score?: number | null
-          semaforo?: string | null
-          summary?: string | null
-          target_kind?: string
-          verdict?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "case_pre_mortem_assessments_case_id_fkey"
-            columns: ["case_id"]
-            isOneToOne: false
-            referencedRelation: "cases"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "case_pre_mortem_assessments_created_by_fkey"
-            columns: ["created_by"]
-            isOneToOne: false
-            referencedRelation: "users"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "case_pre_mortem_assessments_form_definition_id_fkey"
-            columns: ["form_definition_id"]
-            isOneToOne: false
-            referencedRelation: "form_definitions"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "case_pre_mortem_assessments_response_id_fkey"
-            columns: ["response_id"]
-            isOneToOne: false
-            referencedRelation: "case_form_responses"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "case_pre_mortem_assessments_run_id_fkey"
-            columns: ["run_id"]
-            isOneToOne: false
-            referencedRelation: "ai_generation_runs"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      form_fill_guides: {
-        Row: {
-          created_at: string
-          enabled: boolean
-          form_definition_id: string
-          guide_markdown: string
-          source_file_path: string | null
-          updated_at: string
-          updated_by: string | null
-        }
-        Insert: {
-          created_at?: string
-          enabled?: boolean
-          form_definition_id: string
-          guide_markdown?: string
-          source_file_path?: string | null
-          updated_at?: string
-          updated_by?: string | null
-        }
-        Update: {
-          created_at?: string
-          enabled?: boolean
-          form_definition_id?: string
-          guide_markdown?: string
-          source_file_path?: string | null
-          updated_at?: string
-          updated_by?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "form_fill_guides_form_definition_id_fkey"
-            columns: ["form_definition_id"]
-            isOneToOne: true
-            referencedRelation: "form_definitions"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "form_fill_guides_updated_by_fkey"
-            columns: ["updated_by"]
-            isOneToOne: false
-            referencedRelation: "users"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       case_documents: {
         Row: {
           case_id: string
@@ -1271,10 +1008,113 @@ export type Database = {
             referencedColumns: ["user_id"]
           },
           {
+            foreignKeyName: "case_documents_service_phase_id_fkey"
+            columns: ["service_phase_id"]
+            isOneToOne: false
+            referencedRelation: "service_phases"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "case_documents_uploaded_by_fkey"
             columns: ["uploaded_by"]
             isOneToOne: false
             referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      case_exhibits: {
+        Row: {
+          accessed_at: string | null
+          attempts: number
+          canonical_url: string
+          case_id: string
+          cite_order: number
+          content_sha256: string | null
+          created_at: string
+          exhibit_label: string | null
+          fetch_method: string | null
+          final_url: string | null
+          id: string
+          last_error: string | null
+          page_count: number | null
+          pdf_path: string | null
+          published_date: string | null
+          publisher: string | null
+          run_id: string
+          source_kind: string
+          source_url: string
+          status: string
+          supports: string | null
+          title: string | null
+          updated_at: string
+          url_hash: string
+        }
+        Insert: {
+          accessed_at?: string | null
+          attempts?: number
+          canonical_url: string
+          case_id: string
+          cite_order: number
+          content_sha256?: string | null
+          created_at?: string
+          exhibit_label?: string | null
+          fetch_method?: string | null
+          final_url?: string | null
+          id?: string
+          last_error?: string | null
+          page_count?: number | null
+          pdf_path?: string | null
+          published_date?: string | null
+          publisher?: string | null
+          run_id: string
+          source_kind: string
+          source_url: string
+          status?: string
+          supports?: string | null
+          title?: string | null
+          updated_at?: string
+          url_hash: string
+        }
+        Update: {
+          accessed_at?: string | null
+          attempts?: number
+          canonical_url?: string
+          case_id?: string
+          cite_order?: number
+          content_sha256?: string | null
+          created_at?: string
+          exhibit_label?: string | null
+          fetch_method?: string | null
+          final_url?: string | null
+          id?: string
+          last_error?: string | null
+          page_count?: number | null
+          pdf_path?: string | null
+          published_date?: string | null
+          publisher?: string | null
+          run_id?: string
+          source_kind?: string
+          source_url?: string
+          status?: string
+          supports?: string | null
+          title?: string | null
+          updated_at?: string
+          url_hash?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_exhibits_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_exhibits_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "ai_generation_runs"
             referencedColumns: ["id"]
           },
         ]
@@ -1379,89 +1219,18 @@ export type Database = {
             referencedRelation: "case_questionnaire_instances"
             referencedColumns: ["id"]
           },
-        ]
-      }
-      case_questionnaire_instances: {
-        Row: {
-          case_id: string
-          cost_usd: number | null
-          created_at: string
-          error: string | null
-          form_definition_id: string
-          generated_at: string | null
-          id: string
-          input_tokens: number | null
-          inputs_snapshot: Json | null
-          is_current: boolean
-          mode: string
-          model: string | null
-          output_tokens: number | null
-          party_id: string | null
-          schema: Json | null
-          status: string
-          updated_at: string
-          version: number
-        }
-        Insert: {
-          case_id: string
-          cost_usd?: number | null
-          created_at?: string
-          error?: string | null
-          form_definition_id: string
-          generated_at?: string | null
-          id?: string
-          input_tokens?: number | null
-          inputs_snapshot?: Json | null
-          is_current?: boolean
-          mode: string
-          model?: string | null
-          output_tokens?: number | null
-          party_id?: string | null
-          schema?: Json | null
-          status?: string
-          updated_at?: string
-          version?: number
-        }
-        Update: {
-          case_id?: string
-          cost_usd?: number | null
-          created_at?: string
-          error?: string | null
-          form_definition_id?: string
-          generated_at?: string | null
-          id?: string
-          input_tokens?: number | null
-          inputs_snapshot?: Json | null
-          is_current?: boolean
-          mode?: string
-          model?: string | null
-          output_tokens?: number | null
-          party_id?: string | null
-          schema?: Json | null
-          status?: string
-          updated_at?: string
-          version?: number
-        }
-        Relationships: [
           {
-            foreignKeyName: "case_questionnaire_instances_case_id_fkey"
-            columns: ["case_id"]
+            foreignKeyName: "case_form_responses_reviewed_by_fkey"
+            columns: ["reviewed_by"]
             isOneToOne: false
-            referencedRelation: "cases"
+            referencedRelation: "users"
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "case_questionnaire_instances_form_definition_id_fkey"
-            columns: ["form_definition_id"]
+            foreignKeyName: "case_form_responses_service_phase_id_fkey"
+            columns: ["service_phase_id"]
             isOneToOne: false
-            referencedRelation: "form_definitions"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "case_questionnaire_instances_party_id_fkey"
-            columns: ["party_id"]
-            isOneToOne: false
-            referencedRelation: "case_parties"
+            referencedRelation: "service_phases"
             referencedColumns: ["id"]
           },
         ]
@@ -1722,6 +1491,187 @@ export type Database = {
           },
         ]
       }
+      case_pre_mortem_assessments: {
+        Row: {
+          case_id: string
+          cost_usd: number | null
+          created_at: string
+          created_by: string | null
+          findings: Json
+          form_definition_id: string | null
+          id: string
+          input_tokens: number | null
+          model: string | null
+          output_tokens: number | null
+          response_id: string | null
+          run_id: string | null
+          score: number | null
+          semaforo: string | null
+          summary: string | null
+          target_kind: string
+          verdict: string | null
+        }
+        Insert: {
+          case_id: string
+          cost_usd?: number | null
+          created_at?: string
+          created_by?: string | null
+          findings?: Json
+          form_definition_id?: string | null
+          id?: string
+          input_tokens?: number | null
+          model?: string | null
+          output_tokens?: number | null
+          response_id?: string | null
+          run_id?: string | null
+          score?: number | null
+          semaforo?: string | null
+          summary?: string | null
+          target_kind: string
+          verdict?: string | null
+        }
+        Update: {
+          case_id?: string
+          cost_usd?: number | null
+          created_at?: string
+          created_by?: string | null
+          findings?: Json
+          form_definition_id?: string | null
+          id?: string
+          input_tokens?: number | null
+          model?: string | null
+          output_tokens?: number | null
+          response_id?: string | null
+          run_id?: string | null
+          score?: number | null
+          semaforo?: string | null
+          summary?: string | null
+          target_kind?: string
+          verdict?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_pre_mortem_assessments_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_pre_mortem_assessments_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_pre_mortem_assessments_form_definition_id_fkey"
+            columns: ["form_definition_id"]
+            isOneToOne: false
+            referencedRelation: "form_definitions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_pre_mortem_assessments_response_id_fkey"
+            columns: ["response_id"]
+            isOneToOne: false
+            referencedRelation: "case_form_responses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_pre_mortem_assessments_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "ai_generation_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      case_questionnaire_instances: {
+        Row: {
+          case_id: string
+          cost_usd: number | null
+          created_at: string
+          error: string | null
+          form_definition_id: string
+          generated_at: string | null
+          id: string
+          input_tokens: number | null
+          inputs_snapshot: Json | null
+          is_current: boolean
+          mode: string
+          model: string | null
+          output_tokens: number | null
+          party_id: string | null
+          schema: Json | null
+          status: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          case_id: string
+          cost_usd?: number | null
+          created_at?: string
+          error?: string | null
+          form_definition_id: string
+          generated_at?: string | null
+          id?: string
+          input_tokens?: number | null
+          inputs_snapshot?: Json | null
+          is_current?: boolean
+          mode: string
+          model?: string | null
+          output_tokens?: number | null
+          party_id?: string | null
+          schema?: Json | null
+          status?: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          case_id?: string
+          cost_usd?: number | null
+          created_at?: string
+          error?: string | null
+          form_definition_id?: string
+          generated_at?: string | null
+          id?: string
+          input_tokens?: number | null
+          inputs_snapshot?: Json | null
+          is_current?: boolean
+          mode?: string
+          model?: string | null
+          output_tokens?: number | null
+          party_id?: string | null
+          schema?: Json | null
+          status?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_questionnaire_instances_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_questionnaire_instances_form_definition_id_fkey"
+            columns: ["form_definition_id"]
+            isOneToOne: false
+            referencedRelation: "form_definitions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_questionnaire_instances_party_id_fkey"
+            columns: ["party_id"]
+            isOneToOne: false
+            referencedRelation: "case_parties"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       case_requirement_overrides: {
         Row: {
           case_id: string
@@ -1900,6 +1850,51 @@ export type Database = {
           },
         ]
       }
+      case_tab_role_access: {
+        Row: {
+          enabled: boolean
+          id: string
+          org_id: string
+          role: string
+          tab_id: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          enabled?: boolean
+          id?: string
+          org_id: string
+          role: string
+          tab_id: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          enabled?: boolean
+          id?: string
+          org_id?: string
+          role?: string
+          tab_id?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_tab_role_access_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "orgs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_tab_role_access_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       case_timeline: {
         Row: {
           actor_kind: string
@@ -1956,51 +1951,6 @@ export type Database = {
             columns: ["case_id"]
             isOneToOne: false
             referencedRelation: "cases"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      case_tab_role_access: {
-        Row: {
-          enabled: boolean
-          id: string
-          org_id: string
-          role: string
-          tab_id: string
-          updated_at: string
-          updated_by: string | null
-        }
-        Insert: {
-          enabled?: boolean
-          id?: string
-          org_id: string
-          role: string
-          tab_id: string
-          updated_at?: string
-          updated_by?: string | null
-        }
-        Update: {
-          enabled?: boolean
-          id?: string
-          org_id?: string
-          role?: string
-          tab_id?: string
-          updated_at?: string
-          updated_by?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "case_tab_role_access_org_id_fkey"
-            columns: ["org_id"]
-            isOneToOne: false
-            referencedRelation: "orgs"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "case_tab_role_access_updated_by_fkey"
-            columns: ["updated_by"]
-            isOneToOne: false
-            referencedRelation: "users"
             referencedColumns: ["id"]
           },
         ]
@@ -2860,6 +2810,30 @@ export type Database = {
           },
         ]
       }
+      exhibit_domain_health: {
+        Row: {
+          consecutive_failures: number
+          domain: string
+          last_request_at: string | null
+          open_until: string | null
+          updated_at: string
+        }
+        Insert: {
+          consecutive_failures?: number
+          domain: string
+          last_request_at?: string | null
+          open_until?: string | null
+          updated_at?: string
+        }
+        Update: {
+          consecutive_failures?: number
+          domain?: string
+          last_request_at?: string | null
+          open_until?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       expediente_items: {
         Row: {
           created_at: string
@@ -3000,6 +2974,7 @@ export type Database = {
         Row: {
           created_at: string
           created_by: string | null
+          default_empty_policy: string
           detected_fields: Json
           form_definition_id: string
           id: string
@@ -3013,6 +2988,7 @@ export type Database = {
         Insert: {
           created_at?: string
           created_by?: string | null
+          default_empty_policy?: string
           detected_fields?: Json
           form_definition_id: string
           id?: string
@@ -3026,6 +3002,7 @@ export type Database = {
         Update: {
           created_at?: string
           created_by?: string | null
+          default_empty_policy?: string
           detected_fields?: Json
           form_definition_id?: string
           id?: string
@@ -3122,10 +3099,56 @@ export type Database = {
           },
         ]
       }
+      form_fill_guides: {
+        Row: {
+          created_at: string
+          enabled: boolean
+          form_definition_id: string
+          guide_markdown: string
+          source_file_path: string | null
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          enabled?: boolean
+          form_definition_id: string
+          guide_markdown?: string
+          source_file_path?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          enabled?: boolean
+          form_definition_id?: string
+          guide_markdown?: string
+          source_file_path?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "form_fill_guides_form_definition_id_fkey"
+            columns: ["form_definition_id"]
+            isOneToOne: true
+            referencedRelation: "form_definitions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "form_fill_guides_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       form_question_groups: {
         Row: {
           automation_version_id: string
           created_at: string
+          do_not_fill: boolean
           id: string
           position: number
           title_i18n: Json
@@ -3134,6 +3157,7 @@ export type Database = {
         Insert: {
           automation_version_id: string
           created_at?: string
+          do_not_fill?: boolean
           id?: string
           position: number
           title_i18n: Json
@@ -3142,6 +3166,7 @@ export type Database = {
         Update: {
           automation_version_id?: string
           created_at?: string
+          do_not_fill?: boolean
           id?: string
           position?: number
           title_i18n?: Json
@@ -3159,13 +3184,17 @@ export type Database = {
       }
       form_questions: {
         Row: {
+          ai_improve: Json | null
           condition: Json | null
           created_at: string
+          empty_placeholder: string | null
+          empty_policy: string
           field_type: string
           group_id: string
           help_i18n: Json | null
           id: string
           is_required: boolean
+          no_translate: boolean
           options: Json | null
           pdf_field_name: string | null
           position: number
@@ -3176,13 +3205,17 @@ export type Database = {
           validation: Json | null
         }
         Insert: {
+          ai_improve?: Json | null
           condition?: Json | null
           created_at?: string
+          empty_placeholder?: string | null
+          empty_policy?: string
           field_type: string
           group_id: string
           help_i18n?: Json | null
           id?: string
           is_required?: boolean
+          no_translate?: boolean
           options?: Json | null
           pdf_field_name?: string | null
           position: number
@@ -3193,13 +3226,17 @@ export type Database = {
           validation?: Json | null
         }
         Update: {
+          ai_improve?: Json | null
           condition?: Json | null
           created_at?: string
+          empty_placeholder?: string | null
+          empty_policy?: string
           field_type?: string
           group_id?: string
           help_i18n?: Json | null
           id?: string
           is_required?: boolean
+          no_translate?: boolean
           options?: Json | null
           pdf_field_name?: string | null
           position?: number
@@ -4438,6 +4475,68 @@ export type Database = {
           },
         ]
       }
+      questionnaire_generation_configs: {
+        Row: {
+          allow_client_trigger: boolean
+          auto_trigger: boolean
+          created_at: string
+          form_definition_id: string
+          generation_prompt: string | null
+          hybrid_layout: string
+          input_document_slugs: string[]
+          input_form_slugs: string[]
+          mode: string
+          model: string | null
+          on_new_evidence: string
+          prerequisite_document_slugs: string[]
+          prerequisite_form_slugs: string[]
+          target_question_count: number | null
+          updated_at: string
+        }
+        Insert: {
+          allow_client_trigger?: boolean
+          auto_trigger?: boolean
+          created_at?: string
+          form_definition_id: string
+          generation_prompt?: string | null
+          hybrid_layout?: string
+          input_document_slugs?: string[]
+          input_form_slugs?: string[]
+          mode?: string
+          model?: string | null
+          on_new_evidence?: string
+          prerequisite_document_slugs?: string[]
+          prerequisite_form_slugs?: string[]
+          target_question_count?: number | null
+          updated_at?: string
+        }
+        Update: {
+          allow_client_trigger?: boolean
+          auto_trigger?: boolean
+          created_at?: string
+          form_definition_id?: string
+          generation_prompt?: string | null
+          hybrid_layout?: string
+          input_document_slugs?: string[]
+          input_form_slugs?: string[]
+          mode?: string
+          model?: string | null
+          on_new_evidence?: string
+          prerequisite_document_slugs?: string[]
+          prerequisite_form_slugs?: string[]
+          target_question_count?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "questionnaire_generation_configs_form_definition_id_fkey"
+            columns: ["form_definition_id"]
+            isOneToOne: true
+            referencedRelation: "form_definitions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       referral_codes: {
         Row: {
           code: string
@@ -4550,68 +4649,6 @@ export type Database = {
             columns: ["referred_user_id"]
             isOneToOne: false
             referencedRelation: "users"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      questionnaire_generation_configs: {
-        Row: {
-          allow_client_trigger: boolean
-          auto_trigger: boolean
-          created_at: string
-          form_definition_id: string
-          generation_prompt: string | null
-          hybrid_layout: string
-          input_document_slugs: string[]
-          input_form_slugs: string[]
-          mode: string
-          model: string | null
-          on_new_evidence: string
-          prerequisite_document_slugs: string[]
-          prerequisite_form_slugs: string[]
-          target_question_count: number | null
-          updated_at: string
-        }
-        Insert: {
-          allow_client_trigger?: boolean
-          auto_trigger?: boolean
-          created_at?: string
-          form_definition_id: string
-          generation_prompt?: string | null
-          hybrid_layout?: string
-          input_document_slugs?: string[]
-          input_form_slugs?: string[]
-          mode?: string
-          model?: string | null
-          on_new_evidence?: string
-          prerequisite_document_slugs?: string[]
-          prerequisite_form_slugs?: string[]
-          target_question_count?: number | null
-          updated_at?: string
-        }
-        Update: {
-          allow_client_trigger?: boolean
-          auto_trigger?: boolean
-          created_at?: string
-          form_definition_id?: string
-          generation_prompt?: string | null
-          hybrid_layout?: string
-          input_document_slugs?: string[]
-          input_form_slugs?: string[]
-          mode?: string
-          model?: string | null
-          on_new_evidence?: string
-          prerequisite_document_slugs?: string[]
-          prerequisite_form_slugs?: string[]
-          target_question_count?: number | null
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "questionnaire_generation_configs_form_definition_id_fkey"
-            columns: ["form_definition_id"]
-            isOneToOne: true
-            referencedRelation: "form_definitions"
             referencedColumns: ["id"]
           },
         ]
@@ -5052,6 +5089,7 @@ export type Database = {
           description_i18n: Json | null
           entry_parent_service_id: string | null
           entry_phase_id: string | null
+          expediente_guidance: string | null
           icon: string
           id: string
           is_active: boolean
@@ -5077,6 +5115,7 @@ export type Database = {
           description_i18n?: Json | null
           entry_parent_service_id?: string | null
           entry_phase_id?: string | null
+          expediente_guidance?: string | null
           icon?: string
           id?: string
           is_active?: boolean
@@ -5102,6 +5141,7 @@ export type Database = {
           description_i18n?: Json | null
           entry_parent_service_id?: string | null
           entry_phase_id?: string | null
+          expediente_guidance?: string | null
           icon?: string
           id?: string
           is_active?: boolean
@@ -5445,14 +5485,6 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      analytics_sales_waiting_review: {
-        Args: { p_org: string; p_user: string }
-        Returns: number
-      }
-      analytics_sales_closings: {
-        Args: { p_from: string; p_org: string; p_to: string; p_user: string }
-        Returns: number
-      }
       analytics_activity_by_day: {
         Args: { p_from: string; p_org: string; p_to: string; p_tz: string }
         Returns: {
@@ -5503,6 +5535,14 @@ export type Database = {
           won: number
         }[]
       }
+      analytics_sales_closings: {
+        Args: { p_from: string; p_org: string; p_to: string; p_user: string }
+        Returns: number
+      }
+      analytics_sales_waiting_review: {
+        Args: { p_org: string; p_user: string }
+        Returns: number
+      }
       auth_org_id: { Args: never; Returns: string }
       claim_promotion_use: { Args: { p_promo_id: string }; Returns: boolean }
       create_case_atomic: { Args: { p: Json }; Returns: Json }
@@ -5518,21 +5558,21 @@ export type Database = {
       is_staff: { Args: never; Returns: boolean }
       match_dataset_items: {
         Args: {
-          query_embedding: string
-          p_dataset_id: string
-          match_count?: number
           filter_tags?: string[]
+          match_count?: number
+          p_dataset_id: string
+          query_embedding: string
         }
         Returns: {
+          content: string
           id: string
-          title: string
-          content: string | null
-          tags: string[]
-          outcome: string | null
-          jurisdiction: string | null
-          token_count: number | null
+          jurisdiction: string
           meta: Json
+          outcome: string
           similarity: number
+          tags: string[]
+          title: string
+          token_count: number
         }[]
       }
       merge_form_answers: {
@@ -5544,13 +5584,13 @@ export type Database = {
       search_clients_for_staff: {
         Args: { p_limit?: number; p_org: string; p_query: string }
         Returns: {
-          user_id: string
-          first_name: string
-          last_name: string
-          email: string | null
-          phone_e164: string | null
           address: Json
           case_count: number
+          email: string
+          first_name: string
+          last_name: string
+          phone_e164: string
+          user_id: string
         }[]
       }
       show_limit: { Args: never; Returns: number }

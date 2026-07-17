@@ -16,6 +16,8 @@ export {
   getAutomationVersionById,
   listContractableServices,
   listContractableServicePlans,
+  // Expediente assembly guide runtime read (consumed by expediente.autoAssembleWithAi)
+  getServiceAssemblyGuidance,
   listServicePartyRoles,
   getCatalogFirstPhase,
   getCatalogFirstMilestone,

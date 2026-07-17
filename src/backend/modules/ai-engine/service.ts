@@ -3545,6 +3545,11 @@ export interface AssemblyDocInput {
 export interface ExpedienteAssemblyInput {
   caseLabel: string;
   serviceCategory?: string | null;
+  /** Service slug — stable identifier for the prompt context (the label above is display-only). */
+  serviceSlug?: string | null;
+  /** Per-service canonical assembly guide (English plain text, migration 0087).
+   *  When set it takes strict precedence over the generic legal-order rules. */
+  assemblyGuidance?: string | null;
   parties: AssemblyPartyInput[];
   strongDocs: AssemblyStrongDocInput[];
   documents: AssemblyDocInput[];
@@ -3618,9 +3623,17 @@ export async function proposeExpedienteAssembly(
   const editorModel = process.env.AI_EDITOR_MODEL ?? "claude-sonnet-4-6";
   const client = getAnthropicClient();
 
+  // Per-service canonical order (config-as-data, services.expediente_guidance).
+  // With a guide: the prompt gains the serviceSlug context key plus a
+  // strict-precedence "CANONICAL ORDER" block, and the generic examples are
+  // dropped. Without one the WHOLE prompt is byte-identical to the pre-0087
+  // version (fixed by unit test) so unseeded services are unaffected.
+  const guidance = input.assemblyGuidance?.trim() || null;
+
   const context = {
     case: input.caseLabel,
     serviceCategory: input.serviceCategory ?? null,
+    ...(guidance ? { serviceSlug: input.serviceSlug ?? null } : {}),
     parties: input.parties.map((p) => ({ id: p.id, role: p.role, name: p.name })),
     strongDocuments: input.strongDocs.map((s) => ({
       id: s.id,
@@ -3644,18 +3657,30 @@ export async function proposeExpedienteAssembly(
     "Return ONLY valid JSON, no markdown code fences.",
   ].join("\n");
 
+  const genericOrderRules = [
+    "1. Order the sections following the canonical legal sequence for the case type. General order:",
+    "   a) Initial instructions / petition / main USCIS form, b) sworn declarations & affidavits,",
+    "   c) documents of each beneficiary/minor, d) documents of the petitioner/sponsor, e) witnesses, f) supporting evidence.",
+    "   Example (Juvenile Visa / custody): Petition for Temporary Guardianship → Sworn Declaration of the Minor → Affidavit of Mother/Sponsor → Documents of the Minor → Documents of the Petitioner → Affidavit of Witness.",
+    "   Example (Asylum): Form I-589 → Credible Fear Memorandum → documents per family member (beneficiary minor, spouse, each child) → supporting evidence.",
+  ];
+  const guidedOrderRules = [
+    "1. Order the sections following the CANONICAL ORDER FOR THIS SERVICE above — it takes strict precedence.",
+    "   Section titles specified in that guide are used VERBATIM and take precedence over the default",
+    "   title formats of rules 2-4 below. Where the guide is silent, fall back to the general legal",
+    "   sequence: a) main form/petition, b) sworn declarations & affidavits, c) documents of each",
+    "   beneficiary/minor, d) documents of the petitioner/sponsor, e) witnesses, f) supporting evidence.",
+  ];
+
   const buildUserPrompt = (feedback?: string): string => {
     const lines = [
       "CONTEXT (JSON):",
       JSON.stringify(context, null, 2),
       "",
+      ...(guidance ? ["CANONICAL ORDER FOR THIS SERVICE (follow strictly):", guidance, ""] : []),
       "RULES:",
       "0. ALL section titles MUST be written in ENGLISH — the case file is filed with USCIS / the immigration court in English. Translate the artifact labels to natural English titles. Keep party PERSON NAMES verbatim (do not translate names).",
-      "1. Order the sections following the canonical legal sequence for the case type. General order:",
-      "   a) Initial instructions / petition / main USCIS form, b) sworn declarations & affidavits,",
-      "   c) documents of each beneficiary/minor, d) documents of the petitioner/sponsor, e) witnesses, f) supporting evidence.",
-      "   Example (Juvenile Visa / custody): Petition for Temporary Guardianship → Sworn Declaration of the Minor → Affidavit of Mother/Sponsor → Documents of the Minor → Documents of the Petitioner → Affidavit of Witness.",
-      "   Example (Asylum): Form I-589 → Credible Fear Memorandum → documents per family member (beneficiary minor, spouse, each child) → supporting evidence.",
+      ...(guidance ? guidedOrderRules : genericOrderRules),
       "2. Emit ONE 'document' section PER strong artifact (each filled form and each letter), each with an explicit, human-readable ENGLISH title (e.g. \"Form I-589\", \"Credible Fear Memorandum\", \"Statement of the Minor's Circumstances\"). Use the artifact's id as refId and its kind as refType.",
       "3. Group the remaining uploadedDocuments into 'party' sections — ONE per party that has documents. Assign each document to the party it belongs to using fileName + extractedHint + partyId (infer the party even when partyId is null or when a slot has multiple files). ENGLISH title format: \"Documents of the {role in English}: {party name}\" (e.g. \"Documents of the Minor: Juan Pérez\", \"Documents of the Petitioner: Carlos\", \"Documents of the Spouse: Rosa\").",
       "4. Documents that don't belong to any party (e.g. witnesses, general evidence) go in 'other' sections with a clear ENGLISH title (e.g. \"Witness Documents\", \"Supporting Evidence\").",
@@ -3985,7 +4010,7 @@ export interface PreMortemAssessment {
   inputTokens: number | null;
   outputTokens: number | null;
   costUsd: number | null;
-  createdBy: string;
+  createdBy: string | null; // DB column is nullable (system/job-created assessments)
   createdAt: string;
 }
 

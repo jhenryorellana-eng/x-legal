@@ -62,6 +62,8 @@ const {
   mockCountCoverItemRefs,
   mockDeleteCoverRender,
   mockProposeExpedienteAssembly,
+  mockGetServiceAssemblyGuidance,
+  mockListReadyByCase,
   // Audit mock
   mockWriteAudit,
   // Events mock
@@ -110,6 +112,8 @@ const {
   mockCountCoverItemRefs: vi.fn().mockResolvedValue(0),
   mockDeleteCoverRender: vi.fn().mockResolvedValue(undefined),
   mockProposeExpedienteAssembly: vi.fn(),
+  mockGetServiceAssemblyGuidance: vi.fn().mockResolvedValue(null),
+  mockListReadyByCase: vi.fn().mockResolvedValue([]),
   // Audit
   mockWriteAudit: vi.fn().mockResolvedValue(undefined),
   // Events
@@ -223,16 +227,22 @@ vi.mock("@/backend/modules/ai-engine", () => ({
   proposeExpedienteAssembly: mockProposeExpedienteAssembly,
 }));
 
+// Per-service assembly guidance (config-as-data) — default none: existing tests
+// keep the generic-prompt behavior; dedicated tests override it.
+vi.mock("@/backend/modules/catalog", () => ({
+  getServiceAssemblyGuidance: mockGetServiceAssemblyGuidance,
+}));
+
 // autoAssembleWithAi pulls ready exhibits to file behind each memo — default to none
 // so the existing assembly tests are unaffected; a dedicated test exercises insertion.
 vi.mock("@/backend/modules/exhibits", () => ({
-  listReadyByCase: vi.fn().mockResolvedValue([]),
+  listReadyByCase: mockListReadyByCase,
 }));
 
 vi.mock("@/backend/modules/cases", () => ({
   getCaseWorkspace: vi.fn().mockResolvedValue({
     caseNumber: "U26-000001",
-    service: { labelI18n: { es: "Visa de Trabajo", en: "Work Visa" } },
+    service: { id: "svc-1", slug: "visa-trabajo", labelI18n: { es: "Visa de Trabajo", en: "Work Visa" } },
     parties: [
       { id: "00000000-0000-0000-0000-0000000000a1", role: "petitioner", name: "María García" },
     ],
@@ -1142,6 +1152,8 @@ describe("service: autoAssembleWithAi", () => {
     mockListGenerationRunsForMaterial.mockResolvedValue([]);
     mockInsertCoverRender.mockResolvedValue({ id: "cov1" });
     mockInsertItem.mockResolvedValue({ id: "it" });
+    mockGetServiceAssemblyGuidance.mockResolvedValue(null);
+    mockListReadyByCase.mockResolvedValue([]);
     mockProposeExpedienteAssembly.mockResolvedValue({
       sections: [
         { kind: "party", title: "Documentos de la peticionaria: María García", partyId: PARTY_ID, documentIds: ["doc1"] },
@@ -1183,7 +1195,7 @@ describe("service: autoAssembleWithAi", () => {
     // invalid output — seen in prod for services with no strong form). The assembly must
     // NOT hard-fail: the safety nets build a complete draft from the known material.
     mockListGenerationRunsForMaterial.mockResolvedValue([
-      { refId: "gen1", title: "Credible Fear Memorandum", partyId: null },
+      { refId: "gen1", title: "Credible Fear Memorandum", partyId: null, formDefinitionId: "fd1", version: 1 },
     ]);
     mockProposeExpedienteAssembly.mockRejectedValue(new Error("AI_OUTPUT_INVALID"));
 
@@ -1193,6 +1205,92 @@ describe("service: autoAssembleWithAi", () => {
     const types = mockInsertItem.mock.calls.map((c) => (c[0] as { item_type: string }).item_type);
     expect(types).toContain("ai_generation"); // the memo, placed by the safety net
     expect(types).toContain("client_document"); // the leftover document
+  });
+
+  it("passes the service assembly guidance and slug to the AI planner", async () => {
+    mockGetServiceAssemblyGuidance.mockResolvedValue("BIA APPEAL PACKAGE — CANONICAL FILING ORDER...");
+
+    await autoAssembleWithAi(staffActor, CASE_ID);
+
+    expect(mockGetServiceAssemblyGuidance).toHaveBeenCalledWith(staffActor.orgId, "svc-1");
+    expect(mockProposeExpedienteAssembly).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serviceSlug: "visa-trabajo",
+        assemblyGuidance: "BIA APPEAL PACKAGE — CANONICAL FILING ORDER...",
+      }),
+    );
+  });
+
+  it("a guidance load failure never aborts the assembly (planner gets null)", async () => {
+    mockGetServiceAssemblyGuidance.mockRejectedValue(new Error("boom"));
+
+    const res = await autoAssembleWithAi(staffActor, CASE_ID);
+
+    expect(res.itemsCreated).toBeGreaterThan(0);
+    expect(mockProposeExpedienteAssembly).toHaveBeenCalledWith(
+      expect.objectContaining({ assemblyGuidance: null }),
+    );
+  });
+
+  it("files only the CURRENT generation run per form+party (older versions and their exhibits stay out)", async () => {
+    // Valentina-shaped scenario: 4 completed runs of the same brief (v1..v4), each with
+    // its own ready exhibits. Only v4 — and only ITS exhibits — may enter the draft.
+    mockListGenerationRunsForMaterial.mockResolvedValue([
+      { refId: "gen-v4", title: "Brief in Support of Appeal", partyId: null, formDefinitionId: "fd-brief", version: 4 },
+      { refId: "gen-v3", title: "Brief in Support of Appeal", partyId: null, formDefinitionId: "fd-brief", version: 3 },
+      { refId: "gen-v2", title: "Brief in Support of Appeal", partyId: null, formDefinitionId: "fd-brief", version: 2 },
+      { refId: "gen-v1", title: "Brief in Support of Appeal", partyId: null, formDefinitionId: "fd-brief", version: 1 },
+    ]);
+    mockListReadyByCase.mockResolvedValue([
+      { id: "ex-old", run_id: "gen-v1", exhibit_label: "A-1", publisher: "HRW", title: "Old report" },
+      { id: "ex-new", run_id: "gen-v4", exhibit_label: "A-1", publisher: "HRW", title: "New report" },
+    ]);
+    mockProposeExpedienteAssembly.mockRejectedValue(new Error("AI_OUTPUT_INVALID")); // safety-net path
+
+    await autoAssembleWithAi(staffActor, CASE_ID);
+
+    const genInserts = mockInsertItem.mock.calls
+      .map((c) => c[0] as { item_type: string; ref_id: string })
+      .filter((i) => i.item_type === "ai_generation");
+    expect(genInserts).toHaveLength(1);
+    expect(genInserts[0].ref_id).toBe("gen-v4");
+
+    const exhibitInserts = mockInsertItem.mock.calls
+      .map((c) => c[0] as { item_type: string; ref_id: string })
+      .filter((i) => i.item_type === "exhibit");
+    expect(exhibitInserts).toHaveLength(1);
+    expect(exhibitInserts[0].ref_id).toBe("ex-new");
+
+    // Only the current run reaches the planner as a strong doc.
+    expect(mockProposeExpedienteAssembly).toHaveBeenCalledWith(
+      expect.objectContaining({
+        strongDocs: [expect.objectContaining({ id: "gen-v4", kind: "ai_generation" })],
+      }),
+    );
+  });
+});
+
+describe("service: getExpedienteMaterial", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCan.mockReturnValue(undefined);
+    mockRequireCaseAccess.mockResolvedValue(undefined);
+    mockListCoverRendersForMaterial.mockResolvedValue([]);
+    mockListFormResponsesForMaterial.mockResolvedValue([]);
+    mockListApprovedDocumentsForMaterial.mockResolvedValue([]);
+  });
+
+  it("lists only the CURRENT generation run per form+party in the material library", async () => {
+    mockListGenerationRunsForMaterial.mockResolvedValue([
+      { refId: "gen-v2", title: "Brief", createdAt: "2026-07-02", partyId: null, formDefinitionId: "fd1", version: 2 },
+      { refId: "gen-v1", title: "Brief", createdAt: "2026-07-01", partyId: null, formDefinitionId: "fd1", version: 1 },
+      { refId: "gen-other", title: "Other letter", createdAt: "2026-07-01", partyId: null, formDefinitionId: "fd2", version: 1 },
+    ]);
+
+    const { getExpedienteMaterial } = await import("../service");
+    const material = await getExpedienteMaterial(staffActor, CASE_ID);
+
+    expect(material.generations.map((g) => g.refId).sort()).toEqual(["gen-other", "gen-v2"]);
   });
 });
 

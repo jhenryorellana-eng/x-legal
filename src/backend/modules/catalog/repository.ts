@@ -67,6 +67,21 @@ export async function findServiceById(id: string): Promise<ServiceRow | null> {
   return data;
 }
 
+/** Assembly-guidance read for the expediente AI planner (runtime, non-admin).
+ *  Service-role client (no RLS) — the org filter IS the cross-org guard. */
+export async function findServiceGuidance(
+  orgId: string,
+  id: string,
+): Promise<{ expediente_guidance: string | null } | null> {
+  const { data } = await db()
+    .from("services")
+    .select("expediente_guidance")
+    .eq("org_id", orgId)
+    .eq("id", id)
+    .maybeSingle();
+  return data;
+}
+
 export async function updateService(
   id: string,
   patch: TablesUpdate<"services">,

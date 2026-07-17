@@ -16,6 +16,7 @@ import {
   validateExtractionSchema,
   nextVersionNumber,
   isServiceContractable,
+  UpdateServiceDtoSchema,
 } from "@/backend/modules/catalog/domain";
 import type {
   Service,
@@ -56,6 +57,7 @@ function makeService(overrides: Partial<Service> = {}): Service {
     contract_special_clause_i18n: null,
     translation_signer_name: null,
     translation_signature_path: null,
+    expediente_guidance: null,
     position: 0,
     ...overrides,
   };
@@ -820,6 +822,21 @@ describe("applyRequirementOverrides", () => {
 // ---------------------------------------------------------------------------
 // §2.7 — isServiceContractable
 // ---------------------------------------------------------------------------
+
+describe("UpdateServiceDtoSchema — expediente_guidance", () => {
+  it("accepts a plain-text guide and an explicit null (clear)", () => {
+    expect(UpdateServiceDtoSchema.parse({ expediente_guidance: "1. Form EOIR-26 first." })).toMatchObject({
+      expediente_guidance: "1. Form EOIR-26 first.",
+    });
+    expect(UpdateServiceDtoSchema.parse({ expediente_guidance: null })).toMatchObject({
+      expediente_guidance: null,
+    });
+  });
+
+  it("rejects a guide over 20000 chars", () => {
+    expect(() => UpdateServiceDtoSchema.parse({ expediente_guidance: "x".repeat(20001) })).toThrow();
+  });
+});
 
 describe("isServiceContractable", () => {
   it("true for active non-archived service", () => {

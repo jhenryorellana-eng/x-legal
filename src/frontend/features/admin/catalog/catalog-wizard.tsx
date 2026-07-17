@@ -13,7 +13,7 @@ import {
   Lex,
   type IconName,
 } from "@/frontend/components/brand";
-import { ViewHead, FieldLabel, TextInput, SelectInput } from "../shared/chrome";
+import { ViewHead, FieldLabel, TextInput, SelectInput, inputStyle } from "../shared/chrome";
 import { I18nField, type I18nValue } from "../shared/i18n-field";
 import { slugify } from "@/shared/strings";
 import { ExtractionSchemaModal, schemaFieldCount } from "./extraction-schema-modal";
@@ -142,6 +142,8 @@ export interface WizardService {
   /** Per-service certified-translation signing (migration 0057). */
   translation_signer_name: string | null;
   translation_signature_path: string | null;
+  /** Per-service AI expediente assembly guide (migration 0087) — English plain text. */
+  expediente_guidance: string | null;
 }
 
 /** Plazo (días) por etapa de responsabilidad — fuente de la cuenta regresiva del kanban. */
@@ -215,7 +217,7 @@ function milestoneSlug(m: WizardMilestone, i: number): string {
   return slugify(m.label.es || m.label.en || "") || `hito-${i + 1}`;
 }
 
-const STEP_IDS = ["basics", "plans", "parties", "phases", "docs", "forms", "translation", "contract", "publish"] as const;
+const STEP_IDS = ["basics", "plans", "parties", "phases", "docs", "forms", "translation", "contract", "expediente", "publish"] as const;
 type StepId = (typeof STEP_IDS)[number];
 
 const COLOR_SWATCHES: { id: string; value: string }[] = [
@@ -292,6 +294,11 @@ export function CatalogWizard({
   const [signerName, setSignerName] = React.useState<string>(service?.translation_signer_name ?? "");
   const [sigPath, setSigPath] = React.useState<string | null>(service?.translation_signature_path ?? null);
 
+  // Step "expediente" — per-service AI assembly guide (English plain text)
+  const [expedienteGuidance, setExpedienteGuidance] = React.useState<string>(
+    service?.expediente_guidance ?? "",
+  );
+
   // Step 6 publish
   const [pubIssues, setPubIssues] = React.useState<PublicationIssueVM[] | null>(null);
   const [published, setPublished] = React.useState(false);
@@ -359,6 +366,11 @@ export function CatalogWizard({
     }
     if (step === "contract") {
       const ok = await saveContract();
+      if (ok) setStep("expediente");
+      return;
+    }
+    if (step === "expediente") {
+      const ok = await saveExpedienteGuidance();
       if (ok) setStep("publish");
       return;
     }
@@ -405,6 +417,22 @@ export function CatalogWizard({
       contract_object_i18n: { es: contractObject.es ?? "", en: contractObject.en ?? "" },
       contract_scope_i18n: { es: toList(contractScope.es), en: toList(contractScope.en) },
       contract_special_clause_i18n: { es: contractSpecial.es ?? "", en: contractSpecial.en ?? "" },
+    });
+    setSaving(false);
+    if (!r.success) {
+      toast.error(r.error?.message ?? "Error");
+      return false;
+    }
+    toast.success(t.saved);
+    return true;
+  }
+
+  /** Persists the per-service AI expediente assembly guide (expediente step). */
+  async function saveExpedienteGuidance(): Promise<boolean> {
+    if (!serviceId) return true; // create-mode shell: nothing to persist yet
+    setSaving(true);
+    const r = await actions.updateService(serviceId, {
+      expediente_guidance: expedienteGuidance.trim() || null,
     });
     setSaving(false);
     if (!r.success) {
@@ -528,6 +556,14 @@ export function CatalogWizard({
             setScope={setContractScope}
             special={contractSpecial}
             setSpecial={setContractSpecial}
+            t={t}
+          />
+        )}
+        {step === "expediente" && (
+          <ExpedienteStep
+            serviceId={serviceId}
+            guidance={expedienteGuidance}
+            setGuidance={setExpedienteGuidance}
             t={t}
           />
         )}
@@ -724,6 +760,53 @@ function ContractStep({
         </div>
         <I18nField label={t.contractSpecial} value={special} onChange={setSpecial} multiline />
       </div>
+    </div>
+  );
+}
+
+/* ───────────────────────── Step: Expediente (AI assembly guide) ───────────────────────── */
+
+function ExpedienteStep({
+  serviceId,
+  guidance,
+  setGuidance,
+  t,
+}: {
+  serviceId: string | null;
+  guidance: string;
+  setGuidance: (v: string) => void;
+  t: Record<string, string>;
+}) {
+  return (
+    <div>
+      <ViewHead title={t.expedienteStepTitle} sub={t.expedienteStepSub} />
+      <div style={bannerStyle}>
+        <Icon name="info" size={16} color="var(--gold-deep)" />
+        {t.expedienteStepNote}
+      </div>
+      {serviceId === null ? (
+        <p style={{ color: "var(--ink-3)", fontSize: 13.5, marginTop: 12 }}>{t.expedienteSaveServiceFirst}</p>
+      ) : (
+        <div style={{ marginTop: 12, maxWidth: 720 }}>
+          <FieldLabel>{t.expedienteGuidanceLabel}</FieldLabel>
+          <textarea
+            value={guidance}
+            onChange={(e) => setGuidance(e.target.value)}
+            rows={14}
+            placeholder={t.expedienteGuidancePh}
+            style={{
+              ...inputStyle,
+              height: "auto",
+              minHeight: 260,
+              padding: "10px 12px",
+              fontFamily: "var(--font-mono, monospace)",
+              fontSize: 12.5,
+              lineHeight: 1.5,
+              resize: "vertical",
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }

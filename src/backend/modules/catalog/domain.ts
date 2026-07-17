@@ -103,6 +103,10 @@ export const ServiceSchema = z.object({
   // a signature image (catalog-assets path) stamped on the generated translation PDF.
   translation_signer_name: z.string().nullable(),
   translation_signature_path: z.string().nullable(),
+  // Per-service expediente assembly guide (migration 0087): English plain-text
+  // canonical filing order the AI assembly planner injects into its prompt.
+  // NULL → the planner falls back to its generic legal-order rules.
+  expediente_guidance: z.string().nullable(),
   position: z.number().int().default(0),
 });
 export type Service = z.infer<typeof ServiceSchema>;
@@ -137,6 +141,7 @@ export const UpdateServiceDtoSchema = z.object({
   contract_special_clause_i18n: I18nTextDraftSchema.nullable().optional(),
   translation_signer_name: z.string().max(160).nullable().optional(),
   translation_signature_path: z.string().nullable().optional(),
+  expediente_guidance: z.string().max(20000).nullable().optional(),
   position: z.number().int().optional(),
 });
 export type UpdateServiceDto = z.infer<typeof UpdateServiceDtoSchema>;

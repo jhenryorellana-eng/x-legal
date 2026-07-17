@@ -365,6 +365,9 @@ export interface MaterialGenerations {
   createdAt: string;
   outputPath: string;
   partyId: string | null;
+  /** Raw grouping keys so the service can keep only the CURRENT run per (form, party). */
+  formDefinitionId: string;
+  version: number;
 }
 
 export interface MaterialForms {
@@ -501,7 +504,7 @@ export async function listGenerationRunsForMaterial(
   const supabase = createServiceClient();
   const { data } = await supabase
     .from("ai_generation_runs")
-    .select("id, output_path, created_at, party_id, form_definitions(label_i18n)")
+    .select("id, output_path, created_at, party_id, version, form_definition_id, form_definitions(label_i18n)")
     .eq("case_id", caseId)
     .eq("status", "completed")
     .not("output_path", "is", null)
@@ -514,6 +517,8 @@ export async function listGenerationRunsForMaterial(
       createdAt: r.created_at,
       outputPath: r.output_path as string,
       partyId: r.party_id ?? null,
+      formDefinitionId: r.form_definition_id,
+      version: r.version,
     }));
 }
 

@@ -254,6 +254,8 @@ type Json = import("@/shared/database.types").Json;
 interface CaseCoverContext {
   caseNumber: string;
   serviceLabel: string;
+  serviceId: string | null;
+  serviceSlug: string | null;
   clientLabel: string;
   parties: Array<{ id: string; role: string; name: string | null }>;
 }
@@ -263,7 +265,7 @@ async function loadCaseCoverContext(actor: Actor, caseId: string): Promise<CaseC
   const { getCaseWorkspace } = (await import("@/backend/modules/cases")) as {
     getCaseWorkspace: (a: Actor, c: string) => Promise<{
       caseNumber: string;
-      service: { labelI18n: { es: string; en: string } } | null;
+      service: { id: string; slug: string; labelI18n: { es: string; en: string } } | null;
       parties: Array<{ id: string; role: string; name: string | null }>;
     }>;
   };
@@ -276,7 +278,14 @@ async function loadCaseCoverContext(actor: Actor, caseId: string): Promise<CaseC
       parts.length >= 2 ? canonicalClientLabel(parts[0], parts.slice(1).join(" ")) : (parts[0] ?? "—");
   }
   const serviceLabel = ws.service?.labelI18n.es ?? ws.service?.labelI18n.en ?? "";
-  return { caseNumber: ws.caseNumber, serviceLabel, clientLabel, parties: ws.parties };
+  return {
+    caseNumber: ws.caseNumber,
+    serviceLabel,
+    serviceId: ws.service?.id ?? null,
+    serviceSlug: ws.service?.slug ?? null,
+    clientLabel,
+    parties: ws.parties,
+  };
 }
 
 /** Renders a cover PDF + inserts a cover_render row. Returns the new row. */
@@ -420,6 +429,24 @@ export interface AutoAssembleResult {
 }
 
 /**
+ * Keeps only the CURRENT run per (form, party) — highest version. A case can hold
+ * several completed versions of the same letter (regenerations); only the latest
+ * may be filed — older briefs (and their exhibits) must never reach the case file.
+ * Same "current" criterion as ai-engine's getRunsForCase.
+ */
+function pickCurrentRuns<T extends { formDefinitionId: string; partyId: string | null; version: number }>(
+  runs: T[],
+): T[] {
+  const best = new Map<string, T>();
+  for (const r of runs) {
+    const key = `${r.formDefinitionId}:${r.partyId ?? "null"}`;
+    const cur = best.get(key);
+    if (!cur || r.version > cur.version) best.set(key, r);
+  }
+  return [...best.values()];
+}
+
+/**
  * One-click AI assembly: gathers the case context (parties, strong artifacts,
  * approved documents + translations), asks the AI planner for an ordered set of
  * sections, then renders the covers and builds the expediente_items in order
@@ -479,12 +506,16 @@ export async function autoAssembleWithAi(
     exhibitsByRun.set(ex.run_id, arr);
   }
 
+  // Only the CURRENT run per (form, party) may be filed — a case can hold several
+  // completed versions of the same brief and only the latest belongs in the packet.
+  const currentGens = pickCurrentRuns(gens);
+
   const partyName = new Map(ctx.parties.map((p) => [p.id, p.name ?? "—"]));
   const validPartyIds = new Set(ctx.parties.map((p) => p.id));
   const translationByDoc = new Map(translations.map((t) => [t.caseDocumentId, t.translationId]));
   const docById = new Map(docs.map((d) => [d.refId, d]));
   const validForm = new Set(forms.map((f) => f.refId));
-  const validGen = new Set(gens.map((g) => g.refId));
+  const validGen = new Set(currentGens.map((g) => g.refId));
 
   // 3. Ask the AI planner (via ai-engine module-pub; R3). The planner is a non-deterministic
   //    LLM call that occasionally returns output failing schema validation (observed in prod
@@ -493,16 +524,26 @@ export async function autoAssembleWithAi(
   //    back to an empty plan so the safety nets (step 5) still build a complete, canonically
   //    ordered draft from the known material. The paralegal can reorder — a deterministic
   //    draft always beats an empty draft plus an error toast.
+  // Per-service canonical order (config-as-data, migration 0087). Best-effort:
+  // a guidance read failure must never abort the assembly — the planner simply
+  // falls back to its generic legal-order rules.
+  const { getServiceAssemblyGuidance } = await import("@/backend/modules/catalog");
+  const assemblyGuidance = ctx.serviceId
+    ? await getServiceAssemblyGuidance(actor.orgId, ctx.serviceId).catch(() => null)
+    : null;
+
   const { proposeExpedienteAssembly } = await import("@/backend/modules/ai-engine");
   let plan: Awaited<ReturnType<typeof proposeExpedienteAssembly>>;
   try {
     plan = await proposeExpedienteAssembly({
       caseLabel: ctx.caseNumber,
       serviceCategory: ctx.serviceLabel,
+      serviceSlug: ctx.serviceSlug,
+      assemblyGuidance,
       parties: ctx.parties.map((p) => ({ id: p.id, role: p.role, name: p.name ?? "—" })),
       strongDocs: [
         ...forms.map((f) => ({ kind: "automated_form" as const, id: f.refId, label: f.title, partyId: f.partyId })),
-        ...gens.map((g) => ({ kind: "ai_generation" as const, id: g.refId, label: g.title, partyId: g.partyId })),
+        ...currentGens.map((g) => ({ kind: "ai_generation" as const, id: g.refId, label: g.title, partyId: g.partyId })),
       ],
       documents: docs.map((d) => ({
         caseDocumentId: d.refId,
@@ -616,7 +657,7 @@ export async function autoAssembleWithAi(
   // 5. Safety net: place any strong doc / approved doc the planner didn't cover.
   const leftoverStrong = [
     ...forms.filter((f) => !usedStrong.has(f.refId)).map((f) => ({ kind: "automated_form" as const, ref: f.refId, title: f.title })),
-    ...gens.filter((g) => !usedStrong.has(g.refId)).map((g) => ({ kind: "ai_generation" as const, ref: g.refId, title: g.title })),
+    ...currentGens.filter((g) => !usedStrong.has(g.refId)).map((g) => ({ kind: "ai_generation" as const, ref: g.refId, title: g.title })),
   ];
   for (const s of leftoverStrong) {
     const cover = await renderInsertCover(caseId, ctx, dividerTpl, { title: s.title, sectionKind: "document", aiGenerated: true }, actor.userId);
@@ -813,9 +854,13 @@ export async function getExpedienteMaterial(
     listApprovedDocumentsForMaterial(caseId),
   ]);
 
+  // Same rule as autoAssembleWithAi: only the CURRENT run per (form, party) is
+  // addable material — superseded letter versions must not be filed by hand either.
+  const currentGenerations = pickCurrentRuns(generations);
+
   return {
     covers: covers.map((c) => ({ refId: c.refId, title: c.title, createdAt: c.createdAt })),
-    generations: generations.map((g) => ({ refId: g.refId, title: g.title, createdAt: g.createdAt })),
+    generations: currentGenerations.map((g) => ({ refId: g.refId, title: g.title, createdAt: g.createdAt })),
     forms: forms.map((f) => ({ refId: f.refId, title: f.title, createdAt: f.createdAt })),
     documents: documents.map((d) => ({ refId: d.refId, title: d.title, createdAt: d.createdAt })),
   };

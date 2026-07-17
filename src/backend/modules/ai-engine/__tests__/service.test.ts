@@ -1133,6 +1133,54 @@ describe("proposeExpedienteAssembly", () => {
     await expect(proposeExpedienteAssembly(baseInput)).rejects.toMatchObject({ code: "AI_OUTPUT_INVALID" });
     expect(mocks.anthropicClient.messages.create).toHaveBeenCalledTimes(2);
   });
+
+  const validPlanMsg = createMsg(
+    '{"sections":[{"kind":"document","title":"Form EOIR-26","refType":"automated_form","refId":"f1"}]}',
+  );
+  const sentUserPrompt = (): string =>
+    mocks.anthropicClient.messages.create.mock.calls[0][0].messages[0].content as string;
+
+  it("injects the per-service canonical guide as a priority block and drops the generic examples", async () => {
+    mocks.anthropicClient.messages.create.mockResolvedValue(validPlanMsg);
+
+    await proposeExpedienteAssembly({
+      ...baseInput,
+      serviceSlug: "apelacion",
+      assemblyGuidance: "1. Form EOIR-26 first, then the Brief in Support of Appeal.",
+    });
+
+    const prompt = sentUserPrompt();
+    expect(prompt).toContain("CANONICAL ORDER FOR THIS SERVICE");
+    expect(prompt).toContain("1. Form EOIR-26 first, then the Brief in Support of Appeal.");
+    expect(prompt).not.toContain("Juvenile Visa");
+    expect(prompt).not.toContain("Example (Asylum)");
+  });
+
+  it("falls back to the generic rules (verbatim) when no guidance is provided — even with a slug", async () => {
+    mocks.anthropicClient.messages.create.mockResolvedValue(validPlanMsg);
+
+    // serviceSlug is always passed by the orchestrator now; without a guide the
+    // prompt must still be byte-identical to the pre-0087 version (no new keys).
+    await proposeExpedienteAssembly({ ...baseInput, serviceSlug: "apelacion" });
+
+    const prompt = sentUserPrompt();
+    expect(prompt).not.toContain("CANONICAL ORDER FOR THIS SERVICE");
+    expect(prompt).not.toContain("serviceSlug");
+    expect(prompt).toContain("Example (Asylum): Form I-589");
+    expect(prompt).toContain("Example (Juvenile Visa / custody)");
+  });
+
+  it("passes the service slug in the prompt context when a guide is set", async () => {
+    mocks.anthropicClient.messages.create.mockResolvedValue(validPlanMsg);
+
+    await proposeExpedienteAssembly({
+      ...baseInput,
+      serviceSlug: "apelacion",
+      assemblyGuidance: "1. Form EOIR-26 first.",
+    });
+
+    expect(sentUserPrompt()).toContain('"serviceSlug": "apelacion"');
+  });
 });
 
 // ---------------------------------------------------------------------------

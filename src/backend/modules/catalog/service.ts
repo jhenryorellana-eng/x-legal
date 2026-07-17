@@ -2560,6 +2560,23 @@ export async function listContractableServicePlans(serviceId: string) {
 }
 
 /**
+ * Per-service expediente assembly guide for the AI planner (migration 0087).
+ * Runtime read with NO catalog gate (the paralegal assembling a case file is
+ * not a catalog editor — same pattern as listContractableServicePlans). The
+ * repository uses the service-role client, so RLS does NOT apply: the explicit
+ * orgId filter (from the authenticated actor) is the cross-org guard. Returns
+ * null when the service has no guide (the planner then uses its generic rules).
+ */
+export async function getServiceAssemblyGuidance(
+  orgId: string,
+  serviceId: string,
+): Promise<string | null> {
+  const row = await repo.findServiceGuidance(orgId, serviceId);
+  const guidance = row?.expediente_guidance?.trim();
+  return guidance ? guidance : null;
+}
+
+/**
  * Returns the FIRST phase of a service for case activation (DOC-41 §3.4):
  * the explicit entry_phase_id if set, otherwise the lowest-position phase.
  * Internal cross-module read (no actor): consumed by cases.onDownpaymentConfirmed
