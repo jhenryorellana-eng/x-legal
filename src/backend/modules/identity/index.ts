@@ -78,6 +78,11 @@ export { insertCasePartyRow } from "./repository";
 // Client address shape (captured at intake; prefills the I-589 — DOC-40 §2.7)
 export type { ClientAddressInput } from "./repository";
 
+// US ZIP → city/state lookup — "Nuevo caso" step 1 address autofill (RF-VAN-018;
+// consumed by GET /api/v1/zip-lookup). Server-side proxy to zippopotam.us.
+export { lookupUsZip, US_ZIP_REGEX } from "./zip-lookup";
+export type { UsZipLookupResult } from "./zip-lookup";
+
 // Auth / authorization helpers — re-exported here so app-layer files can
 // import them via module-pub boundary (app → module-pub is allowed per DOC-21).
 export { getActor, requireActor, can, allows, systemActor, AuthzError } from "@/backend/platform/authz";

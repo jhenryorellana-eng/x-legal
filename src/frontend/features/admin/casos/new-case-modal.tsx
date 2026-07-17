@@ -11,6 +11,9 @@
  *             editable and is persisted to the profile on submit.
  *           · New client: full name + email + US phone + full US address
  *             (street, apartment, city, state, ZIP). All required except apartment.
+ *           ZIP is the address' leading field: typing it autofills city + state
+ *           via useUsZipLookup → GET /api/v1/zip-lookup (ported from v1 contract
+ *           creation); both stay editable as a manual fallback.
  * Step 2 — Service + plan + parties. Shows the non-blocking RF-VAN-019 notice
  *          when the picked client already has a case of the chosen service.
  * Step 3 — Payment plan. Step 4 — signing link to copy/send.
@@ -24,6 +27,7 @@
 
 import * as React from "react";
 import { getBridge } from "@/frontend/platform-bridge";
+import { useUsZipLookup } from "@/frontend/lib/zip-lookup";
 import { Modal } from "@/frontend/components/desktop/modal";
 import { GradientBtn } from "@/frontend/components/brand/gradient-btn";
 import { GhostBtn } from "@/frontend/components/brand/ghost-btn";
@@ -182,6 +186,10 @@ export function NewCaseModal({
   const [city, setCity] = React.useState("");
   const [stateCode, setStateCode] = React.useState("");
   const [zip, setZip] = React.useState("");
+  // Gates the ZIP→city/state lookup: only fires after the operator edits the
+  // ZIP, so the existing-client prefill neither hits the network nor clobbers
+  // the address stored on the profile.
+  const [zipEdited, setZipEdited] = React.useState(false);
   const [serviceId, setServiceId] = React.useState("");
   const [planKind, setPlanKind] = React.useState<"self" | "with_lawyer" | "">("");
   // Editable payment plan (dollars as strings for the inputs; default-seeded from
@@ -196,6 +204,13 @@ export function NewCaseModal({
   const [partyNames, setPartyNames] = React.useState<Record<string, string[]>>({});
   const [submitting, setSubmitting] = React.useState(false);
   const [signingLink, setSigningLink] = React.useState<string | null>(null);
+
+  // ZIP → city/state autofill (ported from v1 contract creation): 350ms
+  // debounce + abort inside the hook; fills both fields, which stay editable.
+  const zipLookupStatus = useUsZipLookup(zip, zipEdited && open, (place) => {
+    setCity(place.city);
+    setStateCode(place.state);
+  });
 
   // Prefill client name/phone from the originating lead each time the modal
   // opens (e.g. dragging a lead to the terminal-won column). Only seeds on the
@@ -240,6 +255,7 @@ export function NewCaseModal({
     setCity(c.address?.city ?? "");
     setStateCode(c.address?.state ?? "");
     setZip(c.address?.zip ?? "");
+    setZipEdited(false);
     setExistingCases([]);
     void actionsRef.current.getClientCases(c.userId).then((res) => {
       setExistingCases(res.ok && res.cases ? res.cases : []);
@@ -268,6 +284,7 @@ export function NewCaseModal({
     setCity("");
     setStateCode("");
     setZip("");
+    setZipEdited(false);
     if (m === "existing") setClientQuery(presetPhone ?? presetName ?? "");
   }
 
@@ -325,6 +342,7 @@ export function NewCaseModal({
     setCity("");
     setStateCode("");
     setZip("");
+    setZipEdited(false);
     setServiceId("");
     setPlanKind("");
     setPriceDollars("");
@@ -670,25 +688,38 @@ export function NewCaseModal({
                 onChange={setApartment}
                 placeholder="Apt 4B"
               />
+              {/* ZIP drives the row (= v1): typing it autofills city + state. */}
               <div style={{ display: "flex", gap: 10 }}>
-                <div style={{ flex: 2 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <LabeledInput
+                    label={strings.clientZip}
+                    value={zip}
+                    onChange={(v) => {
+                      setZipEdited(true);
+                      setZip(v.replace(/[^\d-]/g, "").slice(0, 10));
+                    }}
+                    inputMode="numeric"
+                    placeholder="33101"
+                    labelAddon={
+                      zipLookupStatus === "loading" ? (
+                        <span style={{ color: "var(--ink-3)" }}>{strings.zipLookupLoading}</span>
+                      ) : zipLookupStatus === "found" ? (
+                        <span style={{ color: "var(--green)" }}>{strings.zipAutofilled}</span>
+                      ) : zipLookupStatus === "not-found" ? (
+                        <span style={{ color: "var(--red)" }}>{strings.zipNotFound}</span>
+                      ) : undefined
+                    }
+                  />
+                </div>
+                <div style={{ flex: 2, minWidth: 0 }}>
                   <LabeledInput label={strings.clientCity} value={city} onChange={setCity} placeholder="Miami" />
                 </div>
-                <div style={{ flex: 1 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <LabeledInput
                     label={strings.clientState}
                     value={stateCode}
                     onChange={(v) => setStateCode(v.toUpperCase().slice(0, 2))}
                     placeholder="FL"
-                  />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <LabeledInput
-                    label={strings.clientZip}
-                    value={zip}
-                    onChange={(v) => setZip(v.replace(/[^\d-]/g, "").slice(0, 10))}
-                    inputMode="numeric"
-                    placeholder="33101"
                   />
                 </div>
               </div>
@@ -845,7 +876,7 @@ export function NewCaseModal({
                             value={nm}
                             placeholder={strings.partyName}
                             onChange={(e) => setPartyName(r.roleKey, i, e.target.value)}
-                            style={{ ...inputStyle, flex: 1 }}
+                            style={{ ...inputStyle, flex: 1, minWidth: 0 }}
                           />
                           {r.cardinality === "multiple" && names.length > 1 && (
                             <button
@@ -905,7 +936,7 @@ export function NewCaseModal({
             placeholder="3500"
           />
           <div style={{ display: "flex", gap: 10 }}>
-            <div style={{ flex: 1 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
               <LabeledInput
                 label={strings.payDownpayment}
                 value={downDollars}
@@ -914,7 +945,7 @@ export function NewCaseModal({
                 placeholder="500"
               />
             </div>
-            <div style={{ flex: 1 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
               <LabeledInput
                 label={strings.payInstallments}
                 value={installmentsCount}
@@ -1083,6 +1114,10 @@ function initialsOf(name: string): string {
 }
 
 const inputStyle: React.CSSProperties = {
+  // width:100% + minWidth:0 on the flex wrappers keep every field inside the
+  // modal — without them the input's intrinsic min-content width forces a
+  // horizontal scrollbar (e.g. the city/state/ZIP row).
+  width: "100%",
   height: 44,
   borderRadius: 12,
   border: "1px solid var(--line)",
@@ -1180,6 +1215,7 @@ function LabeledInput({
   placeholder,
   type,
   disabled,
+  labelAddon,
 }: {
   label: string;
   value: string;
@@ -1188,10 +1224,15 @@ function LabeledInput({
   placeholder?: string;
   type?: React.InputHTMLAttributes<HTMLInputElement>["type"];
   disabled?: boolean;
+  /** Optional inline status hint rendered after the label text (e.g. ZIP lookup). */
+  labelAddon?: React.ReactNode;
 }) {
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <span style={{ fontSize: 12.5, fontWeight: 800, color: "var(--ink-2)" }}>{label}</span>
+      <span style={{ fontSize: 12.5, fontWeight: 800, color: "var(--ink-2)" }}>
+        {label}
+        {labelAddon && <span style={{ fontWeight: 700, fontSize: 11.5 }}> · {labelAddon}</span>}
+      </span>
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
