@@ -291,6 +291,7 @@ import {
   getAiCostsReport,
   materializeProposalToSchema,
   flagQuestionnairesOnNewEvidence,
+  deriveCoverContext,
   AiEngineError,
 } from "../service";
 
@@ -1844,6 +1845,35 @@ describe("materializeProposalToSchema", () => {
       groups: [{ title_i18n: { es: "G", en: "G" }, questions: [{ key: "q1", question_i18n: { es: "x", en: "x" }, field_type: "textarea", condition: { when: { question: "ghost", op: "equals", value: "y" }, action: "show" } }] }],
     });
     expect(schema.groups[0].questions[0].condition).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deriveCoverContext — canonical aliases for the court cover page
+// ---------------------------------------------------------------------------
+
+describe("deriveCoverContext", () => {
+  it("derives applicant_name from the appeal schemas' applicant_full_name/respondent_full_name", () => {
+    const inputs = {
+      documents: [
+        { slug: "asilo", extractionPayload: { applicant_full_name: "PEREZ GOMEZ, Diego Armando" }, rawText: "" },
+        { slug: "decision", extractionPayload: { respondent_full_name: "PEREZ GOMEZ, Diego Armando" }, rawText: "" },
+      ],
+      forms: [],
+    };
+    const ctx = deriveCoverContext(inputs as never, null);
+    expect(ctx.applicant_name).toBe("PEREZ GOMEZ, Diego Armando");
+  });
+
+  it("keeps the legacy full_name alias winning when present (regression)", () => {
+    const inputs = {
+      documents: [
+        { slug: "pasaporte", extractionPayload: { full_name: "MARIA LOPEZ", applicant_full_name: "OTRA" }, rawText: "" },
+      ],
+      forms: [],
+    };
+    const ctx = deriveCoverContext(inputs as never, null);
+    expect(ctx.applicant_name).toBe("MARIA LOPEZ");
   });
 });
 

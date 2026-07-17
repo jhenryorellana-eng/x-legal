@@ -792,7 +792,7 @@ async function reEnqueueSelf(run: GenerationRunRow & { orgId: string }, step: nu
  * aliases the default cover rows use (applicant_name, nationality, entry_date,
  * principal_theory). Research analysis fills nationality / principal_theory.
  */
-function deriveCoverContext(inputs: ResolvedInputs, analysis: ResearchAnalysis | null): Record<string, string> {
+export function deriveCoverContext(inputs: ResolvedInputs, analysis: ResearchAnalysis | null): Record<string, string> {
   const ctx: Record<string, string> = {};
   for (const d of inputs.documents) {
     for (const [k, v] of Object.entries(d.extractionPayload ?? {})) {
@@ -804,7 +804,7 @@ function deriveCoverContext(inputs: ResolvedInputs, analysis: ResearchAnalysis |
     return undefined;
   };
   const set = (k: string, v?: string) => { if (v?.trim() && !ctx[k]) ctx[k] = v.trim(); };
-  set("applicant_name", pick("full_name", "name", "applicant_name", "nombre_completo"));
+  set("applicant_name", pick("full_name", "name", "applicant_name", "nombre_completo", "applicant_full_name", "respondent_full_name"));
   set("entry_date", pick("date_of_entry", "entry_date", "fecha_entrada"));
   set("nationality", pick("nationality", "country", "nacionalidad", "pais") ?? analysis?.nationality ?? undefined);
   set("principal_theory", analysis?.principal_theory ?? undefined);
@@ -4028,6 +4028,11 @@ const PREMORTEM_MEMO_BUDGET = 120_000;
 const PREMORTEM_SOURCE_BUDGET = 40_000;
 /** web_search server-tool call cap for the validator (official examples). */
 const PREMORTEM_WEB_SEARCH_MAX_USES = 5;
+/** Validator wall-clock budget. Large ai_letter targets (a ~100-page appeal
+ *  brief + rubric + full source material + web_search) run well past 4 minutes —
+ *  the old 240s abort was killing them ("Request was aborted."). Must stay under
+ *  the case pages' route maxDuration so the synchronous action fits in prod. */
+const PREMORTEM_CALL_TIMEOUT_MS = 540_000;
 /** Output token budget — I-589 has 460 fields → reports can be long. */
 const PREMORTEM_MAX_OUTPUT_TOKENS = 8_192;
 
@@ -4356,7 +4361,7 @@ export async function assessPreMortemRisk(
       user: userMessage,
       maxTokens: PREMORTEM_MAX_OUTPUT_TOKENS,
       tools: [buildWebSearchTool(PREMORTEM_WEB_SEARCH_MAX_USES, model)],
-      timeoutMs: 240_000,
+      timeoutMs: PREMORTEM_CALL_TIMEOUT_MS,
     });
     validatorText = result.text;
     usage = result.usage;
@@ -4372,7 +4377,7 @@ export async function assessPreMortemRisk(
           user: userMessage,
           maxTokens: PREMORTEM_MAX_OUTPUT_TOKENS,
           tools: [buildWebSearchTool(PREMORTEM_WEB_SEARCH_MAX_USES, PREMORTEM_FALLBACK_MODEL)],
-          timeoutMs: 240_000,
+          timeoutMs: PREMORTEM_CALL_TIMEOUT_MS,
         });
         validatorText = fb.text;
         usage = fb.usage;

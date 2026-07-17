@@ -351,3 +351,21 @@ El artefacto que estás validando es el PDF **AUTOLLENADO, ANTES de imprimirse y
 2. **Adjuntos físicos del paquete** (recibo de pago del EOIR Payment Portal o Form EOIR-26A, copia de la decisión del juez, traducciones certificadas): no son campos del PDF; se agregan al armar el paquete. Si la checklist los marca, asume que el equipo los adjuntará → repórtalos como recordatorio (sugerencia), no como crítico.
 3. **Criterio de aprobación del autollenado**: si los ítems #1–#8 y #10 están completos y coherentes con los documentos del caso, el ítem #12 tiene fecha/destinatario/dirección (o la casilla ECAS marcada) y la checklist está marcada, y las únicas pendencias son las firmas manuscritas y los adjuntos físicos → el documento SÍ tiene calidad para aprobarse: `verdict=would_approve`, `semaforo=green` (o amber si hay hallazgos moderados), **score ≥ 75**, con las firmas/adjuntos como recordatorios finales.
 4. Lo que SÍ sigue siendo crítico aunque todo lo demás esté bien: fecha del ítem #5 incorrecta o fuera del plazo de 30 días, razones vagas o placeholders en el #6, A-Number/nombre discordantes con los documentos, casilla del #5 equivocada, ítem #12 completamente vacío, o familiares mal incluidos/omitidos en el #1.
+
+## 12. Validación cruzada con el Escrito de Apelación (brief)
+
+Cuando el caso tenga generado el **Escrito de Apelación** (`escrito-de-apelacion`, *Brief in
+Support of Appeal*), valida la coherencia entre este formulario y el brief:
+
+- **Cobertura de grounds:** todo motivo dispositivo que el brief ataca debe estar reflejado (al
+  menos en resumen) en las razones del ítem #6 — un ground que el brief desarrolla pero que el
+  #6 omite por completo es **moderado** (riesgo de waiver aparente ante la BIA), con corrección
+  sugerida para el ítem #6.
+- **Motion to Remand:** si el caso tiene evidencias sustentatorias nuevas (documento
+  `evidencias-sustentatorias`) o el brief incluye su sección de Motion to Remand (8 C.F.R.
+  §1003.2(c)), el ítem #6 debe mencionar que se presentará una moción de remand junto con el
+  brief — su ausencia es **moderado** con corrección sugerida.
+- **Consistencia procesal:** la casilla del ítem #8 (se presentará brief) debe ser coherente con
+  la existencia del escrito; un #8 en "no" con un brief generado en el caso es **crítico**.
+- Las discordancias de identidad (nombre / A-Number / corte / fecha) siguen rigiéndose por la
+  sección de validaciones cruzadas documentales: el expediente EOIR manda.
