@@ -176,6 +176,10 @@ Da al validador criterios **verificables** y su **mapeo exacto** a la taxonomía
 
 Estas condiciones son **sugerencia** (el flujo las resuelve después, antes de presentar):
 - Firmas manuscritas pendientes; Proof of Service aún no ejecutado; ensamblado físico/anexos pendientes de compilar.
+- **El bloque CERTIFICATE OF SERVICE al cierre**: su fecha de servicio, la dirección del
+  destinatario (OPLA/DHS) y la firma son **datos de radicación** que el equipo completa al
+  presentar — sus espacios en blanco son *sugerencia*, NUNCA crítico. (Un placeholder dentro del
+  CUERPO argumentativo del brief sí sigue siendo crítico — §5.1.)
 - La tarifa/fee waiver (EOIR‑26A) en trámite — NO es objeto de este brief.
 - Ajustes cosméticos de formato del PDF final.
 
