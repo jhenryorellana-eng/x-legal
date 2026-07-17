@@ -1497,6 +1497,7 @@ export type Database = {
           cost_usd: number | null
           created_at: string
           created_by: string | null
+          error: string | null
           findings: Json
           form_definition_id: string | null
           id: string
@@ -1507,8 +1508,11 @@ export type Database = {
           run_id: string | null
           score: number | null
           semaforo: string | null
+          started_at: string | null
+          status: string
           summary: string | null
           target_kind: string
+          updated_at: string
           verdict: string | null
         }
         Insert: {
@@ -1516,6 +1520,7 @@ export type Database = {
           cost_usd?: number | null
           created_at?: string
           created_by?: string | null
+          error?: string | null
           findings?: Json
           form_definition_id?: string | null
           id?: string
@@ -1526,8 +1531,11 @@ export type Database = {
           run_id?: string | null
           score?: number | null
           semaforo?: string | null
+          started_at?: string | null
+          status?: string
           summary?: string | null
           target_kind: string
+          updated_at?: string
           verdict?: string | null
         }
         Update: {
@@ -1535,6 +1543,7 @@ export type Database = {
           cost_usd?: number | null
           created_at?: string
           created_by?: string | null
+          error?: string | null
           findings?: Json
           form_definition_id?: string | null
           id?: string
@@ -1545,8 +1554,11 @@ export type Database = {
           run_id?: string | null
           score?: number | null
           semaforo?: string | null
+          started_at?: string | null
+          status?: string
           summary?: string | null
           target_kind?: string
+          updated_at?: string
           verdict?: string | null
         }
         Relationships: [

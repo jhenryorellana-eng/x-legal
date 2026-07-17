@@ -55,6 +55,16 @@ const mocks = vi.hoisted(() => {
     listCurrentReadyQuestionnaireInstances: vi.fn().mockResolvedValue([]),
     findQuestionnaireGenerationConfig: vi.fn().mockResolvedValue(null),
     updateQuestionnaireInstance: vi.fn().mockResolvedValue(undefined),
+    // async pre-mortem lifecycle + lazy stale sweeps (ola premortem-async)
+    insertPreMortemQueued: vi.fn(),
+    findPreMortemAssessmentById: vi.fn(),
+    claimPreMortemAssessment: vi.fn(),
+    requeuePreMortemAssessment: vi.fn(),
+    cancelQueuedPreMortemAssessment: vi.fn(),
+    completePreMortemAssessment: vi.fn(),
+    markPreMortemFailed: vi.fn(),
+    sweepStalePreMortemForCase: vi.fn().mockResolvedValue(0),
+    sweepStaleRunsForCase: vi.fn().mockResolvedValue(0),
   };
 
   // platform mock functions
@@ -411,6 +421,22 @@ describe("startGeneration", () => {
       "cases",
       "edit",
     );
+  });
+
+  it("maps the unique-index violation (23505) to AI_RUN_DUPLICATE — atomic backstop for the findActiveRun TOCTOU", async () => {
+    // Two concurrent starts both pass findActiveRun (null); only one insert wins
+    // the uq_ai_runs_active_target partial unique index — the loser must surface
+    // the SAME domain code the friendly pre-check uses.
+    mocks.repo.findActiveRun.mockResolvedValue(null);
+    const uniqueErr = new Error("duplicate key value violates unique constraint") as Error & { code?: string };
+    uniqueErr.code = "23505";
+    mocks.repo.insertRun.mockRejectedValue(uniqueErr);
+
+    await expect(startGeneration(ADMIN_ACTOR, validInput)).rejects.toMatchObject({
+      name: "AiEngineError",
+      code: "AI_RUN_DUPLICATE",
+    });
+    expect(mocks.qstash.enqueueJob).not.toHaveBeenCalled();
   });
 
   it("calls requireCaseAccess with the caseId", async () => {
@@ -907,6 +933,22 @@ describe("getRunsForCase", () => {
     await getRunsForCase(ADMIN_ACTOR, CASE_ID);
 
     expect(mocks.authz.requireCaseAccess).toHaveBeenCalledWith(ADMIN_ACTOR, CASE_ID);
+  });
+
+  it("sweeps stale active runs BEFORE listing (lazy reaper — frees the unique-index lock)", async () => {
+    mocks.repo.listRunsForCase.mockResolvedValue([]);
+
+    await getRunsForCase(ADMIN_ACTOR, CASE_ID);
+
+    expect(mocks.repo.sweepStaleRunsForCase).toHaveBeenCalledOnce();
+    const [caseArg, cutoffs] = mocks.repo.sweepStaleRunsForCase.mock.calls[0] as [string, { runningBefore: string; queuedBefore: string }];
+    expect(caseArg).toBe(CASE_ID);
+    // running cutoff (30 min) must be MORE RECENT than the queued cutoff (60 min):
+    // checkpoints touch updated_at constantly, but the concurrency defer can hold
+    // a queued row legitimately for ~30 min.
+    expect(new Date(cutoffs.runningBefore).getTime()).toBeGreaterThan(new Date(cutoffs.queuedBefore).getTime());
+    // Both cutoffs are in the past.
+    expect(new Date(cutoffs.runningBefore).getTime()).toBeLessThan(Date.now());
   });
 
   it("returns runs from repository", async () => {

@@ -425,7 +425,11 @@ export async function insertRun(
     .single();
 
   if (error || !data) {
-    throw new Error(`ai-engine: insertRun failed — ${error?.message}`);
+    // Preserve the Postgres error code: 23505 on uq_ai_runs_active_target is the
+    // atomic single-active-run guard — the service maps it to AI_RUN_DUPLICATE.
+    const err = new Error(`ai-engine: insertRun failed — ${error?.message}`) as Error & { code?: string };
+    if (error?.code) err.code = error.code;
+    throw err;
   }
   return data;
 }
@@ -1538,6 +1542,243 @@ export async function listPreMortemAssessmentsForCase(
     return [];
   }
   return data ?? [];
+}
+
+/**
+ * Inserts a 'queued' pre-mortem assessment row — the enqueue act IS the
+ * concurrency claim: the partial unique index uq_premortem_active_target
+ * (one queued/running row per artifact) turns a concurrent second start into
+ * a 23505, surfaced to the caller as "duplicate".
+ */
+export async function insertPreMortemQueued(
+  row: TablesInsert<"case_pre_mortem_assessments">,
+): Promise<{ id: string; created_at: string } | "duplicate"> {
+  const client = createServiceClient();
+  const { data, error } = await client
+    .from("case_pre_mortem_assessments")
+    .insert({ ...row, status: "queued" })
+    .select("id, created_at")
+    .single();
+
+  if (error) {
+    if (error.code === "23505") return "duplicate";
+    throw new Error(`ai-engine: insertPreMortemQueued failed — ${error.message}`);
+  }
+  if (!data) throw new Error("ai-engine: insertPreMortemQueued returned no row");
+  return { id: data.id, created_at: data.created_at };
+}
+
+export async function findPreMortemAssessmentById(
+  id: string,
+): Promise<PreMortemAssessmentRow | null> {
+  const client = createServiceClient();
+  const { data, error } = await client
+    .from("case_pre_mortem_assessments")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) {
+    logger.error({ err: error, id }, "ai-engine: findPreMortemAssessmentById failed");
+    return null;
+  }
+  return data ?? null;
+}
+
+/**
+ * Atomic claim queued→running. Returns false when another QStash delivery
+ * already claimed the row (or it reached a terminal state) — the caller MUST
+ * skip without calling the provider (at-least-once delivery, single spend).
+ */
+export async function claimPreMortemAssessment(id: string): Promise<boolean> {
+  const client = createServiceClient();
+  const { data, error } = await client
+    .from("case_pre_mortem_assessments")
+    .update({ status: "running", started_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("status", "queued")
+    .select("id");
+  if (error) {
+    logger.error({ err: error, id }, "ai-engine: claimPreMortemAssessment failed");
+    return false;
+  }
+  return (data?.length ?? 0) > 0;
+}
+
+/**
+ * Reverts running→queued so a QStash retry can re-claim after a call failure
+ * that produced nothing (timeout/5xx). Guarded: never resurrects a terminal row.
+ */
+export async function requeuePreMortemAssessment(id: string): Promise<void> {
+  const client = createServiceClient();
+  const { error } = await client
+    .from("case_pre_mortem_assessments")
+    .update({ status: "queued", started_at: null })
+    .eq("id", id)
+    .eq("status", "running");
+  if (error) {
+    logger.error({ err: error, id }, "ai-engine: requeuePreMortemAssessment failed");
+  }
+}
+
+/**
+ * Cancels a QUEUED validation (user regret). Running rows are not cancellable —
+ * the provider call is already in flight and paid. Returns whether a row changed.
+ */
+export async function cancelQueuedPreMortemAssessment(id: string): Promise<boolean> {
+  const client = createServiceClient();
+  const { data, error } = await client
+    .from("case_pre_mortem_assessments")
+    .update({ status: "failed", error: "cancelled_by_user" })
+    .eq("id", id)
+    .eq("status", "queued")
+    .select("id");
+  if (error) {
+    logger.error({ err: error, id }, "ai-engine: cancelQueuedPreMortemAssessment failed");
+    return false;
+  }
+  return (data?.length ?? 0) > 0;
+}
+
+/**
+ * Terminal completion of a claimed row. Guarded WHERE status='running' (same
+ * pattern as completeRun): rowsAffected=0 means the row was cancelled/failed
+ * meanwhile — the caller logs and skips, never re-runs the paid call.
+ */
+export async function completePreMortemAssessment(
+  id: string,
+  result: {
+    score: number;
+    semaforo: string;
+    verdict: string;
+    summary: string | null;
+    findings: import("@/shared/database.types").Json;
+    model: string;
+    input_tokens: number;
+    output_tokens: number;
+    cost_usd: number | null;
+  },
+): Promise<{ rowsAffected: number }> {
+  const client = createServiceClient();
+  const { data, error } = await client
+    .from("case_pre_mortem_assessments")
+    .update({ ...result, status: "completed", error: null })
+    .eq("id", id)
+    .eq("status", "running")
+    .select("id");
+  if (error) {
+    throw new Error(`ai-engine: completePreMortemAssessment failed — ${error.message}`);
+  }
+  return { rowsAffected: data?.length ?? 0 };
+}
+
+/** Marks a queued/running assessment failed. Never overwrites completed rows. */
+export async function markPreMortemFailed(id: string, errorMsg: string): Promise<void> {
+  const client = createServiceClient();
+  const { error } = await client
+    .from("case_pre_mortem_assessments")
+    .update({ status: "failed", error: errorMsg })
+    .eq("id", id)
+    .in("status", ["queued", "running"]);
+  if (error) {
+    logger.error({ err: error, id }, "ai-engine: markPreMortemFailed failed");
+  }
+}
+
+/**
+ * Lazy zombie reaper (read path): marks stale in-flight assessments of a case as
+ * failed. A running row can't heartbeat (one long provider call), so staleness is
+ * wall-clock: Vercel kills the invocation at maxDuration → anything running past
+ * the cutoff is dead. Queued rows past their cutoff lost their enqueue. NEVER
+ * auto-re-runs (the provider call may have completed server-side — re-calling
+ * would double the spend); the staff re-clicks deliberately.
+ */
+export async function sweepStalePreMortemForCase(
+  caseId: string,
+  cutoffs: { runningBefore: string; queuedBefore: string },
+): Promise<number> {
+  const client = createServiceClient();
+  let swept = 0;
+
+  const { data: staleRunning, error: errRunning } = await client
+    .from("case_pre_mortem_assessments")
+    .update({ status: "failed", error: "stale_running_swept" })
+    .eq("case_id", caseId)
+    .eq("status", "running")
+    .lt("started_at", cutoffs.runningBefore)
+    .select("id");
+  if (errRunning) {
+    logger.error({ err: errRunning, caseId }, "ai-engine: sweepStalePreMortem (running) failed");
+  } else {
+    swept += staleRunning?.length ?? 0;
+  }
+
+  // updated_at, NOT created_at: a requeued row (call failure → QStash retry) is
+  // old by created_at but healthy — the claim/requeue transitions touch
+  // updated_at via the trigger, so the cutoff measures time since the LAST
+  // lifecycle movement, never killing a live retry cycle.
+  const { data: staleQueued, error: errQueued } = await client
+    .from("case_pre_mortem_assessments")
+    .update({ status: "failed", error: "stale_queued_swept" })
+    .eq("case_id", caseId)
+    .eq("status", "queued")
+    .lt("updated_at", cutoffs.queuedBefore)
+    .select("id");
+  if (errQueued) {
+    logger.error({ err: errQueued, caseId }, "ai-engine: sweepStalePreMortem (queued) failed");
+  } else {
+    swept += staleQueued?.length ?? 0;
+  }
+
+  if (swept > 0) {
+    logger.warn({ caseId, swept }, "ai-engine: swept stale pre-mortem assessments to failed");
+  }
+  return swept;
+}
+
+/**
+ * Lazy zombie reaper for GENERATION runs (read path). Needed because the
+ * uq_ai_runs_active_target unique index would otherwise block re-generating
+ * forever behind a dead queued/running row. Thresholds are conservative:
+ * checkpoints touch updated_at every section (≤240s per call), and the
+ * concurrency defer can legitimately hold 'queued' for ~30 min.
+ */
+export async function sweepStaleRunsForCase(
+  caseId: string,
+  cutoffs: { runningBefore: string; queuedBefore: string },
+): Promise<number> {
+  const client = createServiceClient();
+  let swept = 0;
+
+  const { data: staleRunning, error: errRunning } = await client
+    .from("ai_generation_runs")
+    .update({ status: "failed", error: "stale_running_swept", updated_at: new Date().toISOString() })
+    .eq("case_id", caseId)
+    .eq("status", "running")
+    .lt("updated_at", cutoffs.runningBefore)
+    .select("id");
+  if (errRunning) {
+    logger.error({ err: errRunning, caseId }, "ai-engine: sweepStaleRuns (running) failed");
+  } else {
+    swept += staleRunning?.length ?? 0;
+  }
+
+  const { data: staleQueued, error: errQueued } = await client
+    .from("ai_generation_runs")
+    .update({ status: "failed", error: "stale_queued_swept", updated_at: new Date().toISOString() })
+    .eq("case_id", caseId)
+    .eq("status", "queued")
+    .lt("updated_at", cutoffs.queuedBefore)
+    .select("id");
+  if (errQueued) {
+    logger.error({ err: errQueued, caseId }, "ai-engine: sweepStaleRuns (queued) failed");
+  } else {
+    swept += staleQueued?.length ?? 0;
+  }
+
+  if (swept > 0) {
+    logger.warn({ caseId, swept }, "ai-engine: swept stale generation runs to failed");
+  }
+  return swept;
 }
 
 /** The Pre-Mortem filling guide (rubric) + enablement for a form_definition. */

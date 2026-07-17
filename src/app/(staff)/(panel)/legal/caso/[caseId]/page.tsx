@@ -52,7 +52,7 @@ import {
   confirmAttachmentAction,
   getAttachmentDownloadUrlAction,
 } from "@/backend/modules/messaging/actions";
-import { mapStatusToPill, buildRutaVM, buildPreMortemTargets, mapPreMortemReports, mapStatementInstallments } from "../../../admin/casos/view-helpers";
+import { mapStatusToPill, buildRutaVM, buildPreMortemTargets, mapPreMortemReports, mapPreMortemInFlight, mapStatementInstallments } from "../../../admin/casos/view-helpers";
 import {
   reviewDocumentAction,
   registerPaymentAction,
@@ -72,6 +72,8 @@ import {
   getDocumentTranslationAction,
   setDocumentTranslationNotRequiredAction,
   runPreMortemAction,
+  getPreMortemStatusAction,
+  cancelPreMortemAction,
   addCaseNoteAction,
   deleteNoteAction,
 } from "../../../admin/casos/actions";
@@ -235,6 +237,7 @@ export default async function LegalCasoDetailPage({
     enabled: preMortemEnabled,
     targets: preMortemTargets,
     reports: mapPreMortemReports(preMortemRows, preMortemTargets, locale),
+    inFlight: mapPreMortemInFlight(preMortemRows, preMortemTargets),
   };
 
   const vm: CaseWorkspaceVM = {
@@ -317,6 +320,8 @@ export default async function LegalCasoDetailPage({
         startLetterGeneration: startLetterGenerationAction,
         getRunStatus: getRunStatusAction,
         runPreMortem: runPreMortemAction,
+        getPreMortemStatus: getPreMortemStatusAction,
+        cancelPreMortem: cancelPreMortemAction,
         registerPayment: registerPaymentAction,
         resendSigningLink: resendSigningLinkAction,
         sendContract: sendContractAction,

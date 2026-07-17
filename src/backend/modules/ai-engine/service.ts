@@ -158,8 +158,16 @@ import {
   resolveGenerationInputs,
   findGenerationConfig,
   matchDatasetItems,
-  insertPreMortemAssessment,
   listPreMortemAssessmentsForCase,
+  insertPreMortemQueued,
+  findPreMortemAssessmentById,
+  claimPreMortemAssessment,
+  requeuePreMortemAssessment,
+  cancelQueuedPreMortemAssessment,
+  completePreMortemAssessment,
+  markPreMortemFailed,
+  sweepStalePreMortemForCase,
+  sweepStaleRunsForCase,
   findGuideEnabledFormForCase,
   listGuideEnabledFormsForCase,
   listCompletedRunsForForms,
@@ -211,7 +219,9 @@ export class AiEngineError extends Error {
       | "AI_IMPROVE_OUTPUT_INVALID"
       | "PREMORTEM_NO_ELIGIBLE_RUN"
       | "PREMORTEM_NO_TARGET"
-      | "PREMORTEM_NO_GUIDE",
+      | "PREMORTEM_NO_GUIDE"
+      | "PREMORTEM_IN_PROGRESS"
+      | "PREMORTEM_TARGET_REGENERATING",
     public readonly details?: unknown,
   ) {
     super(code);
@@ -375,16 +385,26 @@ export async function startGeneration(
     dataset_injection: null,
   };
 
-  const run = await insertRun({
-    case_id: p.caseId,
-    form_definition_id: p.formDefinitionId,
-    party_id: p.partyId ?? null,
-    status: "queued",
-    version,
-    is_test: p.isTest ?? false,
-    requested_by: actor.userId,
-    config_snapshot: configSnapshot as unknown as import("@/shared/database.types").Json,
-  });
+  let run: GenerationRunRow;
+  try {
+    run = await insertRun({
+      case_id: p.caseId,
+      form_definition_id: p.formDefinitionId,
+      party_id: p.partyId ?? null,
+      status: "queued",
+      version,
+      is_test: p.isTest ?? false,
+      requested_by: actor.userId,
+      config_snapshot: configSnapshot as unknown as import("@/shared/database.types").Json,
+    });
+  } catch (err) {
+    // uq_ai_runs_active_target closes the findActiveRun read-then-insert TOCTOU:
+    // two concurrent starts both pass the pre-check, only one row wins the index.
+    if (isUniqueViolation(err)) {
+      throw new AiEngineError("AI_RUN_DUPLICATE");
+    }
+    throw err;
+  }
 
   await enqueueJob(
     {
@@ -3734,6 +3754,11 @@ export async function proposeExpedienteAssembly(
 // API-AI-02: getRunsForCase
 // ---------------------------------------------------------------------------
 
+/** Running is stale past this: checkpoints touch updated_at every section (≤240s/call). */
+const RUN_STALE_RUNNING_MS = 30 * 60_000;
+/** Queued is stale past this: the concurrency defer can legitimately hold ~30 min. */
+const RUN_STALE_QUEUED_MS = 60 * 60_000;
+
 /**
  * Returns all generation runs for a case, ordered by form+version.
  * The run with highest version per (form, party) is marked isCurrent.
@@ -3745,6 +3770,15 @@ export async function getRunsForCase(
   caseId: string,
 ): Promise<(GenerationRunRow & { isCurrent: boolean })[]> {
   await requireCaseAccess(actor, caseId);
+
+  // Lazy zombie reaper: without it, a dead queued/running row would hold the
+  // uq_ai_runs_active_target lock forever and block re-generation.
+  const now = Date.now();
+  await sweepStaleRunsForCase(caseId, {
+    runningBefore: new Date(now - RUN_STALE_RUNNING_MS).toISOString(),
+    queuedBefore: new Date(now - RUN_STALE_QUEUED_MS).toISOString(),
+  });
+
   const runs = await listRunsForCase(caseId);
 
   // Mark isCurrent: highest version per (form_definition_id, party_id) with status=completed
@@ -4012,6 +4046,9 @@ export interface PreMortemAssessment {
   costUsd: number | null;
   createdBy: string | null; // DB column is nullable (system/job-created assessments)
   createdAt: string;
+  /** Async lifecycle: queued/running rows are in-flight validations (no report yet). */
+  status: "queued" | "running" | "completed" | "failed";
+  error: string | null;
 }
 
 /** A document that can be validated (feeds the tab selector). */
@@ -4214,30 +4251,42 @@ function renderFieldsForValidation(
   );
 }
 
+/** Lifecycle status of an assessment row (async QStash pipeline). */
+export type PreMortemRunStatus = "queued" | "running" | "completed" | "failed";
+
+/** Everything the validator call needs, resolved actor-free on the job side. */
+interface PreMortemContext {
+  caseId: string;
+  targetKind: "ai_letter" | "pdf_automation";
+  runId: string | null;
+  responseId: string | null;
+  formDefinitionId: string;
+  model: string;
+  systemPrompt: string;
+  userMessage: string;
+}
+
 /**
- * Validates the QUALITY of a specific generated artifact (an ai_letter run or a
- * pdf_automation response) against (a) the admin-uploaded filling guide (rubric),
- * (b) the masked case context, and (c) web-searched official examples. Produces a
- * report — score 0-100 + semáforo + verdict + findings — and persists it.
+ * Resolves the FROZEN target (run_id/response_id fixed at enqueue time — never
+ * re-resolved to "latest") into the full validator context: artifact text
+ * (masked), rubric, source material, dynamic budgets and the final prompts.
  *
- * @throws AiEngineError("PREMORTEM_NO_TARGET") when the run/response is missing/ineligible.
- * @throws AiEngineError("PREMORTEM_NO_GUIDE") when the form has no enabled guide.
- * @throws AiEngineError("AI_PROVIDER_UNAVAILABLE") on Anthropic failure.
+ * Actor-free: authorization happened in startPreMortemValidation before the row
+ * was inserted; the job trusts the frozen row. Every throw here is DETERMINISTIC
+ * for the job (a missing guide/artifact does not heal on retry).
+ *
+ * @throws AiEngineError("PREMORTEM_NO_TARGET") when the frozen artifact is gone.
+ * @throws AiEngineError("PREMORTEM_NO_GUIDE") when the form's guide is missing/disabled.
  */
-export async function assessPreMortemRisk(
-  actor: Actor,
-  input: { caseId: string; target: PreMortemTarget },
-): Promise<PreMortemAssessment> {
-  await requireCaseAccess(actor, input.caseId);
-  // Staff-only work product — never exposed to clients, even case members.
-  if (actor.kind !== "staff") throw new AuthzError("wrong_kind");
-
-  const target = input.target;
-
-  // --- Resolve the target artifact + its form_definition ---
-  let targetKind: "ai_letter" | "pdf_automation";
-  let runId: string | null = null;
-  let responseId: string | null = null;
+async function resolvePreMortemContext(input: {
+  caseId: string;
+  targetKind: "ai_letter" | "pdf_automation";
+  runId: string | null;
+  responseId: string | null;
+}): Promise<PreMortemContext> {
+  const targetKind = input.targetKind;
+  const runId = input.runId;
+  const responseId = input.responseId;
   let formDefinitionId = "";
   let configModel: string | null = null;
   let documentBlock = ""; // the artifact rendered (masked) for the prompt
@@ -4249,25 +4298,15 @@ export async function assessPreMortemRisk(
   // memo for contradictions / incoherence / vagueness against the exact record.
   let aiLetterSourceInputs: ResolvedInputs | null = null;
 
-  if (target.kind === "ai_letter") {
-    targetKind = "ai_letter";
-    // Resolve to a full run row either way — we need config_snapshot + party_id to
-    // load the source material the memo was generated from.
-    let run: Awaited<ReturnType<typeof findRunById>>;
-    if (target.runId) {
-      run = await findRunById(target.runId);
-      if (!run) throw new AiEngineError("PREMORTEM_NO_TARGET", { reason: "Provided run not found", runId: target.runId });
-    } else {
-      const eligible = await findLatestEligibleRunForPreMortem(input.caseId);
-      if (!eligible) throw new AiEngineError("PREMORTEM_NO_TARGET", { reason: "No completed ai_letter run with an enabled guide", caseId: input.caseId });
-      run = await findRunById(eligible.runId);
-      if (!run) throw new AiEngineError("PREMORTEM_NO_TARGET", { reason: "Eligible run not found", runId: eligible.runId });
-    }
-    // IDOR: the run MUST belong to the already-authorized case.
+  if (targetKind === "ai_letter") {
+    if (!runId) throw new AiEngineError("PREMORTEM_NO_TARGET", { reason: "Frozen target has no runId" });
+    const run = await findRunById(runId);
+    if (!run) throw new AiEngineError("PREMORTEM_NO_TARGET", { reason: "Frozen run not found", runId });
+    // IDOR belt-and-braces: the frozen row was validated at enqueue, but never
+    // trust a cross-case artifact into a prompt.
     if (run.case_id !== input.caseId) throw new AuthzError("forbidden_case");
 
     const outputText = await resolveMemoText(run.output_text, run.output_path);
-    runId = run.id;
     formDefinitionId = run.form_definition_id ?? "";
     const cfg = formDefinitionId ? await findGenerationConfig(formDefinitionId) : null;
     configModel = cfg?.model ?? run.model ?? null;
@@ -4290,20 +4329,19 @@ export async function assessPreMortemRisk(
     // The budget itself is applied LATER (dynamic — needs the rubric+source sizes).
     pendingMaskedMemo = maskPii(outputText);
   } else {
-    targetKind = "pdf_automation";
-    responseId = target.responseId;
-    // resolveFormResponseFieldValues runs the SAME resolution generateFilledPdf does
-    // (incl. ES→EN translation + N/A policy) → validate exactly what would be filed.
+    if (!responseId) throw new AiEngineError("PREMORTEM_NO_TARGET", { reason: "Frozen target has no responseId" });
+    // resolveFormResponseFieldValuesSystem runs the SAME resolution generateFilledPdf
+    // does (incl. ES→EN translation + N/A policy) → validate exactly what would be
+    // filed. System variant: the job has no actor (authz happened at enqueue).
     const cases = (await import("@/backend/modules/cases")) as {
-      resolveFormResponseFieldValues: (actor: Actor, responseId: string) => Promise<{
+      resolveFormResponseFieldValuesSystem: (responseId: string) => Promise<{
         caseId: string;
         formDefinitionId: string;
         fields: Array<{ pdfFieldName: string | null; label: string; fieldType: string; source: string; value: string | string[] | boolean | null; visible: boolean; required: boolean; empty: boolean; doNotFill: boolean }>;
         missingRequired: string[];
       }>;
     };
-    const resolved = await cases.resolveFormResponseFieldValues(actor, responseId);
-    // IDOR: the response MUST belong to the already-authorized case.
+    const resolved = await cases.resolveFormResponseFieldValuesSystem(responseId);
     if (resolved.caseId !== input.caseId) throw new AuthzError("forbidden_case");
     formDefinitionId = resolved.formDefinitionId;
     documentBlock = maskPii(renderFieldsForValidation(resolved.fields, resolved.missingRequired));
@@ -4336,9 +4374,9 @@ export async function assessPreMortemRisk(
   if (!sourceBlock) {
     try {
       const cases = (await import("@/backend/modules/cases")) as {
-        getCaseExtractions: (actor: Actor, caseId: string) => Promise<unknown[]>;
+        getCaseExtractionsSystem: (caseId: string) => Promise<unknown[]>;
       };
-      const extractions = await cases.getCaseExtractions(actor, input.caseId);
+      const extractions = await cases.getCaseExtractionsSystem(input.caseId);
       if (Array.isArray(extractions) && extractions.length > 0) {
         contextBlock = maskPii(JSON.stringify(extractions)).slice(0, PREMORTEM_CONTEXT_BUDGET);
       }
@@ -4405,8 +4443,42 @@ export async function assessPreMortemRisk(
     "  ]\n" +
     "}";
 
-  // --- Call Anthropic (with web_search) ---
+  return {
+    caseId: input.caseId,
+    targetKind,
+    runId,
+    responseId,
+    formDefinitionId,
+    model,
+    systemPrompt,
+    userMessage,
+  };
+}
+
+/** What one validator call produced (before persistence). */
+interface PreMortemCallResult {
+  score: number;
+  semaforo: Semaforo;
+  verdict: Verdict;
+  summary: string | null;
+  findings: PreMortemFinding[];
+  modelUsed: string;
+  usage: AnthropicUsage;
+  costUsd: number | null;
+}
+
+/**
+ * Runs the single long validator call and parses/calibrates the report.
+ *
+ * Model fallback happens ONLY for fast-fail 400/model errors (they return in
+ * seconds). A slow failure (timeout/5xx) throws: after a 700s call there is no
+ * headroom for a second one inside the webhook's 800s maxDuration — the QStash
+ * retry (via requeue in the job) is the retry mechanism, and a failed call
+ * produced nothing so re-calling never doubles the spend.
+ */
+async function runPreMortemCall(ctx: PreMortemContext): Promise<PreMortemCallResult> {
   const client = getAnthropicClient();
+  const { model, systemPrompt, userMessage } = ctx;
   let validatorText: string;
   let usage: AnthropicUsage;
   let modelUsed: string;
@@ -4425,8 +4497,11 @@ export async function assessPreMortemRisk(
     modelUsed = result.model;
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    logger.error({ err: errMsg, caseId: input.caseId, model }, "ai-engine: pre-mortem validator call failed");
-    if (model !== PREMORTEM_FALLBACK_MODEL && (errMsg.includes("400") || errMsg.includes("model"))) {
+    logger.error({ err: errMsg, caseId: ctx.caseId, model }, "ai-engine: pre-mortem validator call failed");
+    // Fast-fail detection must be NARROW: a bare `includes("model")` would match
+    // any message that merely mentions a model name (e.g. some timeout wrappers)
+    // and trigger a second full-length call inside the same 800s invocation.
+    if (model !== PREMORTEM_FALLBACK_MODEL && (errMsg.includes("400") || errMsg.includes("model_not_found"))) {
       try {
         const fb = await callAnthropic(client, {
           model: PREMORTEM_FALLBACK_MODEL,
@@ -4495,54 +4570,290 @@ export async function assessPreMortemRisk(
   const modelVerdict = isVerdict(parsed?.verdict) ? (parsed!.verdict as Verdict) : null;
   if (modelVerdict && modelVerdict !== verdict) {
     logger.info(
-      { caseId: input.caseId, modelVerdict, calibratedVerdict: verdict, score, hasCritico },
+      { caseId: ctx.caseId, modelVerdict, calibratedVerdict: verdict, score, hasCritico },
       "ai-engine: pre-mortem verdict calibrated per rubric §5.3",
     );
   }
 
-  // --- Persist ---
-  const { id: assessmentId, created_at } = await insertPreMortemAssessment({
+  return { score, semaforo, verdict, summary, findings, modelUsed, usage, costUsd };
+}
+
+/**
+ * API — Enqueues an async Pre-Mortem validation (QStash job model).
+ *
+ * Authorizes (staff-only + case access + IDOR), FREEZES the concrete artifact
+ * (run_id/response_id — never re-resolved later), fails fast on a missing guide,
+ * rejects if a generation of the same form is in flight (the artifact would be
+ * obsolete by the time the report lands), and inserts the 'queued' row — whose
+ * partial unique index IS the atomic anti-duplicate lock. Then enqueues
+ * run-premortem with a per-ROW dedupeId and an explicit 780s endpoint timeout
+ * (QStash's 60s default would fire a CONCURRENT retry mid-call = double spend).
+ *
+ * @throws AiEngineError("PREMORTEM_NO_TARGET" | "PREMORTEM_NO_GUIDE" |
+ *         "PREMORTEM_IN_PROGRESS" | "PREMORTEM_TARGET_REGENERATING")
+ */
+export async function startPreMortemValidation(
+  actor: Actor,
+  input: { caseId: string; target: PreMortemTarget },
+): Promise<{ assessmentId: string }> {
+  await requireCaseAccess(actor, input.caseId);
+  // Staff-only work product — never exposed to clients, even case members.
+  if (actor.kind !== "staff") throw new AuthzError("wrong_kind");
+
+  const target = input.target;
+  let targetKind: "ai_letter" | "pdf_automation";
+  let runId: string | null = null;
+  let responseId: string | null = null;
+  let formDefinitionId = "";
+  let partyId: string | null = null;
+
+  if (target.kind === "ai_letter") {
+    targetKind = "ai_letter";
+    let run: Awaited<ReturnType<typeof findRunById>>;
+    if (target.runId) {
+      run = await findRunById(target.runId);
+      if (!run) throw new AiEngineError("PREMORTEM_NO_TARGET", { reason: "Provided run not found", runId: target.runId });
+    } else {
+      const eligible = await findLatestEligibleRunForPreMortem(input.caseId);
+      if (!eligible) throw new AiEngineError("PREMORTEM_NO_TARGET", { reason: "No completed ai_letter run with an enabled guide", caseId: input.caseId });
+      run = await findRunById(eligible.runId);
+      if (!run) throw new AiEngineError("PREMORTEM_NO_TARGET", { reason: "Eligible run not found", runId: eligible.runId });
+    }
+    // IDOR: the run MUST belong to the already-authorized case.
+    if (run.case_id !== input.caseId) throw new AuthzError("forbidden_case");
+    runId = run.id;
+    formDefinitionId = run.form_definition_id ?? "";
+    partyId = run.party_id;
+  } else {
+    targetKind = "pdf_automation";
+    responseId = target.responseId;
+    // Light meta only — the heavy field resolution happens in the job.
+    const cases = (await import("@/backend/modules/cases")) as {
+      getFormResponseMeta: (responseId: string) => Promise<{ caseId: string; formDefinitionId: string } | null>;
+    };
+    const meta = await cases.getFormResponseMeta(responseId);
+    if (!meta) throw new AiEngineError("PREMORTEM_NO_TARGET", { reason: "Response not found", responseId });
+    // IDOR: the response MUST belong to the already-authorized case.
+    if (meta.caseId !== input.caseId) throw new AuthzError("forbidden_case");
+    formDefinitionId = meta.formDefinitionId;
+  }
+
+  if (!formDefinitionId) {
+    throw new AiEngineError("PREMORTEM_NO_TARGET", { reason: "Target has no form_definition" });
+  }
+
+  // Fail fast + synchronously on config errors the staff can act on immediately.
+  const guide = await findFormFillGuide(formDefinitionId);
+  if (!guide || !guide.enabled || !guide.guide_markdown.trim()) {
+    throw new AiEngineError("PREMORTEM_NO_GUIDE", { formDefinitionId });
+  }
+
+  // Cross-lock: validating a letter while it regenerates would report on an
+  // artifact that is obsolete the moment the new version lands. (One direction
+  // only — regenerating DURING a validation is fine: the report stays anchored
+  // to its historical run_id.)
+  if (targetKind === "ai_letter") {
+    const regenerating = await findActiveRun(input.caseId, formDefinitionId, partyId);
+    if (regenerating) {
+      throw new AiEngineError("PREMORTEM_TARGET_REGENERATING", { formDefinitionId });
+    }
+  }
+
+  const inserted = await insertPreMortemQueued({
     case_id: input.caseId,
     target_kind: targetKind,
     run_id: runId,
     response_id: responseId,
     form_definition_id: formDefinitionId,
-    score,
-    semaforo,
-    verdict,
-    summary,
-    findings: findings as unknown as import("@/shared/database.types").Json,
-    model: modelUsed,
-    input_tokens: usage.inputTokens,
-    output_tokens: usage.outputTokens,
-    cost_usd: costUsd,
+    status: "queued",
     created_by: actor.userId,
+  });
+  if (inserted === "duplicate") {
+    throw new AiEngineError("PREMORTEM_IN_PROGRESS", { formDefinitionId });
+  }
+
+  try {
+    await enqueueJob(
+      {
+        jobKey: "run-premortem",
+        entityId: inserted.id,
+        attempt: 1,
+        // Per-ROW dedupe: a per-target dedupeId would make QStash silently drop
+        // legitimate re-validations inside its dedup window (queued zombie row).
+        dedupeId: `run-premortem:${inserted.id}`,
+        orgId: actor.orgId,
+        assessmentId: inserted.id,
+      },
+      { retries: 2, timeout: "780s" },
+    );
+  } catch (err) {
+    // Compensate: an unenqueued 'queued' row would hold the artifact lock until
+    // the lazy sweep — free it immediately instead.
+    await markPreMortemFailed(inserted.id, "enqueue_failed");
+    throw err;
+  }
+
+  await writeAudit(actor, "ai.premortem.queued", "case_pre_mortem_assessment", inserted.id, {
+    after: { caseId: input.caseId, targetKind, runId, responseId },
   });
 
   logger.info(
-    { job: "assessPreMortemRisk", caseId: input.caseId, targetKind, runId, responseId, score, semaforo, verdict, findingCount: findings.length, model: modelUsed, costUsd },
-    "ai-engine: pre-mortem validation completed",
+    { job: "startPreMortemValidation", assessmentId: inserted.id, caseId: input.caseId, targetKind, runId, responseId },
+    "ai-engine: pre-mortem validation queued",
   );
 
-  return {
-    id: assessmentId,
-    caseId: input.caseId,
-    targetKind,
-    runId,
-    responseId,
-    formDefinitionId,
-    score,
-    semaforo,
-    verdict,
-    summary,
-    findings,
-    model: modelUsed,
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
-    costUsd,
-    createdBy: actor.userId,
-    createdAt: created_at,
-  };
+  return { assessmentId: inserted.id };
+}
+
+export interface RunPreMortemPayload {
+  jobKey: "run-premortem";
+  entityId: string;
+  attempt: number;
+  dedupeId: string;
+  orgId: string;
+  assessmentId: string;
+}
+
+/** In-process persist retries after a SUCCESSFUL (paid) validator call. */
+const PREMORTEM_PERSIST_RETRIES = 3;
+const PREMORTEM_PERSIST_BACKOFF_MS = 150;
+/** Running past this = the invocation is dead (Vercel hard-kills at 800s). */
+const PREMORTEM_STALE_RUNNING_MS = 15 * 60_000;
+/** Queued past this = the enqueue was lost (QStash delivers in seconds). */
+const PREMORTEM_STALE_QUEUED_MS = 30 * 60_000;
+
+/**
+ * Executes the run-premortem QStash job (called by jobs/run-premortem.ts).
+ *
+ * Cost discipline around the single long Anthropic call:
+ *   1. Atomic claim queued→running — a lost claim SKIPS (at-least-once delivery
+ *      must never trigger a second paid call; no stale re-claim either: a zombie
+ *      may have completed the call server-side, so re-running risks double spend).
+ *   2. Deterministic resolve errors (guide/artifact gone) → failed, NO retry.
+ *   3. Call failure → revert to queued + throw (QStash retries; nothing was paid for).
+ *   4. Persist failure AFTER a successful call → in-process retries, then failed
+ *      WITHOUT rethrow (never re-run a paid 700s call for a DB hiccup).
+ */
+export async function executePreMortemJob(payload: RunPreMortemPayload): Promise<JobOutcome> {
+  const row = await findPreMortemAssessmentById(payload.assessmentId);
+  if (!row) {
+    logger.warn({ assessmentId: payload.assessmentId }, "ai-engine: run-premortem row not found — skipping");
+    return "skipped";
+  }
+  if (row.status === "completed" || row.status === "failed") {
+    return "skipped";
+  }
+
+  const claimed = await claimPreMortemAssessment(row.id);
+  if (!claimed) {
+    logger.info({ assessmentId: row.id }, "ai-engine: run-premortem claim lost (concurrent delivery) — skipping");
+    return "skipped";
+  }
+
+  let ctx: PreMortemContext;
+  try {
+    ctx = await resolvePreMortemContext({
+      caseId: row.case_id,
+      targetKind: (row.target_kind as "ai_letter" | "pdf_automation") ?? "ai_letter",
+      runId: row.run_id,
+      responseId: row.response_id,
+    });
+  } catch (err) {
+    if (err instanceof AiEngineError || (err as Error | null)?.name === "AuthzError") {
+      // Deterministic: retrying cannot heal a missing guide/artifact.
+      const msg = err instanceof AiEngineError ? err.code : (err as Error).message;
+      await markPreMortemFailed(row.id, `resolve: ${msg}`);
+      return "failed";
+    }
+    // Transient infra (storage/network) — revert the claim and let QStash retry.
+    await requeuePreMortemAssessment(row.id);
+    throw err;
+  }
+
+  let result: PreMortemCallResult;
+  try {
+    result = await runPreMortemCall(ctx);
+  } catch (err) {
+    // Revert the claim so the QStash retry re-runs the call. NOTE: a client-side
+    // timeout can abort a request Anthropic already accepted (and billed) — this
+    // retry is a DELIBERATE reliability-over-cost tradeoff (Henry 2026-07-17:
+    // "no importa el costo, lo tiene que hacer bien"): a real client's validation
+    // must land even if a lost response costs one extra call. Bounded: retries=2
+    // caps the worst case at 3 paid calls per assessment.
+    await requeuePreMortemAssessment(row.id);
+    throw err;
+  }
+
+  for (let attempt = 1; attempt <= PREMORTEM_PERSIST_RETRIES; attempt++) {
+    try {
+      const { rowsAffected } = await completePreMortemAssessment(row.id, {
+        score: result.score,
+        semaforo: result.semaforo,
+        verdict: result.verdict,
+        summary: result.summary,
+        findings: result.findings as unknown as import("@/shared/database.types").Json,
+        model: result.modelUsed,
+        input_tokens: result.usage.inputTokens,
+        output_tokens: result.usage.outputTokens,
+        cost_usd: result.costUsd,
+      });
+      if (rowsAffected === 0) {
+        // Cancelled/failed meanwhile — keep the spend, don't resurrect the row.
+        logger.warn({ assessmentId: row.id }, "ai-engine: run-premortem result discarded (row left running state meanwhile)");
+        return "skipped";
+      }
+      logger.info(
+        { job: "executePreMortemJob", assessmentId: row.id, caseId: row.case_id, score: result.score, verdict: result.verdict, findingCount: result.findings.length, model: result.modelUsed, costUsd: result.costUsd },
+        "ai-engine: pre-mortem validation completed",
+      );
+      return "completed";
+    } catch (err) {
+      logger.error({ err, assessmentId: row.id, attempt }, "ai-engine: run-premortem persist failed");
+      if (attempt < PREMORTEM_PERSIST_RETRIES) {
+        await new Promise((r) => setTimeout(r, PREMORTEM_PERSIST_BACKOFF_MS * attempt));
+      }
+    }
+  }
+  // Paid call, unpersistable result: NEVER re-run — fail and keep the spend traceable.
+  await markPreMortemFailed(row.id, "persist_failed_after_successful_call");
+  return "failed";
+}
+
+/** job-failed callback: marks the assessment failed after QStash exhausts retries. */
+export async function markPreMortemFailedByCallback(assessmentId: string, errorMsg: string): Promise<void> {
+  logger.error({ assessmentId, errorMsg }, "ai-engine: run-premortem exhausted retries — marking failed");
+  await markPreMortemFailed(assessmentId, errorMsg);
+}
+
+/**
+ * Cancels a QUEUED validation (user regret). Running rows are not cancellable —
+ * the provider call is already in flight and paid; the job's guarded terminal
+ * write (WHERE status='running') makes a cancelled queued row a clean no-op.
+ */
+export async function cancelPreMortemValidation(
+  actor: Actor,
+  assessmentId: string,
+): Promise<{ cancelled: boolean }> {
+  const row = await findPreMortemAssessmentById(assessmentId);
+  if (!row) throw new AiEngineError("PREMORTEM_NO_TARGET", { assessmentId });
+  await requireCaseAccess(actor, row.case_id);
+  if (actor.kind !== "staff") throw new AuthzError("wrong_kind");
+
+  const cancelled = await cancelQueuedPreMortemAssessment(assessmentId);
+  return { cancelled };
+}
+
+/** Lightweight poll endpoint for the UI: the row's lifecycle status. */
+export async function getPreMortemStatus(
+  actor: Actor,
+  assessmentId: string,
+): Promise<{ id: string; status: PreMortemRunStatus }> {
+  const row = await findPreMortemAssessmentById(assessmentId);
+  if (!row) throw new AiEngineError("PREMORTEM_NO_TARGET", { assessmentId });
+  await requireCaseAccess(actor, row.case_id);
+  if (actor.kind !== "staff") throw new AuthzError("wrong_kind");
+
+  return { id: row.id, status: (row.status as PreMortemRunStatus) ?? "completed" };
 }
 
 /**
@@ -4555,6 +4866,14 @@ export async function getPreMortemAssessmentsForCase(
 ): Promise<PreMortemAssessment[]> {
   await requireCaseAccess(actor, caseId);
   if (actor.kind !== "staff") throw new AuthzError("wrong_kind"); // staff-only work product
+
+  // Lazy zombie reaper: heal stale in-flight rows exactly where they are read
+  // (no cron needed). Deliberately a write on the read path — self-curing UI.
+  const now = Date.now();
+  await sweepStalePreMortemForCase(caseId, {
+    runningBefore: new Date(now - PREMORTEM_STALE_RUNNING_MS).toISOString(),
+    queuedBefore: new Date(now - PREMORTEM_STALE_QUEUED_MS).toISOString(),
+  });
 
   const rows = await listPreMortemAssessmentsForCase(caseId);
 
@@ -4576,6 +4895,8 @@ export async function getPreMortemAssessmentsForCase(
     costUsd: row.cost_usd,
     createdBy: row.created_by,
     createdAt: row.created_at,
+    status: (row.status as PreMortemAssessment["status"]) ?? "completed",
+    error: row.error ?? null,
   }));
 }
 

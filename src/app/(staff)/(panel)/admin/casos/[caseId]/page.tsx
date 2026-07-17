@@ -49,7 +49,7 @@ import {
 } from "@/backend/modules/messaging/actions";
 import type { CaseWorkspaceVM, CaseTabId } from "@/frontend/features/shared-case";
 import { buildCasosStrings } from "@/frontend/features/shared-case";
-import { mapStatusToPill, buildRutaVM, buildPreMortemTargets, mapPreMortemReports, mapStatementInstallments } from "../view-helpers";
+import { mapStatusToPill, buildRutaVM, buildPreMortemTargets, mapPreMortemReports, mapPreMortemInFlight, mapStatementInstallments } from "../view-helpers";
 import {
   reviewDocumentAction,
   setRequirementVisibilityAction,
@@ -78,6 +78,8 @@ import {
   assignCaseOwnerAction,
   setDocumentTranslationNotRequiredAction,
   runPreMortemAction,
+  getPreMortemStatusAction,
+  cancelPreMortemAction,
   addCaseNoteAction,
   deleteNoteAction,
 } from "../actions";
@@ -253,6 +255,7 @@ export default async function AdminCasoDetailPage({
     enabled: preMortemEnabled,
     targets: preMortemTargets,
     reports: mapPreMortemReports(preMortemRows, preMortemTargets, locale),
+    inFlight: mapPreMortemInFlight(preMortemRows, preMortemTargets),
   };
 
   const vm: CaseWorkspaceVM = {
@@ -338,6 +341,8 @@ export default async function AdminCasoDetailPage({
         startLetterGeneration: startLetterGenerationAction,
         getRunStatus: getRunStatusAction,
         runPreMortem: runPreMortemAction,
+        getPreMortemStatus: getPreMortemStatusAction,
+        cancelPreMortem: cancelPreMortemAction,
         setRequirementVisibility: canManageDocs ? setRequirementVisibilityAction : undefined,
         advanceCasePhase: canAdvancePhase ? advanceCasePhaseAction : undefined,
         advanceCaseMilestone: canAdvancePhase ? advanceCaseMilestoneAction : undefined,

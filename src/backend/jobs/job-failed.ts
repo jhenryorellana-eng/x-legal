@@ -22,6 +22,7 @@ import {
   markExtractionFailed,
   markTranslationFailed,
   markQuestionnaireGenerationFailed,
+  markPreMortemFailedByCallback,
 } from "@/backend/modules/ai-engine";
 
 // ---------------------------------------------------------------------------
@@ -39,6 +40,8 @@ const JobFailedPayloadSchema = z.object({
   caseId: z.string().uuid().optional(),
   formDefinitionId: z.string().uuid().optional(),
   partyId: z.string().uuid().nullable().optional(),
+  // run-premortem — keyed by assessment row
+  assessmentId: z.string().uuid().optional(),
 }).passthrough(); // pass-through: we only read known fields
 
 // ---------------------------------------------------------------------------
@@ -112,6 +115,14 @@ export async function handleJobFailed(rawPayload: unknown): Promise<void> {
             formDefinitionId: parsed.formDefinitionId,
             partyId: parsed.partyId ?? null,
           });
+        }
+        break;
+      }
+
+      case "run-premortem": {
+        const assessmentId = parsed.assessmentId ?? entityId ?? "";
+        if (assessmentId) {
+          await markPreMortemFailedByCallback(assessmentId, errorMsg);
         }
         break;
       }

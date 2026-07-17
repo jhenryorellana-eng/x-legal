@@ -264,11 +264,22 @@ export interface PreMortemReportVM {
   createdAt: string;
 }
 
+/** A queued/running validation (async QStash pipeline) — persists across reloads. */
+export interface PreMortemInFlightVM {
+  assessmentId: string;
+  /** Matches a PreMortemTargetVM.key (or a bare `${kind}:${formDefinitionId}:`). */
+  targetKey: string;
+  status: "queued" | "running";
+  createdAt: string;
+}
+
 export interface PreMortemVM {
   enabled: boolean;
   targets: PreMortemTargetVM[];
   /** History (newest first); the tab filters by the selected target. */
   reports: PreMortemReportVM[];
+  /** Validations currently queued/running — drives "Validando…" + button lock. */
+  inFlight: PreMortemInFlightVM[];
 }
 
 /** A single objective inside a cita of the appointment route (locale-resolved). */
@@ -518,13 +529,22 @@ export interface CaseDetailActions {
     runId: string;
   }) => Promise<{ ok: boolean; status?: string; outputAvailable?: boolean; error?: { code: string } }>;
   /**
-   * Validate a specific generation/automation with the Pre-Mortem. Returns the new
-   * quality report on success. Optional — only case-detail surfaces inject it.
+   * Enqueue an async Pre-Mortem validation (QStash). Returns the assessmentId
+   * the tab polls with getPreMortemStatus. Optional — only case-detail surfaces
+   * inject it.
    */
   runPreMortem?: (input: {
     caseId: string;
     target: { kind: PreMortemTargetKind; formDefinitionId: string; refId?: string | null };
-  }) => Promise<{ ok: boolean; report?: PreMortemReportVM; error?: { code: string } }>;
+  }) => Promise<{ ok: boolean; assessmentId?: string; error?: { code: string } }>;
+  /** Poll-safe (read-only): lifecycle status of an enqueued validation. */
+  getPreMortemStatus?: (input: {
+    assessmentId: string;
+  }) => Promise<{ ok: boolean; status?: string; error?: { code: string } }>;
+  /** Cancel a QUEUED validation (running ones are already in flight and paid). */
+  cancelPreMortem?: (input: {
+    assessmentId: string;
+  }) => Promise<{ ok: boolean; cancelled?: boolean; error?: { code: string } }>;
   /**
    * Request a translation (ES→EN by default) of an uploaded document into a
    * court-ready English PDF. Enqueues a QStash job; poll with getTranslation.

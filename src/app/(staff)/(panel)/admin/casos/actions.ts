@@ -71,7 +71,9 @@ import {
   improveFormAnswerText,
   translateDocument,
   getDocumentTranslation,
-  assessPreMortemRisk,
+  startPreMortemValidation,
+  getPreMortemStatus,
+  cancelPreMortemValidation,
   AiEngineError,
   type DocumentTranslationRow,
 } from "@/backend/modules/ai-engine";
@@ -90,7 +92,6 @@ import {
 import { classifySaveError } from "@/frontend/features/form-wizard/classify-save-error";
 import { getLocale } from "next-intl/server";
 import { resolveI18n, type Locale } from "@/shared/i18n";
-import { mapPreMortemReports } from "./view-helpers";
 
 type Ok<T> = { ok: true } & T;
 type Err = { ok: false; error: { code: string; message?: string } };
@@ -117,9 +118,15 @@ function mapErr(err: unknown): Err {
 }
 
 // ---------------------------------------------------------------------------
-// runPreMortemAction — validate a specific generation/automation (Pre-Mortem)
+// Pre-Mortem actions — async QStash pipeline (enqueue / poll / cancel)
 // ---------------------------------------------------------------------------
 
+/**
+ * Enqueues an async Pre-Mortem validation and returns immediately with the
+ * assessmentId the tab polls via getPreMortemStatusAction. Config errors the
+ * staff can act on (no guide, duplicate in flight, target regenerating) still
+ * surface synchronously as domain codes.
+ */
 export async function runPreMortemAction(input: {
   caseId: string;
   target: { kind: "ai_letter" | "pdf_automation"; formDefinitionId: string; refId?: string | null };
@@ -131,12 +138,30 @@ export async function runPreMortemAction(input: {
       t.kind === "ai_letter"
         ? ({ kind: "ai_letter", runId: t.refId ?? undefined } as const)
         : ({ kind: "pdf_automation", responseId: t.refId ?? "" } as const);
-    const assessment = await assessPreMortemRisk(actor, { caseId: input.caseId, target: backendTarget });
-    const locale = (await getLocale()) as Locale;
-    // The page revalidates after this (router.refresh), rebuilding reports with the
-    // full target list; the returned report is a transient confirmation.
-    const [report] = mapPreMortemReports([assessment], [], locale === "en" ? "en" : "es");
-    return { ok: true as const, report };
+    const { assessmentId } = await startPreMortemValidation(actor, { caseId: input.caseId, target: backendTarget });
+    return { ok: true as const, assessmentId };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+/** Poll-safe (read-only, never re-enqueues): lifecycle status of a validation. */
+export async function getPreMortemStatusAction(input: { assessmentId: string }) {
+  try {
+    const actor = await requireActor();
+    const { status } = await getPreMortemStatus(actor, input.assessmentId);
+    return { ok: true as const, status };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+/** Cancels a QUEUED validation (running ones are already in flight and paid). */
+export async function cancelPreMortemAction(input: { assessmentId: string }) {
+  try {
+    const actor = await requireActor();
+    const { cancelled } = await cancelPreMortemValidation(actor, input.assessmentId);
+    return { ok: true as const, cancelled };
   } catch (err) {
     return mapErr(err);
   }

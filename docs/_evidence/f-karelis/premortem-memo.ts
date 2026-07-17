@@ -44,10 +44,58 @@ const OUT_FILE = path.resolve(__dirname, `../premortem-memo/assessment${RUN_ID_O
   }
 
   const actor = { userId: HENRY_ADMIN, orgId, kind: "staff" as const, role: "admin" as const, permissions: new Map() };
+  void actor;
 
-  console.log("assessPreMortemRisk (ai_letter)…", runId ? `runId=${runId}` : "(latest eligible)");
-  const target = runId ? { kind: "ai_letter" as const, runId } : { kind: "ai_letter" as const };
-  const a = await svc.assessPreMortemRisk(actor, { caseId: CASE_ID, target });
+  // Async refactor (2026-07-17): the validator now runs through the run-premortem
+  // QStash job. For a LOCAL evidence run we insert the frozen queued row and drive
+  // executePreMortemJob inline — same claim/complete lifecycle, no QStash needed.
+  const repo = await import("../../../src/backend/modules/ai-engine/repository");
+  if (!runId) {
+    const { data: latest } = await sb
+      .from("ai_generation_runs")
+      .select("id")
+      .eq("case_id", CASE_ID)
+      .eq("status", "completed")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    runId = (latest as { id?: string } | null)?.id;
+    if (!runId) throw new Error("no completed run found for the case");
+  }
+  const { data: runRow } = await sb
+    .from("ai_generation_runs")
+    .select("form_definition_id")
+    .eq("id", runId)
+    .single();
+
+  console.log("executePreMortemJob (ai_letter)…", `runId=${runId}`);
+  const inserted = await repo.insertPreMortemQueued({
+    case_id: CASE_ID,
+    target_kind: "ai_letter",
+    run_id: runId,
+    response_id: null,
+    form_definition_id: (runRow as { form_definition_id: string | null })?.form_definition_id ?? null,
+    status: "queued",
+    created_by: HENRY_ADMIN,
+  });
+  if (inserted === "duplicate") throw new Error("a validation for this run is already queued/running");
+
+  const outcome = await svc.executePreMortemJob({
+    jobKey: "run-premortem",
+    entityId: inserted.id,
+    attempt: 1,
+    dedupeId: `run-premortem:${inserted.id}`,
+    orgId,
+    assessmentId: inserted.id,
+  });
+  if (outcome !== "completed") throw new Error(`job outcome=${outcome}`);
+
+  const rows = await svc.getPreMortemAssessmentsForCase(
+    { userId: HENRY_ADMIN, orgId, kind: "staff", role: "admin", permissions: new Map() },
+    CASE_ID,
+  );
+  const a = rows.find((r) => r.id === inserted.id);
+  if (!a) throw new Error("assessment row not found after completion");
 
   const summary = {
     id: a.id, runId: a.runId, targetKind: a.targetKind,

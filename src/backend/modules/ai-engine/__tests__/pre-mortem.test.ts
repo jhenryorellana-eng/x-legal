@@ -1,18 +1,23 @@
 /**
- * ai-engine Pre-Mortem quality validator — unit tests.
+ * ai-engine Pre-Mortem quality validator — unit tests (validator core).
  *
- * Covers:
+ * Since the async refactor the validator runs inside the run-premortem QStash
+ * job; these tests drive the CONTEXT RESOLUTION + CALL + CALIBRATION pieces
+ * through executePreMortemJob with a frozen queued row (the enqueue-side rules
+ * live in pre-mortem-async.test.ts). Covers:
  *   1-4. retrieveDatasetItemsWithFallback (semantic / lexical fallback / null)
- *   5. assessPreMortemRisk: ai_letter happy path (persists validation, new shape)
- *   6. assessPreMortemRisk: pdf_automation happy path (resolveFormResponseFieldValues)
- *   7. assessPreMortemRisk: tolerant JSON parsing (markdown fences)
- *   8. assessPreMortemRisk: filters invalid categories/severities, clamps score
- *   9. assessPreMortemRisk: PREMORTEM_NO_TARGET when no eligible ai_letter run
- *  10. assessPreMortemRisk: PREMORTEM_NO_GUIDE when the form has no enabled guide
- *  11. assessPreMortemRisk: IDOR guard (run/response of a different case)
- *  12. assessPreMortemRisk: non-staff actor rejected (staff-only)
- *  13. getPreMortemAssessmentsForCase: maps rows to the new shape
- *  14. isPreMortemEnabledForCase: delegates to findGuideEnabledFormForCase
+ *   5. Source-material injection (frozen resolved_inputs) into the prompt
+ *   6. Dynamic artifact budget: 500k memo reaches the validator WHOLE
+ *   7. Truncation past the ceiling with a visible marker (no silent cap)
+ *   8. PII masked BEFORE truncation (boundary cut must not leak)
+ *   9-10. computePreMortemDocBudget (pure)
+ *  11. Fallback to config slugs when the run froze empty inputs
+ *  12. pdf_automation path via resolveFormResponseFieldValuesSystem
+ *  13. Tolerant JSON parsing (markdown fences)
+ *  14-16. Deterministic verdict calibration (rubric §5.3)
+ *  17. Filters invalid categories/severities, clamps score
+ *  18-19. IDOR belt-and-braces in the job (run/response of another case → failed)
+ *  20-22. getPreMortemAssessmentsForCase / isPreMortemEnabledForCase
  *
  * All I/O (repository, platform, authz, the cases module) is mocked.
  */
@@ -22,6 +27,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mocks = vi.hoisted(() => {
   const repo = {
     findRunById: vi.fn(),
+    findActiveRun: vi.fn(),
     findGenerationConfig: vi.fn().mockResolvedValue(null),
     matchDatasetItems: vi.fn(),
     insertPreMortemAssessment: vi.fn(),
@@ -32,7 +38,6 @@ const mocks = vi.hoisted(() => {
     listFormResponsesForForms: vi.fn().mockResolvedValue([]),
     findFormFillGuide: vi.fn(),
     findLatestEligibleRunForPreMortem: vi.fn(),
-    findActiveRun: vi.fn(),
     maxVersion: vi.fn(),
     insertRun: vi.fn(),
     updateRunStatus: vi.fn(),
@@ -59,6 +64,16 @@ const mocks = vi.hoisted(() => {
     loadDatasetItems: vi.fn(),
     loadResolvedInputs: vi.fn(),
     resolveGenerationInputs: vi.fn(),
+    // --- async pre-mortem lifecycle ---
+    insertPreMortemQueued: vi.fn(),
+    findPreMortemAssessmentById: vi.fn(),
+    claimPreMortemAssessment: vi.fn(),
+    requeuePreMortemAssessment: vi.fn(),
+    cancelQueuedPreMortemAssessment: vi.fn(),
+    completePreMortemAssessment: vi.fn(),
+    markPreMortemFailed: vi.fn(),
+    sweepStalePreMortemForCase: vi.fn().mockResolvedValue(0),
+    sweepStaleRunsForCase: vi.fn().mockResolvedValue(0),
   };
 
   const authz = {
@@ -73,7 +88,10 @@ const mocks = vi.hoisted(() => {
 
   const cases = {
     getCaseExtractions: vi.fn().mockResolvedValue([]),
+    getCaseExtractionsSystem: vi.fn().mockResolvedValue([]),
     resolveFormResponseFieldValues: vi.fn(),
+    resolveFormResponseFieldValuesSystem: vi.fn(),
+    getFormResponseMeta: vi.fn(),
   };
 
   const anthropicClient = {
@@ -110,7 +128,10 @@ vi.mock("@/backend/platform/authz", () => ({
 
 vi.mock("@/backend/modules/cases", () => ({
   getCaseExtractions: mocks.cases.getCaseExtractions,
+  getCaseExtractionsSystem: mocks.cases.getCaseExtractionsSystem,
   resolveFormResponseFieldValues: mocks.cases.resolveFormResponseFieldValues,
+  resolveFormResponseFieldValuesSystem: mocks.cases.resolveFormResponseFieldValuesSystem,
+  getFormResponseMeta: mocks.cases.getFormResponseMeta,
 }));
 
 vi.mock("@/backend/platform/embeddings", () => ({
@@ -183,12 +204,13 @@ vi.mock("@/backend/platform/supabase", () => {
 });
 
 import {
-  assessPreMortemRisk,
+  executePreMortemJob,
   getPreMortemAssessmentsForCase,
   isPreMortemEnabledForCase,
   retrieveDatasetItemsWithFallback,
   computePreMortemDocBudget,
   AiEngineError,
+  type RunPreMortemPayload,
 } from "../service";
 
 import type { Actor } from "@/backend/platform/authz";
@@ -266,6 +288,50 @@ function mockAnthropic(text: string) {
   }));
 }
 
+/** A frozen queued row (what startPreMortemValidation inserts) for the job. */
+function queuedRow(overrides?: Record<string, unknown>) {
+  return {
+    id: ASSESSMENT_ID,
+    case_id: CASE_ID,
+    target_kind: "ai_letter",
+    run_id: RUN_ID,
+    response_id: null,
+    form_definition_id: FORM_DEF_ID,
+    status: "queued",
+    started_at: null,
+    error: null,
+    score: null,
+    semaforo: null,
+    verdict: null,
+    summary: null,
+    findings: [],
+    model: null,
+    input_tokens: null,
+    output_tokens: null,
+    cost_usd: null,
+    created_by: ACTOR.userId,
+    created_at: "2026-07-17T11:00:00.000Z",
+    updated_at: "2026-07-17T11:00:00.000Z",
+    ...overrides,
+  };
+}
+
+const PAYLOAD: RunPreMortemPayload = {
+  jobKey: "run-premortem",
+  entityId: ASSESSMENT_ID,
+  attempt: 1,
+  dedupeId: `run-premortem:${ASSESSMENT_ID}`,
+  orgId: ACTOR.orgId,
+  assessmentId: ASSESSMENT_ID,
+};
+
+/** Runs the job for the default frozen ai_letter row and returns the persisted result. */
+async function runJob(): Promise<Record<string, unknown>> {
+  const outcome = await executePreMortemJob(PAYLOAD);
+  expect(outcome).toBe("completed");
+  return mocks.repo.completePreMortemAssessment.mock.calls[0][1] as Record<string, unknown>;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.authz.requireCaseAccess.mockResolvedValue(undefined);
@@ -279,13 +345,16 @@ beforeEach(() => {
   mocks.repo.loadDatasetItems.mockResolvedValue([]);
   mocks.repo.matchDatasetItems.mockResolvedValue([]);
   mocks.embeddings.embedText.mockResolvedValue(new Array(768).fill(0.1));
-  mocks.cases.getCaseExtractions.mockResolvedValue([]);
-  // ai_letter now always resolves to a full run row (for config_snapshot + party_id).
+  mocks.cases.getCaseExtractionsSystem.mockResolvedValue([]);
   mocks.repo.findRunById.mockResolvedValue({ ...BASE_RUN });
   // Default: no frozen/config source inputs → validator falls back to extractions.
   mocks.repo.loadResolvedInputs.mockResolvedValue({ documents: [], forms: [] });
   mockAnthropic(VALID_REPORT_JSON);
-  mocks.repo.insertPreMortemAssessment.mockResolvedValue({ id: ASSESSMENT_ID, created_at: "2026-06-29T10:10:00.000Z" });
+  // Async lifecycle defaults: a frozen queued ai_letter row, claim wins, persist ok.
+  mocks.repo.findPreMortemAssessmentById.mockResolvedValue(queuedRow());
+  mocks.repo.claimPreMortemAssessment.mockResolvedValue(true);
+  mocks.repo.completePreMortemAssessment.mockResolvedValue({ rowsAffected: 1 });
+  mocks.repo.sweepStalePreMortemForCase.mockResolvedValue(0);
 });
 
 // ---------------------------------------------------------------------------
@@ -328,44 +397,10 @@ describe("retrieveDatasetItemsWithFallback", () => {
 });
 
 // ---------------------------------------------------------------------------
-// assessPreMortemRisk
+// executePreMortemJob — validator context, budgets, parsing & calibration
 // ---------------------------------------------------------------------------
 
-describe("assessPreMortemRisk", () => {
-  it("ai_letter: auto-selects the latest eligible run, validates, persists (new shape)", async () => {
-    mocks.repo.findLatestEligibleRunForPreMortem.mockResolvedValue({
-      runId: RUN_ID,
-      outputText: BASE_RUN.output_text,
-      outputPath: null,
-      formDefinitionId: FORM_DEF_ID,
-      model: "claude-opus-4-7",
-    });
-
-    const result = await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter" } });
-
-    expect(mocks.authz.requireCaseAccess).toHaveBeenCalledWith(ACTOR, CASE_ID);
-    expect(mocks.anthropicClient.messages.stream).toHaveBeenCalledOnce();
-
-    expect(mocks.repo.insertPreMortemAssessment).toHaveBeenCalledOnce();
-    const insertArg = mocks.repo.insertPreMortemAssessment.mock.calls[0][0] as Record<string, unknown>;
-    expect(insertArg.case_id).toBe(CASE_ID);
-    expect(insertArg.target_kind).toBe("ai_letter");
-    expect(insertArg.run_id).toBe(RUN_ID);
-    expect(insertArg.response_id).toBe(null);
-    expect(insertArg.score).toBe(72);
-    expect(insertArg.semaforo).toBe("amber");
-    expect(insertArg.verdict).toBe("needs_corrections");
-
-    expect(result.targetKind).toBe("ai_letter");
-    expect(result.runId).toBe(RUN_ID);
-    expect(result.score).toBe(72);
-    expect(result.semaforo).toBe("amber");
-    expect(result.verdict).toBe("needs_corrections");
-    expect(result.findings).toHaveLength(1);
-    expect(result.findings[0].category).toBe("mal_llenado");
-    expect(result.createdBy).toBe(ACTOR.userId);
-  });
-
+describe("executePreMortemJob (validator core)", () => {
   it("ai_letter: injects the SOURCE material (questionnaire answers) the memo was generated from", async () => {
     mocks.repo.findRunById.mockResolvedValue({
       ...BASE_RUN,
@@ -386,14 +421,14 @@ describe("assessPreMortemRisk", () => {
       ],
     });
 
-    await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter", runId: RUN_ID } });
+    await runJob();
 
     expect(mocks.repo.loadResolvedInputs).toHaveBeenCalledOnce();
     const streamArg = JSON.stringify(mocks.anthropicClient.messages.stream.mock.calls[0][0]);
     expect(streamArg).toContain("MATERIAL FUENTE");
     expect(streamArg).toContain("A ser detenida por el colectivo armado en Caracas");
     // When source material is present the generic extractions block is skipped.
-    expect(mocks.cases.getCaseExtractions).not.toHaveBeenCalled();
+    expect(mocks.cases.getCaseExtractionsSystem).not.toHaveBeenCalled();
   });
 
   it("ai_letter: a REAL-SIZE giant memo (~500k, a 250-page credible-fear memo) reaches the validator WHOLE", async () => {
@@ -401,7 +436,7 @@ describe("assessPreMortemRisk", () => {
     // With small guide/source the dynamic budget must swallow a 500k memo entirely.
     mocks.repo.findRunById.mockResolvedValue({ ...BASE_RUN, output_text: "A".repeat(500_000) });
 
-    await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter", runId: RUN_ID } });
+    await runJob();
 
     const streamArg = JSON.stringify(mocks.anthropicClient.messages.stream.mock.calls[0][0]);
     expect(streamArg).not.toContain("truncado por presupuesto");
@@ -410,7 +445,7 @@ describe("assessPreMortemRisk", () => {
   it("ai_letter: truncates only past the dynamic context ceiling, with a visible marker (no silent cap)", async () => {
     mocks.repo.findRunById.mockResolvedValue({ ...BASE_RUN, output_text: "A".repeat(720_000) });
 
-    await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter", runId: RUN_ID } });
+    await runJob();
 
     const streamArg = JSON.stringify(mocks.anthropicClient.messages.stream.mock.calls[0][0]);
     expect(streamArg).toContain("truncado por presupuesto");
@@ -426,7 +461,7 @@ describe("assessPreMortemRisk", () => {
     const giant = "relleno con SSN 123-45-6789 aqui. ".repeat(22_000);
     mocks.repo.findRunById.mockResolvedValue({ ...BASE_RUN, output_text: giant });
 
-    await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter", runId: RUN_ID } });
+    await runJob();
 
     const streamArg = JSON.stringify(mocks.anthropicClient.messages.stream.mock.calls[0][0]);
     expect(streamArg).not.toContain("123-45-6789"); // raw SSN never reaches the provider
@@ -463,7 +498,7 @@ describe("assessPreMortemRisk", () => {
       forms: [{ slug: "memorandum-de-miedo-creible-cuestionario", answers: { "¿Qué teme?": "Represalias del grupo armado en su barrio" } }],
     });
 
-    await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter", runId: RUN_ID } });
+    await runJob();
 
     expect(mocks.repo.resolveGenerationInputs).toHaveBeenCalledWith(
       CASE_ID,
@@ -476,8 +511,11 @@ describe("assessPreMortemRisk", () => {
     expect(streamArg).toContain("Represalias del grupo armado en su barrio");
   });
 
-  it("pdf_automation: resolves field values, validates, persists with response_id", async () => {
-    mocks.cases.resolveFormResponseFieldValues.mockResolvedValue({
+  it("pdf_automation: resolves field values via the SYSTEM resolver and completes with the frozen response", async () => {
+    mocks.repo.findPreMortemAssessmentById.mockResolvedValue(
+      queuedRow({ target_kind: "pdf_automation", run_id: null, response_id: RESPONSE_ID }),
+    );
+    mocks.cases.resolveFormResponseFieldValuesSystem.mockResolvedValue({
       caseId: CASE_ID,
       formDefinitionId: FORM_DEF_ID,
       fields: [
@@ -486,74 +524,62 @@ describe("assessPreMortemRisk", () => {
       missingRequired: [],
     });
 
-    const result = await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "pdf_automation", responseId: RESPONSE_ID } });
+    const result = await runJob();
 
-    expect(mocks.cases.resolveFormResponseFieldValues).toHaveBeenCalledWith(ACTOR, RESPONSE_ID);
-    const insertArg = mocks.repo.insertPreMortemAssessment.mock.calls[0][0] as Record<string, unknown>;
-    expect(insertArg.target_kind).toBe("pdf_automation");
-    expect(insertArg.response_id).toBe(RESPONSE_ID);
-    expect(insertArg.run_id).toBe(null);
-    expect(result.responseId).toBe(RESPONSE_ID);
-    expect(result.targetKind).toBe("pdf_automation");
+    expect(mocks.cases.resolveFormResponseFieldValuesSystem).toHaveBeenCalledWith(RESPONSE_ID);
+    expect(result.score).toBe(72);
+    const streamArg = JSON.stringify(mocks.anthropicClient.messages.stream.mock.calls[0][0]);
+    expect(streamArg).toContain("AUTOFILLED OFFICIAL FORM");
+    expect(streamArg).toContain("Caracas, Venezuela");
   });
 
   it("parses JSON even when Anthropic wraps it in markdown fences", async () => {
-    mocks.repo.findLatestEligibleRunForPreMortem.mockResolvedValue({ runId: RUN_ID, outputText: BASE_RUN.output_text, outputPath: null, formDefinitionId: FORM_DEF_ID, model: "claude-opus-4-7" });
     mockAnthropic(
       "Here is my review:\n```json\n" +
         '{"score":40,"semaforo":"red","verdict":"would_reject","summary":"Serious issues.","findings":[{"severity":"critico","category":"placeholder_sin_resolver","location":"Part B","description":"Unreplaced token.","correction":"Fill it."}]}\n' +
         "```\n",
     );
 
-    const result = await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter" } });
+    const result = await runJob();
     expect(result.score).toBe(40);
     expect(result.semaforo).toBe("red");
     expect(result.verdict).toBe("would_reject");
-    expect(result.findings[0].category).toBe("placeholder_sin_resolver");
+    expect((result.findings as Array<{ category: string }>)[0].category).toBe("placeholder_sin_resolver");
   });
 
   it("calibrates the verdict deterministically: score>=75 with ZERO críticos is would_approve even if the model said otherwise", async () => {
     // Henry 2026-07-17: a 79 with no critical findings showed "No se aprobaría".
     // §5.3 of the rubric is a deterministic rule — code enforces it, not model mood.
-    mocks.repo.findLatestEligibleRunForPreMortem.mockResolvedValue({ runId: RUN_ID, outputText: BASE_RUN.output_text, outputPath: null, formDefinitionId: FORM_DEF_ID, model: "claude-opus-4-7" });
     mockAnthropic(
       '{"score":79,"semaforo":"amber","verdict":"needs_corrections","summary":"ok","findings":[' +
         '{"severity":"moderado","category":"calidad","location":"A.5","description":"d","correction":"c"}]}',
     );
 
-    const result = await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter" } });
-
+    const result = await runJob();
     expect(result.verdict).toBe("would_approve");
-    const insertArg = mocks.repo.insertPreMortemAssessment.mock.calls[0][0] as { verdict: string };
-    expect(insertArg.verdict).toBe("would_approve");
   });
 
   it("calibrates the verdict deterministically: a crítico caps at needs_corrections even with a high score", async () => {
-    mocks.repo.findLatestEligibleRunForPreMortem.mockResolvedValue({ runId: RUN_ID, outputText: BASE_RUN.output_text, outputPath: null, formDefinitionId: FORM_DEF_ID, model: "claude-opus-4-7" });
     mockAnthropic(
       '{"score":82,"semaforo":"green","verdict":"would_approve","summary":"ok","findings":[' +
         '{"severity":"critico","category":"mal_llenado","location":"A.1","description":"d","correction":"c"}]}',
     );
 
-    const result = await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter" } });
-
+    const result = await runJob();
     expect(result.verdict).toBe("needs_corrections");
   });
 
   it("calibrates the verdict deterministically: score<50 is would_reject even if the model was lenient", async () => {
-    mocks.repo.findLatestEligibleRunForPreMortem.mockResolvedValue({ runId: RUN_ID, outputText: BASE_RUN.output_text, outputPath: null, formDefinitionId: FORM_DEF_ID, model: "claude-opus-4-7" });
     mockAnthropic(
       '{"score":45,"semaforo":"red","verdict":"needs_corrections","summary":"x","findings":[' +
         '{"severity":"critico","category":"mal_llenado","location":"A","description":"d","correction":"c"}]}',
     );
 
-    const result = await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter" } });
-
+    const result = await runJob();
     expect(result.verdict).toBe("would_reject");
   });
 
   it("filters invalid categories/severities and clamps the score", async () => {
-    mocks.repo.findLatestEligibleRunForPreMortem.mockResolvedValue({ runId: RUN_ID, outputText: BASE_RUN.output_text, outputPath: null, formDefinitionId: FORM_DEF_ID, model: "claude-opus-4-7" });
     mockAnthropic(
       '{"score":150,"semaforo":"amber","verdict":"needs_corrections","summary":"x","findings":[' +
         '{"severity":"critico","category":"mal_llenado","location":"A","description":"d","correction":"c"},' +
@@ -562,58 +588,36 @@ describe("assessPreMortemRisk", () => {
         "]}",
     );
 
-    const result = await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter" } });
+    const result = await runJob();
     expect(result.score).toBe(100); // clamped
     expect(result.findings).toHaveLength(1);
-    expect(result.findings[0].category).toBe("mal_llenado");
+    expect((result.findings as Array<{ category: string }>)[0].category).toBe("mal_llenado");
   });
 
-  it("throws PREMORTEM_NO_TARGET when no eligible ai_letter run exists", async () => {
-    mocks.repo.findLatestEligibleRunForPreMortem.mockResolvedValue(null);
-    await expect(assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter" } })).rejects.toMatchObject({
-      name: "AiEngineError",
-      code: "PREMORTEM_NO_TARGET",
-    });
-    expect(mocks.repo.insertPreMortemAssessment).not.toHaveBeenCalled();
-  });
-
-  it("throws PREMORTEM_NO_GUIDE when the form has no enabled guide", async () => {
-    mocks.repo.findRunById.mockResolvedValue({ ...BASE_RUN });
-    mocks.repo.findFormFillGuide.mockResolvedValue({ guide_markdown: "", enabled: false, source_file_path: null });
-    await expect(
-      assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter", runId: RUN_ID } }),
-    ).rejects.toMatchObject({ name: "AiEngineError", code: "PREMORTEM_NO_GUIDE" });
-    expect(mocks.anthropicClient.messages.stream).not.toHaveBeenCalled();
-    expect(mocks.repo.insertPreMortemAssessment).not.toHaveBeenCalled();
-  });
-
-  it("uses an explicit runId and rejects one from a different case (IDOR)", async () => {
+  it("IDOR belt-and-braces: a frozen run of a DIFFERENT case fails the row (no provider call)", async () => {
     mocks.repo.findRunById.mockResolvedValue({ ...BASE_RUN, case_id: "99999999-9999-4999-8999-999999999999" });
-    await expect(
-      assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter", runId: RUN_ID } }),
-    ).rejects.toMatchObject({ name: "AuthzError", message: "forbidden_case" });
-    expect(mocks.repo.insertPreMortemAssessment).not.toHaveBeenCalled();
+
+    expect(await executePreMortemJob(PAYLOAD)).toBe("failed");
+
+    expect(mocks.repo.markPreMortemFailed).toHaveBeenCalledWith(ASSESSMENT_ID, expect.any(String));
+    expect(mocks.anthropicClient.messages.stream).not.toHaveBeenCalled();
+    expect(mocks.repo.completePreMortemAssessment).not.toHaveBeenCalled();
   });
 
-  it("rejects a pdf_automation response from a different case (IDOR)", async () => {
-    mocks.cases.resolveFormResponseFieldValues.mockResolvedValue({
+  it("IDOR belt-and-braces: a frozen response of a DIFFERENT case fails the row", async () => {
+    mocks.repo.findPreMortemAssessmentById.mockResolvedValue(
+      queuedRow({ target_kind: "pdf_automation", run_id: null, response_id: RESPONSE_ID }),
+    );
+    mocks.cases.resolveFormResponseFieldValuesSystem.mockResolvedValue({
       caseId: "99999999-9999-4999-8999-999999999999",
       formDefinitionId: FORM_DEF_ID,
       fields: [],
       missingRequired: [],
     });
-    await expect(
-      assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "pdf_automation", responseId: RESPONSE_ID } }),
-    ).rejects.toMatchObject({ name: "AuthzError", message: "forbidden_case" });
-    expect(mocks.repo.insertPreMortemAssessment).not.toHaveBeenCalled();
-  });
 
-  it("rejects a non-staff (client) actor — Pre-Mortem is staff-only", async () => {
-    const clientActor: Actor = { ...ACTOR, kind: "client", role: null };
-    await expect(
-      assessPreMortemRisk(clientActor, { caseId: CASE_ID, target: { kind: "ai_letter" } }),
-    ).rejects.toMatchObject({ name: "AuthzError", message: "wrong_kind" });
-    expect(mocks.repo.insertPreMortemAssessment).not.toHaveBeenCalled();
+    expect(await executePreMortemJob(PAYLOAD)).toBe("failed");
+    expect(mocks.repo.markPreMortemFailed).toHaveBeenCalled();
+    expect(mocks.anthropicClient.messages.stream).not.toHaveBeenCalled();
   });
 });
 
@@ -641,6 +645,8 @@ describe("getPreMortemAssessmentsForCase", () => {
       cost_usd: 0.02,
       created_by: ACTOR.userId,
       created_at: "2026-06-29T10:10:00.000Z",
+      status: "completed",
+      error: null,
     };
     mocks.repo.listPreMortemAssessmentsForCase.mockResolvedValue([row]);
 
@@ -652,6 +658,7 @@ describe("getPreMortemAssessmentsForCase", () => {
     expect(a.score).toBe(88);
     expect(a.semaforo).toBe("green");
     expect(a.verdict).toBe("would_approve");
+    expect(a.status).toBe("completed");
     expect(a.findings).toHaveLength(1);
     expect(a.findings[0].category).toBe("calidad");
   });
@@ -686,8 +693,10 @@ describe("isPreMortemEnabledForCase", () => {
 });
 
 describe("AiEngineError", () => {
-  it("constructs the new Pre-Mortem codes", () => {
+  it("constructs the Pre-Mortem codes (incl. the async ones)", () => {
     expect(new AiEngineError("PREMORTEM_NO_GUIDE").code).toBe("PREMORTEM_NO_GUIDE");
     expect(new AiEngineError("PREMORTEM_NO_TARGET").code).toBe("PREMORTEM_NO_TARGET");
+    expect(new AiEngineError("PREMORTEM_IN_PROGRESS").code).toBe("PREMORTEM_IN_PROGRESS");
+    expect(new AiEngineError("PREMORTEM_TARGET_REGENERATING").code).toBe("PREMORTEM_TARGET_REGENERATING");
   });
 });

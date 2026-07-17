@@ -48,6 +48,7 @@ import { handleChargeDueInstallments } from "@/backend/jobs/charge-due-installme
 import { handleSendCampaign } from "@/backend/jobs/send-campaign";
 import { handleFetchExhibit } from "@/backend/jobs/fetch-exhibit";
 import { handleGenerateQuestionnaire } from "@/backend/jobs/generate-questionnaire";
+import { handleRunPremortem } from "@/backend/jobs/run-premortem";
 
 // ---------------------------------------------------------------------------
 // Job registry — jobKey → handler
@@ -69,6 +70,7 @@ const JOB_REGISTRY: Record<string, JobHandler> = {
   "extract-document": handleExtractDocument,
   "translate-document": handleTranslateDocument,
   "generate-questionnaire": handleGenerateQuestionnaire,
+  "run-premortem": handleRunPremortem,
   "ai-budget-aggregation": handleAiBudgetAggregation,
   "job-failed": handleJobFailed,
   // F6 integrations (DOC-70, DOC-26 §2.8)
@@ -87,10 +89,13 @@ const JOB_REGISTRY: Record<string, JobHandler> = {
   "fetch-exhibit": handleFetchExhibit,
 };
 
-// On-demand AI jobs (run-generation/extract/translate) can run past the default
-// 60s function limit — request up to 300s (capped by the Vercel plan; QStash
-// retries on timeout regardless). DOC-82 §8.
-export const maxDuration = 300;
+// On-demand AI jobs can run past the default 60s function limit. run-premortem
+// makes ONE Anthropic call of up to 700s (not sectionable/checkpointable), so the
+// route requests 800s — same ceiling the case pages already use on this Vercel
+// plan. Each job's QStash endpoint `timeout` must stay BELOW this value or QStash
+// fires a concurrent retry mid-invocation (run-premortem enqueues with "780s").
+// Benign for the other jobs: a higher ceiling, same behavior. DOC-82 §8.
+export const maxDuration = 800;
 
 // ---------------------------------------------------------------------------
 // POST handler

@@ -12,6 +12,7 @@ import type {
   InstallmentVM,
   PreMortemReportVM,
   PreMortemTargetVM,
+  PreMortemInFlightVM,
   PreMortemSemaforo,
   PreMortemSeverity,
 } from "@/frontend/features/shared-case";
@@ -147,7 +148,9 @@ export function mapPreMortemReports(
   const refToKey = new Map<string, string>();
   for (const t of targets) if (t.refId) refToKey.set(t.refId, t.key);
 
-  return assessments.map((a) => {
+  // In-flight rows (queued/running) are not reports yet — they surface through
+  // mapPreMortemInFlight; historical rows without status default to completed.
+  return assessments.filter((a) => (a.status ?? "completed") === "completed").map((a) => {
     const refId = a.runId ?? a.responseId;
     const targetKey = (refId && refToKey.get(refId)) ?? `${a.targetKind}:${a.formDefinitionId}:`;
     return {
@@ -171,6 +174,32 @@ export function mapPreMortemReports(
       createdAt: a.createdAt,
     };
   });
+}
+
+/**
+ * Maps queued/running assessments to the in-flight VM the tab uses to show the
+ * persistent "Validando…" state (it survives page reloads — the source of truth
+ * is the row, not client state) and to disable the button per target.
+ */
+export function mapPreMortemInFlight(
+  assessments: PreMortemAssessment[],
+  targets: PreMortemTargetVM[],
+): PreMortemInFlightVM[] {
+  const refToKey = new Map<string, string>();
+  for (const t of targets) if (t.refId) refToKey.set(t.refId, t.key);
+
+  return assessments
+    .filter((a) => a.status === "queued" || a.status === "running")
+    .map((a) => {
+      const refId = a.runId ?? a.responseId;
+      const targetKey = (refId && refToKey.get(refId)) ?? `${a.targetKind}:${a.formDefinitionId}:`;
+      return {
+        assessmentId: a.id,
+        targetKey,
+        status: a.status as "queued" | "running",
+        createdAt: a.createdAt,
+      };
+    });
 }
 
 /** Coarse relative time ("hace 4 meses" / "4 months ago"). */

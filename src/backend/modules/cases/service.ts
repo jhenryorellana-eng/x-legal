@@ -5230,18 +5230,21 @@ interface FieldsCoreResult {
  * decides (generateFilledPdf blocks; the validator reports it as a finding).
  */
 async function resolveFormResponseFieldsCore(
-  actor: Actor,
+  // null = trusted SYSTEM caller (QStash job): authz already happened when the
+  // job was enqueued (staff + IDOR in ai-engine's startPreMortemValidation).
+  actor: Actor | null,
   responseId: string,
   opts?: { enforceFileable?: boolean },
 ): Promise<FieldsCoreResult> {
-  can(actor, "cases", "edit");
+  if (actor) can(actor, "cases", "edit");
 
   const response = await findFormResponseById(responseId);
   if (!response) throw new CaseError("FORM_RESPONSE_NOT_FOUND");
   // Cross-tenant guard (CRITICAL): the resolved values contain decrypted PII (SSN,
   // A-number, passport) from the case's client. findFormResponseById bypasses RLS —
-  // verify the actor owns this response's case before resolving.
-  await requireCaseAccess(actor, response.case_id);
+  // verify the actor owns this response's case before resolving. (System callers
+  // pre-authorized the case↔response pairing before enqueueing.)
+  if (actor) await requireCaseAccess(actor, response.case_id);
 
   const formDef = await findFormDefinitionById(response.form_definition_id);
   if (!formDef) throw new CaseError("FORM_NOT_FOUND");
@@ -5597,6 +5600,38 @@ export async function resolveFormResponseFieldValues(
 }
 
 /**
+ * SYSTEM variant of resolveFormResponseFieldValues — trusted jobs ONLY (QStash
+ * run-premortem). No actor: authorization (staff + case↔response IDOR) already
+ * happened when the job was enqueued. Same resolution core, zero drift.
+ */
+export async function resolveFormResponseFieldValuesSystem(
+  responseId: string,
+): Promise<ResolvedFormResponse> {
+  const core = await resolveFormResponseFieldsCore(null, responseId);
+  return {
+    caseId: core.response.case_id,
+    formDefinitionId: core.response.form_definition_id,
+    fields: core.fields,
+    missingRequired: core.missingRequired,
+    naTargets: [...core.naTargets.entries()].map(([pdfFieldName, placeholder]) => ({ pdfFieldName, placeholder })),
+    versionId: core.published.id,
+    sourceLanguage: core.sourceLanguage,
+  };
+}
+
+/**
+ * Light response metadata for enqueue-time freezing/IDOR (no field resolution,
+ * no PII decryption). Returns null when the response does not exist.
+ */
+export async function getFormResponseMeta(
+  responseId: string,
+): Promise<{ caseId: string; formDefinitionId: string } | null> {
+  const response = await findFormResponseById(responseId);
+  if (!response) return null;
+  return { caseId: response.case_id, formDefinitionId: response.form_definition_id };
+}
+
+/**
  * Generates a filled PDF for an approved (or submitted-by-staff) form response.
  *
  * Gates:
@@ -5726,6 +5761,17 @@ export async function getCaseExtractions(
 ): Promise<DocumentExtractionSummary[]> {
   can(actor, "cases", "view");
   await requireCaseAccess(actor, caseId);
+  return listDocumentExtractionsForCase(caseId);
+}
+
+/**
+ * SYSTEM variant of getCaseExtractions — trusted jobs ONLY (QStash run-premortem
+ * context fallback). The caseId comes from the job's own frozen row, authorized
+ * at enqueue time.
+ */
+export async function getCaseExtractionsSystem(
+  caseId: string,
+): Promise<DocumentExtractionSummary[]> {
   return listDocumentExtractionsForCase(caseId);
 }
 

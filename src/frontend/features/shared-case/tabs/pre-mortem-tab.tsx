@@ -58,6 +58,11 @@ function fmtDate(iso: string): string {
   return iso.slice(0, 10);
 }
 
+/** Poll cadence for the async validation (precedent: letter-review pollUntilDone). */
+const POLL_MS = 4000;
+/** Safety cap ≈ 16 min — past the job's own zombie cutoff, so it always resolves. */
+const MAX_POLLS = 240;
+
 export function PreMortemTab({
   vm,
   actions,
@@ -74,9 +79,16 @@ export function PreMortemTab({
   const t = strings.detail.preMortem;
   const router = useRouter();
   const [busy, setBusy] = React.useState(false);
+  // Bridges the gap between "enqueue returned" and the next server render (the
+  // durable source of the in-flight state is vm.preMortem.inFlight — it survives
+  // page reloads because it comes from the assessment ROW, not client state).
+  // Scoped per TARGET: a bare id would leak the disabled/"Validando…" state onto
+  // every other document while this one runs (the lock is per artifact).
+  const [localActive, setLocalActive] = React.useState<{ assessmentId: string; targetKey: string } | null>(null);
 
   const targets = vm.preMortem?.targets ?? [];
   const reports = vm.preMortem?.reports ?? [];
+  const inFlight = vm.preMortem?.inFlight ?? [];
 
   const selected: PreMortemTargetVM | undefined =
     targets.find((x) => x.key === selectedTargetKey) ?? targets[0];
@@ -87,6 +99,89 @@ export function PreMortemTab({
   const forSelected = selected ? reports.filter((r) => r.targetKey === selected.key) : [];
   const latest: PreMortemReportVM | undefined = forSelected[0];
 
+  // Per-TARGET lock: other documents stay validable while this one runs.
+  const vmActive = selected ? inFlight.find((x) => x.targetKey === selected.key) : undefined;
+  const localForSelected =
+    localActive && selected && localActive.targetKey === selected.key ? localActive : null;
+  const activeId = vmActive?.assessmentId ?? localForSelected?.assessmentId ?? null;
+  const activeStatus: "queued" | "running" | null = vmActive?.status ?? (localForSelected ? "queued" : null);
+
+  // One timer per assessment id — a single scalar ref would orphan chain A when
+  // the user validates target B while A is still running (leaked poll, double
+  // toasts on re-select). disposedRef guards the in-flight tick that resolves
+  // AFTER unmount (the await can land post-cleanup and would re-schedule).
+  const pollRef = React.useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const startedForRef = React.useRef<string | null>(null);
+  const disposedRef = React.useRef(false);
+  // Ids the user cancelled: their in-flight tick must die silently (the row lands
+  // 'failed' with error=cancelled_by_user — toasting "La validación falló" right
+  // after the cancel toast would be wrong).
+  const cancelledIdsRef = React.useRef<Set<string>>(new Set());
+
+  const pollUntilDone = React.useCallback(
+    (assessmentId: string) => {
+      if (typeof actions.getPreMortemStatus !== "function") return;
+      let polls = 0;
+      const tick = async () => {
+        if (disposedRef.current || cancelledIdsRef.current.has(assessmentId)) {
+          pollRef.current.delete(assessmentId);
+          return;
+        }
+        // Pause while the tab is hidden — no point refreshing a page nobody sees.
+        if (typeof document !== "undefined" && document.hidden) {
+          pollRef.current.set(assessmentId, setTimeout(tick, POLL_MS));
+          return;
+        }
+        polls += 1;
+        const res = await actions.getPreMortemStatus!({ assessmentId }).catch(() => null);
+        // The await may resolve after unmount/cancel — never toast or reschedule then.
+        if (disposedRef.current || cancelledIdsRef.current.has(assessmentId)) {
+          pollRef.current.delete(assessmentId);
+          return;
+        }
+        const status = res && res.ok ? res.status : undefined;
+        if (status === "completed" || status === "failed") {
+          pollRef.current.delete(assessmentId);
+          setLocalActive(null);
+          if (status === "completed") toast.success(t.done);
+          else toast.error(t.failed);
+          // Single refresh at the terminal transition (not per tick) — rebuilds
+          // the VM server-side with the new report / cleared inFlight.
+          router.refresh();
+          return;
+        }
+        if (polls >= MAX_POLLS) {
+          pollRef.current.delete(assessmentId);
+          // Clear the started guard so a later render RESUMES a still-in-flight
+          // row (a healthy retrying job can outlive one cap window); the refresh
+          // also runs the server-side sweep, which flips true zombies to failed.
+          if (startedForRef.current === assessmentId) startedForRef.current = null;
+          setLocalActive(null);
+          router.refresh();
+          return;
+        }
+        pollRef.current.set(assessmentId, setTimeout(tick, POLL_MS));
+      };
+      pollRef.current.set(assessmentId, setTimeout(tick, POLL_MS));
+    },
+    [actions, router, t],
+  );
+
+  // Resume polling for an in-flight validation delivered by the VM (page reload).
+  React.useEffect(() => {
+    if (activeId && startedForRef.current !== activeId) {
+      startedForRef.current = activeId;
+      pollUntilDone(activeId);
+    }
+  }, [activeId, pollUntilDone]);
+
+  // Cleanup on unmount.
+  React.useEffect(() => () => {
+    disposedRef.current = true;
+    for (const timer of pollRef.current.values()) clearTimeout(timer);
+    pollRef.current.clear();
+  }, []);
+
   async function onValidate() {
     if (!actions.runPreMortem || !selected) return;
     setBusy(true);
@@ -95,14 +190,45 @@ export function PreMortemTab({
         caseId: vm.header.caseId,
         target: { kind: selected.kind, formDefinitionId: selected.formDefinitionId, refId: selected.refId },
       });
-      if (res.ok) {
-        toast.success(t.done);
-        router.refresh();
+      if (res.ok && res.assessmentId) {
+        setLocalActive({ assessmentId: res.assessmentId, targetKey: selected.key });
+        router.refresh(); // pick up the queued row into vm.preMortem.inFlight
       } else {
-        toast.error(t.error);
+        const code = res.error?.code;
+        if (code === "PREMORTEM_IN_PROGRESS") {
+          toast.error(t.inProgress);
+          router.refresh();
+        } else if (code === "PREMORTEM_TARGET_REGENERATING") {
+          toast.error(t.regenerating);
+        } else {
+          toast.error(t.error);
+        }
       }
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function onCancel() {
+    if (!actions.cancelPreMortem || !activeId) return;
+    const id = activeId;
+    // Optimistic: silence the poll chain BEFORE the round-trip so a tick landing
+    // mid-cancel can't toast a spurious "failed".
+    cancelledIdsRef.current.add(id);
+    const res = await actions.cancelPreMortem({ assessmentId: id }).catch(() => null);
+    if (res && res.ok && res.cancelled) {
+      const timer = pollRef.current.get(id);
+      if (timer) clearTimeout(timer);
+      pollRef.current.delete(id);
+      if (startedForRef.current === id) startedForRef.current = null;
+      toast.success(t.cancelled);
+      setLocalActive(null);
+      router.refresh();
+    } else {
+      // Row already running (not cancellable) — un-silence and make sure the
+      // poll chain is still alive.
+      cancelledIdsRef.current.delete(id);
+      if (!pollRef.current.has(id)) pollUntilDone(id);
     }
   }
 
@@ -150,15 +276,33 @@ export function PreMortemTab({
               </select>
             </label>
             {typeof actions.runPreMortem === "function" && (
-              <GradientBtn size="md" full={false} icon="shield" disabled={busy || !selected} onClick={onValidate}>
-                {busy ? t.validating : t.validate}
+              <GradientBtn size="md" full={false} icon="shield" disabled={busy || !selected || !!activeId} onClick={onValidate}>
+                {busy || activeId ? t.validating : t.validate}
               </GradientBtn>
             )}
           </div>
 
-          {busy && (
-            <div role="progressbar" aria-busy="true" style={{ marginTop: 12, height: 6, borderRadius: 999, background: "var(--line)", overflow: "hidden" }}>
-              <div style={{ width: "40%", height: "100%", background: "var(--accent)", animation: "pm-indeterminate 1.2s ease-in-out infinite" }} />
+          {(busy || activeId) && (
+            <div style={{ marginTop: 12 }}>
+              <div role="progressbar" aria-busy="true" style={{ height: 6, borderRadius: 999, background: "var(--line)", overflow: "hidden" }}>
+                <div style={{ width: "40%", height: "100%", background: "var(--accent)", animation: "pm-indeterminate 1.2s ease-in-out infinite" }} />
+              </div>
+              {activeId && (
+                <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <p style={{ margin: 0, fontSize: 13, color: "var(--ink-2)" }}>
+                    {activeStatus === "running" ? t.runningNotice : t.queuedNotice}
+                  </p>
+                  {activeStatus === "queued" && typeof actions.cancelPreMortem === "function" && (
+                    <button
+                      type="button"
+                      onClick={onCancel}
+                      style={{ border: "1px solid var(--line)", background: "var(--card, #fff)", color: "var(--ink-2)", borderRadius: 999, padding: "3px 12px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}
+                    >
+                      {t.cancel}
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

@@ -42,6 +42,11 @@ function fmtUsd(v: number | null, locale: "es" | "en"): string {
   }).format(v);
 }
 
+/** Poll cadence for the async generation (precedent: pre-mortem pollUntilDone). */
+const POLL_MS = 4000;
+/** Safety cap ≈ 16 min — past the job's own zombie cutoff, so it always resolves. */
+const MAX_POLLS = 240;
+
 export function GeneracionesTab({
   vm,
   actions,
@@ -79,6 +84,107 @@ export function GeneracionesTab({
     vm.generations.find(
       (g) => g.formDefinitionId === f.id && g.isCurrent && (f.partyId ? g.partyId === f.partyId : g.partyId === null),
     );
+  // isCurrent is only set on completed runs, so a queued/running run needs its own
+  // lookup — otherwise a first generation reads "Sin generar" while in flight.
+  const activeRunFor = (f: FormVM): GenerationVM | undefined =>
+    vm.generations.find(
+      (g) =>
+        g.formDefinitionId === f.id &&
+        (g.status === "queued" || g.status === "running") &&
+        (f.partyId ? g.partyId === f.partyId : g.partyId === null),
+    );
+
+  const pollRef = React.useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const startedForRef = React.useRef<Set<string>>(new Set());
+  // Guards the in-flight tick that resolves AFTER unmount (the await can land
+  // post-cleanup and would re-schedule a leaked timeout).
+  const disposedRef = React.useRef(false);
+  // Bridges the gap between "enqueue returned" and the next server render: the
+  // VM only reflects the queued run after router.refresh() lands, and without a
+  // local override the button re-enables and the pill reverts to idle for that
+  // window. Keyed per letter (formId-partyId) so other letters stay unaffected.
+  const [pendingByKey, setPendingByKey] = React.useState<Record<string, string>>({});
+
+  const pollUntilDone = React.useCallback(
+    (runId: string, clearKey?: string) => {
+      if (typeof actions.getRunStatus !== "function") return;
+      const clearPending = () => {
+        if (clearKey) {
+          setPendingByKey((m) => {
+            if (!(clearKey in m)) return m;
+            const next = { ...m };
+            delete next[clearKey];
+            return next;
+          });
+        }
+      };
+      let polls = 0;
+      const tick = async () => {
+        if (disposedRef.current) {
+          pollRef.current.delete(runId);
+          return;
+        }
+        // Pause while the tab is hidden — no point polling a page nobody sees.
+        if (typeof document !== "undefined" && document.hidden) {
+          pollRef.current.set(runId, setTimeout(tick, POLL_MS));
+          return;
+        }
+        polls += 1;
+        const res = await actions.getRunStatus!({ runId }).catch(() => null);
+        // The await may resolve after unmount — never toast or reschedule then.
+        if (disposedRef.current) {
+          pollRef.current.delete(runId);
+          return;
+        }
+        const status = res && res.ok ? res.status : undefined;
+        if (status === "completed" || status === "failed" || status === "cancelled") {
+          pollRef.current.delete(runId);
+          clearPending();
+          if (status === "completed") toast.success(t.toastLetterReady);
+          else toast.error(t.toastLetterFailed);
+          // Single refresh at the terminal transition (not per tick) — rebuilds
+          // the VM server-side with the new current run.
+          router.refresh();
+          return;
+        }
+        if (polls >= MAX_POLLS) {
+          pollRef.current.delete(runId);
+          clearPending();
+          // Clear the started guard so a later render RESUMES a still-in-flight
+          // run (self-chaining generations can legitimately outlive one cap
+          // window); the refresh also runs the server-side stale-run sweep.
+          startedForRef.current.delete(runId);
+          router.refresh();
+          return;
+        }
+        pollRef.current.set(runId, setTimeout(tick, POLL_MS));
+      };
+      pollRef.current.set(runId, setTimeout(tick, POLL_MS));
+    },
+    [actions, router, t],
+  );
+
+  // Resume polling for any in-flight run delivered by the VM (page reload).
+  React.useEffect(() => {
+    for (const f of letters) {
+      const active = activeRunFor(f);
+      if (active && !startedForRef.current.has(active.id)) {
+        startedForRef.current.add(active.id);
+        pollUntilDone(active.id);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vm.generations, pollUntilDone]);
+
+  // Cleanup on unmount.
+  React.useEffect(
+    () => () => {
+      disposedRef.current = true;
+      for (const id of pollRef.current.values()) clearTimeout(id);
+      pollRef.current.clear();
+    },
+    [],
+  );
 
   function reviewHref(f: FormVM): string {
     const q = new URLSearchParams();
@@ -102,8 +208,20 @@ export function GeneracionesTab({
     setBusy(key);
     const r = await actions.startLetterGeneration({ caseId, formDefinitionId: f.id, partyId: f.partyId });
     setBusy(null);
-    if (r.ok) toast.success(t.toastLetterQueued);
-    else toast.error(r.error?.code === "AI_RUN_DUPLICATE" ? t.toastLetterDuplicate : t.toastLetterError);
+    if (r.ok) {
+      toast.success(t.toastLetterQueued);
+      // Local override + refresh: the VM only reflects the queued run after the
+      // next server render — without both, the button re-enables and the pill
+      // reads idle for the whole generation window.
+      if (r.runId) {
+        setPendingByKey((m) => ({ ...m, [key]: r.runId! }));
+        if (!startedForRef.current.has(r.runId)) {
+          startedForRef.current.add(r.runId);
+          pollUntilDone(r.runId, key);
+        }
+      }
+      router.refresh();
+    } else toast.error(r.error?.code === "AI_RUN_DUPLICATE" ? t.toastLetterDuplicate : t.toastLetterError);
   }
 
   return (
@@ -122,9 +240,27 @@ export function GeneracionesTab({
           {letters.map((f: FormVM) => {
             const key = `${f.id}-${f.partyId ?? ""}`;
             const run = currentRunFor(f);
+            const active = activeRunFor(f);
+            // Just-enqueued run not yet in the VM (pre-refresh window).
+            const pendingLocal = !active && pendingByKey[key] ? true : false;
             const isBusy = busy === key;
-            const statusText = run ? (statusLabels[run.status] ?? run.status) : t.genNotStarted;
-            const pill = run ? (GEN_PILL[run.status] ?? "pendiente") : ("pendiente" as StatusKind);
+            // The pill reflects the in-flight run when there is one; the completed
+            // version info below stays visible alongside it.
+            const shown = active ?? run;
+            const statusText = active
+              ? (statusLabels[active.status] ?? active.status)
+              : pendingLocal
+                ? (statusLabels["queued"] ?? "queued")
+                : shown
+                  ? (statusLabels[shown.status] ?? shown.status)
+                  : t.genNotStarted;
+            const pill = active
+              ? (GEN_PILL[active.status] ?? "pendiente")
+              : pendingLocal
+                ? (GEN_PILL["queued"] ?? "pendiente")
+                : shown
+                  ? (GEN_PILL[shown.status] ?? "pendiente")
+                  : ("pendiente" as StatusKind);
             return (
               <div key={key} className="letter-row">
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -144,10 +280,10 @@ export function GeneracionesTab({
                       {t.viewForm}
                     </GhostBtn>
                   )}
-                  {/* Generar / Regenerar — a new version (async). */}
+                  {/* Generar / Regenerar — a new version (async). Blocked while a run is in flight. */}
                   {actions.startLetterGeneration && (
-                    <GhostBtn size="md" full={false} icon="sparkle" disabled={isBusy} onClick={() => regenerate(f, key)}>
-                      {isBusy ? t.generatingForm : run ? t.regenerateLetter : t.generateLetter}
+                    <GhostBtn size="md" full={false} icon="sparkle" disabled={isBusy || !!active || pendingLocal} onClick={() => regenerate(f, key)}>
+                      {isBusy || active || pendingLocal ? t.generatingForm : run ? t.regenerateLetter : t.generateLetter}
                     </GhostBtn>
                   )}
                   {/* Pre-Mortem — validate this generated letter's quality. */}

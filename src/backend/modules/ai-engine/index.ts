@@ -63,8 +63,12 @@ export {
   markQuestionnaireGenerationFailed,
   // Budget (consumed by ai-budget-aggregation cron)
   sumMonthlyCosts,
-  // Pre-Mortem validator (quality validation of generations/automations)
-  assessPreMortemRisk,
+  // Pre-Mortem validator (async QStash pipeline)
+  startPreMortemValidation,
+  executePreMortemJob,
+  cancelPreMortemValidation,
+  getPreMortemStatus,
+  markPreMortemFailedByCallback,
   getPreMortemAssessmentsForCase,
   isPreMortemEnabledForCase,
   listValidableTargetsForCase,
@@ -106,6 +110,8 @@ export type {
   PreMortemAssessment,
   PreMortemFinding,
   PreMortemTarget,
+  PreMortemRunStatus,
+  RunPreMortemPayload,
   ValidableTarget,
 } from "./service";
 

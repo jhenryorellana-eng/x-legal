@@ -30,6 +30,7 @@ export type {
   PreMortemVM,
   PreMortemReportVM,
   PreMortemTargetVM,
+  PreMortemInFlightVM,
   PreMortemFindingVM,
   PreMortemSeverity,
   PreMortemSemaforo,
