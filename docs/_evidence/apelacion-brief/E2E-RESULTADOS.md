@@ -34,7 +34,17 @@
    - Carátula de corte resuelta desde extracciones (respondent, A-number, corte, juez, fecha,
      nacionalidad, grounds) + CERTIFICATE OF SERVICE al cierre.
 
-4. **Pre-Mortem del brief** — (resultado en la sección de abajo cuando complete).
+4. **Pre-Mortem del brief** — tras el fix del abort de 240s (`63a2848`): **score 54 · amber ·
+   needs_corrections · $2.80** (~7 min de validación). El validador **verificó por web search que
+   todas las citas existen** con los holdings atribuidos, confirmó fidelidad total al material
+   fuente (sin contradicciones), CAT separado con el estándar correcto, remand bien ubicado con
+   §1003.2(c) y cobertura de todos los grounds. Sus 5 críticos son defectos editoriales REALES del
+   primer borrador: costura A.5/A.6 (encabezado truncado + bloques solapados — seam del motor de
+   secciones), TOC vs numeración interna, placeholders del Certificate of Service, withholding
+   poco desarrollado. Moderados de valor: **autoridades del 9º Cir. para un caso de Houston (5º
+   Cir.)** — sesgo del dataset a corregir; discrepancia de fecha del testigo; "cannot be
+   understated". El gate protege a Diana exactamente como se diseñó (mismo arco que el EOIR-26:
+   45→82 tras correcciones).
 
 ## Hallazgos anotados
 - Carátula: el subtítulo muestra `[Applicant]` — `deriveCoverContext` no conoce los alias
