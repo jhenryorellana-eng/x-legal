@@ -4014,15 +4014,30 @@ const PREMORTEM_DATASET_BUDGET = 30_000;
 /** Chars of masked case context (extractions) injected into the validator prompt. */
 const PREMORTEM_CONTEXT_BUDGET = 30_000;
 /**
- * Chars of the generated memo (ai_letter) injected into the validator prompt. A
- * court-grade credible-fear memo can reach ~250 pages (>500k chars). We keep a
- * head+tail slice (the tail carries the perjury declaration) and log when we clip
- * — never a silent cap. Single-pass validation stays within the model context.
- * 260k covers a ~100-page appeal brief WHOLE — at 120k the head-tail clip hid the
- * middle sections (the Motion to Remand) from QA and it penalized the document
- * for text it could not see.
+ * GUARANTEED FLOOR of generated-artifact chars injected into the validator
+ * prompt. The real budget is DYNAMIC (computePreMortemDocBudget): the document
+ * gets every char of context left after the rubric and the source material, so
+ * QA judges the WHOLE artifact whenever it fits — a clipped view penalized text
+ * the validator could not see (Henry 2026-07-17: quality over cost, always).
  */
 const PREMORTEM_MEMO_BUDGET = 260_000;
+/** Total input-char target for the validator call (~175k tokens at ~4 chars/token,
+ *  leaving system prompt + categories + 8k output inside a 200k-token context). */
+const PREMORTEM_TOTAL_INPUT_CHAR_TARGET = 700_000;
+/** Scaffolding allowance: system prompt, finding categories, task instructions. */
+const PREMORTEM_PROMPT_OVERHEAD_CHARS = 20_000;
+
+/**
+ * Dynamic artifact budget: everything the model context can still take after the
+ * rubric and the source/context material, never below the guaranteed floor. A
+ * huge rubric+source combination can only shrink the artifact down to the floor
+ * (260k) — and the head-tail clip stays visible-marked, never silent.
+ */
+export function computePreMortemDocBudget(guideChars: number, sourceOrContextChars: number): number {
+  const remaining =
+    PREMORTEM_TOTAL_INPUT_CHAR_TARGET - guideChars - sourceOrContextChars - PREMORTEM_PROMPT_OVERHEAD_CHARS;
+  return Math.max(PREMORTEM_MEMO_BUDGET, remaining);
+}
 /**
  * Chars of the SOURCE material (questionnaire answers + declaración + evidencias,
  * with OCR) injected so the validator can catch contradictions / incoherence /
@@ -4200,7 +4215,10 @@ export async function assessPreMortemRisk(
   let responseId: string | null = null;
   let formDefinitionId = "";
   let configModel: string | null = null;
-  let documentBlock: string; // the artifact rendered (masked) for the prompt
+  let documentBlock = ""; // the artifact rendered (masked) for the prompt
+  // ai_letter path: masked memo held here until the rubric+source sizes are known
+  // (the artifact budget is dynamic — it takes whatever context they leave free).
+  let pendingMaskedMemo: string | null = null;
   // For an ai_letter memo: the SOURCE material it was generated from (questionnaire
   // answers + declaración + evidencias) — injected so the validator can check the
   // memo for contradictions / incoherence / vagueness against the exact record.
@@ -4244,9 +4262,8 @@ export async function assessPreMortemRisk(
     // Mask BEFORE truncating: a cut landing mid-token (SSN/A-number/passport) would
     // break maskPii's contiguous match and leak raw PII to the provider. Truncating an
     // already-masked string can only garble a mask token (cosmetic), never leak.
-    documentBlock =
-      "## GENERATED LETTER (sensitive — identifiers masked)\n\n" +
-      budgetTextHeadTail(maskPii(outputText), PREMORTEM_MEMO_BUDGET, "memo", input.caseId);
+    // The budget itself is applied LATER (dynamic — needs the rubric+source sizes).
+    pendingMaskedMemo = maskPii(outputText);
   } else {
     targetKind = "pdf_automation";
     responseId = target.responseId;
@@ -4303,6 +4320,18 @@ export async function assessPreMortemRisk(
     } catch (err) {
       logger.warn({ err, caseId: input.caseId }, "ai-engine: pre-mortem case-context load failed (non-fatal)");
     }
+  }
+
+  // --- Apply the DYNAMIC artifact budget (ai_letter): the memo takes every char
+  // the rubric + source/context leave free, so QA sees the whole document. ---
+  if (pendingMaskedMemo !== null) {
+    const docBudget = computePreMortemDocBudget(
+      guide.guide_markdown.length,
+      sourceBlock ? sourceBlock.length : contextBlock.length,
+    );
+    documentBlock =
+      "## GENERATED LETTER (sensitive — identifiers masked)\n\n" +
+      budgetTextHeadTail(pendingMaskedMemo, docBudget, "memo", input.caseId);
   }
 
   // --- Build validator prompt ---

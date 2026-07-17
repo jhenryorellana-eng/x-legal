@@ -187,6 +187,7 @@ import {
   getPreMortemAssessmentsForCase,
   isPreMortemEnabledForCase,
   retrieveDatasetItemsWithFallback,
+  computePreMortemDocBudget,
   AiEngineError,
 } from "../service";
 
@@ -395,8 +396,19 @@ describe("assessPreMortemRisk", () => {
     expect(mocks.cases.getCaseExtractions).not.toHaveBeenCalled();
   });
 
-  it("ai_letter: truncates a giant memo to budget with a visible marker (no silent cap)", async () => {
-    mocks.repo.findRunById.mockResolvedValue({ ...BASE_RUN, output_text: "A".repeat(300_000) });
+  it("ai_letter: a REAL-SIZE giant memo (~500k, a 250-page credible-fear memo) reaches the validator WHOLE", async () => {
+    // Henry 2026-07-17: QA must never judge a clipped document because of budget.
+    // With small guide/source the dynamic budget must swallow a 500k memo entirely.
+    mocks.repo.findRunById.mockResolvedValue({ ...BASE_RUN, output_text: "A".repeat(500_000) });
+
+    await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter", runId: RUN_ID } });
+
+    const streamArg = JSON.stringify(mocks.anthropicClient.messages.stream.mock.calls[0][0]);
+    expect(streamArg).not.toContain("truncado por presupuesto");
+  });
+
+  it("ai_letter: truncates only past the dynamic context ceiling, with a visible marker (no silent cap)", async () => {
+    mocks.repo.findRunById.mockResolvedValue({ ...BASE_RUN, output_text: "A".repeat(720_000) });
 
     await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter", runId: RUN_ID } });
 
@@ -409,9 +421,9 @@ describe("assessPreMortemRisk", () => {
   });
 
   it("ai_letter: masks PII BEFORE truncating a giant memo (a boundary cut must not leak raw PII)", async () => {
-    // ~306k chars of repeated SSNs → exceeds PREMORTEM_MEMO_BUDGET (260k) → truncates.
+    // ~748k chars of repeated SSNs → exceeds the dynamic ceiling → truncates.
     // If masking ran AFTER truncation, the SSN straddling the cut would leak raw digits.
-    const giant = "relleno con SSN 123-45-6789 aqui. ".repeat(9000);
+    const giant = "relleno con SSN 123-45-6789 aqui. ".repeat(22_000);
     mocks.repo.findRunById.mockResolvedValue({ ...BASE_RUN, output_text: giant });
 
     await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter", runId: RUN_ID } });
@@ -420,6 +432,14 @@ describe("assessPreMortemRisk", () => {
     expect(streamArg).not.toContain("123-45-6789"); // raw SSN never reaches the provider
     expect(streamArg).toContain("6789"); // the masked form (•••-••-6789) survives
     expect(streamArg).toContain("truncado por presupuesto");
+  });
+
+  it("computePreMortemDocBudget: gives the document all remaining context after guide+source", () => {
+    expect(computePreMortemDocBudget(25_000, 40_000)).toBe(700_000 - 25_000 - 40_000 - 20_000);
+  });
+
+  it("computePreMortemDocBudget: never drops below the guaranteed floor", () => {
+    expect(computePreMortemDocBudget(400_000, 300_000)).toBe(260_000);
   });
 
   it("ai_letter: falls back to config slugs when the run froze empty inputs (older runs)", async () => {
