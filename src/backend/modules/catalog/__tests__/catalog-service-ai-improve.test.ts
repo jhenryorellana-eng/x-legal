@@ -8,6 +8,8 @@
  *   3. Audit written with the new value.
  *   4. REGRESSION: upsertQuestion (editor autosave, full-row semantics) can
  *      never write nor wipe ai_improve — the key is omitted from its schema.
+ *   5. REGRESSION: duplicateVersionAsDraft copies ai_improve to the new draft's
+ *      questions via the dedicated write path (it can't travel via upsertQuestion).
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -19,6 +21,12 @@ const mocks = vi.hoisted(() => {
     findVersionByGroup: vi.fn(),
     upsertQuestion: vi.fn(),
     getServiceSlugIndex: vi.fn(),
+    findVersionById: vi.fn(),
+    listVersions: vi.fn(),
+    insertAutomationVersion: vi.fn(),
+    getVersionTree: vi.fn(),
+    upsertQuestionGroup: vi.fn(),
+    updateQuestionCondition: vi.fn(),
   };
   const can = vi.fn();
   const writeAudit = vi.fn();
@@ -32,6 +40,12 @@ vi.mock("../repository", () => ({
   findVersionByGroup: mocks.repo.findVersionByGroup,
   upsertQuestion: mocks.repo.upsertQuestion,
   getServiceSlugIndex: mocks.repo.getServiceSlugIndex,
+  findVersionById: mocks.repo.findVersionById,
+  listVersions: mocks.repo.listVersions,
+  insertAutomationVersion: mocks.repo.insertAutomationVersion,
+  getVersionTree: mocks.repo.getVersionTree,
+  upsertQuestionGroup: mocks.repo.upsertQuestionGroup,
+  updateQuestionCondition: mocks.repo.updateQuestionCondition,
 }));
 
 vi.mock("@/backend/platform/supabase", () => ({
@@ -85,7 +99,7 @@ vi.mock("@/shared/constants/ai-models", () => ({
 }));
 
 import type { Actor } from "@/backend/platform/authz";
-import { updateQuestionAiImprove, upsertQuestion } from "../service";
+import { updateQuestionAiImprove, upsertQuestion, duplicateVersionAsDraft } from "../service";
 
 const QUESTION_ID = "33333333-3333-4333-8333-333333333333";
 const GROUP_ID = "44444444-4444-4444-8444-444444444444";
@@ -250,5 +264,77 @@ describe("REGRESSION — upsertQuestion never writes ai_improve", () => {
     expect(mocks.repo.upsertQuestion).toHaveBeenCalledTimes(1);
     const row = mocks.repo.upsertQuestion.mock.calls[0][0] as Record<string, unknown>;
     expect("ai_improve" in row).toBe(false);
+  });
+});
+
+describe("REGRESSION — duplicateVersionAsDraft copies ai_improve", () => {
+  const SOURCE_VERSION_ID = "66666666-6666-4666-8666-666666666666";
+  const NEW_Q_WITH = "55555555-5555-4555-8555-555555555551";
+  const NEW_Q_WITHOUT = "55555555-5555-4555-8555-555555555552";
+
+  function makeSourceQuestion(overrides: Record<string, unknown>) {
+    return {
+      question_i18n: { es: "¿Pregunta?" },
+      help_i18n: null,
+      field_type: "text",
+      options: null,
+      pdf_field_name: null,
+      source: "manual",
+      source_ref: null,
+      is_required: false,
+      validation: null,
+      condition: null,
+      empty_policy: "inherit",
+      empty_placeholder: null,
+      no_translate: false,
+      ...overrides,
+    };
+  }
+
+  it("re-writes the config on the NEW question ids via the dedicated write path", async () => {
+    mocks.repo.findVersionById.mockResolvedValue({
+      id: SOURCE_VERSION_ID,
+      form_definition_id: "form-id-111",
+      version: 2,
+      status: "published",
+      source_pdf_path: "catalog/form.pdf",
+      source_language: "en",
+      detected_fields: [],
+      default_empty_policy: "auto",
+    });
+    mocks.repo.listVersions.mockResolvedValue([{ version: 1 }, { version: 2 }]);
+    mocks.repo.insertAutomationVersion.mockResolvedValue({ id: "draft-version-id" });
+    mocks.repo.upsertQuestionGroup.mockResolvedValue({ id: "new-group-id" });
+    mocks.repo.upsertQuestion
+      .mockResolvedValueOnce({ id: NEW_Q_WITH })
+      .mockResolvedValueOnce({ id: NEW_Q_WITHOUT });
+    mocks.repo.getVersionTree.mockResolvedValue({
+      version: { id: SOURCE_VERSION_ID },
+      groups: [
+        {
+          id: GROUP_ID,
+          title_i18n: { es: "Grupo" },
+          position: 0,
+          do_not_fill: false,
+          questions: [
+            makeSourceQuestion({
+              id: "old-q-with-config",
+              position: 0,
+              ai_improve: { instruction: "Una persona por línea." },
+            }),
+            makeSourceQuestion({ id: "old-q-without-config", position: 1, ai_improve: null }),
+          ],
+        },
+      ],
+      questions: [],
+    });
+
+    await duplicateVersionAsDraft(makeActor(), SOURCE_VERSION_ID);
+
+    // Config copied exactly once, onto the NEW id — and never for the question without config.
+    expect(mocks.repo.updateQuestionAiImprove).toHaveBeenCalledTimes(1);
+    expect(mocks.repo.updateQuestionAiImprove).toHaveBeenCalledWith(NEW_Q_WITH, {
+      instruction: "Una persona por línea.",
+    });
   });
 });

@@ -974,6 +974,7 @@ export async function duplicateVersionAsDraft(actor: Actor, versionId: string): 
           empty_policy?: string | null;
           empty_placeholder?: string | null;
           no_translate?: boolean | null;
+          ai_improve?: unknown;
         };
         const newQ = await repo.upsertQuestion({
           group_id: newGroup.id,
@@ -993,6 +994,11 @@ export async function duplicateVersionAsDraft(actor: Actor, versionId: string): 
           no_translate: qRow.no_translate ?? false,
         } as Parameters<typeof repo.upsertQuestion>[0]);
         oldToNewQ.set(q.id, newQ.id);
+        // ai_improve has a dedicated write path (omitted from upsertQuestion's schema
+        // so autosave can't wipe it) — copy it explicitly so the config survives a duplicate.
+        if (qRow.ai_improve != null) {
+          await repo.updateQuestionAiImprove(newQ.id, qRow.ai_improve);
+        }
       }
     }
     for (const g of tree.groups) {
