@@ -4035,7 +4035,7 @@ const PREMORTEM_WEB_SEARCH_MAX_USES = 5;
  *  brief + rubric + full source material + web_search) run well past 4 minutes —
  *  the old 240s abort was killing them ("Request was aborted."). Must stay under
  *  the case pages' route maxDuration so the synchronous action fits in prod. */
-const PREMORTEM_CALL_TIMEOUT_MS = 540_000;
+const PREMORTEM_CALL_TIMEOUT_MS = 700_000;
 /** Output token budget — I-589 has 460 fields → reports can be long. */
 const PREMORTEM_MAX_OUTPUT_TOKENS = 8_192;
 

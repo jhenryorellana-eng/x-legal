@@ -19,7 +19,7 @@ import { getActor } from "@/backend/modules/identity";
 // The Pre-Mortem tab's runPreMortemAction posts through THIS route: validating a
 // large ai_letter (appeal brief + rubric + sources + web_search) runs several
 // minutes, so the segment needs headroom above Vercel's default.
-export const maxDuration = 600;
+export const maxDuration = 800;
 import {
   getCaseWorkspace,
   getCaseDocuments,
