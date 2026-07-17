@@ -57,3 +57,24 @@
 - `seed-ola2.cjs` — siembra idempotente de la Ola 2 (autorizada).
 - `make-evidence-fixtures.mjs` — genera los 2 PDFs sintéticos de Diego.
 - `drafts/` — contenido fuente de la config (system prompt, secciones, research, cuestionario, dataset).
+
+---
+
+# Test E2E #2 — caso NUEVO Valentina U26-000035 (2026-07-17, pedido de Henry: todo por UI, Pre-Mortem >75)
+
+Flujo COMPLETO por la UI del navegador (Playwright MCP) en x-legal.usalatinoprime.com:
+
+1. **Caso nuevo por el modal del admin**: cliente demo Valentina Rojas Medina (San Francisco — corte del 9º Cir. para que el dataset sea autoridad en-circuito) → contrato **firmado en /firma** (scroll-gate + canvas + checkbox) → **pago Zelle demo $200 registrado y confirmado** → caso ACTIVO.
+2. **Cliente**: subió los 3 docs requeridos + **3 evidencias sustentatorias** (denuncia Fiscalía Lara post-decisión, carta de la profesora asilada en España, informe médico certificado obtenido tarde) — las 6 extraídas por Gemini en segundos.
+3. **EOIR-26 v3 (multi-doc #6)**: wizard del cliente (prefills IA + 5 elecciones simples + ítem 12/checklist), submit, aprobación y PDF. El **#6 citó las 3 evidencias POR NOMBRE**, refutó ambos grounds y anunció el motion to remand. **Pre-Mortem: 88 · Se aprobaría** (solo sugerencias pre-firma).
+4. **Cuestionario dinámico** ($0.12): un grupo POR CADA una de las 3 evidencias (citando fiscal, hallazgos médicos), refutación por ground, no-disponibilidad honesta — 25 preguntas respondidas y enviadas.
+5. **Brief — el gate forzó calidad real en 4 iteraciones**: v1 72 → v2 74 (cero críticos) → subimos el presupuesto del validador para que leyera TODO el documento → v3 52 (con visión completa cazó truncados por max_tokens y contaminación de méritos) → config v4 (headroom +70%, headings del ensamblador, remand-only en méritos, guardrails §1208/Lozada) → **v4: 79 → re-validado 82 · would_approve · CERO críticos**.
+
+**Fixes de plataforma que este test produjo (todos en main/PROD):**
+- `f1520f5` presupuesto DINÁMICO del validador (lee el documento entero; piso 260K, objetivo 700K chars) — un memo real de 500K se valida completo.
+- `1390cf7` **veredicto determinista** per rúbrica §5.3 (≥75 sin críticos = aprueba; críticos nunca aprueban; <50 rechaza) + **chip de 3 estados** en la UI (el 79 sin críticos mostraba "No se aprobaría" por el binario viejo).
+- `350fa57`/`63a2848` techos de tiempo del validador (700s call / 800s ruta).
+- Config del brief endurecida iterativamente (sections.json v4 + system prompt + rúbrica CoS).
+
+**Captura**: `.playwright-mcp/valentina-premortem-aprobado.png` (82 · Se aprobaría en la UI).
+**Coste total del test** (≈): cuestionarios $0.25 · briefs v1-v4 $6.0 · validaciones $17 · EOIR-26/extracciones ~$1 → ~$24.
