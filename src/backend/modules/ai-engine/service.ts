@@ -4444,13 +4444,6 @@ export async function assessPreMortemRisk(
       ? Math.min(100, Math.max(0, Math.round(parsed.score)))
       : 50;
   const semaforo: Semaforo = isSemaforo(parsed?.semaforo) ? (parsed!.semaforo as Semaforo) : semaforoFromScore(score);
-  const verdict: Verdict = isVerdict(parsed?.verdict)
-    ? (parsed!.verdict as Verdict)
-    : score >= 80
-      ? "would_approve"
-      : score >= 50
-        ? "needs_corrections"
-        : "would_reject";
   const summary = typeof parsed?.summary === "string" && parsed.summary.trim() ? parsed.summary.trim() : null;
 
   const findings: PreMortemFinding[] = (parsed?.findings ?? [])
@@ -4463,6 +4456,24 @@ export async function assessPreMortemRisk(
       correction: typeof f.correction === "string" ? f.correction : "",
     }))
     .sort((a, b) => compareFindingSeverity(a.severity, b.severity));
+
+  // The rubrics' §5.3 approval criterion is a DETERMINISTIC rule — enforce it in
+  // code instead of trusting the model's verdict field (a 79 with zero críticos
+  // was coming back "needs_corrections" on the model's mood): with críticos it
+  // can never approve; without them, ≥75 approves; <50 always rejects.
+  const hasCritico = findings.some((f) => f.severity === "critico");
+  const verdict: Verdict =
+    score < 50 ? "would_reject"
+    : hasCritico ? "needs_corrections"
+    : score >= 75 ? "would_approve"
+    : "needs_corrections";
+  const modelVerdict = isVerdict(parsed?.verdict) ? (parsed!.verdict as Verdict) : null;
+  if (modelVerdict && modelVerdict !== verdict) {
+    logger.info(
+      { caseId: input.caseId, modelVerdict, calibratedVerdict: verdict, score, hasCritico },
+      "ai-engine: pre-mortem verdict calibrated per rubric §5.3",
+    );
+  }
 
   // --- Persist ---
   const { id: assessmentId, created_at } = await insertPreMortemAssessment({

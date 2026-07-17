@@ -216,7 +216,9 @@ function ReportView({ r, t }: { r: PreMortemReportVM; t: PmStrings }) {
           <span style={{ borderRadius: 999, padding: "4px 12px", fontSize: 12.5, fontWeight: 800, background: c.bg, color: c.fg, alignSelf: "flex-start" }}>
             {semaforoLabel(r.semaforo, t)}
           </span>
-          <Chip tone={r.approved ? "green" : "red"}>{r.approved ? t.verdictApproved : t.verdictRejected}</Chip>
+          {/* 3-state verdict: aprobar (green) / necesita correcciones (gold) /
+              rechazar (red) — verdictLabel ya viene localizado del VM. */}
+          <Chip tone={r.approved ? "green" : r.semaforo === "red" ? "red" : "gold"}>{r.verdictLabel}</Chip>
         </div>
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 12.5, color: "var(--ink-3)", fontWeight: 700 }}>{fmtDate(r.createdAt)}</span>

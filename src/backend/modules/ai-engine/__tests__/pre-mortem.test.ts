@@ -512,6 +512,46 @@ describe("assessPreMortemRisk", () => {
     expect(result.findings[0].category).toBe("placeholder_sin_resolver");
   });
 
+  it("calibrates the verdict deterministically: score>=75 with ZERO críticos is would_approve even if the model said otherwise", async () => {
+    // Henry 2026-07-17: a 79 with no critical findings showed "No se aprobaría".
+    // §5.3 of the rubric is a deterministic rule — code enforces it, not model mood.
+    mocks.repo.findLatestEligibleRunForPreMortem.mockResolvedValue({ runId: RUN_ID, outputText: BASE_RUN.output_text, outputPath: null, formDefinitionId: FORM_DEF_ID, model: "claude-opus-4-7" });
+    mockAnthropic(
+      '{"score":79,"semaforo":"amber","verdict":"needs_corrections","summary":"ok","findings":[' +
+        '{"severity":"moderado","category":"calidad","location":"A.5","description":"d","correction":"c"}]}',
+    );
+
+    const result = await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter" } });
+
+    expect(result.verdict).toBe("would_approve");
+    const insertArg = mocks.repo.insertPreMortemAssessment.mock.calls[0][0] as { verdict: string };
+    expect(insertArg.verdict).toBe("would_approve");
+  });
+
+  it("calibrates the verdict deterministically: a crítico caps at needs_corrections even with a high score", async () => {
+    mocks.repo.findLatestEligibleRunForPreMortem.mockResolvedValue({ runId: RUN_ID, outputText: BASE_RUN.output_text, outputPath: null, formDefinitionId: FORM_DEF_ID, model: "claude-opus-4-7" });
+    mockAnthropic(
+      '{"score":82,"semaforo":"green","verdict":"would_approve","summary":"ok","findings":[' +
+        '{"severity":"critico","category":"mal_llenado","location":"A.1","description":"d","correction":"c"}]}',
+    );
+
+    const result = await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter" } });
+
+    expect(result.verdict).toBe("needs_corrections");
+  });
+
+  it("calibrates the verdict deterministically: score<50 is would_reject even if the model was lenient", async () => {
+    mocks.repo.findLatestEligibleRunForPreMortem.mockResolvedValue({ runId: RUN_ID, outputText: BASE_RUN.output_text, outputPath: null, formDefinitionId: FORM_DEF_ID, model: "claude-opus-4-7" });
+    mockAnthropic(
+      '{"score":45,"semaforo":"red","verdict":"needs_corrections","summary":"x","findings":[' +
+        '{"severity":"critico","category":"mal_llenado","location":"A","description":"d","correction":"c"}]}',
+    );
+
+    const result = await assessPreMortemRisk(ACTOR, { caseId: CASE_ID, target: { kind: "ai_letter" } });
+
+    expect(result.verdict).toBe("would_reject");
+  });
+
   it("filters invalid categories/severities and clamps the score", async () => {
     mocks.repo.findLatestEligibleRunForPreMortem.mockResolvedValue({ runId: RUN_ID, outputText: BASE_RUN.output_text, outputPath: null, formDefinitionId: FORM_DEF_ID, model: "claude-opus-4-7" });
     mockAnthropic(
