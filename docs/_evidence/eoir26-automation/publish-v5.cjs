@@ -36,7 +36,8 @@ const db = createClient(URL, SERVICE, { auth: { persistSession: false } });
 
 const APPLY = process.argv.includes("--apply");
 const TEST_CASE_ID = "e2528124-7255-4156-a378-ab5cffbbcf77"; // U26-000038 (clienta de prueba)
-const DECISION_SLUG = "decision-juez"; // required_document_types del servicio apelacion
+// Slug REAL del requirement en PROD (verificado contra la v4 el 2026-07-18):
+const DECISION_SLUG = "decision-y-orden-del-juez-de-inmigracion";
 
 const die = (step, msg) => { console.error(`FAIL [${step}]: ${msg}`); process.exit(1); };
 const ok = (step, extra = "") => console.log(`OK   [${step}] ${extra}`);
@@ -85,75 +86,88 @@ async function main() {
     prev.why.push(why);
     patches.set(q.id, prev);
   };
-  const negativeOption = (q) =>
-    (q.options ?? []).find((o) => /not detained|no est[aá] detenid|no detenid|(^|\b)no(\b|$)/i.test(optLabelEs(o)) || /not[_-]?detained|(^|\b)no(\b|$)/i.test(String(o.value)));
+  // Parches EXACTOS por pdf_field_name (verificados contra la v4 real en PROD
+  // el 2026-07-18 — ver la consulta en el historial de la ola). Cada uno aborta
+  // si el campo no existe, para nunca publicar una v5 a medias.
+  const byPdfField = (name) => {
+    const q = allQuestions.find((x) => x.pdf_field_name === name);
+    if (!q) die(`field-${name}`, `no existe la pregunta con pdf_field_name "${name}" en la versión publicada`);
+    return q;
+  };
 
-  // 3a. Ítem 3 — ¿detenido? (select con opciones Detained / Not Detained)
-  const item3 = allQuestions.filter((q) =>
-    (q.field_type === "select" || q.field_type === "checkbox") &&
-    Array.isArray(q.options) &&
-    q.options.some((o) => /detained|detenid/i.test(optLabelEs(o)) || /detained/i.test(String(o.value))));
-  if (item3.length === 0) die("item3", "ninguna pregunta con opciones Detained/Not Detained — revisa la v4");
-  for (const q of item3) {
-    const neg = negativeOption(q);
-    if (!neg) die("item3", `pregunta "${esLabel(q)}" sin opción negativa identificable`);
-    const detOpt = (q.options ?? []).find((o) => o !== neg && /detained|detenid/i.test(optLabelEs(o) + " " + String(o.value)));
-    const ref = q.source_ref ?? {};
+  // 3a. Ítem 3 ("3") — ¿detenido? La v4 YA extrae custody_status con value_map
+  // {detained→Detained, non-detained→Not Detained}, pero SIN default y sin las
+  // variantes reales que Gemini devuelve ("not detained" con espacio, etc.) —
+  // por eso el cliente lo vio vacío. Se expande el mapa y default = Not Detained.
+  {
+    const q = byPdfField("3");
     addPatch(q, {
       source: "document_extraction",
       source_ref: {
-        ...ref,
+        ...(q.source_ref ?? {}),
         document_slug: DECISION_SLUG,
         json_path: "custody_status",
         value_map: {
-          "detained": detOpt ? detOpt.value : undefined,
-          "in detention": detOpt ? detOpt.value : undefined,
-          "detenido": detOpt ? detOpt.value : undefined,
-          "not detained": neg.value,
-          "no detenido": neg.value,
-          "released": neg.value,
+          "detained": "Detained",
+          "in detention": "Detained",
+          "in custody": "Detained",
+          "detenido": "Detained",
+          "non-detained": "Not Detained",
+          "not detained": "Not Detained",
+          "not in custody": "Not Detained",
+          "no detenido": "Not Detained",
+          "released": "Not Detained",
         },
-        default_value: neg.value,
+        default_value: "Not Detained",
       },
-    }, `ítem 3: custody_status → value_map + default "${optLabelEs(neg)}"`);
+    }, "ítem 3: value_map expandido (variantes reales de Gemini) + default 'Not Detained'");
   }
 
-  // 3b. Ítem 2 — parte apelante (appellants_line)
-  const item2 = allQuestions.filter((q) =>
-    /apelante|appellant/i.test(esLabel(q)) && q.field_type !== "checkbox" &&
-    !/firma|signature/i.test(esLabel(q)));
-  if (item2.length === 0) die("item2", "ninguna pregunta de 'parte apelante' — revisa la v4");
-  for (const q of item2) {
-    // Solo re-mapear la línea de apelantes (texto), no selects de rol.
-    if (q.field_type === "text" || q.field_type === "textarea") {
-      addPatch(q, {
-        source: "document_extraction",
-        source_ref: { ...(q.source_ref ?? {}), document_slug: DECISION_SLUG, json_path: "appellants_line" },
-      }, "ítem 2: appellants_line desde desicion-juez");
-    } else if (Array.isArray(q.options)) {
-      // Select "quién apela" (I am the alien / DHS…): default = the alien/respondent.
-      const alien = q.options.find((o) => /alien|respondent|yo|extranjer/i.test(optLabelEs(o) + " " + String(o.value)));
-      if (alien) addPatch(q, { source_ref: { ...(q.source_ref ?? {}), default_value: alien.value } }, `ítem 2: default "${optLabelEs(alien)}"`);
-    }
+  // 3b. Ítem 5 ("5") — tipo de decisión apelada. Hoy es client_answer con
+  // default "Merits proceedings appeal"; pasa a extraerse de la decisión:
+  // is_bond_decision=true → Bond appeal; false → Merits; sin dato → default
+  // Merits (la ruta más común). Las 4 fechas condicionales YA extraen
+  // decision_date — sin cambios ahí.
+  {
+    const q = byPdfField("5");
+    addPatch(q, {
+      source: "document_extraction",
+      source_ref: {
+        ...(q.source_ref ?? {}),
+        document_slug: DECISION_SLUG,
+        json_path: "is_bond_decision",
+        value_map: {
+          "true": "Bond proceedings appeal",
+          "false": "Merits proceedings appeal",
+        },
+        default_value: "Merits proceedings appeal",
+      },
+    }, "ítem 5: is_bond_decision → tipo de apelación + default Merits");
   }
 
-  // 3c. Ítem 5 — tipo de decisión + sub-preguntas Sí/No con default NO
-  const item5Group = groups.find((g) => /decisi[oó]n|item\s*5|[ií]tem\s*5/i.test(((g.title_i18n || {}).es || "") + " " + ((g.title_i18n || {}).en || "")));
-  const item5Questions = item5Group ? questionsByGroup.get(item5Group.id) : allQuestions.filter((q) => /tipo de decisi[oó]n|decision(al)? type|qu[eé] decisi[oó]n/i.test(esLabel(q)));
-  if (!item5Questions || item5Questions.length === 0) die("item5", "no encuentro el grupo/preguntas del ítem 5 — revisa la v4");
-  for (const q of item5Questions) {
-    if (q.field_type === "select" && Array.isArray(q.options)) {
-      const isYesNo = q.options.length === 2 && q.options.every((o) => /^(s[ií]|no|yes)$/i.test(optLabelEs(o)) || /^(si|no|yes)$/i.test(String(o.value)));
-      if (isYesNo) {
-        const no = q.options.find((o) => /^no$/i.test(optLabelEs(o)) || /^no$/i.test(String(o.value)));
-        if (no) addPatch(q, { source_ref: { ...(q.source_ref ?? {}), default_value: no.value } }, `ítem 5: default NO en "${esLabel(q).slice(0, 60)}"`);
-      } else if (/tipo de decisi[oó]n|type of decision|qu[eé] decidi[oó]/i.test(esLabel(q))) {
-        addPatch(q, {
-          source: "document_extraction",
-          source_ref: { ...(q.source_ref ?? {}), document_slug: DECISION_SLUG, json_path: "decision_outcome" },
-        }, "ítem 5: decision_outcome desde desicion-juez (value_map existente se conserva)");
-      }
-    }
+  // 3c. Ítem 7 ("7") — solicitud de argumento oral. Único select Sí/No sin
+  // default en la v4; "si no se encuentra, por defecto NO" (lo más común,
+  // la propia opción lo dice). Sigue siendo editable por el cliente/staff.
+  {
+    const q = byPdfField("7");
+    const no = (q.options ?? []).find((o) => /^no$/i.test(String(o.value)));
+    if (!no) die("item7", "la pregunta '7' no tiene opción 'No'");
+    addPatch(q, {
+      source_ref: { ...(q.source_ref ?? {}), default_value: no.value },
+    }, "ítem 7 (argumento oral): default 'No'");
+  }
+
+  // Verificación (sin parche) de lo que la v4 ya tiene bien y Henry pidió:
+  // ítem 1 ← appellants_line, ítem 2 default Respondent/Applicant, fechas 5.x ←
+  // decision_date, ítem 8 default Yes.
+  for (const [field, expect] of [
+    ["1. List names and alien numbers", "appellants_line"],
+    ["Date 5.1_af_date", "decision_date"],
+  ]) {
+    const q = byPdfField(field);
+    const jp = (q.source_ref ?? {}).json_path;
+    if (jp !== expect) die(`verify-${field}`, `esperaba json_path=${expect}, la v4 tiene ${jp}`);
+    info(`verify OK: "${field}" ← ${expect} (sin cambios)`);
   }
 
   // 3d. Checklist final — default_value=true salvo las 3 excepciones
