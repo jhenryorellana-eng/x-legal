@@ -267,6 +267,69 @@ export async function listPublishedQuestionTexts(formDefinitionId: string): Prom
   return rows.map((r) => r.question_i18n?.es ?? r.question_i18n?.en ?? "").filter(Boolean);
 }
 
+/** Base (published-version) client questions, loaded for the draft-answers pass.
+ *  Read-only consumption of catalog data (same precedent as listPublishedQuestionTexts). */
+export interface PublishedQuestionForDrafts {
+  id: string;
+  question_i18n: { es?: string; en?: string } | null;
+  help_i18n: { es?: string; en?: string } | null;
+  field_type: string;
+  options: Array<{ value: string; label_i18n?: { es?: string; en?: string } }> | null;
+  is_required: boolean;
+}
+
+export async function listPublishedClientQuestionsForDrafts(
+  formDefinitionId: string,
+): Promise<PublishedQuestionForDrafts[]> {
+  const client = createServiceClient();
+  const { data: ver } = await client
+    .from("form_automation_versions")
+    .select("id")
+    .eq("form_definition_id", formDefinitionId)
+    .eq("status", "published")
+    .maybeSingle();
+  const versionId = (ver as { id?: string } | null)?.id;
+  if (!versionId) return [];
+  const { data } = await client
+    .from("form_questions")
+    .select(
+      "id, question_i18n, help_i18n, field_type, options, is_required, source, form_question_groups!inner(automation_version_id)",
+    )
+    .eq("form_question_groups.automation_version_id", versionId)
+    .eq("source", "client_answer");
+  const rows = (data ?? []) as unknown as Array<
+    PublishedQuestionForDrafts & { source: string }
+  >;
+  return rows.map(({ source: _s, ...q }) => q);
+}
+
+/** The draft answers of a specific instance (cases reads it at submit time to
+ *  materialize untouched drafts with provenance).
+ *  ⚠ Caller contract: takes a bare instanceId with NO authorization — every
+ *  caller must resolve the id from an already-access-gated response/case
+ *  (submitFormResponse does requireCaseAccess first). Do not expose directly. */
+export async function getQuestionnaireInstanceDrafts(
+  instanceId: string,
+): Promise<Record<string, string> | null> {
+  const client = createServiceClient();
+  const { data, error } = await client
+    .from("case_questionnaire_instances")
+    .select("draft_answers")
+    .eq("id", instanceId)
+    .maybeSingle();
+  if (error) {
+    logger.error({ err: error, instanceId }, "ai-engine: getQuestionnaireInstanceDrafts failed");
+    return null;
+  }
+  const drafts = (data?.draft_answers ?? null) as Record<string, unknown> | null;
+  if (!drafts || typeof drafts !== "object") return null;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(drafts)) {
+    if (typeof v === "string" && v.trim()) out[k] = v;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
 /** A question + its version, loaded for the T5 "Mejorar con IA" flow. Read-only
  *  consumption of catalog config (same precedent as resolveAiFields). */
 export interface QuestionForImprove {
@@ -1269,6 +1332,14 @@ export async function loadResolvedInputs(snapshot: ConfigSnapshot): Promise<{
         rawText: data.raw_text ?? "",
         ...(label ? { label } : {}),
       });
+
+      // Calibration signal for the generation char budgets (head-tail clip):
+      // with chunked OCR a 200+ page record yields ~600k chars — this log tells
+      // us how much of each document the prompt actually sees.
+      logger.info(
+        { slug: docRef.slug, rawTextLength: (data.raw_text ?? "").length },
+        "ai-engine: resolved input document raw_text size",
+      );
     }
   }
 

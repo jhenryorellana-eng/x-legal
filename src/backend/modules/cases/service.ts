@@ -10,6 +10,7 @@
  */
 
 import { z } from "zod";
+import { createHash } from "node:crypto";
 
 import { can, requireCaseAccess, AuthzError } from "@/backend/platform/authz";
 import type { Actor } from "@/backend/platform/authz";
@@ -105,12 +106,17 @@ import {
   listFormResponsesForCase,
   insertFormResponse,
   mergeFormAnswers,
+  mergeFormAnswersIfEmpty,
   updateFormResponse,
   findLatestActiveDocumentBySlug,
   findDocumentExtractionByCaseDocId,
   findCompletedGenerationByFormSlug,
   downloadDocumentBytesBySlug,
   downloadAllDocumentBytesBySlug,
+  findRawTextsBySlug,
+  listDocumentMetaBySlugs,
+  findAiFieldCacheRows,
+  upsertAiFieldCacheRows,
   AI_FIELD_CONTEXT_MAX_TOTAL_BYTES,
   findClientProfileForForm,
   findUserContactFields,
@@ -1575,7 +1581,7 @@ export async function confirmDocumentUpload(
     original_filename: parsed.originalFilename,
     display_name: displayName,
     mime_type: mimeType,
-    size_bytes: 0, // size validated by storage, exact value not critical here
+    size_bytes: validated.bytes?.length ?? 0, // real size — downstream gates (AI extraction cap) rely on it
     status: "uploaded",
     service_phase_id: caseForPhase?.current_phase_id ?? null,
     // Only the rejected→correction case keeps a traceable chain link; a
@@ -1687,6 +1693,18 @@ export async function deleteCaseDocument(
     actorUserId: actor.userId,
     visibleToClient: true,
     titleI18n: { en: "Document removed", es: "Documento eliminado" },
+  });
+
+  // emitAndWait (not emit): the Lex knowledge-index reindex enqueue must complete
+  // before the serverless request freezes (same pattern as document.uploaded).
+  // The reindex's orphan sweep removes this document's chunks.
+  await appEvents.emitAndWait({
+    type: "document.deleted",
+    payload: {
+      caseId: doc.case_id,
+      documentId: doc.id,
+    },
+    occurredAt: new Date(),
   });
 
   if (actor.kind === "staff") {
@@ -3693,21 +3711,44 @@ export async function resolveBySource(
   };
   const source = question.source;
   const sourceRef = (question.source_ref ?? {}) as Record<string, unknown>;
+  // Config-as-data prefill knobs (ola apelación): `default_value` fills a field
+  // the source could not resolve (or a client_answer left untouched); `value_map`
+  // translates an extracted value (booleans/enums) into an OPTION value so selects
+  // can be prefilled — a mapped select never receives a raw non-option value.
+  const defaultValue = (() => {
+    const dv = sourceRef["default_value"];
+    return typeof dv === "string" && dv.trim() !== "" ? dv : undefined;
+  })();
 
   if (source === "client_answer") {
-    return responseAnswers[question.id] ?? null;
+    const own = responseAnswers[question.id];
+    if (own !== undefined && own !== null && own !== "") return own;
+    return defaultValue ?? own ?? null;
   }
 
   if (source === "document_extraction") {
+    const applyMap = (raw: unknown): unknown => {
+      const valueMap = sourceRef["value_map"];
+      if (valueMap && typeof valueMap === "object" && !Array.isArray(valueMap)) {
+        const key = raw === null || raw === undefined ? "" : String(raw).trim().toLowerCase();
+        const hit = Object.entries(valueMap as Record<string, unknown>).find(
+          ([k]) => k.trim().toLowerCase() === key,
+        );
+        return hit ? hit[1] : (defaultValue ?? null);
+      }
+      if (raw === null || raw === undefined || raw === "") return defaultValue ?? null;
+      return raw;
+    };
+
     const documentSlug = sourceRef["document_slug"] as string | undefined;
     const jsonPath = sourceRef["json_path"] as string | undefined;
-    if (!documentSlug) return null;
+    if (!documentSlug) return applyMap(null);
 
     const approvedDoc = await findLatestActiveDocumentBySlug(caseId, documentSlug, partyId);
-    if (!approvedDoc) return null;
+    if (!approvedDoc) return applyMap(null);
 
     const extraction = await findDocumentExtractionByCaseDocId(approvedDoc.id);
-    if (!extraction || extraction.status !== "completed") return null;
+    if (!extraction || extraction.status !== "completed") return applyMap(null);
 
     if (!jsonPath) return extraction.payload;
 
@@ -3715,10 +3756,10 @@ export async function resolveBySource(
     const parts = jsonPath.split(".");
     let current: unknown = extraction.payload;
     for (const part of parts) {
-      if (current == null || typeof current !== "object") return null;
+      if (current == null || typeof current !== "object") return applyMap(null);
       current = (current as Record<string, unknown>)[part];
     }
-    return current ?? null;
+    return applyMap(current ?? null);
   }
 
   if (source === "generation_output") {
@@ -3893,6 +3934,7 @@ export async function resolveAiFields(
       fileBase64: string;
       mimeType: string;
       contextFiles?: Array<{ fileBase64: string; mimeType: string; label?: string }>;
+      contextTexts?: Array<{ text: string; label?: string }>;
       fields: Array<{ id: string; instruction: string }>;
       model?: string | null;
     }) => Promise<Record<string, string>>;
@@ -3910,48 +3952,122 @@ export async function resolveAiFields(
     const model = first.model ?? null;
     try {
       if (first.connected.kind === "document") {
+        const ctxSlugs = (first.connected.context_slugs ?? []).filter((s) => s && s !== first.connected.slug);
+
+        // Fingerprint-validated cache: an ai_field used to fire a Gemini call on
+        // EVERY wizard open. Key = per-question instruction + connected config +
+        // model + the document set's cheap metadata (id/size/updated_at) — a
+        // new/replaced upload changes the fingerprint and forces a recompute.
+        const allSlugs = [first.connected.slug, ...ctxSlugs];
+        const docsMeta = await listDocumentMetaBySlugs(caseId, allSlugs, partyId);
+        const fingerprintFor = (f: AiFieldResolveInput): string =>
+          createHash("sha256")
+            .update(
+              JSON.stringify({
+                instruction: f.instruction,
+                connected: { kind: f.connected.kind, slug: f.connected.slug, ctx: ctxSlugs },
+                model,
+                docs: docsMeta.map((d) => [d.id, d.size_bytes, d.updated_at, d.extraction_status, d.extraction_completed_at]),
+              }),
+            )
+            .digest("hex");
+        const cacheRows = await findAiFieldCacheRows(caseId, partyId, grp.map((f) => f.id));
+        const cacheByQ = new Map(cacheRows.map((r) => [r.question_id, r]));
+        const allCached = grp.every((f) => {
+          const row = cacheByQ.get(f.id);
+          return !!row && row.input_fingerprint === fingerprintFor(f);
+        });
+        if (allCached) {
+          for (const f of grp) out[f.id] = cacheByQ.get(f.id)!.value;
+          continue;
+        }
+
         const doc = await downloadDocumentBytesBySlug(caseId, first.connected.slug, partyId);
         if (!doc) continue;
         const fileBase64 = Buffer.from(doc.bytes).toString("base64");
-        // Context documents (best-effort): every active file of each context slug,
-        // labeled, so the interpreter can corroborate against the wider record.
-        // Gemini bounds the WHOLE inline request (primary included), so the budget
-        // starts minus the primary's size and is threaded across the slugs.
-        const ctxSlugs = (first.connected.context_slugs ?? []).filter((s) => s && s !== first.connected.slug);
+        // Context documents (best-effort). PREFERRED source: the completed
+        // extraction's raw_text (a 14MB scanned record travels as text — the
+        // 12MB inline guardrail used to SKIP it and item #6 lost its context).
+        // Slugs without a completed extraction fall back to bytes; Gemini bounds
+        // the WHOLE inline request (primary included), so the byte budget starts
+        // minus the primary's size and is threaded across the fallback slugs.
         let contextFiles: Array<{ fileBase64: string; mimeType: string; label?: string }> | undefined;
+        let contextTexts: Array<{ text: string; label?: string }> | undefined;
         if (ctxSlugs.length > 0) {
-          let remaining = AI_FIELD_CONTEXT_MAX_TOTAL_BYTES - doc.bytes.byteLength;
-          if (remaining <= 0) {
-            logger.warn(
-              { caseId, slug: first.connected.slug, primaryBytes: doc.bytes.byteLength },
-              "resolveAiFields: primary document consumes the whole inline budget; context skipped",
-            );
-          }
-          const files: Array<{ fileBase64: string; mimeType: string; label?: string }> = [];
+          const texts: Array<{ text: string; label?: string }> = [];
+          const byteSlugs: string[] = [];
           for (const slug of ctxSlugs) {
-            if (remaining <= 0) break;
-            const docs = await downloadAllDocumentBytesBySlug(caseId, slug, partyId, { maxTotalBytes: remaining });
-            for (const d of docs) {
-              remaining -= d.bytes.byteLength;
-              files.push({
-                fileBase64: Buffer.from(d.bytes).toString("base64"),
-                mimeType: d.mimeType,
-                ...(d.label ? { label: d.label } : {}),
-              });
+            const raws = await findRawTextsBySlug(caseId, slug, partyId);
+            if (raws.length > 0) {
+              texts.push(...raws.map((r) => ({ text: r.rawText, ...(r.label ? { label: r.label } : {}) })));
+            } else {
+              byteSlugs.push(slug);
             }
           }
-          if (files.length > 0) contextFiles = files;
+          if (byteSlugs.length > 0) {
+            let remaining = AI_FIELD_CONTEXT_MAX_TOTAL_BYTES - doc.bytes.byteLength;
+            if (remaining <= 0) {
+              logger.warn(
+                { caseId, slug: first.connected.slug, primaryBytes: doc.bytes.byteLength },
+                "resolveAiFields: primary document consumes the whole inline budget; context skipped",
+              );
+            }
+            const files: Array<{ fileBase64: string; mimeType: string; label?: string }> = [];
+            for (const slug of byteSlugs) {
+              if (remaining <= 0) break;
+              const docs = await downloadAllDocumentBytesBySlug(caseId, slug, partyId, { maxTotalBytes: remaining });
+              for (const d of docs) {
+                remaining -= d.bytes.byteLength;
+                files.push({
+                  fileBase64: Buffer.from(d.bytes).toString("base64"),
+                  mimeType: d.mimeType,
+                  ...(d.label ? { label: d.label } : {}),
+                });
+              }
+            }
+            if (files.length > 0) contextFiles = files;
+          }
+          if (texts.length > 0) contextTexts = texts;
         }
-        Object.assign(
-          out,
-          await aiEngine.interpretDocumentFields({
-            fileBase64,
-            mimeType: doc.mimeType,
-            ...(contextFiles ? { contextFiles } : {}),
-            fields: reqs,
+        const resolved = await aiEngine.interpretDocumentFields({
+          fileBase64,
+          mimeType: doc.mimeType,
+          ...(contextFiles ? { contextFiles } : {}),
+          ...(contextTexts ? { contextTexts } : {}),
+          fields: reqs,
+          model,
+        });
+        Object.assign(out, resolved);
+
+        // Stale-cache fallback: a provider hiccup on a RECOMPUTE (fingerprint
+        // changed, e.g. a document was just approved) must never blank a field
+        // that resolved fine minutes ago — a slightly-stale draft beats an empty
+        // required field that blocks the official PDF. Never cached, so the next
+        // resolution retries the provider.
+        for (const f of grp) {
+          const empty = typeof out[f.id] !== "string" || out[f.id].trim() === "";
+          const stale = cacheByQ.get(f.id);
+          if (empty && stale?.value) {
+            out[f.id] = stale.value;
+            logger.warn(
+              { caseId, questionId: f.id, slug: first.connected.slug },
+              "resolveAiFields: provider returned empty on recompute — serving stale cached value",
+            );
+          }
+        }
+
+        // Cache write-back (never cache empties — a provider hiccup must retry).
+        const cacheable = grp
+          .filter((f) => typeof resolved[f.id] === "string" && resolved[f.id].trim() !== "")
+          .map((f) => ({
+            case_id: caseId,
+            party_id: partyId,
+            question_id: f.id,
+            input_fingerprint: fingerprintFor(f),
+            value: resolved[f.id],
             model,
-          }),
-        );
+          }));
+        if (cacheable.length > 0) await upsertAiFieldCacheRows(cacheable);
       } else if (first.connected.kind === "ai_letter") {
         const run = await findCompletedGenerationByFormSlug(caseId, first.connected.slug, partyId);
         if (!run?.outputText) continue;
@@ -4049,13 +4165,17 @@ export interface FormForClientDto {
 
 /**
  * Ola 3 — maps a generated questionnaire instance's jsonb schema to wizard groups.
- * Questions are all client_answer (no prefills); answers key off the stable uuids.
+ * Questions are all client_answer; answers key off the stable uuids.
  * `positionOffset` places generated groups AFTER base groups in hybrid mode.
+ * `drafts` (autofill total): AI-drafted answers from the instance surface as an
+ * editable prefill with the dedicated "ai_draft" source (chip "Borrador IA");
+ * a saved client answer ALWAYS wins over a draft.
  */
 function schemaToWizardGroups(
   schema: unknown,
   answers: Record<string, unknown>,
   positionOffset: number,
+  drafts?: Record<string, string> | null,
 ): FormGroupDto[] {
   const s = (schema ?? {}) as {
     groups?: Array<{
@@ -4075,6 +4195,8 @@ function schemaToWizardGroups(
       questions: (g.questions ?? [])
         .map((q) => {
           const opts = q.options as Array<{ value: string; label_i18n: unknown }> | null;
+          const saved = answers[q.id] ?? null;
+          const draft = saved === null || saved === "" ? (drafts?.[q.id] ?? null) : null;
           return {
             id: q.id,
             groupId: g.id,
@@ -4084,11 +4206,11 @@ function schemaToWizardGroups(
             options: opts ? opts.map((o) => ({ value: o.value, labelI18n: asI18n(o.label_i18n) ?? { en: o.value, es: o.value } })) : null,
             isRequired: q.is_required,
             position: q.position,
-            source: q.source ?? "client_answer",
+            source: draft !== null ? "ai_draft" : (q.source ?? "client_answer"),
             validation: (q.validation as { regex?: string; min?: number; max?: number } | null) ?? null,
-            prefillValue: null,
-            isPrefilled: false,
-            currentAnswer: answers[q.id] ?? null,
+            prefillValue: draft,
+            isPrefilled: draft !== null,
+            currentAnswer: saved,
             condition: parseConditionOrNull(q.condition),
             // Ola 3 generated questionnaires carry no per-question catalog config.
             aiImproveEnabled: false,
@@ -4165,7 +4287,12 @@ export async function getFormForClient(
       const rawQuestions = await catalog.listQuestions(g.id);
 
       const questions: FormQuestionDto[] = await Promise.all(rawQuestions.map(async (q) => {
-        const isPrefilled = q.source !== "client_answer";
+        // client_answer questions with a catalog default_value get the same
+        // prefill treatment (chip + editable value) as sourced questions.
+        const hasClientDefault =
+          q.source === "client_answer" &&
+          typeof (q.source_ref as Record<string, unknown> | null)?.["default_value"] === "string";
+        const isPrefilled = q.source !== "client_answer" || hasClientDefault;
         let prefillValue: unknown = null;
 
         if (isPrefilled) {
@@ -4233,9 +4360,9 @@ export async function getFormForClient(
   let questionnaireStale = false;
   if (formDef.kind === "questionnaire") {
     const aiEngine = (await import("@/backend/modules/ai-engine" as string)) as {
-      getQuestionnaireClientState: (caseId: string, formDefinitionId: string, partyId: string | null) => Promise<{ isDynamic: boolean; mode: string; autoTrigger: boolean; instance: { status: string; schema: unknown } | null; prereqs: { ok: boolean; missingForms: string[]; missingDocuments: string[] } | null }>;
+      getQuestionnaireClientState: (caseId: string, formDefinitionId: string, partyId: string | null) => Promise<{ isDynamic: boolean; mode: string; autoTrigger: boolean; instance: { status: string; schema: unknown; draft_answers?: Record<string, string> | null } | null; prereqs: { ok: boolean; missingForms: string[]; missingDocuments: string[] } | null }>;
       startQuestionnaireGeneration: (actor: Actor, input: { caseId: string; formDefinitionId: string; partyId?: string | null }) => Promise<unknown>;
-      getCurrentQuestionnaireInstance: (caseId: string, formDefinitionId: string, partyId: string | null) => Promise<{ status: string; schema: unknown } | null>;
+      getCurrentQuestionnaireInstance: (caseId: string, formDefinitionId: string, partyId: string | null) => Promise<{ status: string; schema: unknown; draft_answers?: Record<string, string> | null } | null>;
     };
     const state = await aiEngine.getQuestionnaireClientState(input.caseId, input.formDefinitionId, partyId);
     if (state.isDynamic) {
@@ -4258,7 +4385,24 @@ export async function getFormForClient(
       const status = instance?.status ?? "pending_prereqs";
       if (status === "ready" || status === "stale") {
         questionnaireStale = status === "stale";
-        const generated = schemaToWizardGroups(instance?.schema, answers, groups.length);
+        const drafts = (instance?.draft_answers ?? null) as Record<string, string> | null;
+        const generated = schemaToWizardGroups(instance?.schema, answers, groups.length, drafts);
+        // Hybrid base questions get the same draft prefill treatment: an
+        // AI-drafted answer surfaces on any untouched client_answer question.
+        if (drafts && state.mode === "hybrid") {
+          for (const g of groups) {
+            for (const q of g.questions) {
+              const saved = q.currentAnswer;
+              if (q.source !== "client_answer") continue;
+              if (saved !== null && saved !== "") continue;
+              const draft = drafts[q.id];
+              if (typeof draft !== "string" || !draft) continue;
+              q.prefillValue = draft;
+              q.isPrefilled = true;
+              q.source = "ai_draft";
+            }
+          }
+        }
         groups = state.mode === "hybrid" ? [...groups, ...generated] : generated;
       } else {
         if (state.mode === "automatic") groups = [];
@@ -4873,6 +5017,65 @@ export async function submitFormResponse(
   // the FORM_NOT_SUBMITTABLE check above — so there is no submit-side bypass to
   // block here (assertDocumentsGate would no-op on the existing response anyway).
 
+  // Autofill total (ola apelación): a per-case questionnaire response inherits
+  // the instance's AI drafts for every question the client reviewed but did not
+  // edit — persisted WITH provenance (`ai_draft_question_ids`) so staff can
+  // always tell an AI-drafted answer from client testimony. The client's review
+  // is the stepped wizard + confirmation screen; a saved answer always wins.
+  if (response.questionnaire_instance_id) {
+    try {
+      const aiEngine = (await import("@/backend/modules/ai-engine" as string)) as {
+        getQuestionnaireInstanceDrafts: (instanceId: string) => Promise<Record<string, string> | null>;
+      };
+      const drafts = await aiEngine.getQuestionnaireInstanceDrafts(response.questionnaire_instance_id);
+      if (drafts) {
+        const before = (response.answers ?? {}) as Record<string, unknown>;
+        const isEmpty = (v: unknown) => v === undefined || v === null || v === "";
+        const pending = Object.fromEntries(
+          Object.entries(drafts).filter(([qid]) => isEmpty(before[qid])),
+        );
+        // Atomic fill-only-if-empty (RPC, migration 0092): a client autosave
+        // landing between our read and this write ALWAYS wins over the draft.
+        const final =
+          Object.keys(pending).length > 0
+            ? await mergeFormAnswersIfEmpty(response.id, pending)
+            : null;
+        // Provenance = draft keys that actually landed (value equals the draft
+        // in the FINAL answers; a concurrent client edit excludes itself).
+        const materializedIds = final
+          ? Object.keys(pending).filter((qid) => final[qid] === drafts[qid])
+          : [];
+        // Defensive: keep the validated view in sync with what the RPC actually
+        // persisted, regardless of whether any draft landed.
+        if (final) response.answers = final as import("@/shared/database.types").Json;
+        if (final && materializedIds.length > 0) {
+          // UNION with prior provenance — a reject→regenerate→resubmit cycle
+          // materializes in batches and must never drop earlier ids.
+          const prior = Array.isArray(response.ai_draft_question_ids)
+            ? (response.ai_draft_question_ids as string[])
+            : [];
+          const provenance = [...new Set([...prior, ...materializedIds])];
+          await updateFormResponse(response.id, {
+            ai_draft_question_ids: provenance as unknown as import("@/shared/database.types").Json,
+          });
+          // PII-safe audit: ids + counts only, never answer values (RF-TRX-023).
+          await writeAudit(actor, "case.form_response.ai_drafts_materialized", "case_form_responses", response.id, {
+            after: {
+              caseId: parsed.caseId,
+              questionnaireInstanceId: response.questionnaire_instance_id,
+              materializedQuestionIds: materializedIds,
+              count: materializedIds.length,
+            },
+          });
+        }
+      }
+    } catch (err) {
+      // Best-effort: a drafts read failure must never block the client's submit;
+      // unanswered required questions still surface through validation below.
+      logger.warn({ err, responseId: response.id }, "submitFormResponse: draft materialization failed (non-fatal)");
+    }
+  }
+
   // Full server-side validation (RF-TRX-027 — client is never the source of truth).
   // A pdf_automation form ALWAYS resolves to ≥1 question; an empty result means the
   // version couldn't be resolved (catalog read failed / version unpublished) — fail
@@ -4893,7 +5096,13 @@ export async function submitFormResponse(
     const effective: Record<string, unknown> = { ...answers };
     for (const q of questions as Array<QuestionValidationRule & { source?: string; source_ref?: unknown }>) {
       const src = q.source ?? "client_answer";
-      if (src === "client_answer") continue;
+      // client_answer questions resolve nothing — EXCEPT when the catalog gave
+      // them a default_value (ola apelación): the wizard showed it as a prefill
+      // and the PDF will stamp it, so validation must see it too.
+      const hasClientDefault =
+        src === "client_answer" &&
+        typeof (q.source_ref as Record<string, unknown> | null)?.["default_value"] === "string";
+      if (src === "client_answer" && !hasClientDefault) continue;
       const cur = effective[q.id];
       if (cur !== undefined && cur !== null && cur !== "") continue;
       try {
@@ -5345,6 +5554,33 @@ async function resolveFormResponseFieldsCore(
   const answersTranslated: Record<string, string> = {};
   const needsTranslation = sourceLang === "en"; // English AcroForm ⇒ translate any Spanish free-text
 
+  // Conditions must see the same reality the fill writes. A controlling question
+  // resolved by default_value/value_map (or any non-typed source) satisfies its
+  // dependents even though `answers` has no entry for it — otherwise the PDF ships
+  // a marked item-5 box with a blank date next to it. Overlay resolved values for
+  // exactly the questions some condition references (ai_field excluded: expensive,
+  // and AI prose never gates a checkbox).
+  const conditionSourceIds = new Set<string>();
+  for (const q of questions) {
+    const c = parseConditionOrNull(q.condition);
+    if (c) conditionSourceIds.add(c.when.question);
+  }
+  const conditionAnswers: Record<string, unknown> = { ...answers };
+  for (const q of questions) {
+    if (!conditionSourceIds.has(q.id) || q.source === "ai_field") continue;
+    const own = answers[q.id];
+    if (own !== undefined && own !== null && own !== "") continue;
+    const resolved = await resolveBySource(
+      { id: q.id, source: q.source, source_ref: q.source_ref },
+      answers,
+      caseId,
+      partyId,
+    );
+    if (resolved !== undefined && resolved !== null && resolved !== "") {
+      conditionAnswers[q.id] = resolved;
+    }
+  }
+
   // Batch-resolve ai_field questions (one provider call per connected source) BEFORE
   // the fill loop, so the synchronous PDF fill stays fast even with many AI-written
   // fields. Only VISIBLE fields WITHOUT an explicit client answer are sent to the AI:
@@ -5353,7 +5589,7 @@ async function resolveFormResponseFieldsCore(
   const aiFieldReqs: AiFieldResolveInput[] = [];
   for (const q of questions) {
     if (q.source !== "ai_field") continue;
-    const cs = deriveFieldState(parseConditionOrNull(q.condition), q.is_required, answers);
+    const cs = deriveFieldState(parseConditionOrNull(q.condition), q.is_required, conditionAnswers);
     if (!cs.visible) continue;
     const own0 = answers[q.id];
     if (own0 !== undefined && own0 !== null && own0 !== "") continue;
@@ -5385,7 +5621,7 @@ async function resolveFormResponseFieldsCore(
     for (const q of questions) {
       if (q.do_not_fill) continue;
       if (q.field_type !== "text" && q.field_type !== "textarea") continue;
-      const cs = deriveFieldState(parseConditionOrNull(q.condition), q.is_required, answers);
+      const cs = deriveFieldState(parseConditionOrNull(q.condition), q.is_required, conditionAnswers);
       if (!cs.visible) continue;
       const own = answers[q.id];
       const val = typeof own === "string" ? own.trim() : "";
@@ -5460,7 +5696,7 @@ async function resolveFormResponseFieldsCore(
 
     // Conditional/dynamic: a field hidden by its condition is left blank in the
     // PDF (v1 parity: "NO ⇒ blank"); a locked-off field is likewise not required.
-    const condState = deriveFieldState(parseConditionOrNull(q.condition), q.is_required, answers);
+    const condState = deriveFieldState(parseConditionOrNull(q.condition), q.is_required, conditionAnswers);
     if (!condState.visible) {
       fields.push({ questionId: q.id, pdfFieldName: q.pdf_field_name, label, fieldType: q.field_type, source: q.source, value: null, visible: false, required: false, empty: true, doNotFill: false });
       continue;

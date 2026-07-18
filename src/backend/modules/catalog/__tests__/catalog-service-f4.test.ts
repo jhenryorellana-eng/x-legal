@@ -1200,6 +1200,8 @@ describe("updateQuestionnaireGenerationConfig", () => {
     auto_trigger: true,
     allow_client_trigger: false,
     on_new_evidence: "flag" as const,
+    draft_answers_enabled: false,
+    draft_answers_prompt: null,
   };
 
   beforeEach(() => {

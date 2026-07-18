@@ -155,6 +155,8 @@ export function buildFormEditorVM(data: RawFormEditorData, datasets: RawDataset[
           auto_trigger: (data.questionnaireGenConfig.auto_trigger as boolean) ?? true,
           allow_client_trigger: (data.questionnaireGenConfig.allow_client_trigger as boolean) ?? false,
           on_new_evidence: (data.questionnaireGenConfig.on_new_evidence as "never" | "flag" | "auto") ?? "flag",
+          draft_answers_enabled: (data.questionnaireGenConfig.draft_answers_enabled as boolean) ?? false,
+          draft_answers_prompt: (data.questionnaireGenConfig.draft_answers_prompt as string | null) ?? null,
         }
       : null,
     datasets: datasets.map((d) => ({ id: d.id, name: d.name, tokens: d.total_tokens, active: d.is_active })),

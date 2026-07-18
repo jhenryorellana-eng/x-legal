@@ -47,6 +47,7 @@ export {
   startQuestionnaireGeneration,
   getCurrentQuestionnaireInstance,
   getQuestionnaireClientState,
+  getQuestionnaireInstanceDrafts,
   evaluateQuestionnairePrereqs,
   materializeProposalToSchema,
   // on_new_evidence watcher (consumed by register-consumers on document.uploaded)
@@ -75,6 +76,41 @@ export {
   // Error class
   AiEngineError,
 } from "./service";
+
+// ---------------------------------------------------------------------------
+// Lex case chat (staff "Lex" tab) — user-facing surface + job entrypoints
+// ---------------------------------------------------------------------------
+
+export {
+  getLexThread,
+  sendLexMessage,
+  getLexMessageStatus,
+  reindexCaseKnowledge,
+  executeLexAnswerJob,
+  executeLexReindexJob,
+  LexError,
+} from "./lex-service";
+
+export type {
+  LexAnswerJobPayload,
+  LexReindexJobPayload,
+  LexReindexResult,
+} from "./lex-service";
+
+export {
+  LEX_MODELS,
+  LEX_SOURCE_KINDS,
+  DEFAULT_LEX_MODEL,
+  buildLexSystemPrompt,
+} from "./lex-domain";
+
+export type {
+  LexSource,
+  LexSourceKind,
+  LexMessageVM,
+  LexThreadVM,
+  LexModel,
+} from "./lex-domain";
 
 export type {
   StartGenerationResult,

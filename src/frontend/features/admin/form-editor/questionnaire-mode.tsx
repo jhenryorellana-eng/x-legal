@@ -152,6 +152,7 @@ function QuestionnaireGenConfigPanel({ vm, actions }: { vm: FormEditorVM; action
     mode: "global", generation_prompt: null, input_document_slugs: [], input_form_slugs: [],
     prerequisite_form_slugs: [], prerequisite_document_slugs: [], target_question_count: 15,
     model: null, hybrid_layout: "append_group", auto_trigger: true, allow_client_trigger: false, on_new_evidence: "flag",
+    draft_answers_enabled: false, draft_answers_prompt: null,
   };
   const [cfg, setCfg] = React.useState<QuestionnaireGenConfigVM>(initial);
   const [saving, setSaving] = React.useState(false);
@@ -179,6 +180,8 @@ function QuestionnaireGenConfigPanel({ vm, actions }: { vm: FormEditorVM; action
       auto_trigger: cfg.auto_trigger,
       allow_client_trigger: cfg.allow_client_trigger,
       on_new_evidence: cfg.on_new_evidence,
+      draft_answers_enabled: cfg.draft_answers_enabled,
+      draft_answers_prompt: cfg.draft_answers_prompt || null,
     });
     setSaving(false);
     if (r.success) toast.success("Configuración guardada"); else toast.error(r.error?.message ?? "Error");
@@ -245,6 +248,20 @@ function QuestionnaireGenConfigPanel({ vm, actions }: { vm: FormEditorVM; action
                   <option value="merge_by_topic">Intercaladas por tema</option>
                 </SelectInput>
               </div>
+            )}
+          </div>
+
+          <div>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--ink-2)", cursor: "pointer" }}>
+              <Switch checked={cfg.draft_answers_enabled} onCheckedChange={(v) => set("draft_answers_enabled", v)} aria-label="Borradores de respuesta IA" /> Borradores de respuesta IA (autofill)
+            </label>
+            <p style={{ margin: "6px 0 0", fontSize: 12, color: "var(--ink-3)", lineHeight: 1.4 }}>
+              La IA redacta un borrador de respuesta por pregunta desde los documentos del caso; el cliente lo revisa, edita y envía (chip «Borrador IA»).
+            </p>
+            {cfg.draft_answers_enabled && (
+              <textarea value={cfg.draft_answers_prompt ?? ""} onChange={(e) => set("draft_answers_prompt", e.target.value)} rows={3}
+                placeholder="Instrucciones extra para los borradores (opcional). Ej.: responde solo con hechos del expediente; sin evidencia nueva, la respuesta es 'No'."
+                style={{ width: "100%", marginTop: 8, padding: 10, borderRadius: 10, border: "1px solid var(--line)", fontSize: 13, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }} />
             )}
           </div>
 

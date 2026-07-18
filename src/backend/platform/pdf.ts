@@ -907,6 +907,41 @@ export async function countPdfPages(bytes: Uint8Array): Promise<number> {
   }
 }
 
+/**
+ * Extracts a page range into a standalone PDF (0-based `startPage`,
+ * `endPageExclusive` clamped to the document length). Powers the chunked OCR
+ * pipeline for large scanned documents — each chunk must be a valid PDF small
+ * enough for an inline AI request. Throws on an empty/out-of-bounds range.
+ */
+export async function extractPdfPageRange(
+  bytes: Uint8Array,
+  startPage: number,
+  endPageExclusive: number,
+): Promise<Uint8Array> {
+  const mupdf = await import("mupdf");
+
+  const M = mupdf as any;
+  const src = M.Document.openDocument(bytes, "application/pdf");
+  try {
+    const total = src.countPages();
+    const end = Math.min(endPageExclusive, total);
+    if (startPage < 0 || startPage >= end) {
+      throw new Error(
+        `extractPdfPageRange: invalid range [${startPage}, ${endPageExclusive}) for a ${total}-page document`,
+      );
+    }
+    const dst = new M.PDFDocument();
+    try {
+      for (let i = startPage; i < end; i++) dst.graftPage(dst.countPages(), src, i);
+      return dst.saveToBuffer("garbage=4,compress=yes").asUint8Array() as Uint8Array;
+    } finally {
+      try { dst.destroy?.(); } catch { /* freed */ }
+    }
+  } finally {
+    try { src.destroy?.(); } catch { /* freed */ }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // H. stampBates — continuous legal foliation on every page (USALP-0001…)
 // ---------------------------------------------------------------------------

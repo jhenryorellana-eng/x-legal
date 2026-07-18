@@ -26,6 +26,11 @@ import { getAccountStatement } from "@/backend/modules/billing";
 import { getCaseTabAccess } from "@/backend/modules/case-tabs";
 import { getContractForCase } from "@/backend/modules/contracts";
 import { getRunsForCase } from "@/backend/modules/ai-engine";
+import {
+  getLexThreadAction,
+  sendLexMessageAction,
+  getLexMessageStatusAction,
+} from "@/backend/modules/ai-engine/actions";
 import { getCaseRuta } from "@/backend/modules/scheduling";
 import { getCaseNotes } from "@/backend/modules/notes";
 import { resolveI18n, type Locale } from "@/shared/i18n";
@@ -303,6 +308,11 @@ export default async function VentasCasoDetailPage({
       isAdmin={false}
       tabAccessByRole={tabAccess.allowedByRole}
       initialTab={tab as CaseTabId | undefined}
+      lexActions={{
+        getLexThread: getLexThreadAction,
+        sendLexMessage: sendLexMessageAction,
+        getLexMessageStatus: getLexMessageStatusAction,
+      }}
       chatRaw={{
         getCaseThread: getCaseThreadAction,
         send: sendMessageAction,

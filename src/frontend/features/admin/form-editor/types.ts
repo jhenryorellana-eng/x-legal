@@ -124,12 +124,16 @@ export interface QuestionnaireGenConfigVM {
   auto_trigger: boolean;
   allow_client_trigger: boolean;
   on_new_evidence: "never" | "flag" | "auto";
+  draft_answers_enabled: boolean;
+  draft_answers_prompt: string | null;
 }
 
 export interface GenerationSectionVM {
   key: string;
   heading: string;
   min_words: number;
+  /** Word ceiling (0 = sin techo — comportamiento legacy). */
+  max_words?: number;
   max_tokens: number;
   guidance: string;
   type: "doctrinal" | "narrative" | "analysis";

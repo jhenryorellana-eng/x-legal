@@ -72,6 +72,14 @@ vi.mock("@/backend/modules/audit", () => ({
   appendCaseTimeline: vi.fn().mockResolvedValue(undefined),
 }));
 
+// cases/service only reaches ai-engine through dynamic imports; the quality
+// gate is exercised in document-quality-gate.test.ts — here it just passes.
+vi.mock("@/backend/modules/ai-engine", () => ({
+  assessDocumentLegibility: vi
+    .fn()
+    .mockResolvedValue({ legible: true, blurLevel: "none" }),
+}));
+
 vi.mock("../repository", async (importOriginal) => {
   const original = await importOriginal<typeof import("../repository")>();
   return {
@@ -285,5 +293,53 @@ describe("confirmDocumentUpload — H-3 uploadRef prefix guard", () => {
     ).rejects.toMatchObject({ code: "DOC_UPLOAD_INVALID" });
 
     expect(mockValidateUploadedObject).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// size_bytes — the row must persist the REAL validated size (was hardcoded 0,
+// which silently disabled every downstream size gate, e.g. the AI extraction cap)
+// ---------------------------------------------------------------------------
+
+describe("confirmDocumentUpload — persists the real size_bytes", () => {
+  const VALID_UPLOAD_REF = `case/${CASE_ID}/1234-document.pdf`;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCan.mockReturnValue(undefined);
+    mockFindCaseById.mockResolvedValue(ACTIVE_CASE);
+    mockInsertCaseDocument.mockImplementation(async (row: Record<string, unknown>) => ({
+      id: "ffffffff-ffff-4fff-8fff-000000000002",
+      ...row,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }));
+  });
+
+  it("stores the validated byte length instead of 0", async () => {
+    const bytes = Buffer.alloc(3 * 1024 * 1024, 1);
+    mockValidateUploadedObject.mockResolvedValue({ ok: true, bytes });
+
+    await confirmDocumentUpload(ACTOR, {
+      caseId: CASE_ID,
+      uploadRef: VALID_UPLOAD_REF,
+      originalFilename: "document.pdf",
+    });
+
+    const inserted = mockInsertCaseDocument.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(inserted.size_bytes).toBe(bytes.length);
+  });
+
+  it("falls back to 0 when the validator returned no bytes", async () => {
+    mockValidateUploadedObject.mockResolvedValue({ ok: true });
+
+    await confirmDocumentUpload(ACTOR, {
+      caseId: CASE_ID,
+      uploadRef: VALID_UPLOAD_REF,
+      originalFilename: "document.pdf",
+    });
+
+    const inserted = mockInsertCaseDocument.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(inserted.size_bytes).toBe(0);
   });
 });

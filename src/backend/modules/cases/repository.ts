@@ -539,6 +539,28 @@ export async function insertFormResponse(row: {
  * (0018) is not yet applied; the fallback is functionally correct, only losing
  * atomicity under truly-simultaneous saves.
  */
+/**
+ * Atomic AI-draft materialization (migration 0092): merges ONLY the patch keys
+ * that are still absent/empty AT WRITE TIME — a concurrent client autosave
+ * always wins over a draft. Returns the final answers map (null on failure —
+ * the caller treats the whole materialization as best-effort).
+ */
+export async function mergeFormAnswersIfEmpty(
+  responseId: string,
+  patch: Record<string, unknown>,
+): Promise<Record<string, unknown> | null> {
+  const supabase = createServiceClient();
+  const { data, error } = await supabase.rpc("merge_form_answers_if_empty", {
+    p_response_id: responseId,
+    p_patch: patch as import("@/shared/database.types").Json,
+  });
+  if (error) {
+    logger.warn({ err: error, responseId }, "cases: merge_form_answers_if_empty failed");
+    return null;
+  }
+  return (data as Record<string, unknown> | null) ?? null;
+}
+
 export async function mergeFormAnswers(
   responseId: string,
   patch: Record<string, unknown>,
@@ -606,6 +628,10 @@ export async function updateFormResponse(
     /** Ola 3 — re-pin a dynamic questionnaire draft to the current instance after
      *  a regeneration (keeps pin == the schema the answers are keyed to). */
     questionnaire_instance_id: string | null;
+    /** Autofill total — materialized answers (client answers + untouched AI
+     *  drafts) with their provenance ids, written at submit time. */
+    answers: import("@/shared/database.types").Json;
+    ai_draft_question_ids: import("@/shared/database.types").Json;
   }>,
 ): Promise<void> {
   const supabase = createServiceClient();
@@ -841,6 +867,160 @@ export async function downloadAllDocumentBytesBySlug(
     out.push({ bytes, mimeType: row.mime_type, ...(label ? { label } : {}) });
   }
   return out;
+}
+
+/**
+ * The completed extractions' raw_text of every active document of a slug —
+ * the PREFERRED ai_field context (a 14MB scanned record travels as text, not as
+ * bytes that would blow the inline budget). Returns [] when none is completed.
+ */
+export async function findRawTextsBySlug(
+  caseId: string,
+  requirementSlug: string,
+  partyId: string | null,
+): Promise<Array<{ rawText: string; label?: string }>> {
+  const supabase = createServiceClient();
+  let query = supabase
+    .from("case_documents")
+    .select(
+      "id, display_name, original_filename, required_document_types!inner(slug), document_extractions(status, raw_text)",
+    )
+    .eq("case_id", caseId)
+    .eq("required_document_types.slug", requirementSlug)
+    .in("status", ["uploaded", "approved"])
+    .order("created_at", { ascending: true });
+  if (partyId) query = query.eq("party_id", partyId);
+  else query = query.is("party_id", null);
+
+  const { data } = await query;
+  const rows = (data ?? []) as unknown as Array<{
+    display_name: string | null;
+    original_filename: string | null;
+    document_extractions:
+      | { status: string; raw_text: string | null }
+      | Array<{ status: string; raw_text: string | null }>
+      | null;
+  }>;
+  const out: Array<{ rawText: string; label?: string }> = [];
+  for (const row of rows) {
+    const ext = Array.isArray(row.document_extractions)
+      ? row.document_extractions[0]
+      : row.document_extractions;
+    if (ext?.status !== "completed" || !ext.raw_text?.trim()) continue;
+    const label = row.display_name ?? row.original_filename ?? undefined;
+    out.push({ rawText: ext.raw_text, ...(label ? { label } : {}) });
+  }
+  return out;
+}
+
+/**
+ * Cheap metadata of every active document of a slug set — the ai_field cache
+ * fingerprint input (a new/replaced upload changes id/size/updated_at).
+ */
+export async function listDocumentMetaBySlugs(
+  caseId: string,
+  slugs: string[],
+  partyId: string | null,
+): Promise<
+  Array<{
+    id: string;
+    slug: string;
+    size_bytes: number;
+    updated_at: string;
+    /** Extraction lifecycle — part of the ai_field cache fingerprint: a context
+     *  resolved while OCR was still running must recompute once it completes. */
+    extraction_status: string | null;
+    extraction_completed_at: string | null;
+  }>
+> {
+  if (slugs.length === 0) return [];
+  const supabase = createServiceClient();
+  let query = supabase
+    .from("case_documents")
+    .select(
+      "id, size_bytes, updated_at, required_document_types!inner(slug), document_extractions(status, completed_at)",
+    )
+    .eq("case_id", caseId)
+    .in("required_document_types.slug", slugs)
+    .in("status", ["uploaded", "approved"])
+    .order("created_at", { ascending: true });
+  if (partyId) query = query.eq("party_id", partyId);
+  else query = query.is("party_id", null);
+
+  const { data } = await query;
+  const rows = (data ?? []) as unknown as Array<{
+    id: string;
+    size_bytes: number | null;
+    updated_at: string;
+    required_document_types: { slug: string } | Array<{ slug: string }>;
+    document_extractions:
+      | { status: string; completed_at: string | null }
+      | Array<{ status: string; completed_at: string | null }>
+      | null;
+  }>;
+  return rows.map((r) => {
+    const rdt = Array.isArray(r.required_document_types)
+      ? r.required_document_types[0]
+      : r.required_document_types;
+    const ext = Array.isArray(r.document_extractions)
+      ? r.document_extractions[0]
+      : r.document_extractions;
+    return {
+      id: r.id,
+      slug: rdt?.slug ?? "",
+      size_bytes: r.size_bytes ?? 0,
+      updated_at: r.updated_at,
+      extraction_status: ext?.status ?? null,
+      extraction_completed_at: ext?.completed_at ?? null,
+    };
+  });
+}
+
+/** Cached ai_field resolutions for a question set (fingerprint validated by the caller). */
+export async function findAiFieldCacheRows(
+  caseId: string,
+  partyId: string | null,
+  questionIds: string[],
+): Promise<Array<{ question_id: string; input_fingerprint: string; value: string }>> {
+  if (questionIds.length === 0) return [];
+  const supabase = createServiceClient();
+  let query = supabase
+    .from("case_ai_field_cache")
+    .select("question_id, input_fingerprint, value")
+    .eq("case_id", caseId)
+    .in("question_id", questionIds);
+  if (partyId) query = query.eq("party_id", partyId);
+  else query = query.is("party_id", null);
+  const { data, error } = await query;
+  if (error) {
+    logger.warn({ err: error, caseId }, "cases: findAiFieldCacheRows failed — treating as miss");
+    return [];
+  }
+  return (data ?? []) as Array<{ question_id: string; input_fingerprint: string; value: string }>;
+}
+
+/** Upserts resolved ai_field values (ON CONFLICT case/party/question). Best-effort. */
+export async function upsertAiFieldCacheRows(
+  rows: Array<{
+    case_id: string;
+    party_id: string | null;
+    question_id: string;
+    input_fingerprint: string;
+    value: string;
+    model: string | null;
+  }>,
+): Promise<void> {
+  if (rows.length === 0) return;
+  const supabase = createServiceClient();
+  const { error } = await supabase
+    .from("case_ai_field_cache")
+    .upsert(
+      rows.map((r) => ({ ...r, updated_at: new Date().toISOString() })),
+      { onConflict: "case_id,party_id,question_id" },
+    );
+  if (error) {
+    logger.warn({ err: error }, "cases: upsertAiFieldCacheRows failed (non-fatal)");
+  }
 }
 
 /**

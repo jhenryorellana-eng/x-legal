@@ -184,7 +184,7 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
 
   // Sections editor (generic long-form config — generalizes v1's 17 sections)
   function addSection() {
-    const next: GenerationSectionVM = { key: `s${cfg.sections.length + 1}`, heading: "", min_words: 0, max_tokens: 4000, guidance: "", type: "analysis" };
+    const next: GenerationSectionVM = { key: `s${cfg.sections.length + 1}`, heading: "", min_words: 0, max_words: 0, max_tokens: 4000, guidance: "", type: "analysis" };
     setCfg({ ...cfg, sections: [...cfg.sections, next] });
   }
   function updateSection(idx: number, patch: Partial<GenerationSectionVM>) {
@@ -427,7 +427,19 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
           {/* Sections */}
           <div>
             <FieldLabel>Secciones (documento largo)</FieldLabel>
-            <p style={{ fontSize: 11.5, color: "var(--ink-3)", margin: "0 0 10px" }}>Vacío = una sola generación. Con secciones, la IA genera y ensambla cada una en orden (piso de palabras + pase de expansión).</p>
+            <p style={{ fontSize: 11.5, color: "var(--ink-3)", margin: "0 0 10px" }}>Vacío = una sola generación. Con secciones, la IA genera y ensambla cada una en orden (piso + techo de palabras: pase de expansión si queda corta, pase de acortado si excede el techo; 0 en Máx = sin techo).</p>
+            {cfg.sections.length > 0 && (() => {
+              const totMin = cfg.sections.reduce((a, s) => a + (s.min_words || 0), 0);
+              const totMax = cfg.sections.reduce((a, s) => a + (s.max_words || 0), 0);
+              const pages = (w: number) => Math.round(w / 450);
+              return (
+                <p style={{ fontSize: 12, fontWeight: 700, color: totMax === 0 && totMin > 12000 ? "var(--gold-deep)" : "var(--ink-2)", margin: "0 0 10px" }}>
+                  Σ palabras: mín {totMin.toLocaleString()} ({pages(totMin)} págs aprox.)
+                  {totMax > 0 ? ` · máx ${totMax.toLocaleString()} (${pages(totMax)} págs aprox.)` : " · sin techo — el documento puede crecer sin límite"}
+                  {" "}· ~450 palabras/pág del cuerpo (sin carátula/TOC/anexos)
+                </p>
+              );
+            })()}
             {cfg.sections.map((s, i) => (
               <div key={i} style={{ border: "1px solid var(--line)", borderRadius: 12, padding: 12, marginBottom: 10, display: "grid", gap: 8 }}>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -435,8 +447,9 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
                   <TextInput value={s.heading} placeholder="Título de la sección" aria-label={`Título sección ${i + 1}`} onChange={(e) => updateSection(i, { heading: e.target.value })} />
                   <button type="button" onClick={() => removeSection(i)} aria-label={`Eliminar sección ${i + 1}`} style={{ border: "none", background: "none", color: "var(--red)", cursor: "pointer", display: "inline-flex" }}><Icon name="x" size={16} /></button>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr", gap: 8 }}>
                   <div><FieldLabel>Mín. palabras</FieldLabel><TextInput type="number" value={String(s.min_words)} aria-label={`Mín palabras sección ${i + 1}`} onChange={(e) => updateSection(i, { min_words: Math.max(0, Number(e.target.value) || 0) })} /></div>
+                  <div><FieldLabel>Máx. palabras</FieldLabel><TextInput type="number" value={String(s.max_words ?? 0)} aria-label={`Máx palabras sección ${i + 1}`} onChange={(e) => updateSection(i, { max_words: Math.max(0, Number(e.target.value) || 0) })} /></div>
                   <div><FieldLabel>Máx. tokens</FieldLabel><TextInput type="number" value={String(s.max_tokens)} aria-label={`Máx tokens sección ${i + 1}`} onChange={(e) => updateSection(i, { max_tokens: Math.max(256, Math.min(16000, Number(e.target.value) || 4000)) })} /></div>
                   <div><FieldLabel>Tipo</FieldLabel><SelectInput value={s.type} aria-label={`Tipo sección ${i + 1}`} onChange={(e) => updateSection(i, { type: e.target.value as GenerationSectionVM["type"] })}><option value="doctrinal">Doctrinal</option><option value="narrative">Narrativa</option><option value="analysis">Análisis</option></SelectInput></div>
                   <div><FieldLabel>Modelo</FieldLabel><SelectInput value={s.model ?? ""} aria-label={`Modelo sección ${i + 1}`} onChange={(e) => updateSection(i, { model: e.target.value || null })}><option value="">Por defecto</option>{GENERATION_MODELS.map((m) => <option key={m} value={m}>{m}</option>)}</SelectInput></div>

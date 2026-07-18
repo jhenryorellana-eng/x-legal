@@ -834,6 +834,57 @@ export type Database = {
           },
         ]
       }
+      case_ai_field_cache: {
+        Row: {
+          case_id: string
+          created_at: string
+          id: string
+          input_fingerprint: string
+          model: string | null
+          party_id: string | null
+          question_id: string
+          updated_at: string
+          value: string
+        }
+        Insert: {
+          case_id: string
+          created_at?: string
+          id?: string
+          input_fingerprint: string
+          model?: string | null
+          party_id?: string | null
+          question_id: string
+          updated_at?: string
+          value: string
+        }
+        Update: {
+          case_id?: string
+          created_at?: string
+          id?: string
+          input_fingerprint?: string
+          model?: string | null
+          party_id?: string | null
+          question_id?: string
+          updated_at?: string
+          value?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_ai_field_cache_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_ai_field_cache_party_id_fkey"
+            columns: ["party_id"]
+            isOneToOne: false
+            referencedRelation: "case_parties"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       case_appointment_schedule: {
         Row: {
           case_id: string
@@ -1121,6 +1172,7 @@ export type Database = {
       }
       case_form_responses: {
         Row: {
+          ai_draft_question_ids: Json | null
           answers: Json
           answers_translated: Json
           automation_version_id: string | null
@@ -1142,6 +1194,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          ai_draft_question_ids?: Json | null
           answers?: Json
           answers_translated?: Json
           automation_version_id?: string | null
@@ -1163,6 +1216,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          ai_draft_question_ids?: Json | null
           answers?: Json
           answers_translated?: Json
           automation_version_id?: string | null
@@ -1231,6 +1285,145 @@ export type Database = {
             columns: ["service_phase_id"]
             isOneToOne: false
             referencedRelation: "service_phases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      case_knowledge_chunks: {
+        Row: {
+          case_id: string
+          chunk_index: number
+          content: string
+          content_hash: string
+          created_at: string
+          embedding: string | null
+          id: string
+          source_id: string
+          source_kind: string
+          source_label: string
+          updated_at: string
+        }
+        Insert: {
+          case_id: string
+          chunk_index: number
+          content: string
+          content_hash: string
+          created_at?: string
+          embedding?: string | null
+          id?: string
+          source_id: string
+          source_kind: string
+          source_label?: string
+          updated_at?: string
+        }
+        Update: {
+          case_id?: string
+          chunk_index?: number
+          content?: string
+          content_hash?: string
+          created_at?: string
+          embedding?: string | null
+          id?: string
+          source_id?: string
+          source_kind?: string
+          source_label?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_knowledge_chunks_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      case_lex_messages: {
+        Row: {
+          content: string
+          cost_usd: number | null
+          created_at: string
+          error: string | null
+          id: string
+          input_tokens: number | null
+          model: string | null
+          output_tokens: number | null
+          role: string
+          sources: Json
+          status: string
+          thread_id: string
+        }
+        Insert: {
+          content?: string
+          cost_usd?: number | null
+          created_at?: string
+          error?: string | null
+          id?: string
+          input_tokens?: number | null
+          model?: string | null
+          output_tokens?: number | null
+          role: string
+          sources?: Json
+          status?: string
+          thread_id: string
+        }
+        Update: {
+          content?: string
+          cost_usd?: number | null
+          created_at?: string
+          error?: string | null
+          id?: string
+          input_tokens?: number | null
+          model?: string | null
+          output_tokens?: number | null
+          role?: string
+          sources?: Json
+          status?: string
+          thread_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_lex_messages_thread_id_fkey"
+            columns: ["thread_id"]
+            isOneToOne: false
+            referencedRelation: "case_lex_threads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      case_lex_threads: {
+        Row: {
+          case_id: string
+          created_at: string
+          id: string
+          staff_user_id: string
+        }
+        Insert: {
+          case_id: string
+          created_at?: string
+          id?: string
+          staff_user_id: string
+        }
+        Update: {
+          case_id?: string
+          created_at?: string
+          id?: string
+          staff_user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_lex_threads_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_lex_threads_staff_user_id_fkey"
+            columns: ["staff_user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
             referencedColumns: ["id"]
           },
         ]
@@ -1604,6 +1797,7 @@ export type Database = {
           case_id: string
           cost_usd: number | null
           created_at: string
+          draft_answers: Json | null
           error: string | null
           form_definition_id: string
           generated_at: string | null
@@ -1624,6 +1818,7 @@ export type Database = {
           case_id: string
           cost_usd?: number | null
           created_at?: string
+          draft_answers?: Json | null
           error?: string | null
           form_definition_id: string
           generated_at?: string | null
@@ -1644,6 +1839,7 @@ export type Database = {
           case_id?: string
           cost_usd?: number | null
           created_at?: string
+          draft_answers?: Json | null
           error?: string | null
           form_definition_id?: string
           generated_at?: string | null
@@ -2674,6 +2870,7 @@ export type Database = {
           model: string
           output_tokens: number | null
           payload: Json | null
+          progress: Json | null
           raw_text: string | null
           status: string
           updated_at: string
@@ -2689,6 +2886,7 @@ export type Database = {
           model: string
           output_tokens?: number | null
           payload?: Json | null
+          progress?: Json | null
           raw_text?: string | null
           status?: string
           updated_at?: string
@@ -2704,6 +2902,7 @@ export type Database = {
           model?: string
           output_tokens?: number | null
           payload?: Json | null
+          progress?: Json | null
           raw_text?: string | null
           status?: string
           updated_at?: string
@@ -4492,6 +4691,8 @@ export type Database = {
           allow_client_trigger: boolean
           auto_trigger: boolean
           created_at: string
+          draft_answers_enabled: boolean
+          draft_answers_prompt: string | null
           form_definition_id: string
           generation_prompt: string | null
           hybrid_layout: string
@@ -4509,6 +4710,8 @@ export type Database = {
           allow_client_trigger?: boolean
           auto_trigger?: boolean
           created_at?: string
+          draft_answers_enabled?: boolean
+          draft_answers_prompt?: string | null
           form_definition_id: string
           generation_prompt?: string | null
           hybrid_layout?: string
@@ -4526,6 +4729,8 @@ export type Database = {
           allow_client_trigger?: boolean
           auto_trigger?: boolean
           created_at?: string
+          draft_answers_enabled?: boolean
+          draft_answers_prompt?: string | null
           form_definition_id?: string
           generation_prompt?: string | null
           hybrid_layout?: string
@@ -5568,6 +5773,21 @@ export type Database = {
       is_client: { Args: never; Returns: boolean }
       is_conversation_participant: { Args: { conv: string }; Returns: boolean }
       is_staff: { Args: never; Returns: boolean }
+      match_case_knowledge: {
+        Args: {
+          match_count?: number
+          p_case_id: string
+          query_embedding: string
+        }
+        Returns: {
+          content: string
+          id: string
+          similarity: number
+          source_id: string
+          source_kind: string
+          source_label: string
+        }[]
+      }
       match_dataset_items: {
         Args: {
           filter_tags?: string[]
@@ -5590,6 +5810,10 @@ export type Database = {
       merge_form_answers: {
         Args: { p_patch: Json; p_response_id: string }
         Returns: undefined
+      }
+      merge_form_answers_if_empty: {
+        Args: { p_patch: Json; p_response_id: string }
+        Returns: Json
       }
       next_case_number: { Args: { org: string }; Returns: string }
       normalize_phone: { Args: { raw: string }; Returns: string }

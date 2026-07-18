@@ -44,6 +44,15 @@ export const OrgSettingsSchema = z.object({
   /** Free-form goals/notes used by the dashboard targets (meta).
    *  Keys capped at 60 chars, values capped at 1 000 chars (M-3: bounded, no unlimited input). */
   goals: z.record(z.string().max(60), z.string().max(1000)).default({}),
+  /**
+   * Lex case-chat model override (staff "Lex" tab). null = platform default
+   * (env AI_LEX_MODEL, then claude-sonnet-4-6). Whitelisted to the models the
+   * ai-engine prices and the web_search tool supports.
+   */
+  ai_lex_model: z
+    .enum(["claude-sonnet-4-6", "claude-haiku-4-5", "claude-fable-5"])
+    .nullable()
+    .default(null),
 });
 export type OrgSettings = z.infer<typeof OrgSettingsSchema>;
 
@@ -58,6 +67,11 @@ export const UpdateOrgSettingsDtoSchema = z.object({
   payment_zelle_email: z.string().max(160).nullable().optional(),
   /** Keys capped at 60 chars, values capped at 1 000 chars (M-3). */
   goals: z.record(z.string().max(60), z.string().max(1000)).optional(),
+  /** Lex case-chat model override; null restores the platform default. */
+  ai_lex_model: z
+    .enum(["claude-sonnet-4-6", "claude-haiku-4-5", "claude-fable-5"])
+    .nullable()
+    .optional(),
 });
 export type UpdateOrgSettingsDto = z.infer<typeof UpdateOrgSettingsDtoSchema>;
 

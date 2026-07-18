@@ -56,6 +56,8 @@ const {
   mockSynthesizeLetterFields,
   mockGetCurrentQuestionnaireInstance,
   mockGetQuestionnaireClientState,
+  mockGetQuestionnaireInstanceDrafts,
+  mockMergeFormAnswersIfEmpty,
   // audit mocks
   mockWriteAudit,
   mockAppendCaseTimeline,
@@ -90,6 +92,8 @@ const {
   mockSynthesizeLetterFields: vi.fn().mockResolvedValue({}),
   mockGetCurrentQuestionnaireInstance: vi.fn().mockResolvedValue(null),
   mockGetQuestionnaireClientState: vi.fn(),
+  mockGetQuestionnaireInstanceDrafts: vi.fn().mockResolvedValue(null),
+  mockMergeFormAnswersIfEmpty: vi.fn().mockResolvedValue(null),
   mockWriteAudit: vi.fn().mockResolvedValue(undefined),
   mockAppendCaseTimeline: vi.fn().mockResolvedValue(undefined),
   mockEmit: vi.fn(),
@@ -157,6 +161,7 @@ vi.mock("../repository", () => ({
   findFormResponseById: mockFindFormResponseById,
   insertFormResponse: mockInsertFormResponse,
   mergeFormAnswers: mockMergeFormAnswers,
+  mergeFormAnswersIfEmpty: mockMergeFormAnswersIfEmpty,
   updateFormResponse: mockUpdateFormResponse,
   listFormResponsesForCase: vi.fn().mockResolvedValue([]),
   findLatestActiveDocumentBySlug: mockFindLatestActiveDocumentBySlug,
@@ -166,6 +171,12 @@ vi.mock("../repository", () => ({
   downloadAllDocumentBytesBySlug: mockDownloadAllDocumentBytesBySlug,
   // Tiny shared inline budget so the threading math is visible in tests.
   AI_FIELD_CONTEXT_MAX_TOTAL_BYTES: 100,
+  // ai_field raw_text context + fingerprint cache (covered in ai-field-cache.test.ts):
+  // benign defaults here = always a cache miss and byte-context fallback.
+  findRawTextsBySlug: vi.fn().mockResolvedValue([]),
+  listDocumentMetaBySlugs: vi.fn().mockResolvedValue([]),
+  findAiFieldCacheRows: vi.fn().mockResolvedValue([]),
+  upsertAiFieldCacheRows: vi.fn().mockResolvedValue(undefined),
   findClientProfileForForm: mockFindClientProfileForForm,
   findUserContactFields: mockFindUserContactFields,
   listDocumentExtractionsForCase: mockListDocumentExtractionsForCase,
@@ -200,6 +211,7 @@ vi.mock("@/backend/modules/ai-engine", () => ({
   synthesizeLetterFields: mockSynthesizeLetterFields,
   getCurrentQuestionnaireInstance: mockGetCurrentQuestionnaireInstance,
   getQuestionnaireClientState: mockGetQuestionnaireClientState,
+  getQuestionnaireInstanceDrafts: mockGetQuestionnaireInstanceDrafts,
 }));
 
 vi.mock("@/backend/platform/crypto", () => ({
@@ -1268,6 +1280,42 @@ describe("generateFilledPdf", () => {
     expect(mockFillAcroForm).toHaveBeenCalledWith(expect.anything(), {}, { MarriedYes: false, MarriedNo: true });
   });
 
+  it("a condition sees its controlling select resolved by default_value (EOIR-26 item-5 date regression)", async () => {
+    // The item-5 selector is client_answer with default_value "merits" — the client
+    // never typed it, so `answers` is empty. Its dependent date (condition equals
+    // "merits") must STILL fill: the checkbox and its date come from the same
+    // effective resolution, or the PDF ships a marked box with a blank date.
+    mockFindFormResponseById.mockResolvedValue({ ...approvedResponse, answers: {} });
+    mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
+    mockListQuestionGroups.mockResolvedValue([{ id: "grp1" }]);
+    mockListQuestions.mockResolvedValue([
+      {
+        id: "qDecision", source: "client_answer", source_ref: { default_value: "merits" },
+        pdf_field_name: null, is_required: true, field_type: "select",
+        options: [
+          { value: "merits", pdf_field_name: "Box5.1" },
+          { value: "bond", pdf_field_name: "Box5.2" },
+        ],
+      },
+      {
+        id: "qDate", source: "document_extraction",
+        source_ref: { document_slug: "decision", json_path: "decision_date" },
+        pdf_field_name: "Date5.1", is_required: false, field_type: "date",
+        condition: { when: { question: "qDecision", op: "equals", value: "merits" }, action: "show" },
+      },
+    ]);
+    mockFindLatestActiveDocumentBySlug.mockResolvedValue({ id: DOC_ID, storage_path: "case/x/decision.pdf" });
+    mockFindDocumentExtractionByCaseDocId.mockResolvedValue({
+      status: "completed",
+      payload: { decision_date: "2026-06-30" },
+    });
+
+    await generateFilledPdf(staffActor, { responseId: RESPONSE_ID });
+    const fill = mockFillAcroForm.mock.calls[0][2] as Record<string, unknown>;
+    expect(fill["Box5.1"]).toBe(true);
+    expect(fill["Date5.1"]).toBe("06/30/2026");
+  });
+
   it("back-fills N/A only on visible empty free-text — never dates, never hidden fields", async () => {
     mockFindFormResponseById.mockResolvedValue({ ...approvedResponse, answers: {} });
     mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
@@ -2257,5 +2305,370 @@ describe("getCaseExtractions", () => {
 
     const result = await getCaseExtractions(staffActor, CASE_ID);
     expect(result).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ola apelación — value_map / default_value en source_ref (prefill de selects)
+// ---------------------------------------------------------------------------
+
+describe("resolveBySource — value_map / default_value", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFindLatestActiveDocumentBySlug.mockResolvedValue({ id: "doc-1" });
+    mockFindDocumentExtractionByCaseDocId.mockResolvedValue({
+      status: "completed",
+      payload: { is_oral_decision: true, decision_outcome: "denied" },
+    });
+  });
+
+  it("maps an extracted boolean through value_map to an option value", async () => {
+    const value = await resolveBySource(
+      {
+        id: "q-tipo",
+        source: "document_extraction",
+        source_ref: {
+          document_slug: "decision",
+          json_path: "is_oral_decision",
+          value_map: { true: "oral", false: "written" },
+        },
+      },
+      {},
+      CASE_ID,
+      null,
+    );
+    expect(value).toBe("oral");
+  });
+
+  it("value_map miss falls back to default_value (never leaks a raw non-option value)", async () => {
+    mockFindDocumentExtractionByCaseDocId.mockResolvedValue({
+      status: "completed",
+      payload: { is_oral_decision: "quién sabe" },
+    });
+    const value = await resolveBySource(
+      {
+        id: "q-tipo",
+        source: "document_extraction",
+        source_ref: {
+          document_slug: "decision",
+          json_path: "is_oral_decision",
+          value_map: { true: "oral", false: "written" },
+          default_value: "oral",
+        },
+      },
+      {},
+      CASE_ID,
+      null,
+    );
+    expect(value).toBe("oral");
+  });
+
+  it("document_extraction default_value applies when the document is missing", async () => {
+    mockFindLatestActiveDocumentBySlug.mockResolvedValue(null);
+    const value = await resolveBySource(
+      {
+        id: "q-tipo",
+        source: "document_extraction",
+        source_ref: { document_slug: "decision", json_path: "x", default_value: "oral" },
+      },
+      {},
+      CASE_ID,
+      null,
+    );
+    expect(value).toBe("oral");
+  });
+
+  it("client_answer default_value fills an unanswered question; a real answer wins", async () => {
+    const ref = { id: "q-brief", source: "client_answer", source_ref: { default_value: "yes" } };
+    expect(await resolveBySource(ref, {}, CASE_ID, null)).toBe("yes");
+    expect(await resolveBySource(ref, { "q-brief": "no" }, CASE_ID, null)).toBe("no");
+  });
+});
+
+describe("submitFormResponse — client_answer defaults satisfy required fields", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRequireCaseAccess.mockResolvedValue(undefined);
+  });
+
+  it("submits with an untouched required select whose source_ref carries a default_value", async () => {
+    mockFindFormResponse.mockResolvedValue({ ...draftResponse, answers: {} });
+    mockListQuestionGroups.mockResolvedValue([{ id: "grp1" }]);
+    mockListQuestions.mockResolvedValue([
+      {
+        id: "q-brief",
+        field_type: "select",
+        is_required: true,
+        options: [{ value: "yes" }, { value: "no" }],
+        validation: null,
+        source: "client_answer",
+        source_ref: { default_value: "yes" },
+      },
+    ]);
+    mockFindFormResponseById.mockResolvedValue({ ...submittedResponse });
+
+    await expect(
+      submitFormResponse(clientActor, { caseId: CASE_ID, formDefinitionId: FORM_DEF_ID, partyId: null }),
+    ).resolves.toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ola apelación — AI draft answers (autofill total del cuestionario dinámico)
+// ---------------------------------------------------------------------------
+
+describe("getFormForClient — AI draft prefill (questionnaire)", () => {
+  const QN_DEF = { ...activeFormDef, kind: "questionnaire" };
+  const BASE_QID = "eeeeeeee-eeee-4eee-8eee-000000000001";
+  const GEN_QID = "eeeeeeee-eeee-4eee-8eee-000000000002";
+
+  const instanceSchema = {
+    groups: [
+      {
+        id: "gggggggg-gggg-4ggg-8ggg-000000000001",
+        title_i18n: { es: "Generadas", en: "Generated" },
+        position: 0,
+        questions: [
+          {
+            id: GEN_QID,
+            question_i18n: { es: "¿Qué denegó el juez?", en: "What did the judge deny?" },
+            help_i18n: null,
+            field_type: "textarea",
+            options: null,
+            is_required: true,
+            position: 0,
+            source: "client_answer",
+            validation: null,
+            condition: null,
+          },
+        ],
+      },
+    ],
+  };
+
+  function hybridState(drafts: Record<string, string> | null) {
+    return {
+      isDynamic: true,
+      mode: "hybrid",
+      hybridLayout: "append_group",
+      autoTrigger: false,
+      allowClientTrigger: false,
+      instance: { status: "ready", schema: instanceSchema, draft_answers: drafts },
+      prereqs: null,
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRequireCaseAccess.mockResolvedValue(undefined);
+    mockFindFormDefinitionById.mockResolvedValue(QN_DEF);
+    mockGetPublishedAutomationVersion.mockResolvedValue(publishedVersion);
+    mockListQuestionGroups.mockResolvedValue([
+      { id: "grp-base", title_i18n: { es: "Base", en: "Base" }, position: 0 },
+    ]);
+    mockListQuestions.mockResolvedValue([
+      {
+        id: BASE_QID,
+        group_id: "grp-base",
+        question_i18n: { es: "¿Qué fue injusto?", en: "What was unfair?" },
+        help_i18n: null,
+        field_type: "textarea",
+        options: null,
+        is_required: true,
+        position: 0,
+        source: "client_answer",
+        source_ref: null,
+        validation: null,
+        condition: null,
+        ai_improve: null,
+      },
+    ]);
+  });
+
+  it("prefills generated AND base questions from instance draft_answers as source 'ai_draft'", async () => {
+    mockFindFormResponse.mockResolvedValue(null);
+    mockGetQuestionnaireClientState.mockResolvedValue(
+      hybridState({ [BASE_QID]: "Borrador base", [GEN_QID]: "Borrador generado" }),
+    );
+
+    const dto = await getFormForClient(clientActor, {
+      caseId: CASE_ID,
+      formDefinitionId: FORM_DEF_ID,
+      partyId: null,
+    });
+
+    const allQs = dto.groups.flatMap((g) => g.questions);
+    const baseQ = allQs.find((q) => q.id === BASE_QID);
+    const genQ = allQs.find((q) => q.id === GEN_QID);
+
+    expect(baseQ?.prefillValue).toBe("Borrador base");
+    expect(baseQ?.isPrefilled).toBe(true);
+    expect(baseQ?.source).toBe("ai_draft");
+
+    expect(genQ?.prefillValue).toBe("Borrador generado");
+    expect(genQ?.isPrefilled).toBe(true);
+    expect(genQ?.source).toBe("ai_draft");
+  });
+
+  it("a saved client answer always wins over the draft (no prefill, source intact)", async () => {
+    mockFindFormResponse.mockResolvedValue({
+      ...draftResponse,
+      automation_version_id: VERSION_ID,
+      answers: { [GEN_QID]: "Lo escribí yo" },
+    });
+    mockGetQuestionnaireClientState.mockResolvedValue(
+      hybridState({ [GEN_QID]: "Borrador generado" }),
+    );
+
+    const dto = await getFormForClient(clientActor, {
+      caseId: CASE_ID,
+      formDefinitionId: FORM_DEF_ID,
+      partyId: null,
+    });
+
+    const genQ = dto.groups.flatMap((g) => g.questions).find((q) => q.id === GEN_QID);
+    expect(genQ?.currentAnswer).toBe("Lo escribí yo");
+    expect(genQ?.isPrefilled).toBe(false);
+    expect(genQ?.source).toBe("client_answer");
+  });
+
+  it("no drafts → questionnaire renders exactly as before (regression)", async () => {
+    mockFindFormResponse.mockResolvedValue(null);
+    mockGetQuestionnaireClientState.mockResolvedValue(hybridState(null));
+
+    const dto = await getFormForClient(clientActor, {
+      caseId: CASE_ID,
+      formDefinitionId: FORM_DEF_ID,
+      partyId: null,
+    });
+
+    const allQs = dto.groups.flatMap((g) => g.questions);
+    for (const q of allQs) {
+      expect(q.isPrefilled).toBe(false);
+      expect(q.prefillValue).toBeNull();
+    }
+  });
+});
+
+describe("submitFormResponse — materializes untouched AI drafts with provenance", () => {
+  const INSTANCE_ID = "ffffffff-ffff-4fff-8fff-000000000010";
+  const BASE_QID = "eeeeeeee-eeee-4eee-8eee-000000000001";
+  const GEN_QID = "eeeeeeee-eeee-4eee-8eee-000000000002";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRequireCaseAccess.mockResolvedValue(undefined);
+    mockListQuestionGroups.mockResolvedValue([]);
+    mockListQuestions.mockResolvedValue([]);
+  });
+
+  it("fills unanswered questions via the ATOMIC fill-if-empty RPC and records provenance", async () => {
+    mockFindFormResponse.mockResolvedValue({
+      ...draftResponse,
+      automation_version_id: null,
+      questionnaire_instance_id: INSTANCE_ID,
+      answers: { [BASE_QID]: "Editado por el cliente" },
+    });
+    mockGetQuestionnaireInstanceDrafts.mockResolvedValue({
+      [BASE_QID]: "Borrador base",
+      [GEN_QID]: "Borrador generado",
+    });
+    mockMergeFormAnswersIfEmpty.mockResolvedValue({
+      [BASE_QID]: "Editado por el cliente",
+      [GEN_QID]: "Borrador generado",
+    });
+    mockFindFormResponseById.mockResolvedValue({ ...submittedResponse });
+
+    await submitFormResponse(clientActor, {
+      caseId: CASE_ID,
+      formDefinitionId: FORM_DEF_ID,
+      partyId: null,
+    });
+
+    expect(mockGetQuestionnaireInstanceDrafts).toHaveBeenCalledWith(INSTANCE_ID);
+    // Only the EMPTY question goes to the RPC (the client-edited one is excluded)
+    expect(mockMergeFormAnswersIfEmpty).toHaveBeenCalledWith(RESPONSE_ID, {
+      [GEN_QID]: "Borrador generado",
+    });
+    expect(mockUpdateFormResponse).toHaveBeenCalledWith(
+      RESPONSE_ID,
+      expect.objectContaining({ ai_draft_question_ids: [GEN_QID] }),
+    );
+    // PII-safe audit: ids only, never values
+    expect(mockWriteAudit).toHaveBeenCalledWith(
+      expect.anything(),
+      "case.form_response.ai_drafts_materialized",
+      "case_form_responses",
+      RESPONSE_ID,
+      expect.anything(),
+    );
+    const auditCall = mockWriteAudit.mock.calls.at(-1);
+    expect(JSON.stringify(auditCall)).not.toContain("Borrador generado");
+  });
+
+  it("a concurrent client autosave wins: the RPC result excludes the draft → no provenance for it", async () => {
+    mockFindFormResponse.mockResolvedValue({
+      ...draftResponse,
+      automation_version_id: null,
+      questionnaire_instance_id: INSTANCE_ID,
+      answers: {},
+    });
+    mockGetQuestionnaireInstanceDrafts.mockResolvedValue({ [GEN_QID]: "Borrador generado" });
+    // The RPC saw a client answer land first → kept it (fill-if-empty semantics)
+    mockMergeFormAnswersIfEmpty.mockResolvedValue({ [GEN_QID]: "Lo escribió el cliente a última hora" });
+    mockFindFormResponseById.mockResolvedValue({ ...submittedResponse });
+
+    await submitFormResponse(clientActor, {
+      caseId: CASE_ID,
+      formDefinitionId: FORM_DEF_ID,
+      partyId: null,
+    });
+
+    const provenanceCall = mockUpdateFormResponse.mock.calls.find(
+      (c) => (c[1] as Record<string, unknown>)?.ai_draft_question_ids !== undefined,
+    );
+    expect(provenanceCall).toBeUndefined();
+  });
+
+  it("skips materialization entirely when the client answered everything", async () => {
+    mockFindFormResponse.mockResolvedValue({
+      ...draftResponse,
+      automation_version_id: null,
+      questionnaire_instance_id: INSTANCE_ID,
+      answers: { [BASE_QID]: "a", [GEN_QID]: "b" },
+    });
+    mockGetQuestionnaireInstanceDrafts.mockResolvedValue({
+      [BASE_QID]: "Borrador base",
+      [GEN_QID]: "Borrador generado",
+    });
+    mockFindFormResponseById.mockResolvedValue({ ...submittedResponse });
+
+    await submitFormResponse(clientActor, {
+      caseId: CASE_ID,
+      formDefinitionId: FORM_DEF_ID,
+      partyId: null,
+    });
+
+    const materializeCall = mockUpdateFormResponse.mock.calls.find(
+      (c) => (c[1] as Record<string, unknown>)?.ai_draft_question_ids !== undefined,
+    );
+    expect(materializeCall).toBeUndefined();
+  });
+
+  it("keeps the submit intact for a non-questionnaire response (no instance pin)", async () => {
+    mockFindFormResponse.mockResolvedValue(draftResponse);
+    mockListQuestionGroups.mockResolvedValue([{ id: "grp1" }]);
+    mockListQuestions.mockResolvedValue([
+      { id: "q1", field_type: "text", is_required: false, options: null, validation: null },
+    ]);
+    mockFindFormResponseById.mockResolvedValue({ ...submittedResponse });
+
+    await submitFormResponse(clientActor, {
+      caseId: CASE_ID,
+      formDefinitionId: FORM_DEF_ID,
+      partyId: null,
+    });
+
+    expect(mockGetQuestionnaireInstanceDrafts).not.toHaveBeenCalled();
   });
 });

@@ -7,6 +7,7 @@ import { IconHalo } from "@/frontend/components/brand/icon-tile";
 import { Lex } from "@/frontend/components/brand/lex";
 import { GradientBtn } from "@/frontend/components/brand/gradient-btn";
 import { ProgressBar } from "@/frontend/components/brand/progress-bar";
+import { UPLOAD_MAX_FILE_BYTES } from "@/shared/constants/uploads";
 
 /** Results of the upload actions (structurally match the server actions). */
 export interface StartUploadResult {
@@ -40,7 +41,7 @@ export interface ExtractionStatusResult {
  * return to capture without registering anything.
  */
 
-const MAX_BYTES = 20 * 1024 * 1024; // 20 MB — friendly client cap
+const MAX_BYTES = UPLOAD_MAX_FILE_BYTES; // single shared cap (RNF-016)
 
 export interface UploadLabels {
   eyebrow: string;
@@ -80,6 +81,10 @@ export interface UploadLabels {
   /** Friendly message when extraction failed / timed out (non-blocking). */
   reviewFailedTitle: string;
   reviewFailedSub: string;
+  /** Large documents: extraction is STILL RUNNING when the poll gives up —
+   *  reassure instead of implying failure (chunked OCR takes minutes). */
+  reviewSlowTitle: string;
+  reviewSlowSub: string;
   // --- Multiple documents (allow_multiple): the client names each file ---
   /** Field label asking the client to name this file, e.g. "¿Cómo se llama este documento?". */
   nameLabel: string;
@@ -206,7 +211,7 @@ function AnalyzingView({ labels }: { labels: UploadLabels }) {
   );
 }
 
-/** Read-only review of the extracted data (or a friendly failure note). */
+/** Read-only review of the extracted data (or a friendly failure/slow note). */
 function ReviewView({
   labels,
   fields,
@@ -215,18 +220,19 @@ function ReviewView({
 }: {
   labels: UploadLabels;
   fields: Array<{ key: string; label: string; value: string }>;
-  failed: boolean;
+  failed: false | "failed" | "slow";
   onContinue: () => void;
 }) {
   if (failed) {
+    const slow = failed === "slow";
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16, padding: "40px 0", textAlign: "center" }}>
         <Lex size={120} mood="atento" />
         <div className="t-title" style={{ fontSize: 19, fontWeight: 800, color: "var(--navy)" }}>
-          {labels.reviewFailedTitle}
+          {slow ? labels.reviewSlowTitle : labels.reviewFailedTitle}
         </div>
         <div style={{ color: "var(--ink-2)", fontSize: 14.5, fontWeight: 500, maxWidth: 300 }}>
-          {labels.reviewFailedSub}
+          {slow ? labels.reviewSlowSub : labels.reviewFailedSub}
         </div>
         <div style={{ width: "100%", marginTop: 8 }}>
           <GradientBtn onClick={onContinue}>{labels.reviewContinue}</GradientBtn>
@@ -333,7 +339,7 @@ export function UploadScreen({
   // status, then show a read-only review before the celebration.
   const [caseDocumentId, setCaseDocumentId] = React.useState<string | null>(null);
   const [extracted, setExtracted] = React.useState<Record<string, unknown> | null>(null);
-  const [extractionFailed, setExtractionFailed] = React.useState(false);
+  const [extractionFailed, setExtractionFailed] = React.useState<false | "failed" | "slow">(false);
   const [nav, setNav] = React.useState<{ progress: number; gain: number }>({
     progress: previousProgress,
     gain: 0,
@@ -367,8 +373,15 @@ export function UploadScreen({
         setStage("review");
         return;
       }
-      if ((r.ok && r.status === "failed") || attempts >= MAX_ATTEMPTS) {
-        setExtractionFailed(true);
+      if (r.ok && r.status === "failed") {
+        setExtractionFailed("failed");
+        setStage("review");
+        return;
+      }
+      if (attempts >= MAX_ATTEMPTS) {
+        // Still pending — a 200+ page record extracts in chunks over several
+        // minutes. Reassure ("still reading") instead of implying failure.
+        setExtractionFailed("slow");
         setStage("review");
         return;
       }

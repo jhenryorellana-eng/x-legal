@@ -26,6 +26,8 @@
  *   retry-abogados-polling    — Abogados.com polling retry (DOC-70, DOC-26 §2.8, F6)
  *   installment-reminders     — overdue mark + due-3d/due-day client reminders (DOC-44 §3.9, F6-Ola2)
  *   expire-stale-checkouts    — clear orphaned pending/stripe payments (unblocks new checkouts)
+ *   lex-answer                — Lex case chat: one staff question → RAG + Anthropic answer
+ *   lex-reindex-case          — Lex case chat: incremental case-knowledge reindex (content-hash gated)
  */
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -49,6 +51,8 @@ import { handleSendCampaign } from "@/backend/jobs/send-campaign";
 import { handleFetchExhibit } from "@/backend/jobs/fetch-exhibit";
 import { handleGenerateQuestionnaire } from "@/backend/jobs/generate-questionnaire";
 import { handleRunPremortem } from "@/backend/jobs/run-premortem";
+import { handleLexAnswer } from "@/backend/jobs/lex-answer";
+import { handleLexReindexCase } from "@/backend/jobs/lex-reindex-case";
 
 // ---------------------------------------------------------------------------
 // Job registry — jobKey → handler
@@ -71,6 +75,9 @@ const JOB_REGISTRY: Record<string, JobHandler> = {
   "translate-document": handleTranslateDocument,
   "generate-questionnaire": handleGenerateQuestionnaire,
   "run-premortem": handleRunPremortem,
+  // Lex case chat (staff "Lex" tab): per-question answer + knowledge reindex
+  "lex-answer": handleLexAnswer,
+  "lex-reindex-case": handleLexReindexCase,
   "ai-budget-aggregation": handleAiBudgetAggregation,
   "job-failed": handleJobFailed,
   // F6 integrations (DOC-70, DOC-26 §2.8)

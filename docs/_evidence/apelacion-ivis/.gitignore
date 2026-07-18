@@ -1,0 +1,5 @@
+# PII de la clienta real (Ivis Palma) — los artefactos con datos personales NO se
+# commitean; viven solo en la máquina local. La evidencia commiteada son los
+# scripts + VERIFICACION.md.
+*.pdf
+*.png

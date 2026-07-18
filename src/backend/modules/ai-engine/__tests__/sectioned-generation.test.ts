@@ -5,6 +5,7 @@ import {
   lastWords,
   buildSectionUserMessage,
   buildExpansionUserMessage,
+  buildCondenseUserMessage,
   assembleDocument,
   assemblePrompt,
   DEFAULT_GENERATION_RULES,
@@ -93,6 +94,41 @@ describe("buildExpansionUserMessage", () => {
     expect(msg).toContain("2000+ words");
     expect(msg).toContain("short draft");
     expect(msg).toContain("do NOT pad");
+  });
+
+  it("bounds the expansion when a ceiling is provided (never oscillate with condense)", () => {
+    const msg = buildExpansionUserMessage("SECTION PROMPT", "short draft", 900, 1300);
+    expect(msg).toContain("NEVER past 1300 words");
+  });
+});
+
+describe("target-length control (max_words — ola apelación)", () => {
+  it("prompts a min/max range with a hard ceiling when both are set", () => {
+    const msg = buildSectionUserMessage("CTX", section({ min_words: 900, max_words: 1300 }), "", null);
+    expect(msg).toContain("between 900 and 1300 words");
+    expect(msg).toContain("do NOT exceed 1300 words");
+    expect(msg).not.toContain("at least 900 words, developed in depth");
+  });
+
+  it("keeps the legacy floor-only wording byte-identical when max_words is absent/0 (regression)", () => {
+    const legacy = buildSectionUserMessage("CTX", section({ min_words: 3400 }), "", null);
+    expect(legacy).toContain("Target at least 3400 words, developed in depth (no filler).");
+    const explicitZero = buildSectionUserMessage("CTX", section({ min_words: 3400, max_words: 0 }), "", null);
+    expect(explicitZero).toBe(legacy);
+  });
+
+  it("prompts a pure ceiling when only max_words is set", () => {
+    const msg = buildSectionUserMessage("CTX", section({ min_words: 0, max_words: 120 }), "", null);
+    expect(msg).toContain("do NOT exceed 120 words");
+    expect(msg).not.toContain("at least");
+  });
+
+  it("buildCondenseUserMessage cuts padding but never facts or citations", () => {
+    const msg = buildCondenseUserMessage("SECTION PROMPT", "very long draft", 800);
+    expect(msg).toContain("SECTION PROMPT");
+    expect(msg).toContain("under 800 words");
+    expect(msg).toContain("NEVER cut client facts, legal citations");
+    expect(msg).toContain("very long draft");
   });
 });
 

@@ -448,6 +448,8 @@ export const QuestionnaireGenerationConfigSchema = z.object({
   auto_trigger: z.boolean().default(true),
   allow_client_trigger: z.boolean().default(false),
   on_new_evidence: z.enum(["never", "flag", "auto"]).default("flag"),
+  draft_answers_enabled: z.boolean().default(false),
+  draft_answers_prompt: z.string().max(8000).nullable().optional(),
 });
 export type QuestionnaireGenerationConfigInput = z.infer<typeof QuestionnaireGenerationConfigSchema>;
 
@@ -503,10 +505,27 @@ export const QuestionGroupSchema = z.object({
 export type QuestionGroup = z.infer<typeof QuestionGroupSchema>;
 
 export const SourceRefSchema = z.discriminatedUnion("source", [
-  z.object({ source: z.literal("client_answer"), source_ref: z.null() }),
+  z.object({
+    source: z.literal("client_answer"),
+    // Optional config-as-data default (ola apelación): pre-fills an untouched
+    // question (e.g. EOIR-26 item 8 "will a brief be filed?" = yes by service
+    // design). Editable prefill — the client's answer always wins.
+    source_ref: z.union([
+      z.null(),
+      z.object({ default_value: z.string().min(1).max(500) }),
+    ]),
+  }),
   z.object({
     source: z.literal("document_extraction"),
-    source_ref: z.object({ document_slug: z.string(), json_path: z.string() }),
+    source_ref: z.object({
+      document_slug: z.string(),
+      json_path: z.string(),
+      // Maps an extracted value (booleans/enums, matched case-insensitively) to
+      // an OPTION value so selects can be prefilled; a miss falls back to
+      // default_value — a mapped select never receives a raw non-option value.
+      value_map: z.record(z.string(), z.string()).optional(),
+      default_value: z.string().min(1).max(500).optional(),
+    }),
   }),
   z.object({
     source: z.literal("generation_output"),
@@ -605,11 +624,18 @@ export const GenerationSectionSchema = z.object({
   key: z.string().min(1),
   heading: z.string().min(1),
   min_words: z.number().int().min(0).max(20000).default(0),
+  // (ola apelación) word CEILING: 0 = no ceiling (legacy — old configs parse and
+  // behave byte-identically). The engine prompts a hard limit, bounds the
+  // expansion pass by it and condenses drafts that exceed it by >15%.
+  max_words: z.number().int().min(0).max(20000).default(0),
   max_tokens: z.number().int().min(256).max(16000).default(4000),
   guidance: z.string().default(""),
   type: z.enum(["doctrinal", "narrative", "analysis"]).default("analysis"),
   // Optional per-section model override (e.g. Opus for the dense nexus section).
   model: z.enum(GENERATION_MODELS).nullable().optional(),
+}).refine((s) => s.max_words === 0 || s.max_words >= s.min_words, {
+  message: "max_words debe ser 0 (sin techo) o mayor o igual que min_words",
+  path: ["max_words"],
 });
 export type GenerationSection = z.infer<typeof GenerationSectionSchema>;
 
@@ -1058,9 +1084,43 @@ export function validateVersionPublication(input: {
  * DOC-40 §2.6 rules (d/e) + §2.7.
  */
 export function validateSourceRef(q: Question, ctx: VersionCtx): PublicationIssue[] {
+  // A select/multiselect question with a prefill knob (value_map / default_value)
+  // must only ever produce values that exist among its options — anything else
+  // would seed an impossible selection.
+  const optionValueIssues = (): PublicationIssue[] => {
+    if (q.field_type !== "select" && q.field_type !== "multiselect") return [];
+    const optionValues = new Set(
+      (Array.isArray(q.options) ? (q.options as Array<{ value?: unknown }>) : []).map((o) =>
+        String(o?.value ?? ""),
+      ),
+    );
+    if (optionValues.size === 0) return [];
+    const ref = (q.source_ref ?? {}) as { value_map?: Record<string, string>; default_value?: string };
+    const issues: PublicationIssue[] = [];
+    for (const mapped of Object.values(ref.value_map ?? {})) {
+      if (!optionValues.has(mapped)) {
+        issues.push(
+          blocking(
+            "CATALOG_SOURCE_REF_INVALID",
+            `value_map produce "${mapped}", que no es un value de las opciones de la pregunta.`,
+          ),
+        );
+      }
+    }
+    if (ref.default_value !== undefined && !optionValues.has(ref.default_value)) {
+      issues.push(
+        blocking(
+          "CATALOG_SOURCE_REF_INVALID",
+          `default_value "${ref.default_value}" no es un value de las opciones de la pregunta.`,
+        ),
+      );
+    }
+    return issues;
+  };
+
   switch (q.source) {
     case "client_answer":
-      return [];
+      return optionValueIssues();
     case "document_extraction": {
       const ref = q.source_ref as { document_slug?: string; json_path?: string } | null;
       if (!ref?.document_slug || !(ref.document_slug in ctx.documentSlugsWithSchema)) {
@@ -1078,9 +1138,10 @@ export function validateSourceRef(q: Question, ctx: VersionCtx): PublicationIssu
             "CATALOG_SOURCE_PATH_UNKNOWN",
             `json_path "${ref.json_path}" no existe en el extraction_schema.`,
           ),
+          ...optionValueIssues(),
         ];
       }
-      return [];
+      return optionValueIssues();
     }
     case "generation_output": {
       const ref = q.source_ref as { form_slug?: string } | null;

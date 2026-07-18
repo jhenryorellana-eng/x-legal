@@ -42,7 +42,14 @@ import {
 } from "@/backend/platform/storage";
 import { logger } from "@/backend/platform/logger";
 import { writeAudit } from "@/backend/modules/audit";
-import { renderMarkdownToPdf, renderMarkdownToDocx, renderCertifiedTranslationPdf } from "@/backend/platform/pdf";
+import {
+  renderMarkdownToPdf,
+  renderMarkdownToDocx,
+  renderCertifiedTranslationPdf,
+  countPdfPages,
+  extractPdfPageRange,
+} from "@/backend/platform/pdf";
+import { UPLOAD_MAX_FILE_BYTES, UPLOAD_MAX_FILE_MB } from "@/shared/constants/uploads";
 import { checkUrlReachable, keepReachable } from "@/backend/platform/url-utils";
 import { embedText } from "@/backend/platform/embeddings";
 import { DEFAULT_GENERATION_MODEL } from "@/shared/constants/ai-models";
@@ -85,6 +92,7 @@ import {
   lastWords,
   buildSectionUserMessage,
   buildExpansionUserMessage,
+  buildCondenseUserMessage,
   stripLeadingHeading,
   assembleDocument,
   buildAnnexesSection,
@@ -183,6 +191,7 @@ import {
   updateQuestionnaireInstance,
   findSubmittedFormSlugs,
   listPublishedQuestionTexts,
+  listPublishedClientQuestionsForDrafts,
   findQuestionForImprove,
   type QuestionnaireInstanceRow,
   type QuestionnaireGenConfigRow,
@@ -233,8 +242,19 @@ export class AiEngineError extends Error {
 // Constants
 // ---------------------------------------------------------------------------
 
-const _AI_DOCUMENT_MAX_PAGES = 100;
-const AI_DOCUMENT_MAX_BYTES = 25 * 1024 * 1024; // 25 MB
+// Documents accepted for AI processing follow the shared upload cap (RNF-016).
+const AI_DOCUMENT_MAX_BYTES = UPLOAD_MAX_FILE_BYTES;
+// Chunked OCR extraction — large scanned documents (200+ page court records)
+// cannot be extracted in one call: the inline request caps around 20MB and the
+// full raw_text exceeds any single response. Route threshold + chunk sizing:
+const EXTRACTION_CHUNKED_MIN_BYTES = 15 * 1024 * 1024;
+const EXTRACTION_CHUNKED_MIN_PAGES = 30;
+const EXTRACTION_CHUNK_PAGES = 25;
+const EXTRACTION_SOFT_BUDGET_MS = 600_000; // under the 800s QStash webhook maxDuration
+const EXTRACTION_MAX_OUTPUT_TOKENS = 65_536;
+// Legibility gate — sample the first pages of big PDFs instead of inlining 14MB+
+const LEGIBILITY_SAMPLE_MIN_BYTES = 4 * 1024 * 1024;
+const LEGIBILITY_SAMPLE_PAGES = 5;
 const CONCURRENCY_LIMIT = 2; // max simultaneous T1 runs per org (DOC-74 §2.4)
 const MAX_CONCURRENCY_DEFER = 30; // max deferrals before marking stall-failed
 const DATASET_BUDGET = parseInt(process.env.AI_DATASET_TOKEN_BUDGET ?? "50000", 10);
@@ -788,6 +808,66 @@ async function runSinglePassGeneration(
   });
 }
 
+/** A section drafted truncated by max_tokens TWICE — never accept a cut-off
+ *  filing silently (ola apelación: end of the silent truncation). */
+export class SectionTruncatedError extends Error {
+  constructor(public readonly sectionKey: string) {
+    super(`SECTION_TRUNCATED:${sectionKey}`);
+    this.name = "SectionTruncatedError";
+  }
+}
+
+/**
+ * Target-length control for one drafted section (ola apelación):
+ *  1. stopReason 'max_tokens' → ONE retry with an explicit concision order;
+ *     a second truncation throws SectionTruncatedError (run fails loudly).
+ *  2. Below the floor → expansion pass, bounded by the ceiling (accepted only
+ *     if it grew, stayed ≤ ceiling×1.15 and did not truncate).
+ *  3. Above ceiling×1.15 → ONE condense pass (accepted only if it shrank,
+ *     kept the floor and did not truncate).
+ * `call` already accounts usage/cost. Exported for unit tests.
+ */
+export async function enforceSectionLength(args: {
+  section: GenerationSectionSpec;
+  sectionUserContent: string;
+  first: { text: string; stopReason: string };
+  call: (user: string) => Promise<{ text: string; stopReason: string }>;
+}): Promise<string> {
+  const { section: sec, sectionUserContent: secContent } = args;
+  const ceiling = sec.max_words ?? 0;
+  let res = args.first;
+
+  if (res.stopReason === "max_tokens") {
+    const retry = await args.call(
+      secContent +
+        "\n\nYour previous draft was cut off by the token limit. Rewrite THIS section more concisely so it fits completely" +
+        (ceiling > 0 ? ` (hard ceiling: ${ceiling} words)` : "") +
+        ". Never end mid-sentence.",
+    );
+    if (retry.stopReason === "max_tokens") throw new SectionTruncatedError(sec.key);
+    res = retry;
+  }
+
+  if (sec.min_words > 0 && countWords(res.text) < sec.min_words) {
+    const exp = await args.call(
+      buildExpansionUserMessage(secContent, res.text, sec.min_words, ceiling > 0 ? ceiling : undefined),
+    );
+    const grew = countWords(exp.text) > countWords(res.text);
+    const withinCeiling = ceiling === 0 || countWords(exp.text) <= ceiling * 1.15;
+    if (grew && withinCeiling && exp.stopReason !== "max_tokens") res = exp;
+  }
+
+  if (ceiling > 0 && countWords(res.text) > ceiling * 1.15) {
+    const cond = await args.call(buildCondenseUserMessage(secContent, res.text, ceiling));
+    const shrank = countWords(cond.text) < countWords(res.text);
+    const keepsFloor =
+      sec.min_words === 0 || countWords(cond.text) >= Math.min(sec.min_words, ceiling) * 0.85;
+    if (shrank && keepsFloor && cond.stopReason !== "max_tokens") res = cond;
+  }
+
+  return res.text;
+}
+
 /** Re-enqueues this run to continue on a fresh invocation (self-chaining). */
 async function reEnqueueSelf(run: GenerationRunRow & { orgId: string }, step: number): Promise<void> {
   await enqueueJob(
@@ -1003,20 +1083,35 @@ async function runSectionedGeneration(
 
       const secModel = sec.model || draftDefaultModel;
       const secContent = buildSectionUserMessage(draftBase, sec, prevTail, snapshot.research_instructions, sectionContext);
-      let res = await callAnthropic(client, { model: secModel, system: prompt.system, user: secContent, maxTokens: sec.max_tokens });
-      account(res);
-      if (sec.min_words > 0 && countWords(res.text) < sec.min_words) {
-        const exp = await callAnthropic(client, {
-          model: secModel,
-          system: prompt.system,
-          user: buildExpansionUserMessage(secContent, res.text, sec.min_words),
-          maxTokens: sec.max_tokens,
-        });
-        account(exp);
-        if (countWords(exp.text) > countWords(res.text)) res = exp;
+      const first = await callAnthropic(client, { model: secModel, system: prompt.system, user: secContent, maxTokens: sec.max_tokens });
+      account(first);
+      const doCall = async (user: string) => {
+        const r = await callAnthropic(client, { model: secModel, system: prompt.system, user, maxTokens: sec.max_tokens });
+        account(r);
+        return r;
+      };
+      let finalText: string;
+      try {
+        finalText = await enforceSectionLength({ section: sec, sectionUserContent: secContent, first, call: doCall });
+      } catch (err) {
+        if (err instanceof SectionTruncatedError) {
+          const msg = `${err.message} — la sección quedó truncada por max_tokens dos veces; sube max_tokens de la sección o baja max_words`;
+          await repoMarkRunFailed(run.id, msg);
+          emitGenerationFailed({
+            caseId: run.case_id,
+            runId: run.id,
+            formDefinitionId: run.form_definition_id,
+            partyId: run.party_id,
+            version: run.version,
+            error: msg,
+            isTest: run.is_test,
+          });
+          return "failed";
+        }
+        throw err;
       }
-      parts.push(`## ${sec.heading}\n\n${stripLeadingHeading(res.text.trim(), sec.heading)}`);
-      prevTail = lastWords(res.text, 1200);
+      parts.push(`## ${sec.heading}\n\n${stripLeadingHeading(finalText.trim(), sec.heading)}`);
+      prevTail = lastWords(finalText, 1200);
       sectionsDone = i + 1;
       await checkpoint();
 
@@ -1061,6 +1156,16 @@ async function renderAndStore(
 
   if (fmt === "pdf") {
     const bytes = await renderMarkdownToPdf(outputText);
+    // Length telemetry (ola apelación): the target-length control is word-based
+    // and open-loop — this log closes the loop for HUMANS (calibrate max_words
+    // per section against the real page count; ~450 words/page US Letter).
+    try {
+      const pageCount = await countPdfPages(bytes);
+      logger.info(
+        { runId: run.id, pageCount, totalWords: countWords(outputText) },
+        "run-generation: rendered PDF length",
+      );
+    } catch { /* telemetry only — never blocks the render */ }
     const { error } = await supabase.storage
       .from("generated")
       .upload(path, bytes, { contentType: "application/pdf", upsert: true });
@@ -1258,13 +1363,13 @@ export async function executeExtractionJob(
     return "skipped";
   }
 
-  // Size/page limits (DOC-74 §3.3)
+  // Size limit — the shared upload cap (RNF-016); pages are handled by chunking.
   if (doc.sizeBytes > AI_DOCUMENT_MAX_BYTES) {
     await upsertExtraction({
       case_document_id: doc.id,
       status: "failed",
       model: process.env.AI_GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL,
-      error: `AI_DOCUMENT_TOO_LARGE: file ${Math.round(doc.sizeBytes / 1024 / 1024)}MB exceeds 25MB limit`,
+      error: `AI_DOCUMENT_TOO_LARGE: file ${Math.round(doc.sizeBytes / 1024 / 1024)}MB exceeds ${UPLOAD_MAX_FILE_MB}MB limit`,
     });
     return "failed";
   }
@@ -1328,6 +1433,33 @@ export async function executeExtractionJob(
   const model = process.env.AI_GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL;
   const geminiModels = getGeminiModels();
 
+  // Route: large scanned PDFs go through the chunked OCR pipeline (page-range
+  // sub-PDFs + checkpointed progress + one final fields pass). Small documents
+  // keep the single multimodal call below, byte-identical except for the raised
+  // output budget (medium documents used to truncate raw_text at 8192 tokens).
+  let pageCount = 1;
+  if (doc.mimeType === "application/pdf") {
+    try {
+      pageCount = await countPdfPages(fileBytes);
+    } catch (err) {
+      logger.warn({ err, caseDocumentId: doc.id }, "extract-document: countPdfPages failed — single-call route");
+    }
+  }
+  if (
+    doc.mimeType === "application/pdf" &&
+    (fileBytes.length > EXTRACTION_CHUNKED_MIN_BYTES || pageCount > EXTRACTION_CHUNKED_MIN_PAGES)
+  ) {
+    return runChunkedExtraction({
+      doc,
+      fileBytes,
+      pageCount,
+      existingProgress: existing?.progress ?? null,
+      baseProps: baseProps as Record<string, unknown>,
+      baseRequired,
+      model,
+    });
+  }
+
   let extractionResult: Record<string, unknown> | null = null;
   let inputTokens = 0;
   let outputTokens = 0;
@@ -1361,7 +1493,7 @@ export async function executeExtractionJob(
         ],
         config: {
           temperature: 0,
-          maxOutputTokens: 8192,
+          maxOutputTokens: EXTRACTION_MAX_OUTPUT_TOKENS,
           responseMimeType: "application/json",
           responseSchema: extractionSchemaWithRawText,
         },
@@ -1448,6 +1580,295 @@ export async function executeExtractionJob(
       costUsd,
     },
     "extract-document: completed",
+  );
+
+  return "completed";
+}
+
+// ---------------------------------------------------------------------------
+// Chunked OCR extraction — large scanned documents
+// ---------------------------------------------------------------------------
+
+interface ChunkedExtractionProgress {
+  kind: "chunked";
+  page_count: number;
+  chunk_pages: number;
+  parts: Record<string, string>;
+  usage: { input_tokens: number; output_tokens: number };
+}
+
+/** Loads a checkpoint if it matches the current chunking geometry; else starts fresh. */
+function parseChunkedProgress(value: unknown, pageCount: number): ChunkedExtractionProgress {
+  const p = value as Partial<ChunkedExtractionProgress> | null;
+  if (
+    p &&
+    p.kind === "chunked" &&
+    p.page_count === pageCount &&
+    p.chunk_pages === EXTRACTION_CHUNK_PAGES &&
+    p.parts &&
+    typeof p.parts === "object"
+  ) {
+    return {
+      kind: "chunked",
+      page_count: pageCount,
+      chunk_pages: EXTRACTION_CHUNK_PAGES,
+      parts: { ...p.parts },
+      usage: {
+        input_tokens: p.usage?.input_tokens ?? 0,
+        output_tokens: p.usage?.output_tokens ?? 0,
+      },
+    };
+  }
+  return {
+    kind: "chunked",
+    page_count: pageCount,
+    chunk_pages: EXTRACTION_CHUNK_PAGES,
+    parts: {},
+    usage: { input_tokens: 0, output_tokens: 0 },
+  };
+}
+
+/**
+ * OCR-first pipeline for large PDFs:
+ *  1. Split into page-range sub-PDFs (mupdf) of EXTRACTION_CHUNK_PAGES pages.
+ *  2. OCR each chunk with a plain-text call (no JSON schema — less truncable),
+ *     checkpointing every chunk in `document_extractions.progress` so QStash
+ *     retries / self-chained invocations resume at the first missing index and
+ *     never re-pay a completed chunk.
+ *  3. Self-chain to a fresh invocation when over the soft wall-clock budget.
+ *  4. One final text-only fields pass over the assembled raw_text (the full
+ *     document view matters for synthesis fields like persecution_summary).
+ */
+async function runChunkedExtraction(args: {
+  doc: { id: string; caseId: string; mimeType: string };
+  fileBytes: Uint8Array;
+  pageCount: number;
+  existingProgress: unknown;
+  baseProps: Record<string, unknown>;
+  baseRequired: string[];
+  model: string;
+}): Promise<JobOutcome> {
+  const { doc, fileBytes, pageCount, baseProps, baseRequired, model } = args;
+  const geminiModels = getGeminiModels();
+  const chunkCount = Math.ceil(pageCount / EXTRACTION_CHUNK_PAGES);
+  const progress = parseChunkedProgress(args.existingProgress, pageCount);
+  const start = Date.now();
+
+  const persistCheckpoint = async () => {
+    await upsertExtraction({
+      case_document_id: doc.id,
+      status: "pending",
+      model,
+      progress: progress as unknown as import("@/shared/database.types").Json,
+    });
+  };
+
+  for (let i = 0; i < chunkCount; i++) {
+    if (progress.parts[String(i)] !== undefined) continue;
+
+    const startPage = i * EXTRACTION_CHUNK_PAGES;
+    const endPage = Math.min(startPage + EXTRACTION_CHUNK_PAGES, pageCount);
+    const chunkBytes = await extractPdfPageRange(fileBytes, startPage, endPage);
+    const chunkBase64 = Buffer.from(chunkBytes).toString("base64");
+
+    let ocrText: string | null = null;
+    let lastErr: unknown = null;
+    for (let attempt = 0; attempt < 2 && ocrText === null; attempt++) {
+      try {
+        const response = await geminiModels.generateContent({
+          model,
+          contents: [
+            {
+              role: "user",
+              parts: [
+                { inlineData: { mimeType: "application/pdf", data: chunkBase64 } },
+                {
+                  text:
+                    "Transcribe the complete text of this document segment, in reading order. " +
+                    "Output plain text only — no summaries, no commentary, no markdown fences. " +
+                    "Preserve headings and paragraph breaks.",
+                },
+              ],
+            },
+          ],
+          config: {
+            temperature: 0,
+            maxOutputTokens: EXTRACTION_MAX_OUTPUT_TOKENS,
+            responseMimeType: "text/plain",
+          },
+        });
+        ocrText = response.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+        progress.usage.input_tokens += response.usageMetadata?.promptTokenCount ?? 0;
+        progress.usage.output_tokens += response.usageMetadata?.candidatesTokenCount ?? 0;
+      } catch (err) {
+        lastErr = err;
+        logger.warn(
+          { err, attempt, chunk: i, caseDocumentId: doc.id },
+          "extract-document: chunk OCR call failed",
+        );
+      }
+    }
+
+    if (ocrText === null) {
+      const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
+      await upsertExtraction({
+        case_document_id: doc.id,
+        status: "failed",
+        model,
+        error: `AI_OCR_CHUNK_FAILED: chunk ${i} (pages ${startPage + 1}-${endPage}): ${msg}`,
+        progress: progress as unknown as import("@/shared/database.types").Json,
+      });
+      return "failed";
+    }
+
+    progress.parts[String(i)] = ocrText;
+    await persistCheckpoint();
+
+    const remaining = chunkCount - Object.keys(progress.parts).length;
+    if (remaining > 0 && Date.now() - start > EXTRACTION_SOFT_BUDGET_MS) {
+      const done = Object.keys(progress.parts).length;
+      await enqueueJob(
+        {
+          jobKey: "extract-document",
+          entityId: doc.id,
+          attempt: 1,
+          dedupeId: `extract-document:${doc.id}:chain-${done}`,
+          caseDocumentId: doc.id,
+        },
+        { delay: 1, retries: 2 },
+      );
+      logger.info(
+        { caseDocumentId: doc.id, done, remaining },
+        "extract-document: soft budget hit — self-chained to a fresh invocation",
+      );
+      return "deferred";
+    }
+  }
+
+  // Assemble the full raw_text in chunk order with page-range markers (the
+  // `=== Page N ===` convention of extractPdfText, at chunk granularity).
+  const rawText = Array.from({ length: chunkCount }, (_, i) => {
+    const s = i * EXTRACTION_CHUNK_PAGES + 1;
+    const e = Math.min((i + 1) * EXTRACTION_CHUNK_PAGES, pageCount);
+    return `=== Pages ${s}-${e} ===\n${progress.parts[String(i)] ?? ""}`;
+  }).join("\n\n");
+
+  // Fields pass — text-only over the assembled OCR, WITHOUT the raw_text field
+  // (we already have it). Same 2-attempt validation loop as the single-call path.
+  const fieldsSchema = { type: "object", properties: baseProps, required: baseRequired };
+  let extractionResult: Record<string, unknown> | null = null;
+  let ajvErrors: string | null = null;
+  let fieldsIn = 0;
+  let fieldsOut = 0;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const feedbackPrompt =
+      attempt > 0 && ajvErrors
+        ? `\n\nCORRECTION REQUIRED: The previous response had validation errors. Fix exactly these issues:\n${ajvErrors}`
+        : "";
+    try {
+      const response = await geminiModels.generateContent({
+        model,
+        contents: [
+          {
+            role: "user",
+            parts: [
+              {
+                text:
+                  `Extract all information from this document text and return a JSON object matching the provided schema.${feedbackPrompt}` +
+                  `\n\nDOCUMENT TEXT (OCR):\n\n${rawText}`,
+              },
+            ],
+          },
+        ],
+        config: {
+          temperature: 0,
+          maxOutputTokens: 8192,
+          responseMimeType: "application/json",
+          responseSchema: fieldsSchema,
+        },
+      });
+      const text = response.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+      fieldsIn += response.usageMetadata?.promptTokenCount ?? 0;
+      fieldsOut += response.usageMetadata?.candidatesTokenCount ?? 0;
+
+      try {
+        extractionResult = JSON.parse(text) as Record<string, unknown>;
+      } catch {
+        ajvErrors = "Response was not valid JSON";
+        continue;
+      }
+      const missingRequired = baseRequired.filter(
+        (key) => extractionResult && !(key in extractionResult),
+      );
+      if (missingRequired.length > 0) {
+        ajvErrors = `Missing required fields: ${missingRequired.join(", ")}`;
+        extractionResult = null;
+        continue;
+      }
+      ajvErrors = null;
+      break;
+    } catch (err) {
+      logger.error({ err, attempt, caseDocumentId: doc.id }, "extract-document: fields pass failed");
+      if (attempt === 1) {
+        // Keep the checkpoint — the paid OCR survives for a reprocess.
+        await upsertExtraction({
+          case_document_id: doc.id,
+          status: "failed",
+          model,
+          error: err instanceof Error ? err.message : String(err),
+          progress: progress as unknown as import("@/shared/database.types").Json,
+        });
+        return "failed";
+      }
+    }
+  }
+
+  if (!extractionResult || ajvErrors) {
+    await upsertExtraction({
+      case_document_id: doc.id,
+      status: "failed",
+      model,
+      error: `AI_OUTPUT_INVALID: ${ajvErrors}`,
+      progress: progress as unknown as import("@/shared/database.types").Json,
+    });
+    return "failed";
+  }
+
+  const inputTokens = progress.usage.input_tokens + fieldsIn;
+  const outputTokens = progress.usage.output_tokens + fieldsOut;
+  const costUsd = computeGeminiCost({ inputTokens, outputTokens });
+
+  await upsertExtraction({
+    case_document_id: doc.id,
+    status: "completed",
+    payload: extractionResult as import("@/shared/database.types").Json,
+    raw_text: rawText,
+    model,
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
+    cost_usd: costUsd,
+    completed_at: new Date().toISOString(),
+    error: null,
+    progress: null,
+  });
+
+  emitExtractionCompleted({ caseId: doc.caseId, caseDocumentId: doc.id });
+
+  logger.info(
+    {
+      job: "extract-document",
+      caseDocumentId: doc.id,
+      route: "chunked",
+      pageCount,
+      chunkCount,
+      rawTextLength: rawText.length,
+      model,
+      inputTokens,
+      outputTokens,
+      costUsd,
+    },
+    "extract-document: chunked extraction completed",
   );
 
   return "completed";
@@ -2028,7 +2449,22 @@ export async function assessDocumentLegibility(input: {
   }
 
   const model = process.env.AI_GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL;
-  const base64 = Buffer.from(input.bytes).toString("base64");
+
+  // Big PDFs: judge legibility on a first-pages sample — inlining a 14MB+ scan
+  // would blow the request limit and silently fail-open (no quality control at
+  // all). Sampling failure falls back to the full bytes (outer fail-open stands).
+  let sendBytes = input.bytes;
+  if (input.mimeType === "application/pdf" && input.bytes.length > LEGIBILITY_SAMPLE_MIN_BYTES) {
+    try {
+      const pages = await countPdfPages(input.bytes);
+      if (pages > LEGIBILITY_SAMPLE_PAGES) {
+        sendBytes = await extractPdfPageRange(input.bytes, 0, LEGIBILITY_SAMPLE_PAGES);
+      }
+    } catch (err) {
+      logger.warn({ err }, "ai-engine: legibility sampling failed — using full bytes");
+    }
+  }
+  const base64 = Buffer.from(sendBytes).toString("base64");
 
   try {
     const response = await getGeminiModels().generateContent({
@@ -2317,6 +2753,9 @@ export async function interpretDocumentFields(input: {
   /** Additional documents the interpreter READS as supporting context (labeled);
    *  the instruction still applies to the PRIMARY document. */
   contextFiles?: Array<{ fileBase64: string; mimeType: string; label?: string }>;
+  /** Context as EXTRACTED TEXT (preferred for large scanned records — a 14MB
+   *  package travels as text instead of blowing the inline byte budget). */
+  contextTexts?: Array<{ text: string; label?: string }>;
   fields: AiFieldRequest[];
   model?: string | null;
 }): Promise<Record<string, string>> {
@@ -2326,12 +2765,13 @@ export async function interpretDocumentFields(input: {
   }
   const model = input.model || process.env.AI_GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
   const ctxFiles = input.contextFiles ?? [];
-  const contextNote =
-    ctxFiles.length > 0
-      ? "\n\nSe adjuntan además documentos de contexto (rotulados): úsalos para corroborar y " +
-        "fundamentar, pero la instrucción se aplica sobre el DOCUMENTO PRINCIPAL. Si ninguno " +
-        "de los documentos respalda un dato, devuelve cadena vacía (NO inventes)."
-      : "";
+  const ctxTexts = input.contextTexts ?? [];
+  const hasContext = ctxFiles.length > 0 || ctxTexts.length > 0;
+  const contextNote = hasContext
+    ? "\n\nSe adjuntan además documentos de contexto (rotulados): úsalos para corroborar y " +
+      "fundamentar, pero la instrucción se aplica sobre el DOCUMENTO PRINCIPAL. Si ninguno " +
+      "de los documentos respalda un dato, devuelve cadena vacía (NO inventes)."
+    : "";
   const prompt =
     "Eres un asistente legal que INTERPRETA un documento (no extraes un dato literal: " +
     "lees, comprendes y redactas). Para cada campo, produce el texto solicitado basándote " +
@@ -2341,10 +2781,12 @@ export async function interpretDocumentFields(input: {
     "\n\nCampos:\n" +
     buildAiFieldList(input.fields) +
     '\n\nResponde en JSON: {"answers":[{"id":"<id>","value":"<texto>"}]}.';
-  // Without context files the part shape stays EXACTLY [document, prompt]
-  // (regression-safe for every existing single-document ai_field).
+  // Without any context the part shape stays EXACTLY [document, prompt]
+  // (regression-safe for every existing single-document ai_field). Context text
+  // is PII-masked before the provider (same policy as the generation pipeline);
+  // the interpreter is told never to echo mask tokens into an answer.
   const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> =
-    ctxFiles.length === 0
+    !hasContext
       ? [{ inlineData: { mimeType: input.mimeType, data: input.fileBase64 } }, { text: prompt }]
       : [
           { text: "DOCUMENTO PRINCIPAL (la instrucción se aplica sobre este documento):" },
@@ -2353,6 +2795,14 @@ export async function interpretDocumentFields(input: {
             { text: `DOCUMENTO DE CONTEXTO ${i + 1}${c.label ? ` — "${sanitizeDocLabel(c.label)}"` : ""}:` },
             { inlineData: { mimeType: c.mimeType, data: c.fileBase64 } },
           ]),
+          ...ctxTexts.map((c, i) => ({
+            text:
+              `DOCUMENTO DE CONTEXTO (texto extraído) ${ctxFiles.length + i + 1}` +
+              `${c.label ? ` — "${sanitizeDocLabel(c.label)}"` : ""}:\n` +
+              // Mask BEFORE truncating (project-memory CRITICAL): a head-tail cut
+              // through an unmasked A-number/SSN would leave the fragment visible.
+              `${headTailClip(maskPii(c.text), 300_000, "contexto")}\n--- FIN DEL DOCUMENTO DE CONTEXTO ---`,
+          })),
           { text: prompt },
         ];
   try {
@@ -2745,6 +3195,119 @@ async function generateCaseQuestionnaire(input: {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Draft answers (autofill total) — second pass after materialization
+// ---------------------------------------------------------------------------
+
+const QUESTIONNAIRE_DRAFT_SYSTEM_BASE =
+  "Eres un paralegal experto en inmigración. REDACTA BORRADORES DE RESPUESTA a un cuestionario del cliente, " +
+  "usando EXCLUSIVAMENTE la información del expediente (documentos y respuestas previas) que se te da. " +
+  "El cliente revisará y editará cada borrador antes de enviarlo.\n\n" +
+  "REGLAS ABSOLUTAS:\n" +
+  '1. SOLO datos presentes en el expediente. Si la respuesta a una pregunta NO consta, devuelve cadena vacía "" — ' +
+  "NUNCA inventes hechos, fechas, nombres ni lugares.\n" +
+  "2. Preguntas con opciones (select/checkbox): responde con el `value` EXACTO de una opción, y solo cuando el " +
+  "expediente lo respalde (p. ej. si el expediente no menciona evidencia nueva, la respuesta a '¿tienes evidencia " +
+  'nueva?' + "' es la opción negativa). Sin respaldo, cadena vacía.\n" +
+  "3. Fechas: formato AAAA-MM-DD; solo si constan en el expediente.\n" +
+  "4. El expediente puede traer números de identificación ENMASCARADOS (aparecen como •••). NUNCA copies esos " +
+  "símbolos al borrador: reformula la frase sin el número.\n" +
+  "5. Escribe en ESPAÑOL, en primera persona (voz del cliente), tono claro y honesto, 1-4 frases por respuesta " +
+  "narrativa (el cliente ampliará al revisar).\n" +
+  "6. Cero relleno: un borrador vacío es mejor que uno especulativo.";
+
+interface DraftableQuestion {
+  id: string;
+  question: string;
+  help: string | null;
+  fieldType: string;
+  options: Array<{ value: string; label: string }> | null;
+  isRequired: boolean;
+}
+
+function draftAnswersOutputInstructions(): string {
+  return (
+    "\n\n## FORMATO DE SALIDA\n" +
+    'Devuelve SOLO JSON con esta forma: {"answers":[{"id":"<uuid de la pregunta>","value":"<borrador o cadena vacía>"}]}. ' +
+    "Incluye una entrada por CADA pregunta listada, en el mismo orden."
+  );
+}
+
+function draftableQuestionLine(q: DraftableQuestion): string {
+  const opts = q.options?.length
+    ? ` | opciones: ${q.options.map((o) => o.value).join(", ")}`
+    : "";
+  const help = q.help ? ` | ayuda: ${q.help}` : "";
+  return `- id: ${q.id} | tipo: ${q.fieldType}${opts}${q.isRequired ? " | requerida" : ""} | ${q.question}${help}`;
+}
+
+/** Fail-safe filter: unknown ids, empty values, PII mask tokens and select
+ *  values outside the question's options are dropped (never shown to a client). */
+export function filterDraftAnswers(
+  raw: Array<{ id?: unknown; value?: unknown }> | null | undefined,
+  questions: DraftableQuestion[],
+): Record<string, string> {
+  const byId = new Map(questions.map((q) => [q.id, q]));
+  const drafts: Record<string, string> = {};
+  for (const a of raw ?? []) {
+    const q = byId.get(String(a?.id ?? ""));
+    if (!q) continue;
+    const value = typeof a?.value === "string" ? a.value.trim() : "";
+    if (!value) continue;
+    if (value.includes("•") || value.includes("⟦") || value.includes("⟧")) continue;
+    if (q.fieldType === "select" || q.fieldType === "checkbox") {
+      if (!q.options?.some((o) => o.value === value)) continue;
+    }
+    drafts[q.id] = value;
+  }
+  return drafts;
+}
+
+/**
+ * Drafts one grounded answer per client question from the same masked case
+ * context the question generator used. Throws on provider failure — the caller
+ * treats the whole pass as best-effort.
+ */
+async function generateQuestionnaireDraftAnswers(input: {
+  config: QuestionnaireGenConfigRow;
+  inputs: ResolvedInputs;
+  questions: DraftableQuestion[];
+}): Promise<{ drafts: Record<string, string>; inputTokens: number; outputTokens: number; costUsd: number }> {
+  const model = input.config.model || DEFAULT_GENERATION_MODEL;
+  if (isAiStubEnabled()) {
+    const drafts: Record<string, string> = {};
+    for (const q of input.questions) {
+      drafts[q.id] =
+        q.fieldType === "date"
+          ? "2026-01-15"
+          : q.options?.length
+            ? q.options[0].value
+            : "Borrador de respuesta (stub IA) basado en tu expediente.";
+    }
+    return { drafts, inputTokens: 0, outputTokens: 0, costUsd: 0 };
+  }
+
+  const extra = input.config.draft_answers_prompt?.trim();
+  const system = extra
+    ? `${QUESTIONNAIRE_DRAFT_SYSTEM_BASE}\n\nINSTRUCCIONES ADICIONALES DEL SERVICIO:\n${extra}`
+    : QUESTIONNAIRE_DRAFT_SYSTEM_BASE;
+  const user =
+    buildQuestionGenContext(input.inputs, []) +
+    "\n\n## PREGUNTAS A RESPONDER (redacta el borrador de cada una)\n" +
+    input.questions.map(draftableQuestionLine).join("\n") +
+    draftAnswersOutputInstructions();
+
+  const client = getAnthropicClient();
+  const r = await callAnthropic(client, { model, system, user, maxTokens: 8000, timeoutMs: 240_000 });
+  const parsed = stripFencesAndParse<{ answers?: Array<{ id?: unknown; value?: unknown }> }>(r.text);
+  return {
+    drafts: filterDraftAnswers(parsed?.answers, input.questions),
+    inputTokens: r.usage.inputTokens,
+    outputTokens: r.usage.outputTokens,
+    costUsd: computeAnthropicCost(r.usage, model) ?? 0,
+  };
+}
+
 export interface QuestionnairePrereqStatus {
   ok: boolean;
   missingForms: string[];
@@ -2969,13 +3532,58 @@ export async function executeQuestionnaireGenerationJob(payload: {
     const result = await generateCaseQuestionnaire({ config, inputs, alreadyCovered });
     if (result.schema.groups.length === 0) throw new Error("generator returned no questions");
 
+    // Draft answers (autofill total) — best-effort second pass over the FINAL
+    // question list: generated uuids exist only after materialization, and the
+    // hybrid base questions come from the published version. A drafting failure
+    // never blocks the questionnaire (ready without drafts).
+    let draftAnswers: Record<string, string> | null = null;
+    let draftUsage = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+    if (config.draft_answers_enabled) {
+      try {
+        const generatedQs: DraftableQuestion[] = result.schema.groups.flatMap((g) =>
+          g.questions.map((q) => ({
+            id: q.id,
+            question: q.question_i18n.es || q.question_i18n.en,
+            help: q.help_i18n?.es ?? null,
+            fieldType: q.field_type,
+            options: q.options?.map((o) => ({ value: o.value, label: o.label_i18n.es || o.label_i18n.en })) ?? null,
+            isRequired: q.is_required,
+          })),
+        );
+        const baseQs: DraftableQuestion[] =
+          config.mode === "hybrid"
+            ? (await listPublishedClientQuestionsForDrafts(instance.form_definition_id)).map((q) => ({
+                id: q.id,
+                question: q.question_i18n?.es ?? q.question_i18n?.en ?? "",
+                help: q.help_i18n?.es ?? null,
+                fieldType: q.field_type,
+                options:
+                  q.options?.map((o) => ({
+                    value: o.value,
+                    label: o.label_i18n?.es ?? o.label_i18n?.en ?? o.value,
+                  })) ?? null,
+                isRequired: q.is_required,
+              }))
+            : [];
+        const draftables = [...baseQs, ...generatedQs].filter((q) => q.question);
+        if (draftables.length > 0) {
+          const res = await generateQuestionnaireDraftAnswers({ config, inputs, questions: draftables });
+          draftAnswers = Object.keys(res.drafts).length > 0 ? res.drafts : null;
+          draftUsage = { inputTokens: res.inputTokens, outputTokens: res.outputTokens, costUsd: res.costUsd };
+        }
+      } catch (err) {
+        logger.warn({ err, instanceId: instance.id }, "ai-engine: draft answers pass failed (non-fatal)");
+      }
+    }
+
     await updateQuestionnaireInstance(instance.id, {
       status: "ready",
       schema: result.schema as unknown as import("@/shared/database.types").Json,
+      draft_answers: draftAnswers as unknown as import("@/shared/database.types").Json,
       model: result.model,
-      input_tokens: result.inputTokens,
-      output_tokens: result.outputTokens,
-      cost_usd: result.costUsd,
+      input_tokens: result.inputTokens + draftUsage.inputTokens,
+      output_tokens: result.outputTokens + draftUsage.outputTokens,
+      cost_usd: result.costUsd + draftUsage.costUsd,
       generated_at: new Date().toISOString(),
       error: null,
     });
@@ -2989,6 +3597,10 @@ export async function executeQuestionnaireGenerationJob(payload: {
     return "failed";
   }
 }
+
+/** Cases reads the anchored instance's drafts at submit time (materialization
+ *  with provenance) — re-exported so the module border stays index→service. */
+export { getQuestionnaireInstanceDrafts } from "./repository";
 
 /**
  * job-failed callback for generate-questionnaire (DOC-26 §5). When QStash exhausts

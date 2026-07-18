@@ -21,6 +21,8 @@ export async function saveOrgSettings(patch: {
   default_timezone?: string;
   representative_name?: string | null;
   payment_zelle_email?: string | null;
+  /** Lex (case AI chat) model override — null restores the platform default. */
+  ai_lex_model?: "claude-sonnet-4-6" | "claude-haiku-4-5" | "claude-fable-5" | null;
 }) {
   const r = await updateOrgSettingsAction(patch);
   return r.success ? { success: true } : { success: false, error: r.error };

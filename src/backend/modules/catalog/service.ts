@@ -1958,10 +1958,16 @@ export async function updateQuestionnaireGenerationConfig(
     auto_trigger: parsed.auto_trigger,
     allow_client_trigger: parsed.allow_client_trigger,
     on_new_evidence: parsed.on_new_evidence,
+    draft_answers_enabled: parsed.draft_answers_enabled,
+    draft_answers_prompt: parsed.draft_answers_prompt ?? null,
   });
   await writeAudit(actor, "catalog.questionnaire_config.updated", "questionnaire_generation_configs", parsed.form_definition_id, {
     // Redact the prompt text in the audit log (length only), like updateGenerationConfig.
-    after: { ...parsed, generation_prompt: parsed.generation_prompt ? `[redacted:${parsed.generation_prompt.length}chars]` : null },
+    after: {
+      ...parsed,
+      generation_prompt: parsed.generation_prompt ? `[redacted:${parsed.generation_prompt.length}chars]` : null,
+      draft_answers_prompt: parsed.draft_answers_prompt ? `[redacted:${parsed.draft_answers_prompt.length}chars]` : null,
+    },
   });
 }
 

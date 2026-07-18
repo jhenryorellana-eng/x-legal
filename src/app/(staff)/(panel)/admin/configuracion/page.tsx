@@ -137,6 +137,7 @@ function buildConfigStrings(
     "title", "sub", "tabGeneral", "tabCovers", "tabTerms", "orgName", "logo",
     "contactPhones", "phoneLabel", "phoneNumber", "addPhone", "timezone",
     "representativeName", "representativePlaceholder", "paymentZelle", "paymentZellePlaceholder",
+    "lexModel", "lexModelSub", "lexModelDefault", "lexModelSonnet", "lexModelHaiku", "lexModelFable",
     "invalidPhone", "generalNote", "coversEmptyTitle", "coversEmptySub",
     "coverActive", "coverInactive", "coverInactiveNote", "coverEditNote",
     "termsCurrent", "termsCurrentChip", "termsHistory", "termsNewVersion",

@@ -305,7 +305,21 @@ export function QuestionCard({
 
             {/* Origin-specific pickers */}
             {q.source === "client_answer" && (
-              <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--ink-3)" }}>{strings.originClientNote}</p>
+              <>
+                <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--ink-3)" }}>{strings.originClientNote}</p>
+                <div style={{ marginTop: 8 }}>
+                  <FieldLabel>Valor por defecto (opcional — prefill editable)</FieldLabel>
+                  <TextInput
+                    value={((q.source_ref ?? {}) as { default_value?: string }).default_value ?? ""}
+                    disabled={readOnly}
+                    placeholder={q.field_type === "select" ? "value exacto de una opción" : "texto por defecto"}
+                    aria-label="Valor por defecto"
+                    onChange={(e) =>
+                      onChange({ source_ref: e.target.value ? { default_value: e.target.value } : null })
+                    }
+                  />
+                </div>
+              </>
             )}
             {q.source !== "client_answer" && (
               <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--ink-2)", lineHeight: 1.4 }}>{strings.originNotShown}</p>
@@ -424,23 +438,78 @@ function OptionsEditor({
 }
 
 function DocExtractionPicker({ q, sources, strings, readOnly, onChange }: PickerProps) {
-  const ref = (q.source_ref ?? {}) as { document_slug?: string; json_path?: string };
+  const ref = (q.source_ref ?? {}) as {
+    document_slug?: string;
+    json_path?: string;
+    value_map?: Record<string, string>;
+    default_value?: string;
+  };
   const doc = sources.documents.find((d) => d.slug === ref.document_slug);
+  const mapEntries = Object.entries(ref.value_map ?? {});
+  const setMap = (entries: Array<[string, string]>) => {
+    const vm = Object.fromEntries(entries.filter(([k]) => k !== ""));
+    onChange({ source_ref: { ...ref, ...(Object.keys(vm).length ? { value_map: vm } : { value_map: undefined }) } });
+  };
+  const isChoice = q.field_type === "select" || q.field_type === "multiselect";
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
-      <div>
-        <FieldLabel>{strings.pickDocument}</FieldLabel>
-        <SelectInput value={ref.document_slug ?? ""} disabled={readOnly} aria-label={strings.pickDocument} onChange={(e) => onChange({ source_ref: { ...ref, document_slug: e.target.value, json_path: "" } })}>
-          <option value="">—</option>
-          {sources.documents.map((d) => <option key={d.slug} value={d.slug}>{d.slug}</option>)}
-        </SelectInput>
+    <div style={{ marginTop: 10 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+        <div>
+          <FieldLabel>{strings.pickDocument}</FieldLabel>
+          <SelectInput value={ref.document_slug ?? ""} disabled={readOnly} aria-label={strings.pickDocument} onChange={(e) => onChange({ source_ref: { ...ref, document_slug: e.target.value, json_path: "" } })}>
+            <option value="">—</option>
+            {sources.documents.map((d) => <option key={d.slug} value={d.slug}>{d.slug}</option>)}
+          </SelectInput>
+        </div>
+        <div>
+          <FieldLabel>{strings.pickPath}</FieldLabel>
+          <SelectInput value={ref.json_path ?? ""} disabled={readOnly || !doc} aria-label={strings.pickPath} onChange={(e) => onChange({ source_ref: { ...ref, json_path: e.target.value } })}>
+            <option value="">—</option>
+            {(doc?.paths ?? []).map((p) => <option key={p} value={p}>{p}</option>)}
+          </SelectInput>
+        </div>
       </div>
-      <div>
-        <FieldLabel>{strings.pickPath}</FieldLabel>
-        <SelectInput value={ref.json_path ?? ""} disabled={readOnly || !doc} aria-label={strings.pickPath} onChange={(e) => onChange({ source_ref: { ...ref, json_path: e.target.value } })}>
-          <option value="">—</option>
-          {(doc?.paths ?? []).map((p) => <option key={p} value={p}>{p}</option>)}
-        </SelectInput>
+
+      {/* Mapeo de valores (ola apelación): valor extraído → value de opción, para
+          prefills de selects (booleans/enums). Un miss cae al valor por defecto. */}
+      {isChoice && (
+        <div style={{ marginTop: 8 }}>
+          <FieldLabel>Mapeo de valores (extraído → value de opción)</FieldLabel>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {mapEntries.map(([k, v], i) => (
+              <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 6, alignItems: "center" }}>
+                <TextInput value={k} placeholder="valor extraído (ej. true)" disabled={readOnly} aria-label={`map key ${i + 1}`}
+                  onChange={(e) => { const n = [...mapEntries]; n[i] = [e.target.value, v]; setMap(n); }} style={{ height: 36 }} />
+                <SelectInput value={v} disabled={readOnly} aria-label={`map value ${i + 1}`}
+                  onChange={(e) => { const n = [...mapEntries]; n[i] = [k, e.target.value]; setMap(n); }}>
+                  <option value="">—</option>
+                  {(q.options ?? []).map((o) => <option key={o.value} value={o.value}>{o.value}</option>)}
+                </SelectInput>
+                <button type="button" disabled={readOnly} onClick={() => setMap(mapEntries.filter((_, j) => j !== i))}
+                  style={{ border: "none", background: "none", color: "var(--ink-3)", cursor: "pointer", display: "inline-flex" }} aria-label="remove mapping">
+                  <Icon name="x" size={15} />
+                </button>
+              </div>
+            ))}
+          </div>
+          {!readOnly && (
+            <button type="button" onClick={() => setMap([...mapEntries, ["", ""]])}
+              style={{ marginTop: 6, border: "none", background: "none", color: "var(--accent)", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+              + Añadir mapeo
+            </button>
+          )}
+        </div>
+      )}
+
+      <div style={{ marginTop: 8 }}>
+        <FieldLabel>Valor por defecto (si no se puede resolver)</FieldLabel>
+        <TextInput
+          value={ref.default_value ?? ""}
+          disabled={readOnly}
+          placeholder={isChoice ? "value exacto de una opción" : "texto por defecto (opcional)"}
+          aria-label="Valor por defecto de extracción"
+          onChange={(e) => onChange({ source_ref: { ...ref, default_value: e.target.value || undefined } })}
+        />
       </div>
     </div>
   );

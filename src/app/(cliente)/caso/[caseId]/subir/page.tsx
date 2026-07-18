@@ -92,6 +92,8 @@ export default async function SubirPage({
         reviewEmpty: t("reviewEmpty"),
         reviewFailedTitle: t("reviewFailedTitle"),
         reviewFailedSub: t("reviewFailedSub"),
+        reviewSlowTitle: t("reviewSlowTitle"),
+        reviewSlowSub: t("reviewSlowSub"),
         nameLabel: t("nameLabel"),
         namePlaceholder: t("namePlaceholder"),
         nameRequired: t("nameRequired"),

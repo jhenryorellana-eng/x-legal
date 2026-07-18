@@ -129,6 +129,8 @@ export async function updateOrgSettings(
         ? dto.payment_zelle_email
         : before.settings.payment_zelle_email,
     goals: dto.goals ?? before.settings.goals,
+    ai_lex_model:
+      dto.ai_lex_model !== undefined ? dto.ai_lex_model : before.settings.ai_lex_model,
   };
 
   const updated = await repo.updateOrg(actor.orgId, {

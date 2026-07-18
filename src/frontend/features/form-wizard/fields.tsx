@@ -51,6 +51,7 @@ function originLabel(source: string, labels: WizardLabels): string {
   if (source === "document_extraction") return labels.prefillFromDocument;
   if (source === "profile") return labels.prefillFromProfile;
   if (source === "generation_output") return labels.prefillFromGeneration;
+  if (source === "ai_draft") return labels.prefillFromAiDraft;
   return labels.prefillFromProfile;
 }
 
@@ -65,7 +66,8 @@ function PrefillChip({
   labels: WizardLabels;
 }) {
   if (!question.isPrefilled) return null;
-  const isAi = !edited && question.source === "document_extraction";
+  const isAi =
+    !edited && (question.source === "document_extraction" || question.source === "ai_draft");
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
       {isAi && (

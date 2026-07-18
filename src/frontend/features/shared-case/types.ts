@@ -420,6 +420,42 @@ export interface DocumentTranslationView {
   hasPdf: boolean;
 }
 
+/* ---------------------------------------------------------------------------
+ * Lex — the case AI chat (staff). Structural mirror of the ai-engine module's
+ * Lex contract, REDECLARED here so the feature never imports @/backend (R2).
+ * The RSC pages inject the real server actions via the `lex` prop of
+ * SharedCaseView; any drift is caught by the page-level typecheck.
+ * ------------------------------------------------------------------------ */
+
+/** A citation under a Lex answer: a case chunk (document/form) or a web page. */
+export type LexSource =
+  | { kind: "chunk"; label: string }
+  | { kind: "web"; uri: string; title: string | null };
+
+export interface LexMessageVM {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  status: "running" | "completed" | "failed";
+  sources: LexSource[];
+  createdAt: string;
+}
+
+export interface LexThreadVM {
+  threadId: string | null;
+  messages: LexMessageVM[];
+}
+
+/** The three ai-engine server actions the Lex tab consumes (fixed contract). */
+export interface LexActions {
+  getLexThread: (caseId: string) => Promise<LexThreadVM>;
+  sendLexMessage: (
+    caseId: string,
+    content: string,
+  ) => Promise<{ ok: true; threadId: string; messageId: string } | { ok: false; error: string }>;
+  getLexMessageStatus: (messageId: string) => Promise<LexMessageVM | null>;
+}
+
 export interface CaseDetailActions {
   /** Add a note to the case with a visibility (general/team/personal). Optional. */
   addNote?: (input: {

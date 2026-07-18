@@ -29,10 +29,11 @@ import { ExpedienteTab } from "./tabs/expediente-tab";
 import { FasesAnterioresTab } from "./tabs/fases-anteriores-tab";
 import { PreMortemTab } from "./tabs/pre-mortem-tab";
 import { NotasTab } from "./tabs/notas-tab";
+import { LexTab } from "./tabs/lex-tab";
 import { buildChatActions, type RawChatActions } from "@/frontend/features/messaging/build-chat-actions";
 import { useMessagingController } from "@/frontend/features/messaging/messaging-controller";
 import { stageLabel } from "./stage-label";
-import type { CaseWorkspaceVM, CaseDetailActions, CaseTabId, StaffRoleVM } from "./types";
+import type { CaseWorkspaceVM, CaseDetailActions, CaseTabId, StaffRoleVM, LexActions } from "./types";
 import type { CasosStrings } from "./strings";
 
 export interface SharedCaseViewProps {
@@ -46,6 +47,8 @@ export interface SharedCaseViewProps {
   isAdmin: boolean;
   /** F7-Ola7a — raw messaging server actions (object of "use server" refs). */
   chatRaw?: RawChatActions;
+  /** Lex (case AI chat) server actions — injected by the staff RSC pages. */
+  lexActions?: LexActions;
   /**
    * Org admin override of the visible tabs, per role (from case_tab_role_access).
    * A role present → use its set; absent → the role's code default. The view
@@ -69,6 +72,7 @@ export function SharedCaseView({
   backHref,
   isAdmin,
   chatRaw,
+  lexActions,
   tabAccessByRole,
   initialTab,
   initialTarget,
@@ -335,6 +339,7 @@ export function SharedCaseView({
           />
         )}
         {active === "generaciones" && <GeneracionesTab vm={vm} actions={actions} strings={strings} locale={locale} title={tb.generaciones} onOpenPreMortem={openPreMortem} preMortemEnabled={vm.preMortem?.enabled ?? false} />}
+        {active === "lex" && <LexTab caseId={h.caseId} strings={t.lex} actions={lexActions} locale={locale} />}
         {active === "traspaso" && <TraspasoTab vm={vm} actions={actions} strings={strings} />}
         {active === "pagos" && <PagosTab vm={vm} actions={actions} strings={strings} locale={locale} />}
         {active === "expediente" && <ExpedienteTab vm={vm} strings={strings} title={tb.expediente} />}

@@ -28,8 +28,9 @@ import { SectionLabel } from "../ui";
 import { DocumentPreviewModal } from "../document-preview-modal";
 import { DocumentTranslationModal } from "../document-translation-modal";
 import { toDownloadFilename } from "@/shared/strings";
+import { UPLOAD_MAX_FILE_BYTES } from "@/shared/constants/uploads";
 
-const MAX_BYTES = 20 * 1024 * 1024;
+const MAX_BYTES = UPLOAD_MAX_FILE_BYTES;
 
 /** Semantic download filename for a document: slugified name + real extension. */
 function downloadNameFor(displayName: string, mimeType: string): string {

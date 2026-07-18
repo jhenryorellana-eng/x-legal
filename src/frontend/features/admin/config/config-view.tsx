@@ -9,6 +9,9 @@ import { I18nField, type I18nValue } from "../shared/i18n-field";
 
 /* ───────────────────────── Types ───────────────────────── */
 
+/** Lex (case AI chat) models selectable in org settings; null = platform default. */
+export type LexModelId = "claude-sonnet-4-6" | "claude-haiku-4-5" | "claude-fable-5";
+
 export interface OrgConfigVM {
   id: string;
   name: string;
@@ -18,6 +21,8 @@ export interface OrgConfigVM {
     logo_url: string | null;
     representative_name: string | null;
     payment_zelle_email: string | null;
+    /** Lex model override (null/absent = default Sonnet 4.6). */
+    ai_lex_model?: LexModelId | null;
     goals: Record<string, unknown>;
   };
 }
@@ -50,6 +55,7 @@ export interface ConfigViewProps {
       default_timezone?: string;
       representative_name?: string | null;
       payment_zelle_email?: string | null;
+      ai_lex_model?: LexModelId | null;
     }) => Promise<{ success: boolean; error?: { code: string; message: string } }>;
     setCoverActive: (
       id: string,
@@ -125,6 +131,7 @@ function GeneralTab({
   const [tz, setTz] = React.useState(org.settings.default_timezone);
   const [representative, setRepresentative] = React.useState(org.settings.representative_name ?? "");
   const [zelle, setZelle] = React.useState(org.settings.payment_zelle_email ?? "");
+  const [lexModel, setLexModel] = React.useState<LexModelId | "">(org.settings.ai_lex_model ?? "");
   const [saving, setSaving] = React.useState(false);
   const [savedAt, setSavedAt] = React.useState<boolean>(false);
 
@@ -136,6 +143,7 @@ function GeneralTab({
       default_timezone: tz,
       representative_name: representative.trim() || null,
       payment_zelle_email: zelle.trim() || null,
+      ai_lex_model: lexModel === "" ? null : lexModel,
     });
     setSaving(false);
     if (r.success) {
@@ -235,6 +243,17 @@ function GeneralTab({
             placeholder={t.paymentZellePlaceholder}
             onChange={(e) => setZelle(e.target.value)}
           />
+        </div>
+
+        <div>
+          <FieldLabel>{t.lexModel}</FieldLabel>
+          <SelectInput value={lexModel} onChange={(e) => setLexModel(e.target.value as LexModelId | "")}>
+            <option value="">{t.lexModelDefault}</option>
+            <option value="claude-sonnet-4-6">{t.lexModelSonnet}</option>
+            <option value="claude-haiku-4-5">{t.lexModelHaiku}</option>
+            <option value="claude-fable-5">{t.lexModelFable}</option>
+          </SelectInput>
+          <p style={{ margin: "6px 0 0", fontSize: 12.5, lineHeight: 1.5, color: "var(--ink-3)" }}>{t.lexModelSub}</p>
         </div>
 
         <p

@@ -8,8 +8,10 @@
  *
  * Server-side validation is MANDATORY before registering a file row (§5.1):
  * - Extension allowlist per bucket context
- * - File size ≤ 25 MB (RNF-016)
+ * - File size ≤ UPLOAD_MAX_FILE_BYTES (RNF-016, single shared constant)
  */
+
+import { UPLOAD_MAX_FILE_BYTES } from "@/shared/constants/uploads";
 
 import { createServiceClient } from "./supabase";
 import { logger } from "./logger";
@@ -18,8 +20,12 @@ import { logger } from "./logger";
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Default max file size: 25 MB (RNF-016) */
-export const MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024;
+/**
+ * Default max file size (RNF-016). One source of truth for every surface —
+ * see `src/shared/constants/uploads.ts`; the `case-documents` bucket
+ * `file_size_limit` mirrors this value.
+ */
+export const MAX_FILE_SIZE_BYTES = UPLOAD_MAX_FILE_BYTES;
 
 /** Signed URL TTL for downloads: 5 min (DOC-27 §5) */
 const DOWNLOAD_URL_TTL_SECONDS = 5 * 60;
@@ -136,7 +142,7 @@ export function validateMagicBytes(
 }
 
 /**
- * Validates file size against the 25 MB limit (RNF-016).
+ * Validates file size against the shared upload limit (RNF-016).
  */
 export function validateFileSize(
   sizeBytes: number,
@@ -217,7 +223,7 @@ export async function createSignedDownloadUrl(
  * Validates an uploaded object after the client has PUT it to the signed URL.
  *
  * Checks:
- * 1. Object exists and its metadata size ≤ 25 MB
+ * 1. Object exists and its size ≤ the shared upload limit
  * 2. Extension is in the allowlist for the bucket context
  * 3. Magic bytes match the declared extension (§5.1)
  *
@@ -229,7 +235,7 @@ export async function validateUploadedObject(
   path: string,
   bucketContext: BucketContext,
   opts?: {
-    /** Overrides the 25 MB default — only up to the bucket's own limit. */
+    /** Overrides the shared default — only up to the bucket's own limit. */
     maxBytes?: number;
   },
 ): Promise<StorageValidationResult> {

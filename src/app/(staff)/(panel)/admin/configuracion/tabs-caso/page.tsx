@@ -30,6 +30,7 @@ const TAB_LABEL_KEY: Record<CaseTabId, string> = {
   documentos: "documentos",
   formularios: "formularios",
   generaciones: "generaciones",
+  lex: "lex",
   citas: "citasRoute",
   expediente: "expediente",
   validacion: "validacion",

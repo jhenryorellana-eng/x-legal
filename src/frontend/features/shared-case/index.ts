@@ -35,4 +35,8 @@ export type {
   PreMortemSeverity,
   PreMortemSemaforo,
   PreMortemTargetKind,
+  LexActions,
+  LexMessageVM,
+  LexThreadVM,
+  LexSource,
 } from "./types";

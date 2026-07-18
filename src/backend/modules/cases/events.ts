@@ -5,6 +5,7 @@
  * - document.uploaded       (caseId, documentId, uploadedByKind)
  * - document.approved       (caseId, documentId)
  * - document.rejected       (caseId, documentId)
+ * - document.deleted        (caseId, documentId) — hard delete of an unreviewed upload
  * - form_response.submitted (caseId, responseId, formDefinitionId, partyId, submittedByKind)
  * - form_response.approved  (caseId, responseId, formDefinitionId, partyId)
  * - form_response.rejected  (caseId, responseId, formDefinitionId, partyId)
@@ -42,6 +43,21 @@ export interface DocumentApprovedEvent {
 
 export interface DocumentRejectedEvent {
   type: "document.rejected";
+  payload: {
+    caseId: string;
+    documentId: string;
+  };
+  occurredAt: Date;
+}
+
+/**
+ * A never-reviewed ('uploaded') document was hard-deleted (client/staff removed
+ * a mistaken upload). Reviewed documents are immutable, so this never fires for
+ * approved/rejected rows. Consumed by ai-engine to sweep the document's chunks
+ * out of the Lex case knowledge index.
+ */
+export interface DocumentDeletedEvent {
+  type: "document.deleted";
   payload: {
     caseId: string;
     documentId: string;
@@ -129,6 +145,7 @@ export type CaseEvent =
   | DocumentUploadedEvent
   | DocumentApprovedEvent
   | DocumentRejectedEvent
+  | DocumentDeletedEvent
   | FormResponseSubmittedEvent
   | FormResponseApprovedEvent
   | FormResponseRejectedEvent

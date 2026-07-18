@@ -49,6 +49,7 @@ function previewLabels(lang: "es" | "en"): WizardLabels {
     prefillFromDocument: t("lo tomamos de tu documento", "from your document"),
     prefillFromProfile: t("lo tomamos de tu perfil", "from your profile"),
     prefillFromGeneration: t("lo tomamos de tu solicitud", "from your application"),
+    prefillFromAiDraft: t("borrador redactado con IA — revísalo", "AI-drafted — review it"),
     prefillEdited: t("Lo cambiaste tú", "You changed it"),
     prefillAiBadge: t("IA", "AI"),
     selectPlaceholder: t("Elige una opción", "Choose an option"),

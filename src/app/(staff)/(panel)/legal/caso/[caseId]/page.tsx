@@ -35,6 +35,11 @@ import { getAccountStatement } from "@/backend/modules/billing";
 import { getCaseTabAccess } from "@/backend/modules/case-tabs";
 import { getContractForCase } from "@/backend/modules/contracts";
 import { getRunsForCase, getPreMortemAssessmentsForCase, isPreMortemEnabledForCase, listValidableTargetsForCase } from "@/backend/modules/ai-engine";
+import {
+  getLexThreadAction,
+  sendLexMessageAction,
+  getLexMessageStatusAction,
+} from "@/backend/modules/ai-engine/actions";
 import { getValidationsForCase } from "@/backend/modules/integrations";
 import { getCaseExpedientes } from "@/backend/modules/expediente";
 import { getCaseRuta } from "@/backend/modules/scheduling";
@@ -348,6 +353,11 @@ export default async function LegalCasoDetailPage({
       tabAccessByRole={tabAccess.allowedByRole}
       initialTab={tab as CaseTabId | undefined}
       initialTarget={target}
+      lexActions={{
+        getLexThread: getLexThreadAction,
+        sendLexMessage: sendLexMessageAction,
+        getLexMessageStatus: getLexMessageStatusAction,
+      }}
       chatRaw={{
         getCaseThread: getCaseThreadAction,
         send: sendMessageAction,

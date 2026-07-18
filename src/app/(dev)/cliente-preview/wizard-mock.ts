@@ -20,6 +20,7 @@ export const wizardLabelsMock: WizardLabels = {
   prefillFromDocument: "lo tomamos de tu acta de nacimiento",
   prefillFromProfile: "lo tomamos de tu perfil",
   prefillFromGeneration: "lo tomamos de tu solicitud",
+  prefillFromAiDraft: "borrador redactado con IA desde tus documentos — revísalo y ajústalo",
   prefillEdited: "Lo cambiaste tú",
   prefillAiBadge: "IA",
   selectPlaceholder: "Elige una opción",

@@ -71,6 +71,13 @@ export interface GenerationSectionSpec {
   heading: string;
   min_words: number;
   max_tokens: number;
+  /**
+   * Word CEILING (ola apelación — target-length control). 0/absent = no ceiling
+   * (legacy behavior, every existing snapshot keeps parsing/behaving the same).
+   * The engine prompts a hard limit, bounds the expansion pass by it and runs
+   * one condense pass when a draft exceeds it by >15%.
+   */
+  max_words?: number;
   guidance: string;
   type: "doctrinal" | "narrative" | "analysis";
   /** Optional per-section model override (e.g. Opus for the dense nexus section). */
@@ -1140,7 +1147,18 @@ export function buildSectionUserMessage(
 ): string {
   const parts = [baseUserContent, "", `## SECTION TO WRITE NOW: ${section.heading}`];
   if (section.guidance.trim()) parts.push(section.guidance.trim());
-  if (section.min_words > 0) parts.push(`Target at least ${section.min_words} words, developed in depth (no filler).`);
+  const maxWords = section.max_words ?? 0;
+  if (section.min_words > 0 && maxWords > 0) {
+    parts.push(
+      `Write between ${section.min_words} and ${maxWords} words. Hard ceiling: do NOT exceed ${maxWords} words — exceeding the limit weakens the filing. No filler.`,
+    );
+  } else if (maxWords > 0) {
+    parts.push(
+      `Hard ceiling: do NOT exceed ${maxWords} words — exceeding the limit weakens the filing. Be precise and dense, no filler.`,
+    );
+  } else if (section.min_words > 0) {
+    parts.push(`Target at least ${section.min_words} words, developed in depth (no filler).`);
+  }
   if (researchInstructions && researchInstructions.trim()) parts.push(`Research guidance: ${researchInstructions.trim()}`);
   if (sectionContext && sectionContext.trim()) parts.push("", sectionContext.trim());
   if (prevTail.trim()) {
@@ -1156,12 +1174,37 @@ export function buildSectionUserMessage(
   return parts.join("\n");
 }
 
-/** Expansion-pass user message when a section came in below its word floor. */
-export function buildExpansionUserMessage(sectionUserContent: string, draft: string, floor: number): string {
+/** Expansion-pass user message when a section came in below its word floor.
+ *  With a ceiling, the expansion is explicitly bounded — expansion and condense
+ *  must never oscillate against each other. */
+export function buildExpansionUserMessage(
+  sectionUserContent: string,
+  draft: string,
+  floor: number,
+  ceiling?: number,
+): string {
+  const bound =
+    ceiling && ceiling > 0 ? ` Expand toward ${floor}+ words but NEVER past ${ceiling} words.` : "";
   return [
     sectionUserContent,
     "",
-    `Your previous draft was below the required depth (${floor}+ words). Rewrite it at FULL depth — expand the analysis and detail, do NOT pad with filler or repetition. Your draft to expand:`,
+    `Your previous draft was below the required depth (${floor}+ words). Rewrite it at FULL depth — expand the analysis and detail, do NOT pad with filler or repetition.${bound} Your draft to expand:`,
+    "",
+    draft,
+  ].join("\n");
+}
+
+/** Condense-pass user message when a section exceeded its word ceiling. Cuts
+ *  redundancy and doctrinal padding — NEVER facts or citations (R1/R4). */
+export function buildCondenseUserMessage(
+  sectionUserContent: string,
+  draft: string,
+  ceiling: number,
+): string {
+  return [
+    sectionUserContent,
+    "",
+    `Your previous draft exceeded the hard ceiling of ${ceiling} words. Rewrite it at or under ${ceiling} words: cut redundancy, repetition and doctrinal padding, but NEVER cut client facts, legal citations or their holdings. Your draft to condense:`,
     "",
     draft,
   ].join("\n");

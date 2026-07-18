@@ -26,6 +26,7 @@ export function resolveWizardLabels(t: (key: string) => string): WizardLabels {
     prefillFromDocument: t("prefillFromDocument"),
     prefillFromProfile: t("prefillFromProfile"),
     prefillFromGeneration: t("prefillFromGeneration"),
+    prefillFromAiDraft: t("prefillFromAiDraft"),
     prefillEdited: t("prefillEdited"),
     prefillAiBadge: t("prefillAiBadge"),
     selectPlaceholder: t("selectPlaceholder"),

@@ -46,6 +46,12 @@ export const DEFAULT_EDITOR_MODEL: GenerationModel = "claude-sonnet-4-6";
 /** Default model for T5 UI suggestions (DOC-74 §1). */
 export const DEFAULT_UI_MODEL: GenerationModel = "claude-haiku-4-5";
 
+/**
+ * Default model for the Lex case-chat capability (staff "Lex" tab).
+ * Overridable per org via orgs.settings.ai_lex_model, then env AI_LEX_MODEL.
+ */
+export const DEFAULT_LEX_MODEL = "claude-sonnet-4-6";
+
 // ---------------------------------------------------------------------------
 // Client factory (lazy singleton)
 // ---------------------------------------------------------------------------

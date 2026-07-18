@@ -23,6 +23,7 @@ export const CASE_TAB_IDS = [
   "documentos",
   "formularios",
   "generaciones",
+  "lex",
   "citas",
   "preMortem",
   "expediente",
@@ -54,6 +55,7 @@ export const CANONICAL_TAB_ORDER: readonly CaseTabId[] = [
   "documentos",
   "formularios",
   "generaciones",
+  "lex",
   "citas",
   "preMortem",
   "expediente",
@@ -67,8 +69,9 @@ export const CANONICAL_TAB_ORDER: readonly CaseTabId[] = [
 /**
  * Per-role default tab set AND canonical order (DOC-52 §5 / DOC-53 §3 / DOC-54 §2).
  * `pagos` is admin + sales + finance; `generaciones` (canonical "Generaciones",
- * formerly "Cartas") is the AI-letters tab for paralegal + admin; messaging is a
- * header button, not a tab. Admin sees the full set.
+ * formerly "Cartas") is the AI-letters tab for paralegal + admin; `lex` (the case
+ * AI chat) is available to every staff role; messaging is a header button, not a
+ * tab. Admin sees the full set.
  */
 export const ROLE_DEFAULT_TAB_ORDER: Record<StaffRole, CaseTabId[]> = {
   sales: [
@@ -78,6 +81,7 @@ export const ROLE_DEFAULT_TAB_ORDER: Record<StaffRole, CaseTabId[]> = {
     "citas",
     "documentos",
     "formularios",
+    "lex",
     "fasesAnteriores",
     "traspaso",
     "notas",
@@ -88,6 +92,7 @@ export const ROLE_DEFAULT_TAB_ORDER: Record<StaffRole, CaseTabId[]> = {
     "documentos",
     "formularios",
     "generaciones",
+    "lex",
     "citas",
     "preMortem",
     "expediente",
@@ -104,6 +109,7 @@ export const ROLE_DEFAULT_TAB_ORDER: Record<StaffRole, CaseTabId[]> = {
     "documentos",
     "formularios",
     "generaciones",
+    "lex",
     "preMortem",
     "expediente",
     "validacion",
@@ -114,7 +120,7 @@ export const ROLE_DEFAULT_TAB_ORDER: Record<StaffRole, CaseTabId[]> = {
     "notas",
     "historial",
   ],
-  finance: ["resumen", "contrato", "pagos", "documentos", "notas", "historial"],
+  finance: ["resumen", "contrato", "pagos", "documentos", "lex", "notas", "historial"],
 };
 
 /** Tabs locked (padlock) while the case is not active — never admin-configurable. */
