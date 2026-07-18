@@ -1593,7 +1593,7 @@ export async function executeExtractionJob(
     error: null,
   });
 
-  emitExtractionCompleted({ caseId: doc.caseId, caseDocumentId: doc.id });
+  await emitExtractionCompleted({ caseId: doc.caseId, caseDocumentId: doc.id });
 
   logger.info(
     {
@@ -1936,7 +1936,7 @@ async function runChunkedExtraction(args: {
     progress: null,
   });
 
-  emitExtractionCompleted({ caseId: doc.caseId, caseDocumentId: doc.id });
+  await emitExtractionCompleted({ caseId: doc.caseId, caseDocumentId: doc.id });
 
   logger.info(
     {

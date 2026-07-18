@@ -85,10 +85,18 @@ export function emitGenerationFailed(payload: GenerationFailedPayload): void {
   } satisfies DomainEvent<GenerationFailedPayload>);
 }
 
-export function emitExtractionCompleted(
+/**
+ * emitAndWait — same rationale as emitGenerationCompleted above: the extraction
+ * job runs inside a Vercel QStash invocation that is FROZEN the instant it
+ * returns 200. The ai_field prefill warm consumer (register-consumers →
+ * enqueueAiPrefillWarm) does an async QStash publish; a fire-and-forget `emit`
+ * dropped that in-flight enqueue in prod (cache stayed cold — found live
+ * 2026-07-18, exact repeat of the exhibits-capture lesson). Callers MUST await.
+ */
+export async function emitExtractionCompleted(
   payload: ExtractionCompletedPayload,
-): void {
-  appEvents.emit({
+): Promise<void> {
+  await appEvents.emitAndWait({
     type: "extraction.completed",
     payload,
     occurredAt: new Date(),

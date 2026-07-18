@@ -217,6 +217,12 @@ async function main() {
   if (e5) die("clone-version", e5.message);
   ok("clone-version", `v${v5.version} draft (${v5.id})`);
 
+  // Los inserts devuelven ids NUEVOS → las `condition.when.question` clonadas
+  // seguirían apuntando a los ids viejos y los condicionales (fechas del ítem
+  // 5, ítem 12) jamás se mostrarían/llenarían. Se clona en dos pasadas: insertar
+  // todo construyendo el mapa oldId→newId, luego remapear las condiciones.
+  const idMap = new Map(); // old question id → new question id
+  const newQuestionIds = [];
   for (const g of groups) {
     const { data: ng, error: eg } = await db.from("form_question_groups").insert({
       ...strip(g), automation_version_id: v5.id,
@@ -224,13 +230,27 @@ async function main() {
     if (eg) die("clone-group", eg.message);
     for (const q of questionsByGroup.get(g.id)) {
       const patch = patches.get(q.id)?.patch ?? {};
-      const { error: eq } = await db.from("form_questions").insert({
+      const { data: nq, error: eq } = await db.from("form_questions").insert({
         ...strip({ ...q, _group: undefined }), ...patch, group_id: ng.id,
-      });
+      }).select("id, condition").single();
       if (eq) die("clone-question", `${esLabel(q).slice(0, 60)}: ${eq.message}`);
+      idMap.set(q.id, nq.id);
+      newQuestionIds.push(nq);
     }
   }
-  ok("clone-questions", "grupos y preguntas clonados con parches");
+  let remapped = 0;
+  for (const nq of newQuestionIds) {
+    const c = nq.condition;
+    const ref = c && typeof c === "object" ? c.when?.question : null;
+    const mapped = ref ? idMap.get(ref) : null;
+    if (!mapped) continue;
+    const { error: ec } = await db.from("form_questions").update({
+      condition: { ...c, when: { ...c.when, question: mapped } },
+    }).eq("id", nq.id);
+    if (ec) die("remap-condition", ec.message);
+    remapped++;
+  }
+  ok("clone-questions", `grupos y preguntas clonados con parches (${remapped} condiciones remapeadas)`);
 
   // Publicar: archivar v4, publicar v5 (índice parcial: 1 published por definición).
   const { error: e6 } = await db.from("form_automation_versions").update({ status: "archived" }).eq("id", pub.id);
