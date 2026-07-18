@@ -28,6 +28,7 @@ pgTAP tests for Row Level Security policies defined in DOC-31.
 | `20_scheduling_client_scope.sql` | **27, 28** | Client sees 0 `availability_rules`/`availability_exceptions`/`staff_scheduling_settings` (raw agenda hidden); `appointments` self-service: client books only on their own case as themselves, cannot spoof `client_user_id` nor book a foreign case (42501), cannot UPDATE another client's appointment (0 rows) |
 | `21_storage_bucket_policies.sql` | **29** | `storage.objects`: client SELECT/INSERT only `case-documents` objects whose path `case_id` is their case; cross-case path denied (42501/0 rows); `expedientes` bucket invisible to client + no `authenticated` INSERT (42501) |
 | `22_realtime_channels_multitenant.sql` | **30** | Realtime channel predicates: client cannot join `board:*` (not owner/admin), passes `team:{org}` SELECT but FAILS INSERT (cannot track presence), staff passes INSERT; multi-tenant — admin of a foreign org sees 0 `cases` of another org (`org_id = auth_org_id()`) |
+| `23_lex_private_threads.sql` | — (0093 Lex) | Lex case chat: client sees 0 `case_knowledge_chunks`/`case_lex_threads`/`case_lex_messages` and cannot INSERT chunks (42501); staff with `cases` sees chunks and their OWN thread/messages (+ INSERT into own thread); chunks are service-role-only even for staff (42501); another staff with the module sees 0 threads/messages and cannot INSERT into a foreign thread — history is private per employee |
 
 ## Running locally
 

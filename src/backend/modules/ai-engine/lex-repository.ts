@@ -456,6 +456,24 @@ export async function listExistingChunks(
   return data ?? [];
 }
 
+/**
+ * Head-count of a case's chunks — the day-zero bootstrap probe (getLexThread).
+ * Returns null on error so the caller can tell "unknown" apart from "empty"
+ * and skip the bootstrap enqueue instead of firing it spuriously.
+ */
+export async function countCaseChunks(caseId: string): Promise<number | null> {
+  const client = createServiceClient();
+  const { count, error } = await client
+    .from("case_knowledge_chunks")
+    .select("id", { count: "exact", head: true })
+    .eq("case_id", caseId);
+  if (error) {
+    logger.error({ err: error, caseId }, "ai-engine: lex countCaseChunks failed");
+    return null;
+  }
+  return count ?? 0;
+}
+
 /** Upserts one chunk keyed by the unique (source_kind, source_id, chunk_index). */
 export async function upsertChunk(row: TablesInsert<"case_knowledge_chunks">): Promise<void> {
   const client = createServiceClient();

@@ -49,6 +49,7 @@ import {
   type LexMessageVM,
 } from "./lex-domain";
 import * as repo from "./lex-repository";
+import { enqueueLexReindex } from "./events";
 import type { JobOutcome } from "./service";
 
 // ---------------------------------------------------------------------------
@@ -120,6 +121,16 @@ export async function getLexThread(actor: Actor, caseId: string): Promise<LexThr
   await requireCaseAccess(actor, caseId);
   // Staff-only work product — the client never sees Lex threads.
   if (actor.kind !== "staff") throw new AuthzError("wrong_kind");
+
+  // Day-zero bootstrap: cases that predate Lex (or whose events were lost)
+  // have no chunks, and no future event may ever fire for them. Opening the
+  // tab is the earliest signal — enqueue the first index build here so it is
+  // usually ready before the first question. Fire-and-forget: neither a failed
+  // count (null = unknown) nor a failed enqueue may break reading the thread,
+  // and re-enqueueing is inert (QStash publish-dedup + content-hash diff).
+  if ((await repo.countCaseChunks(caseId)) === 0) {
+    await enqueueLexReindex(caseId);
+  }
 
   const thread = await repo.findThread(caseId, actor.userId);
   if (!thread) return { threadId: null, messages: [] }; // lazy: no thread until first send

@@ -109,8 +109,11 @@ export function emitExtractionCompleted(
  * own publish-dedup still coalesces bursts (same dedupeId within its window),
  * and the job itself is idempotent (content-hash diff + orphan sweep).
  * Non-fatal by contract: a lost trigger only delays the index.
+ *
+ * Exported for the day-zero bootstrap in lex-service.getLexThread (cases that
+ * predate Lex have no chunks and no future event may ever fire for them).
  */
-async function enqueueLexReindex(caseId: string): Promise<void> {
+export async function enqueueLexReindex(caseId: string): Promise<void> {
   try {
     await enqueueJob(
       {

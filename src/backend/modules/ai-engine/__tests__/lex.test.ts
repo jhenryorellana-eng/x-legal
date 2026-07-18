@@ -50,6 +50,7 @@ const mocks = vi.hoisted(() => {
     deleteSourceChunksFrom: vi.fn().mockResolvedValue(0),
     deleteDocumentChunks: vi.fn().mockResolvedValue(undefined),
     matchCaseKnowledge: vi.fn(),
+    countCaseChunks: vi.fn(),
     getOrgLexModel: vi.fn().mockResolvedValue(null),
     getUserLocale: vi.fn().mockResolvedValue("es"),
     hasPendingExtractions: vi.fn().mockResolvedValue(false),
@@ -101,7 +102,6 @@ vi.mock("@/backend/platform/ai-stub", () => ({
 
 vi.mock("@/backend/platform/anthropic", () => ({
   getAnthropicClient: mocks.getAnthropicClient,
-  DEFAULT_LEX_MODEL: "claude-sonnet-4-6",
 }));
 
 vi.mock("@/backend/platform/logger", () => ({
@@ -110,6 +110,7 @@ vi.mock("@/backend/platform/logger", () => ({
 
 // Imported AFTER the mocks (vitest hoists vi.mock anyway).
 import {
+  getLexThread,
   sendLexMessage,
   reindexCaseKnowledge,
   executeLexAnswerJob,
@@ -169,6 +170,7 @@ beforeEach(() => {
   mocks.repo.getOrgLexModel.mockResolvedValue(null);
   mocks.repo.getUserLocale.mockResolvedValue("es");
   mocks.repo.hasPendingExtractions.mockResolvedValue(false);
+  mocks.repo.countCaseChunks.mockResolvedValue(1);
 });
 
 // ---------------------------------------------------------------------------
@@ -397,6 +399,65 @@ describe("reindexCaseKnowledge", () => {
       { source_kind: "case_profile", source_id: CASE_ID },
     ]);
     expect(result.removed).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getLexThread — day-zero index bootstrap (mocked repository + qstash)
+// ---------------------------------------------------------------------------
+
+describe("getLexThread bootstrap", () => {
+  it("enqueues lex-reindex-case when the case has zero chunks", async () => {
+    mocks.repo.countCaseChunks.mockResolvedValue(0);
+    mocks.repo.findThread.mockResolvedValue(null);
+
+    const vm = await getLexThread(STAFF_ACTOR, CASE_ID);
+
+    expect(vm).toEqual({ threadId: null, messages: [] });
+    expect(mocks.qstash.enqueueJob).toHaveBeenCalledTimes(1);
+    expect(mocks.qstash.enqueueJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobKey: "lex-reindex-case",
+        caseId: CASE_ID,
+        dedupeId: `lex-reindex:${CASE_ID}:1`,
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("does not enqueue when the case already has chunks", async () => {
+    mocks.repo.countCaseChunks.mockResolvedValue(7);
+    mocks.repo.findThread.mockResolvedValue(null);
+
+    await getLexThread(STAFF_ACTOR, CASE_ID);
+
+    expect(mocks.qstash.enqueueJob).not.toHaveBeenCalled();
+  });
+
+  it("skips the bootstrap when the count is unknown (repo error → null)", async () => {
+    mocks.repo.countCaseChunks.mockResolvedValue(null);
+    mocks.repo.findThread.mockResolvedValue(null);
+
+    const vm = await getLexThread(STAFF_ACTOR, CASE_ID);
+
+    expect(vm).toEqual({ threadId: null, messages: [] });
+    expect(mocks.qstash.enqueueJob).not.toHaveBeenCalled();
+  });
+
+  it("still returns the thread when the bootstrap enqueue fails", async () => {
+    mocks.repo.countCaseChunks.mockResolvedValue(0);
+    mocks.qstash.enqueueJob.mockRejectedValueOnce(new Error("qstash down"));
+    mocks.repo.findThread.mockResolvedValue({
+      id: THREAD_ID,
+      case_id: CASE_ID,
+      staff_user_id: STAFF_ID,
+      created_at: "2026-07-18T00:00:00.000Z",
+    });
+    mocks.repo.listMessages.mockResolvedValue([]);
+
+    const vm = await getLexThread(STAFF_ACTOR, CASE_ID);
+
+    expect(vm.threadId).toBe(THREAD_ID);
   });
 });
 
