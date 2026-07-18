@@ -197,6 +197,7 @@ export class CaseError extends Error {
       | "FORMS_LOCKED_DOCS_INCOMPLETE"
       | "FORM_NOT_SUBMITTABLE"
       | "FORM_VALIDATION_FAILED"
+      | "FORM_INCOMPLETE"
       | "FORM_PDF_BLOCKED"
       | "FORM_PDF_REQUIRED_MISSING"
       | "FORM_RESPONSE_NOT_FOUND"
@@ -2742,13 +2743,16 @@ export async function getDocumentExtractionStatus(
 ): Promise<{
   status: "pending" | "completed" | "failed" | null;
   payload: Record<string, unknown> | null;
+  /** Chunked-OCR progress for long extractions (null when not chunked / done).
+   *  Drives the client's "Leyendo página X de Y" bar during multi-minute runs. */
+  progress: { pagesDone: number; pagesTotal: number; pct: number } | null;
 }> {
   const doc = await findDocumentById(documentId);
   if (!doc) throw new CaseError("DOC_NOT_FOUND");
   await requireCaseAccess(actor, doc.case_id);
 
   const ext = await findDocumentExtractionByCaseDocId(documentId);
-  if (!ext) return { status: null, payload: null };
+  if (!ext) return { status: null, payload: null, progress: null };
 
   const status = ext.status as "pending" | "completed" | "failed";
   let payload: Record<string, unknown> | null = null;
@@ -2758,7 +2762,19 @@ export async function getDocumentExtractionStatus(
     const { raw_text: _rawText, ...rest } = ext.payload as Record<string, unknown>;
     payload = rest;
   }
-  return { status, payload };
+
+  // The checkpoint shape belongs to ai-engine — read it through its pub, never
+  // parse the jsonb here (module boundary). Only meaningful while pending.
+  let progress: { pagesDone: number; pagesTotal: number; pct: number } | null = null;
+  if (status === "pending") {
+    try {
+      const { getExtractionProgressSummary } = await import("@/backend/modules/ai-engine");
+      progress = await getExtractionProgressSummary(documentId);
+    } catch {
+      progress = null; // best-effort — the poll simply shows the spinner state
+    }
+  }
+  return { status, payload, progress };
 }
 
 /**
@@ -3669,6 +3685,19 @@ export interface FormResolveCache {
   primaryClientId?: Promise<string | null>;
   profile?: Promise<Awaited<ReturnType<typeof findClientProfileForForm>>>;
   userContact?: Promise<Awaited<ReturnType<typeof findUserContactFields>>>;
+  /** Memoized document/extraction lookups keyed by `${slug}|${partyId}` / doc id —
+   *  a form with N document_extraction questions used to re-query the same doc
+   *  and extraction row N times (2N queries per open). */
+  docBySlug?: Map<string, Promise<Awaited<ReturnType<typeof findLatestActiveDocumentBySlug>>>>;
+  extractionByDocId?: Map<string, Promise<Awaited<ReturnType<typeof findDocumentExtractionByCaseDocId>>>>;
+}
+
+/** True when a client_answer question carries a catalog default_value (string
+ *  or boolean — booleans back defaulted checkboxes). Single source of truth for
+ *  the wizard / submit-validation / completeness prefill decision. */
+export function hasClientDefaultValue(sourceRef: unknown): boolean {
+  const dv = (sourceRef as Record<string, unknown> | null)?.["default_value"];
+  return typeof dv === "boolean" || (typeof dv === "string" && dv.trim() !== "");
 }
 
 export async function resolveBySource(
@@ -3715,8 +3744,11 @@ export async function resolveBySource(
   // the source could not resolve (or a client_answer left untouched); `value_map`
   // translates an extracted value (booleans/enums) into an OPTION value so selects
   // can be prefilled — a mapped select never receives a raw non-option value.
+  // Booleans are accepted so a CHECKBOX can default to marked (the EOIR-26 final
+  // checklist pre-marks everything except the optional items).
   const defaultValue = (() => {
     const dv = sourceRef["default_value"];
+    if (typeof dv === "boolean") return dv;
     return typeof dv === "string" && dv.trim() !== "" ? dv : undefined;
   })();
 
@@ -3744,10 +3776,39 @@ export async function resolveBySource(
     const jsonPath = sourceRef["json_path"] as string | undefined;
     if (!documentSlug) return applyMap(null);
 
-    const approvedDoc = await findLatestActiveDocumentBySlug(caseId, documentSlug, partyId);
+    // Memoized like the profile loaders above (same eviction-on-rejection rule).
+    const docKey = `${documentSlug}|${partyId ?? ""}`;
+    const loadDoc = (): Promise<Awaited<ReturnType<typeof findLatestActiveDocumentBySlug>>> => {
+      if (!cache) return findLatestActiveDocumentBySlug(caseId, documentSlug, partyId);
+      cache.docBySlug ??= new Map();
+      let p = cache.docBySlug.get(docKey);
+      if (!p) {
+        p = findLatestActiveDocumentBySlug(caseId, documentSlug, partyId).catch((e) => {
+          cache.docBySlug?.delete(docKey);
+          throw e;
+        });
+        cache.docBySlug.set(docKey, p);
+      }
+      return p;
+    };
+    const loadExtraction = (docId: string): Promise<Awaited<ReturnType<typeof findDocumentExtractionByCaseDocId>>> => {
+      if (!cache) return findDocumentExtractionByCaseDocId(docId);
+      cache.extractionByDocId ??= new Map();
+      let p = cache.extractionByDocId.get(docId);
+      if (!p) {
+        p = findDocumentExtractionByCaseDocId(docId).catch((e) => {
+          cache.extractionByDocId?.delete(docId);
+          throw e;
+        });
+        cache.extractionByDocId.set(docId, p);
+      }
+      return p;
+    };
+
+    const approvedDoc = await loadDoc();
     if (!approvedDoc) return applyMap(null);
 
-    const extraction = await findDocumentExtractionByCaseDocId(approvedDoc.id);
+    const extraction = await loadExtraction(approvedDoc.id);
     if (!extraction || extraction.status !== "completed") return applyMap(null);
 
     if (!jsonPath) return extraction.payload;
@@ -3956,8 +4017,11 @@ export async function resolveAiFields(
 
         // Fingerprint-validated cache: an ai_field used to fire a Gemini call on
         // EVERY wizard open. Key = per-question instruction + connected config +
-        // model + the document set's cheap metadata (id/size/updated_at) — a
-        // new/replaced upload changes the fingerprint and forces a recompute.
+        // model + the document set's CONTENT-relevant metadata (id/size/extraction
+        // lifecycle) — a new/replaced upload changes the fingerprint and forces a
+        // recompute. `updated_at` is deliberately excluded: an approval/rename
+        // touches the row without changing content and used to invalidate every
+        // cached ai_field of the case.
         const allSlugs = [first.connected.slug, ...ctxSlugs];
         const docsMeta = await listDocumentMetaBySlugs(caseId, allSlugs, partyId);
         const fingerprintFor = (f: AiFieldResolveInput): string =>
@@ -3967,7 +4031,7 @@ export async function resolveAiFields(
                 instruction: f.instruction,
                 connected: { kind: f.connected.kind, slug: f.connected.slug, ctx: ctxSlugs },
                 model,
-                docs: docsMeta.map((d) => [d.id, d.size_bytes, d.updated_at, d.extraction_status, d.extraction_completed_at]),
+                docs: docsMeta.map((d) => [d.id, d.size_bytes, d.extraction_status, d.extraction_completed_at]),
               }),
             )
             .digest("hex");
@@ -4081,6 +4145,122 @@ export async function resolveAiFields(
 }
 
 // ---------------------------------------------------------------------------
+// ai_field prefill warm-up (Ola perf — LLM never on the read path)
+// ---------------------------------------------------------------------------
+
+/**
+ * Enqueues the `refresh-ai-prefill` QStash job for a case (best-effort, never
+ * throws). Deduped per (case, party): QStash's publish-dedup coalesces bursts —
+ * e.g. three documents approved in a row warm once. orgId is DELIBERATELY
+ * omitted (same rationale as enqueueLexReindex): the webhook's permanent
+ * idempotency barrier would otherwise swallow every future warm of the case.
+ *
+ * Triggers: extraction.completed / document.approved consumers, and a cache
+ * miss during getFormForClient.
+ */
+export async function enqueueAiPrefillWarm(caseId: string, partyId: string | null): Promise<void> {
+  try {
+    const { enqueueJob } = await import("@/backend/platform/qstash");
+    await enqueueJob(
+      {
+        jobKey: "refresh-ai-prefill",
+        entityId: caseId,
+        attempt: 1,
+        dedupeId: `ai-prefill:${caseId}:${partyId ?? "case"}`,
+        caseId,
+        partyId,
+      },
+      { retries: 2, timeout: "280s" },
+    );
+  } catch (err) {
+    logger.warn({ err, caseId }, "cases: failed to enqueue refresh-ai-prefill (non-fatal)");
+  }
+}
+
+/**
+ * Resolves EVERY `ai_field` question of the case's current phase in ONE batch
+ * and persists the results into `case_ai_field_cache` (via resolveAiFields'
+ * fingerprint-checked cache write-back — already-fresh entries never re-pay the
+ * provider). Runs inside the `refresh-ai-prefill` QStash job, fired by
+ * extraction.completed / document.approved — so the cache is warm BEFORE a
+ * human reaches the wizard. getFormForClient serves cache-only.
+ *
+ * NO ACTOR GATE — trusted callers only (the refresh-ai-prefill QStash job,
+ * whose enqueue sites are themselves authorized: requireCaseAccess'd reads or
+ * case-scoped event consumers). NEVER wire this to client-controllable input:
+ * it would be an instant IDOR + AI-cost-abuse vector (each miss is a paid
+ * Gemini call).
+ */
+export async function warmAiFieldCacheForCase(
+  caseId: string,
+  partyId: string | null,
+): Promise<{ fields: number; resolved: number }> {
+  const caseRow = await findCaseById(caseId);
+  if (!caseRow?.current_phase_id) return { fields: 0, resolved: 0 };
+
+  const catalog = (await import("@/backend/modules/catalog" as string)) as {
+    listFormDefinitions?: (phaseId: string) => Promise<Array<{ id: string; kind: string }>>;
+    getPublishedAutomationVersion: (id: string) => Promise<{ id: string } | null>;
+    listQuestionGroups: (versionId: string) => Promise<Array<{ id: string }>>;
+    listQuestions: (groupId: string) => Promise<Array<{ id: string; source: string; source_ref: unknown }>>;
+  };
+  if (!catalog.listFormDefinitions) return { fields: 0, resolved: 0 };
+
+  const defs = await catalog.listFormDefinitions(caseRow.current_phase_id);
+  const fields: AiFieldResolveInput[] = [];
+  for (const d of defs) {
+    if (d.kind !== "pdf_automation") continue;
+    const published = await catalog.getPublishedAutomationVersion(d.id);
+    if (!published) continue;
+    const groups = await catalog.listQuestionGroups(published.id);
+    const questionArrays = await Promise.all(groups.map((g) => catalog.listQuestions(g.id)));
+    for (const q of questionArrays.flat()) {
+      if (q.source !== "ai_field") continue;
+      const sr = (q.source_ref ?? {}) as Record<string, unknown>;
+      const connected = sr["connected"] as { kind?: string; slug?: string; context_slugs?: string[] } | undefined;
+      const instruction = sr["instruction"] as string | undefined;
+      if (!connected?.kind || !connected?.slug || !instruction) continue;
+      fields.push({
+        id: q.id,
+        connected: {
+          kind: connected.kind,
+          slug: connected.slug,
+          ...(connected.context_slugs?.length ? { context_slugs: connected.context_slugs } : {}),
+        },
+        instruction,
+        model: (sr["model"] as string | undefined) ?? null,
+      });
+    }
+  }
+
+  if (fields.length === 0) return { fields: 0, resolved: 0 };
+  const resolved = await resolveAiFields(caseId, partyId, fields);
+  logger.info(
+    { caseId, partyId, fields: fields.length, resolved: Object.keys(resolved).length },
+    "cases: warmAiFieldCacheForCase done",
+  );
+  return { fields: fields.length, resolved: Object.keys(resolved).length };
+}
+
+/**
+ * Light cache read used by the wizard's prefill polling: returns the cached
+ * ai_field values for the given question ids (no provider calls, no
+ * fingerprint math). The wizard patches untouched questions as values land.
+ *
+ * @api-id (read — consumed by the wizard polling action)
+ */
+export async function getAiFieldPrefill(
+  actor: Actor,
+  input: { caseId: string; questionIds: string[]; partyId?: string | null },
+): Promise<Record<string, string>> {
+  await requireCaseAccess(actor, input.caseId);
+  const ids = input.questionIds.filter((x) => typeof x === "string").slice(0, 200);
+  if (ids.length === 0) return {};
+  const rows = await findAiFieldCacheRows(input.caseId, input.partyId ?? null, ids);
+  return Object.fromEntries(rows.map((r) => [r.question_id, r.value]));
+}
+
+// ---------------------------------------------------------------------------
 // Wizard shape types
 // ---------------------------------------------------------------------------
 
@@ -4105,6 +4285,12 @@ export interface FormQuestionDto {
   prefillValue: unknown;
   /** Whether this value comes from a non-client source (pre-filled, client may not edit). */
   isPrefilled: boolean;
+  /**
+   * Ola perf — true when an `ai_field` prefill is still being computed in the
+   * background (no cached value yet). The wizard shows a shimmer and polls
+   * getAiFieldPrefill; the open itself NEVER waits for a provider call.
+   */
+  prefillPending?: boolean;
   /** Current answer saved in the response (null if none yet). */
   currentAnswer: unknown;
   /** Conditional visibility (show/lock/require). NULL = unconditional. */
@@ -4183,7 +4369,7 @@ function schemaToWizardGroups(
       questions?: Array<{
         id: string; question_i18n: unknown; help_i18n: unknown; field_type: string;
         options: unknown; is_required: boolean; position: number; source: string;
-        validation: unknown; condition: unknown;
+        validation: unknown; condition: unknown; default_value?: string | null;
       }>;
     }>;
   };
@@ -4196,7 +4382,12 @@ function schemaToWizardGroups(
         .map((q) => {
           const opts = q.options as Array<{ value: string; label_i18n: unknown }> | null;
           const saved = answers[q.id] ?? null;
-          const draft = saved === null || saved === "" ? (drafts?.[q.id] ?? null) : null;
+          // Draft precedence: AI draft > schema default_value ("no aplica" on
+          // evidence the case doesn't have — deterministic, survives a drafts
+          // failure) > empty. A saved client answer always wins.
+          const schemaDefault =
+            typeof q.default_value === "string" && q.default_value !== "" ? q.default_value : null;
+          const draft = saved === null || saved === "" ? (drafts?.[q.id] ?? schemaDefault) : null;
           return {
             id: q.id,
             groupId: g.id,
@@ -4283,19 +4474,38 @@ export async function getFormForClient(
     // client / contact row are fetched once, not once per prefilled question.
     const resolveCache: FormResolveCache = {};
 
-    groups = await Promise.all(rawGroups.map(async (g) => {
-      const rawQuestions = await catalog.listQuestions(g.id);
+    // Ola perf — ai_field questions are served CACHE-ONLY on open. The old path
+    // fired one Gemini round-trip per ai_field question on EVERY open (~30s
+    // wizard opens). Now: one cache read for all of them; misses render as
+    // `prefillPending` and a background warm job fills the cache (the wizard
+    // polls). The authoritative sync resolution still lives in
+    // resolveFormResponseFieldsCore (PDF fill must be exact).
+    const rawQuestionsByGroup = await Promise.all(rawGroups.map((g) => catalog.listQuestions(g.id)));
+    const aiFieldIds = rawQuestionsByGroup.flat().filter((q) => q.source === "ai_field").map((q) => q.id);
+    const aiCacheByQ = new Map<string, string>(
+      aiFieldIds.length > 0
+        ? (await findAiFieldCacheRows(input.caseId, partyId, aiFieldIds)).map((r) => [r.question_id, r.value])
+        : [],
+    );
+    let aiPrefillMisses = 0;
+
+    groups = await Promise.all(rawGroups.map(async (g, gIdx) => {
+      const rawQuestions = rawQuestionsByGroup[gIdx];
 
       const questions: FormQuestionDto[] = await Promise.all(rawQuestions.map(async (q) => {
         // client_answer questions with a catalog default_value get the same
         // prefill treatment (chip + editable value) as sourced questions.
-        const hasClientDefault =
-          q.source === "client_answer" &&
-          typeof (q.source_ref as Record<string, unknown> | null)?.["default_value"] === "string";
+        const hasClientDefault = q.source === "client_answer" && hasClientDefaultValue(q.source_ref);
         const isPrefilled = q.source !== "client_answer" || hasClientDefault;
         let prefillValue: unknown = null;
+        let prefillPending = false;
 
-        if (isPrefilled) {
+        if (q.source === "ai_field") {
+          const cached = aiCacheByQ.get(q.id);
+          prefillValue = cached ?? null;
+          prefillPending = cached === undefined;
+          if (prefillPending) aiPrefillMisses += 1;
+        } else if (isPrefilled) {
           try {
             prefillValue = await resolveBySource(
               { id: q.id, source: q.source, source_ref: q.source_ref },
@@ -4335,6 +4545,7 @@ export async function getFormForClient(
           validation,
           prefillValue,
           isPrefilled,
+          ...(prefillPending ? { prefillPending } : {}),
           currentAnswer: answers[q.id] ?? null,
           condition: parseConditionOrNull(q.condition),
           aiImproveEnabled: isAiImproveEnabled(q.ai_improve),
@@ -4350,6 +4561,12 @@ export async function getFormForClient(
     }));
 
     groups.sort((a, b) => a.position - b.position);
+
+    // Cache misses → kick the background warm job (deduped). Best-effort: a
+    // failed enqueue only delays the prefill until the next open/event.
+    if (aiPrefillMisses > 0) {
+      await enqueueAiPrefillWarm(input.caseId, partyId);
+    }
   }
 
   // Ola 3 — per-case questionnaire (automatic/hybrid): the client fills AI-generated
@@ -5018,16 +5235,18 @@ export async function submitFormResponse(
   // block here (assertDocumentsGate would no-op on the existing response anyway).
 
   // Autofill total (ola apelación): a per-case questionnaire response inherits
-  // the instance's AI drafts for every question the client reviewed but did not
-  // edit — persisted WITH provenance (`ai_draft_question_ids`) so staff can
-  // always tell an AI-drafted answer from client testimony. The client's review
-  // is the stepped wizard + confirmation screen; a saved answer always wins.
+  // the instance's AI drafts PLUS the schema's deterministic default_values
+  // ("no aplica" on evidence the case doesn't have) for every question the
+  // client reviewed but did not edit — persisted WITH provenance
+  // (`ai_draft_question_ids`) so staff can always tell an AI-drafted answer
+  // from client testimony. The client's review is the stepped wizard +
+  // confirmation screen; a saved answer always wins.
   if (response.questionnaire_instance_id) {
     try {
       const aiEngine = (await import("@/backend/modules/ai-engine" as string)) as {
-        getQuestionnaireInstanceDrafts: (instanceId: string) => Promise<Record<string, string> | null>;
+        getQuestionnaireInstanceAutofillValues: (instanceId: string) => Promise<Record<string, string> | null>;
       };
-      const drafts = await aiEngine.getQuestionnaireInstanceDrafts(response.questionnaire_instance_id);
+      const drafts = await aiEngine.getQuestionnaireInstanceAutofillValues(response.questionnaire_instance_id);
       if (drafts) {
         const before = (response.answers ?? {}) as Record<string, unknown>;
         const isEmpty = (v: unknown) => v === undefined || v === null || v === "";
@@ -5099,9 +5318,7 @@ export async function submitFormResponse(
       // client_answer questions resolve nothing — EXCEPT when the catalog gave
       // them a default_value (ola apelación): the wizard showed it as a prefill
       // and the PDF will stamp it, so validation must see it too.
-      const hasClientDefault =
-        src === "client_answer" &&
-        typeof (q.source_ref as Record<string, unknown> | null)?.["default_value"] === "string";
+      const hasClientDefault = src === "client_answer" && hasClientDefaultValue(q.source_ref);
       if (src === "client_answer" && !hasClientDefault) continue;
       const cur = effective[q.id];
       if (cur !== undefined && cur !== null && cur !== "") continue;
@@ -5190,6 +5407,144 @@ export type ApproveFormResponseInput = z.infer<typeof ApproveFormResponseSchema>
  *
  * @api-id API-CASE-18
  */
+export interface FormResponseCompleteness {
+  complete: boolean;
+  /** Required questions still unanswered (first 50, with a display label). */
+  missing: Array<{ questionId: string; label: string }>;
+}
+
+/**
+ * Field-completeness check behind the staff "Verificar/Aprobar" button
+ * (RF-VAN-043 — Vanessa only verifies that everything is complete) and the
+ * approve gate. Covers BOTH form kinds:
+ *  - catalog/pdf_automation questions: sources resolved (profile/extraction/
+ *    defaults; ai_field from CACHE only — this read never calls a provider),
+ *    then the same condition-aware validator the submit path uses.
+ *  - generated questionnaire questions (instance schema): saved answers plus
+ *    the instance's autofill values (drafts + "no aplica" defaults) — an
+ *    autofilled "no aplica" COUNTS as answered, otherwise the gate could
+ *    never close on evidence the case simply doesn't have.
+ *
+ * @api-id (read — consumed by the staff verify button + the review panel)
+ */
+export async function getFormResponseCompleteness(
+  actor: Actor,
+  responseId: string,
+): Promise<FormResponseCompleteness> {
+  can(actor, "cases", "edit");
+  const response = await findFormResponseById(responseId);
+  if (!response) throw new CaseError("FORM_RESPONSE_NOT_FOUND");
+  await requireCaseAccess(actor, response.case_id);
+  return computeFormResponseCompleteness(response);
+}
+
+async function computeFormResponseCompleteness(
+  response: CaseFormResponseRow,
+): Promise<FormResponseCompleteness> {
+  const answers = (response.answers ?? {}) as Record<string, unknown>;
+  const missing: Array<{ questionId: string; label: string }> = [];
+  const labelOf = (qi: unknown, fallback: string): string => {
+    const i = asI18n(qi);
+    return i?.es || i?.en || fallback;
+  };
+  const isEmpty = (v: unknown) => v === undefined || v === null || v === "";
+
+  // Part A — catalog (published-version) questions, sources resolved.
+  if (response.automation_version_id) {
+    type Q = QuestionValidationRule & { source?: string; source_ref?: unknown; question_i18n?: unknown };
+    const questions = (await getQuestionsForVersion(response.automation_version_id)) as Q[];
+    const effective: Record<string, unknown> = { ...answers };
+    const resolveCache: FormResolveCache = {};
+    for (const q of questions) {
+      const src = q.source ?? "client_answer";
+      const hasClientDefault = src === "client_answer" && hasClientDefaultValue(q.source_ref);
+      if ((src === "client_answer" && !hasClientDefault) || src === "ai_field") continue;
+      if (!isEmpty(effective[q.id])) continue;
+      try {
+        const resolved = await resolveBySource(
+          { id: q.id, source: src, source_ref: q.source_ref },
+          answers,
+          response.case_id,
+          response.party_id,
+          resolveCache,
+        );
+        if (!isEmpty(resolved)) effective[q.id] = resolved;
+      } catch {
+        // stays empty — surfaces below if required
+      }
+    }
+    // ai_field questions count from the durable cache (never a provider call here).
+    const aiIds = questions.filter((q) => (q.source ?? "") === "ai_field").map((q) => q.id);
+    if (aiIds.length > 0) {
+      const rows = await findAiFieldCacheRows(response.case_id, response.party_id, aiIds);
+      for (const r of rows) if (isEmpty(effective[r.question_id])) effective[r.question_id] = r.value;
+    }
+    const requiredErrors = validateAnswerTypes(effective, questions).filter((e) => e.code === "required");
+    const byId = new Map(questions.map((q) => [q.id, q]));
+    for (const e of requiredErrors) {
+      missing.push({ questionId: e.questionId, label: labelOf(byId.get(e.questionId)?.question_i18n, e.questionId) });
+    }
+
+    // Fail-closed (review 2026-07-18): a STILL-PENDING ai_field (no cache row,
+    // no saved answer) that CONTROLS another question's condition makes that
+    // dependent question invisible to the validator — deriveFieldState treats a
+    // missing controller as "unsatisfied", so a required dependent field would
+    // silently pass as complete while the warm job is still running. Until the
+    // controller resolves, report IT as missing so approve blocks instead of
+    // certifying a form whose conditional branches are unknown.
+    const conditionControllers = new Set(
+      questions.map((q) => parseConditionOrNull(q.condition)?.when.question).filter((x): x is string => !!x),
+    );
+    for (const q of questions) {
+      if ((q.source ?? "") !== "ai_field") continue;
+      if (!isEmpty(effective[q.id])) continue;
+      if (!conditionControllers.has(q.id)) continue;
+      if (missing.some((m) => m.questionId === q.id)) continue;
+      missing.push({ questionId: q.id, label: labelOf(q.question_i18n, q.id) });
+    }
+  }
+
+  // Part B — generated questionnaire questions (instance schema).
+  if (response.questionnaire_instance_id) {
+    try {
+      const aiEngine = (await import("@/backend/modules/ai-engine" as string)) as {
+        getQuestionnaireInstanceSchemaQuestions: (instanceId: string) => Promise<Array<{
+          id: string;
+          question_i18n: unknown;
+          field_type: string;
+          options: Array<{ value: string }> | null;
+          is_required: boolean;
+          validation: unknown;
+          condition: unknown;
+        }> | null>;
+        getQuestionnaireInstanceAutofillValues: (instanceId: string) => Promise<Record<string, string> | null>;
+      };
+      const schemaQs = await aiEngine.getQuestionnaireInstanceSchemaQuestions(response.questionnaire_instance_id);
+      if (schemaQs && schemaQs.length > 0) {
+        // Not-yet-materialized autofill (drafts + "no aplica" defaults) counts
+        // as answered — materialization happens at submit, but the gate must
+        // agree with what the wizard shows.
+        const autofill =
+          (await aiEngine.getQuestionnaireInstanceAutofillValues(response.questionnaire_instance_id)) ?? {};
+        const effective: Record<string, unknown> = { ...answers };
+        for (const [qid, v] of Object.entries(autofill)) {
+          if (isEmpty(effective[qid])) effective[qid] = v;
+        }
+        const rules = schemaQs as unknown as QuestionValidationRule[];
+        const requiredErrors = validateAnswerTypes(effective, rules).filter((e) => e.code === "required");
+        const byId = new Map(schemaQs.map((q) => [q.id, q]));
+        for (const e of requiredErrors) {
+          missing.push({ questionId: e.questionId, label: labelOf(byId.get(e.questionId)?.question_i18n, e.questionId) });
+        }
+      }
+    } catch (err) {
+      logger.warn({ err, responseId: response.id }, "completeness: questionnaire schema check failed (skipped)");
+    }
+  }
+
+  return { complete: missing.length === 0, missing: missing.slice(0, 50) };
+}
+
 export async function approveFormResponse(
   actor: Actor,
   input: ApproveFormResponseInput,
@@ -5206,6 +5561,17 @@ export async function approveFormResponse(
 
   if (response.status !== "submitted") {
     throw new CaseError("FORM_NOT_SUBMITTABLE");
+  }
+
+  // Invariant `approved ⇒ complete` (RF-VAN-043): approving is VERIFYING that
+  // every required field resolves. Blocks with the missing list so the UI can
+  // say exactly what's pending instead of a generic failure.
+  const completeness = await computeFormResponseCompleteness(response);
+  if (!completeness.complete) {
+    throw new CaseError("FORM_INCOMPLETE", {
+      count: completeness.missing.length,
+      missing: completeness.missing.slice(0, 20),
+    });
   }
 
   await updateFormResponse(response.id, {
@@ -5566,6 +5932,9 @@ async function resolveFormResponseFieldsCore(
     if (c) conditionSourceIds.add(c.when.question);
   }
   const conditionAnswers: Record<string, unknown> = { ...answers };
+  // One memo cache for the WHOLE core resolution (condition overlay + fill loop):
+  // the same doc/extraction/profile rows back many questions.
+  const coreResolveCache: FormResolveCache = {};
   for (const q of questions) {
     if (!conditionSourceIds.has(q.id) || q.source === "ai_field") continue;
     const own = answers[q.id];
@@ -5575,6 +5944,7 @@ async function resolveFormResponseFieldsCore(
       answers,
       caseId,
       partyId,
+      coreResolveCache,
     );
     if (resolved !== undefined && resolved !== null && resolved !== "") {
       conditionAnswers[q.id] = resolved;
@@ -5718,6 +6088,7 @@ async function resolveFormResponseFieldsCore(
         answers,
         caseId,
         partyId,
+        coreResolveCache,
       );
     }
 
@@ -6141,7 +6512,11 @@ async function buildStageChecklist(actor: Actor, caseRow: CaseRow): Promise<Stag
   try {
     const forms = await getClientFormsForCase(actor, caseRow.id);
     formsTotal = forms.length;
-    formsDone = forms.filter((f) => f.status === "submitted" || f.status === "approved").length;
+    // Honest checklist (RF-VAN-043/045): a form counts as done only when staff
+    // VERIFIED it ("approved"). With the approve completeness gate, approved
+    // implies every required field resolves — "submitted" alone no longer
+    // greenlights the handoff to legal.
+    formsDone = forms.filter((f) => f.status === "approved").length;
 
     if (stage === "legal") {
       // Staff-inclusive: most real pdf_automation/ai_letter defs are filled_by=staff,

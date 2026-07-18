@@ -22,6 +22,7 @@ import type {
   SubmitFormFn,
   TranslateAnswersFn,
   ImproveAnswerFn,
+  GetAiPrefillFn,
   FieldErrorCode,
   SaveState,
 } from "./types";
@@ -78,6 +79,9 @@ export interface FormWizardProps {
   partyName?: string | null;
   saveDraft: SaveDraftFn;
   submitForm: SubmitFormFn;
+  /** Ola perf — light cache read that patches `prefillPending` ai_field values in
+   *  as the background warm job lands them. Absent = no polling (mocks/preview). */
+  getAiPrefill?: GetAiPrefillFn;
   /** Server-side translator fallback (Gemini) for the answer-translation flow. */
   translateAnswers?: TranslateAnswersFn;
   /** "Mejorar con IA" server action. Only questions with `aiImproveEnabled` show
@@ -125,6 +129,7 @@ export function FormWizard({
   partyName,
   saveDraft,
   submitForm,
+  getAiPrefill,
   translateAnswers,
   improveAnswer,
   onSubmitted,
@@ -159,6 +164,59 @@ export function FormWizard({
   const initial = React.useMemo(() => buildInitialAnswers(groups), [groups]);
   const [answers, setAnswers] = React.useState<Record<string, unknown>>(initial.answers);
   const [prefilledIds, setPrefilledIds] = React.useState<Set<string>>(initial.prefilledIds);
+
+  // Ola perf — ai_field prefills computed in the BACKGROUND: the open renders
+  // instantly with a shimmer chip on each `prefillPending` question and this
+  // polls the cache (no provider calls) to patch values into questions the user
+  // has not touched. Stops when nothing is pending, the user edits everything
+  // pending, or the 90s deadline passes (the field simply stays manual).
+  const [pendingAiIds, setPendingAiIds] = React.useState<Set<string>>(() => {
+    const s = new Set<string>();
+    for (const g of groups) for (const q of g.questions) if (q.prefillPending) s.add(q.id);
+    return s;
+  });
+  const aiPollDeadlineRef = React.useRef<number>(Date.now() + 90_000);
+  React.useEffect(() => {
+    if (!getAiPrefill || pendingAiIds.size === 0) return;
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled || Date.now() > aiPollDeadlineRef.current) return;
+      const ids = Array.from(pendingAiIds);
+      const res = await getAiPrefill({ caseId, questionIds: ids, partyId }).catch(
+        () => ({ ok: false as const, values: undefined }),
+      );
+      if (cancelled) return;
+      const values = (res.ok ? res.values : undefined) ?? {};
+      const landed = Object.keys(values);
+      if (landed.length === 0) return;
+      // Never overwrite something the user typed — patch only still-empty answers.
+      setAnswers((prev) => {
+        const next = { ...prev };
+        for (const [qid, v] of Object.entries(values)) {
+          const cur = prev[qid];
+          if (cur !== undefined && cur !== null && cur !== "") continue;
+          next[qid] = v;
+        }
+        return next;
+      });
+      setPrefilledIds((prev) => {
+        const next = new Set(prev);
+        for (const qid of landed) next.add(qid);
+        return next;
+      });
+      setPendingAiIds((prev) => {
+        const next = new Set(prev);
+        for (const qid of landed) next.delete(qid);
+        return next;
+      });
+    };
+    void tick();
+    const interval = setInterval(() => void tick(), 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [getAiPrefill, pendingAiIds, caseId, partyId]);
 
   // Resume at the first incomplete group (DOC-50 §6.3 — "primer paso incompleto").
   const [step, setStep] = React.useState<number>(() => {
@@ -222,6 +280,15 @@ export function FormWizard({
     // Editing a prefilled field flips it to client_answer (chip → "Lo cambiaste tú").
     if (prefilledIds.has(questionId)) {
       setPrefilledIds((prev) => {
+        const next = new Set(prev);
+        next.delete(questionId);
+        return next;
+      });
+    }
+    // Typing into a still-pending ai_field claims it for the user: stop the
+    // shimmer and never patch a polled value over their input.
+    if (pendingAiIds.has(questionId)) {
+      setPendingAiIds((prev) => {
         const next = new Set(prev);
         next.delete(questionId);
         return next;
@@ -914,6 +981,7 @@ export function FormWizard({
                 showDictation={isTextarea}
                 disabled={cond.disabled}
                 lockMessage={lockMessage}
+                aiPending={pendingAiIds.has(q.id)}
               />
             </div>
           );

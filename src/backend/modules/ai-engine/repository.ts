@@ -247,6 +247,31 @@ export async function findSubmittedFormSlugs(
   return out;
 }
 
+/** Client-edit check for on_new_evidence=auto: the saved answers of the (case,
+ *  form, party) response plus which of them were AI-materialized drafts. Null =
+ *  no response yet (nothing to orphan — auto-regenerate is safe). */
+export async function findFormResponseAnswersMeta(
+  caseId: string,
+  formDefinitionId: string,
+  partyId: string | null,
+): Promise<{ answers: Record<string, unknown>; aiDraftQuestionIds: string[] } | null> {
+  const client = createServiceClient();
+  let q = client
+    .from("case_form_responses")
+    .select("answers, ai_draft_question_ids")
+    .eq("case_id", caseId)
+    .eq("form_definition_id", formDefinitionId);
+  q = partyId ? q.eq("party_id", partyId) : q.is("party_id", null);
+  const { data } = await q.maybeSingle();
+  if (!data) return null;
+  return {
+    answers: (data.answers ?? {}) as Record<string, unknown>,
+    aiDraftQuestionIds: Array.isArray(data.ai_draft_question_ids)
+      ? (data.ai_draft_question_ids as string[])
+      : [],
+  };
+}
+
 /** The Spanish text of every published (base) question of a form — used by hybrid
  *  mode to tell the generator which questions are already covered. */
 export async function listPublishedQuestionTexts(formDefinitionId: string): Promise<string[]> {

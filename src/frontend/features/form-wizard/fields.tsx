@@ -55,6 +55,45 @@ function originLabel(source: string, labels: WizardLabels): string {
   return labels.prefillFromProfile;
 }
 
+/** Shimmering chip while the background warm job computes an ai_field prefill
+ *  (Ola perf): the wizard opened instantly and is polling for the value. */
+function PrefillPendingChip({ labels }: { labels: WizardLabels }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+      <span
+        className="anim-soft-pop"
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 7,
+          height: 26,
+          padding: "0 11px",
+          background: "var(--blue-soft)",
+          color: "var(--accent)",
+          borderRadius: 999,
+          fontFamily: "var(--font-title)",
+          fontWeight: 800,
+          fontSize: 12,
+          whiteSpace: "nowrap",
+        }}
+      >
+        <span
+          aria-hidden
+          style={{
+            width: 10,
+            height: 10,
+            borderRadius: 999,
+            border: "2px solid var(--accent)",
+            borderTopColor: "transparent",
+            animation: "spin 0.9s linear infinite",
+          }}
+        />
+        {labels.prefillAiPending}
+      </span>
+    </div>
+  );
+}
+
 /** The gold "Ya lo tenemos" chip + sparkle + origin microcopy (DOC-50 §6.4). */
 function PrefillChip({
   question,
@@ -739,7 +778,7 @@ function LockNote({ message }: { message: string }) {
  *  is wrapped in a native `<fieldset disabled>` so every descendant control is
  *  inert, and the optional `lockMessage` explains why. */
 export function WizardField(
-  props: FieldProps & { showDictation?: boolean; disabled?: boolean; lockMessage?: string | null; hidePrefillChip?: boolean },
+  props: FieldProps & { showDictation?: boolean; disabled?: boolean; lockMessage?: string | null; hidePrefillChip?: boolean; aiPending?: boolean },
 ) {
   const { question } = props;
   const edited = question.isPrefilled && !props.showPrefill;
@@ -768,7 +807,9 @@ export function WizardField(
 
   return (
     <div>
-      {!props.hidePrefillChip && <PrefillChip question={question} edited={edited} labels={props.labels} />}
+      {!props.hidePrefillChip && (props.aiPending
+        ? <PrefillPendingChip labels={props.labels} />
+        : <PrefillChip question={question} edited={edited} labels={props.labels} />)}
       <fieldset
         disabled={props.disabled}
         aria-disabled={props.disabled || undefined}

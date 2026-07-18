@@ -887,6 +887,14 @@ export interface GeneratedQuestion {
   validation: { regex?: string; min?: number; max?: number } | null;
   /** Conditional visibility, with `when.question` already resolved to a uuid. */
   condition: QuestionCondition | null;
+  /**
+   * Deterministic autofill (autofill total): pre-seeded value for questions the
+   * expediente cannot answer — e.g. the negative/"no aplica" option on an
+   * evidence-availability question when that evidence was never uploaded. The
+   * wizard falls back to it when no AI draft exists, and it counts as ANSWERED
+   * for completeness (a checklist gated on it must be able to close).
+   */
+  default_value?: string | null;
 }
 export interface GeneratedGroup {
   id: string;

@@ -13,6 +13,7 @@ import { requireActor } from "@/backend/modules/identity";
 import {
   saveFormDraft,
   submitFormResponse,
+  getAiFieldPrefill,
   CaseError,
 } from "@/backend/modules/cases";
 import { classifySaveError } from "@/frontend/features/form-wizard/classify-save-error";
@@ -61,6 +62,29 @@ export interface SubmitFormResult {
   ok: boolean;
   responseId?: string;
   error?: { code: string; details?: Record<string, unknown> };
+}
+
+/**
+ * Light cache read for the wizard's ai_field prefill polling (Ola perf): the
+ * open renders instantly with `prefillPending` shimmers and this action patches
+ * the values in as the background warm job lands them. No provider calls.
+ */
+export async function getAiPrefillAction(input: {
+  caseId: string;
+  questionIds: string[];
+  partyId: string | null;
+}): Promise<{ ok: boolean; values?: Record<string, string> }> {
+  try {
+    const actor = await requireActor();
+    const values = await getAiFieldPrefill(actor, {
+      caseId: input.caseId,
+      questionIds: input.questionIds,
+      partyId: input.partyId,
+    });
+    return { ok: true, values };
+  } catch {
+    return { ok: false };
+  }
 }
 
 /**

@@ -27,7 +27,7 @@ export interface CaseFormItemVM {
 }
 
 export interface CaseFormsActions {
-  approve: (input: { responseId: string }) => Promise<{ ok: boolean; error?: { code: string } }>;
+  approve: (input: { responseId: string }) => Promise<{ ok: boolean; error?: { code: string; details?: Record<string, unknown> } }>;
   generatePdf: (input: { responseId: string }) => Promise<{ ok: boolean; downloadUrl?: string; error?: { code: string; details?: Record<string, unknown> } }>;
   /**
    * Launch an ai_letter generation (carta IA) from a form response. Optional —
@@ -46,9 +46,18 @@ const STATUS_PILL: Record<string, { kind: StatusKind; label: string }> = {
   approved: { kind: "aprobado", label: "Aprobado" },
 };
 
+function missingPreview(details?: Record<string, unknown>): string {
+  const raw = details?.missing;
+  const labels = (Array.isArray(raw) ? raw : [])
+    .map((m) => (typeof m === "string" ? m : ((m as { label?: unknown } | null)?.label as string | undefined)))
+    .filter((x): x is string => !!x);
+  return labels.slice(0, 3).join(", ") + (labels.length > 3 ? "…" : "");
+}
+
 function pdfErrorMessage(code: string, details?: Record<string, unknown>): string {
   if (code === "FORM_PDF_BLOCKED" && details?.reason === "requires_approval") return "Aprueba el formulario antes de generar el PDF.";
   if (code === "FORM_PDF_BLOCKED") return "El formulario aún no está listo para generar el PDF.";
+  if (code === "FORM_PDF_REQUIRED_MISSING") return `Faltan campos obligatorios: ${missingPreview(details) || "revisa el formulario"}.`;
   if (code === "FORM_VALIDATION_FAILED") return "Faltan campos obligatorios por completar.";
   if (code === "FORM_VERSION_MISMATCH") return "La versión del formulario cambió; revisa las respuestas.";
   return "No se pudo generar el PDF. Inténtalo de nuevo.";
@@ -107,6 +116,8 @@ export function CaseFormsManager({
     if (r.ok) {
       setItems((xs) => xs.map((x) => (x.responseId === it.responseId ? { ...x, status: "approved" } : x)));
       toast.success("Formulario aprobado");
+    } else if (r.error?.code === "FORM_INCOMPLETE") {
+      toast.error(`Faltan respuestas obligatorias: ${missingPreview(r.error.details) || "revisa el formulario"}.`);
     } else {
       toast.error(r.error?.code === "FORM_NOT_APPROVABLE" ? "Este formulario no puede aprobarse en su estado actual." : "No se pudo aprobar.");
     }

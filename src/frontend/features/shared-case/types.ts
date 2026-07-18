@@ -550,6 +550,15 @@ export interface CaseDetailActions {
     responseId: string;
   }) => Promise<{ ok: boolean; downloadUrl?: string; error?: { code: string; details?: Record<string, unknown> } }>;
   /**
+   * Verify/approve a SUBMITTED form response (RF-VAN-043 — "Marcar como
+   * Verificado" in the Información tab). The server blocks with FORM_INCOMPLETE
+   * (+missing list in details) when required fields are unresolved. Optional —
+   * staff surfaces with review rights inject it (ventas / legal / admin).
+   */
+  approveForm?: (input: {
+    responseId: string;
+  }) => Promise<{ ok: boolean; error?: { code: string; details?: Record<string, unknown> } }>;
+  /**
    * AI-letter generation actions (Generaciones tab — Ola 2). Optional; only staff
    * surfaces that authorize generation inject them.
    */

@@ -1936,6 +1936,57 @@ describe("materializeProposalToSchema", () => {
     });
     expect(schema.groups[0].questions[0].condition).toBeNull();
   });
+
+  // Autofill total — default_value determinista ("no aplica" sin evidencia)
+  it("carries default_value through when it maps to a REAL select option", () => {
+    const schema = materializeProposalToSchema({
+      groups: [{
+        title_i18n: { es: "G", en: "G" },
+        questions: [{
+          key: "q1",
+          question_i18n: { es: "¿Tiene evidencia nueva?", en: "New evidence?" },
+          field_type: "select",
+          options: [
+            { value: "si", label_i18n: { es: "Sí", en: "Yes" } },
+            { value: "no_aplica", label_i18n: { es: "No aplica", en: "Not applicable" } },
+          ],
+          default_value: "no_aplica",
+        }],
+      }],
+    });
+    expect(schema.groups[0].questions[0].default_value).toBe("no_aplica");
+  });
+
+  it("drops a hallucinated default_value that is not one of the options (fail-safe)", () => {
+    const schema = materializeProposalToSchema({
+      groups: [{
+        title_i18n: { es: "G", en: "G" },
+        questions: [{
+          key: "q1",
+          question_i18n: { es: "x", en: "x" },
+          field_type: "select",
+          options: [{ value: "si", label_i18n: { es: "Sí", en: "Yes" } }],
+          default_value: "opcion-fantasma",
+        }],
+      }],
+    });
+    expect(schema.groups[0].questions[0].default_value).toBeNull();
+  });
+
+  it("keeps a free-text default_value on textarea (honest unavailability phrasing)", () => {
+    const schema = materializeProposalToSchema({
+      groups: [{
+        title_i18n: { es: "G", en: "G" },
+        questions: [{
+          key: "q1",
+          question_i18n: { es: "x", en: "x" },
+          field_type: "textarea",
+          default_value: "Por ahora no cuento con este documento.",
+        }],
+      }],
+    });
+    expect(schema.groups[0].questions[0].default_value).toBe("Por ahora no cuento con este documento.");
+  });
 });
 
 // ---------------------------------------------------------------------------

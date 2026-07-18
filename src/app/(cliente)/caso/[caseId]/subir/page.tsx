@@ -29,6 +29,9 @@ export default async function SubirPage({
   const locale = (await getLocale()) as Locale;
   const t = await getTranslations("cliente.subir");
   const td = await getTranslations("cliente.documentos");
+  // ICU template interpolated CLIENT-side ("Leyendo página {done} de {total}…"):
+  // echo the placeholders back so next-intl returns the raw template.
+  const tWithVars = t as unknown as (key: string, values: Record<string, string>) => string;
 
   let matrix;
   try {
@@ -94,6 +97,8 @@ export default async function SubirPage({
         reviewFailedSub: t("reviewFailedSub"),
         reviewSlowTitle: t("reviewSlowTitle"),
         reviewSlowSub: t("reviewSlowSub"),
+        extractingPages: tWithVars("extractingPages", { done: "{done}", total: "{total}" }),
+        continueBackground: t("continueBackground"),
         nameLabel: t("nameLabel"),
         namePlaceholder: t("namePlaceholder"),
         nameRequired: t("nameRequired"),

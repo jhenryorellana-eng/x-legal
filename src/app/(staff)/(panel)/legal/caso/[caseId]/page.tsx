@@ -82,7 +82,7 @@ import {
   addCaseNoteAction,
   deleteNoteAction,
 } from "../../../admin/casos/actions";
-import { getFormResponsePdfUrlAction, generateFilledPdfAction } from "../../../admin/casos/form-actions";
+import { getFormResponsePdfUrlAction, generateFilledPdfAction, approveFormResponseAction } from "../../../admin/casos/form-actions";
 import { getGenerationOutputUrlAction, startLetterGenerationAction, getRunStatusAction } from "../../../admin/casos/generation-actions";
 
 export const dynamic = "force-dynamic";
@@ -321,6 +321,7 @@ export default async function LegalCasoDetailPage({
         reviewDocument: reviewDocumentAction,
         getFilledPdfUrl: getFormResponsePdfUrlAction,
         generateFilledPdf: generateFilledPdfAction,
+        approveForm: approveFormResponseAction,
         getGenerationOutputUrl: getGenerationOutputUrlAction,
         startLetterGeneration: startLetterGenerationAction,
         getRunStatus: getRunStatusAction,

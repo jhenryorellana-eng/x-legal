@@ -27,6 +27,8 @@ export interface ExtractionStatusResult {
   ok: boolean;
   status?: "pending" | "completed" | "failed" | null;
   payload?: Record<string, unknown> | null;
+  /** Chunked-OCR progress for multi-minute extractions ("Leyendo página X de Y"). */
+  progress?: { pagesDone: number; pagesTotal: number; pct: number } | null;
   error?: { code: string };
 }
 
@@ -85,6 +87,10 @@ export interface UploadLabels {
    *  reassure instead of implying failure (chunked OCR takes minutes). */
   reviewSlowTitle: string;
   reviewSlowSub: string;
+  /** Chunked-OCR page progress template, e.g. "Leyendo página {done} de {total}…" */
+  extractingPages: string;
+  /** CTA to leave a long extraction running and continue (the upload is done). */
+  continueBackground: string;
   // --- Multiple documents (allow_multiple): the client names each file ---
   /** Field label asking the client to name this file, e.g. "¿Cómo se llama este documento?". */
   nameLabel: string;
@@ -164,8 +170,25 @@ function formatExtractionFields(
     .map(([k, v]) => ({ key: k, label: prettifyKey(k), value: formatValue(v) }));
 }
 
-/** "Analizando con IA…" — shown while Gemini reads the document. */
-function AnalyzingView({ labels }: { labels: UploadLabels }) {
+/** "Analizando con IA…" — shown while Gemini reads the document. Long chunked
+ *  extractions get a DETERMINATE page-progress bar ("Leyendo página X de Y…")
+ *  plus a "continuar en segundo plano" CTA — the upload itself already
+ *  succeeded, so a 9-minute OCR must never read as a failure or hold the
+ *  client hostage on this screen. */
+function AnalyzingView({
+  labels,
+  progress,
+  onContinueBackground,
+}: {
+  labels: UploadLabels;
+  progress: { pagesDone: number; pagesTotal: number; pct: number } | null;
+  onContinueBackground: (() => void) | null;
+}) {
+  const pageText = progress
+    ? labels.extractingPages
+        .replace("{done}", String(Math.max(1, progress.pagesDone)))
+        .replace("{total}", String(progress.pagesTotal))
+    : null;
   return (
     <div
       style={{
@@ -194,19 +217,54 @@ function AnalyzingView({ labels }: { labels: UploadLabels }) {
           }}
         >
           <div
-            style={{
-              height: "100%",
-              width: "40%",
-              borderRadius: 999,
-              background: "var(--gold-deep)",
-              animation: "ulpIndeterminate 1.1s ease-in-out infinite",
-            }}
+            style={
+              progress
+                ? {
+                    height: "100%",
+                    width: `${Math.max(4, progress.pct)}%`,
+                    borderRadius: 999,
+                    background: "var(--gold-deep)",
+                    transition: "width 0.6s ease",
+                  }
+                : {
+                    height: "100%",
+                    width: "40%",
+                    borderRadius: 999,
+                    background: "var(--gold-deep)",
+                    animation: "ulpIndeterminate 1.1s ease-in-out infinite",
+                  }
+            }
           />
         </div>
       </div>
+      {pageText && (
+        <div className="t-title" style={{ color: "var(--gold-deep)", fontSize: 14, fontWeight: 800 }}>
+          {pageText}
+        </div>
+      )}
       <div style={{ color: "var(--ink-2)", fontSize: 14.5, fontWeight: 500, maxWidth: 300 }}>
         {labels.analyzingSub}
       </div>
+      {onContinueBackground && (
+        <button
+          type="button"
+          onClick={onContinueBackground}
+          className="t-title"
+          style={{
+            marginTop: 4,
+            background: "none",
+            border: "1.5px solid var(--line)",
+            borderRadius: 999,
+            padding: "10px 18px",
+            color: "var(--accent)",
+            fontWeight: 800,
+            fontSize: 14,
+            cursor: "pointer",
+          }}
+        >
+          {labels.continueBackground}
+        </button>
+      )}
     </div>
   );
 }
@@ -340,6 +398,12 @@ export function UploadScreen({
   const [caseDocumentId, setCaseDocumentId] = React.useState<string | null>(null);
   const [extracted, setExtracted] = React.useState<Record<string, unknown> | null>(null);
   const [extractionFailed, setExtractionFailed] = React.useState<false | "failed" | "slow">(false);
+  // Chunked-OCR page progress ("Leyendo página X de Y…") for long extractions.
+  const [extractionProgress, setExtractionProgress] = React.useState<{
+    pagesDone: number;
+    pagesTotal: number;
+    pct: number;
+  } | null>(null);
   const [nav, setNav] = React.useState<{ progress: number; gain: number }>({
     progress: previousProgress,
     gain: 0,
@@ -352,19 +416,30 @@ export function UploadScreen({
     router.push(`/caso/${caseId}/exito?${qs.toString()}`);
   }, [router, caseId, nav.progress, nav.gain]);
 
-  // Poll the extraction status while analyzing. Gemini takes a few seconds; we
-  // poll every 2.5s and fall through to a non-blocking "couldn't read" review on
-  // failure or timeout (extraction is assistance — it never blocks the upload).
+  // Poll the extraction status while analyzing. Progress-aware adaptive loop:
+  // a passport reads in seconds, but a 200+ page record OCRs in chunks over
+  // ~9 minutes — while the checkpoint keeps ADVANCING we keep waiting (up to a
+  // 15-min hard cap) and show "Leyendo página X de Y…". Only a real failure, or
+  // progress stalled >3 min, falls through to the non-blocking review states.
+  // NEVER show failure language while status is still "pending".
   React.useEffect(() => {
     if (stage !== "analyzing" || !caseDocumentId) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
-    let attempts = 0;
-    const MAX_ATTEMPTS = 24; // ~60s
+    const startedAt = Date.now();
+    const HARD_CAP_MS = 15 * 60_000;
+    // A chunked extraction that IS reporting pages gets a generous stall window;
+    // one that never sent a single progress signal (short doc, or truly stuck)
+    // falls through to the reassuring "slow" screen much sooner.
+    const STALL_WITH_PROGRESS_MS = 3 * 60_000;
+    const STALL_NO_PROGRESS_MS = 90_000;
+    // "Something happened" = any status/progress signal since the last change.
+    let lastSignal = Date.now();
+    let lastPagesDone = -1;
+    let sawProgress = false;
 
     const tick = async () => {
       if (cancelled) return;
-      attempts += 1;
       const r = await getExtractionStatus({ caseDocumentId });
       if (cancelled) return;
       if (r.ok && r.status === "completed") {
@@ -378,14 +453,25 @@ export function UploadScreen({
         setStage("review");
         return;
       }
-      if (attempts >= MAX_ATTEMPTS) {
-        // Still pending — a 200+ page record extracts in chunks over several
-        // minutes. Reassure ("still reading") instead of implying failure.
+      const p = r.ok ? (r.progress ?? null) : null;
+      if (p) {
+        sawProgress = true;
+        setExtractionProgress(p);
+        if (p.pagesDone !== lastPagesDone) {
+          lastPagesDone = p.pagesDone;
+          lastSignal = Date.now();
+        }
+      }
+      const elapsed = Date.now() - startedAt;
+      const stallMs = sawProgress ? STALL_WITH_PROGRESS_MS : STALL_NO_PROGRESS_MS;
+      const stalled = Date.now() - lastSignal > stallMs;
+      if (elapsed > HARD_CAP_MS || (stalled && elapsed > 60_000)) {
+        // Still pending — reassure ("still reading") instead of implying failure.
         setExtractionFailed("slow");
         setStage("review");
         return;
       }
-      timer = setTimeout(tick, 2500);
+      timer = setTimeout(tick, elapsed > 60_000 ? 5000 : 2500);
     };
 
     timer = setTimeout(tick, 2000);
@@ -590,7 +676,11 @@ export function UploadScreen({
           </div>
         </div>
       ) : stage === "analyzing" ? (
-        <AnalyzingView labels={labels} />
+        <AnalyzingView
+          labels={labels}
+          progress={extractionProgress}
+          onContinueBackground={extractionProgress ? goToCelebration : null}
+        />
       ) : stage === "review" ? (
         <ReviewView
           labels={labels}

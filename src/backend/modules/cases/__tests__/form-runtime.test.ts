@@ -204,6 +204,12 @@ vi.mock("@/backend/platform/pdf", () => ({
   backfillNaTextFields: mockBackfillNa,
 }));
 
+// Ola perf: a cache miss on an ai_field question enqueues the background warm
+// job — the wizard open itself must NEVER call a provider.
+vi.mock("@/backend/platform/qstash", () => ({
+  enqueueJob: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("@/backend/modules/ai-engine", () => ({
   translateAnswerText: mockTranslateText,
   translateAnswersBatch: mockTranslateAnswersBatch,
@@ -212,6 +218,9 @@ vi.mock("@/backend/modules/ai-engine", () => ({
   getCurrentQuestionnaireInstance: mockGetCurrentQuestionnaireInstance,
   getQuestionnaireClientState: mockGetQuestionnaireClientState,
   getQuestionnaireInstanceDrafts: mockGetQuestionnaireInstanceDrafts,
+  // Autofill total: drafts ∪ schema default_values. The submit path consumes
+  // THIS one; same mock fn keeps the provenance assertions unchanged.
+  getQuestionnaireInstanceAutofillValues: mockGetQuestionnaireInstanceDrafts,
 }));
 
 vi.mock("@/backend/platform/crypto", () => ({
@@ -1088,6 +1097,122 @@ describe("approveFormResponse", () => {
     ).rejects.toThrow("forbidden_case");
 
     expect(mockUpdateFormResponse).not.toHaveBeenCalled();
+  });
+
+  // --- Completeness gate (RF-VAN-043: approved ⇒ complete) ------------------
+
+  const REQ_QID = "eeeeeeee-eeee-4eee-8eee-000000000101";
+  const AI_CTRL_QID = "eeeeeeee-eeee-4eee-8eee-000000000102";
+  const DEP_QID = "eeeeeeee-eeee-4eee-8eee-000000000103";
+
+  it("throws FORM_INCOMPLETE (with the missing list) when a required question is unanswered", async () => {
+    mockFindFormResponseById.mockResolvedValue({ ...submittedResponse, answers: {} });
+    mockListQuestionGroups.mockResolvedValue([{ id: "g1" }]);
+    mockListQuestions.mockResolvedValue([
+      {
+        id: REQ_QID, field_type: "text", is_required: true, options: null, validation: null,
+        source: "client_answer", source_ref: null, condition: null,
+        question_i18n: { es: "Nombre completo", en: "Full name" },
+      },
+    ]);
+
+    await expect(
+      approveFormResponse(staffActor, { responseId: RESPONSE_ID }),
+    ).rejects.toMatchObject({
+      code: "FORM_INCOMPLETE",
+      details: expect.objectContaining({
+        count: 1,
+        missing: [expect.objectContaining({ questionId: REQ_QID, label: "Nombre completo" })],
+      }),
+    });
+    expect(mockUpdateFormResponse).not.toHaveBeenCalled();
+  });
+
+  it("approves when the only required question resolves via a catalog default_value", async () => {
+    mockFindFormResponseById.mockResolvedValue({ ...submittedResponse, answers: {} });
+    mockListQuestionGroups.mockResolvedValue([{ id: "g1" }]);
+    mockListQuestions.mockResolvedValue([
+      {
+        id: REQ_QID, field_type: "text", is_required: true, options: null, validation: null,
+        source: "client_answer", source_ref: { default_value: "Not Detained" }, condition: null,
+        question_i18n: { es: "¿Detenido?", en: "Detained?" },
+      },
+    ]);
+
+    await approveFormResponse(staffActor, { responseId: RESPONSE_ID });
+
+    expect(mockUpdateFormResponse).toHaveBeenCalledWith(
+      RESPONSE_ID,
+      expect.objectContaining({ status: "approved" }),
+    );
+  });
+
+  it("fail-closed: a still-pending ai_field that CONTROLS a condition blocks the approve", async () => {
+    // The dependent required question is HIDDEN while its ai_field controller is
+    // unresolved — without the fail-closed rule the form would approve as
+    // "complete" with an unknown conditional branch.
+    mockFindFormResponseById.mockResolvedValue({ ...submittedResponse, answers: {} });
+    mockListQuestionGroups.mockResolvedValue([{ id: "g1" }]);
+    mockListQuestions.mockResolvedValue([
+      {
+        id: AI_CTRL_QID, field_type: "select", is_required: false,
+        options: [{ value: "si" }, { value: "no" }], validation: null,
+        source: "ai_field",
+        source_ref: { connected: { kind: "document", slug: "decision-juez" }, instruction: "¿Es X?" },
+        condition: null,
+        question_i18n: { es: "¿Decisión oral?", en: "Oral decision?" },
+      },
+      {
+        id: DEP_QID, field_type: "date", is_required: true, options: null, validation: null,
+        source: "client_answer", source_ref: null,
+        condition: { when: { question: AI_CTRL_QID, op: "equals", value: "si" }, action: "show" },
+        question_i18n: { es: "Fecha de la decisión oral", en: "Oral decision date" },
+      },
+    ]);
+    const repo = await import("@/backend/modules/cases/repository");
+    vi.mocked(repo.findAiFieldCacheRows).mockResolvedValue([]); // still warming
+
+    await expect(
+      approveFormResponse(staffActor, { responseId: RESPONSE_ID }),
+    ).rejects.toMatchObject({
+      code: "FORM_INCOMPLETE",
+      details: expect.objectContaining({
+        missing: [expect.objectContaining({ questionId: AI_CTRL_QID })],
+      }),
+    });
+    expect(mockUpdateFormResponse).not.toHaveBeenCalled();
+  });
+
+  it("approves once the controlling ai_field is cached and the condition turns the dependent off", async () => {
+    mockFindFormResponseById.mockResolvedValue({ ...submittedResponse, answers: {} });
+    mockListQuestionGroups.mockResolvedValue([{ id: "g1" }]);
+    mockListQuestions.mockResolvedValue([
+      {
+        id: AI_CTRL_QID, field_type: "select", is_required: false,
+        options: [{ value: "si" }, { value: "no" }], validation: null,
+        source: "ai_field",
+        source_ref: { connected: { kind: "document", slug: "decision-juez" }, instruction: "¿Es X?" },
+        condition: null,
+        question_i18n: { es: "¿Decisión oral?", en: "Oral decision?" },
+      },
+      {
+        id: DEP_QID, field_type: "date", is_required: true, options: null, validation: null,
+        source: "client_answer", source_ref: null,
+        condition: { when: { question: AI_CTRL_QID, op: "equals", value: "si" }, action: "show" },
+        question_i18n: { es: "Fecha de la decisión oral", en: "Oral decision date" },
+      },
+    ]);
+    const repo = await import("@/backend/modules/cases/repository");
+    vi.mocked(repo.findAiFieldCacheRows).mockResolvedValue([
+      { question_id: AI_CTRL_QID, input_fingerprint: "fp", value: "no" },
+    ]);
+
+    await approveFormResponse(staffActor, { responseId: RESPONSE_ID });
+
+    expect(mockUpdateFormResponse).toHaveBeenCalledWith(
+      RESPONSE_ID,
+      expect.objectContaining({ status: "approved" }),
+    );
   });
 });
 
@@ -2670,5 +2795,75 @@ describe("submitFormResponse — materializes untouched AI drafts with provenanc
     });
 
     expect(mockGetQuestionnaireInstanceDrafts).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ola perf — getFormForClient sirve ai_field SOLO desde caché (LLM nunca en el GET)
+// ---------------------------------------------------------------------------
+
+describe("getFormForClient — ai_field prefill is CACHE-ONLY (Ola perf)", () => {
+  const AI_QID = "99999999-9999-4999-8999-000000000001";
+  const aiFieldQuestion = {
+    id: AI_QID,
+    group_id: "g1",
+    question_i18n: { es: "Motivo de la decisión", en: "Decision reason" },
+    help_i18n: null,
+    field_type: "textarea",
+    options: null,
+    is_required: false,
+    position: 0,
+    source: "ai_field",
+    source_ref: { connected: { kind: "document", slug: "decision-juez" }, instruction: "Resume el motivo" },
+    validation: null,
+    condition: null,
+    ai_improve: null,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRequireCaseAccess.mockResolvedValue(undefined);
+    mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
+    mockFindFormResponse.mockResolvedValue(null);
+    mockGetPublishedAutomationVersion.mockResolvedValue(publishedVersion);
+    mockListQuestionGroups.mockResolvedValue([{ id: "g1", title_i18n: { es: "G", en: "G" }, position: 0 }]);
+    mockListQuestions.mockResolvedValue([aiFieldQuestion]);
+  });
+
+  it("cache HIT → serves the cached value without any provider call", async () => {
+    const repo = await import("@/backend/modules/cases/repository");
+    vi.mocked(repo.findAiFieldCacheRows).mockResolvedValue([
+      { question_id: AI_QID, input_fingerprint: "fp", value: "valor cacheado" },
+    ]);
+
+    const dto = await getFormForClient(clientActor, { caseId: CASE_ID, formDefinitionId: FORM_DEF_ID, partyId: null });
+
+    const q = dto.groups[0].questions[0];
+    expect(q.prefillValue).toBe("valor cacheado");
+    expect(q.prefillPending).toBeUndefined();
+    expect(mockInterpretDocumentFields).not.toHaveBeenCalled();
+    const { enqueueJob } = await import("@/backend/platform/qstash");
+    expect(vi.mocked(enqueueJob)).not.toHaveBeenCalled();
+  });
+
+  it("cache MISS → prefillPending + background warm enqueued (deduped), still no provider call", async () => {
+    const repo = await import("@/backend/modules/cases/repository");
+    vi.mocked(repo.findAiFieldCacheRows).mockResolvedValue([]);
+
+    const dto = await getFormForClient(clientActor, { caseId: CASE_ID, formDefinitionId: FORM_DEF_ID, partyId: null });
+
+    const q = dto.groups[0].questions[0];
+    expect(q.prefillValue).toBeNull();
+    expect(q.prefillPending).toBe(true);
+    expect(mockInterpretDocumentFields).not.toHaveBeenCalled();
+    const { enqueueJob } = await import("@/backend/platform/qstash");
+    expect(vi.mocked(enqueueJob)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobKey: "refresh-ai-prefill",
+        caseId: CASE_ID,
+        dedupeId: `ai-prefill:${CASE_ID}:case`,
+      }),
+      expect.anything(),
+    );
   });
 });

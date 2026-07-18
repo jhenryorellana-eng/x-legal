@@ -45,6 +45,7 @@ export {
   staffUpdateFormAnswers,
   submitFormResponse,
   approveFormResponse,
+  getFormResponseCompleteness,
   rejectFormResponse,
   generateFilledPdf,
   resolveFormResponseFieldValues,
@@ -52,6 +53,10 @@ export {
   getFormResponseMeta,
   getFormResponsePdfUrl,
   resolveBySource,
+  // Ola perf — ai_field prefill warm-up (LLM never on the read path)
+  enqueueAiPrefillWarm,
+  warmAiFieldCacheForCase,
+  getAiFieldPrefill,
   // Staff reads
   getCaseExtractions,
   getCaseExtractionsSystem,

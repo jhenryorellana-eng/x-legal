@@ -30,6 +30,7 @@
 import { z } from "zod";
 import { can, requireCaseAccess, AuthzError } from "@/backend/platform/authz";
 import type { Actor } from "@/backend/platform/authz";
+import { appEvents } from "@/backend/platform/events";
 import { enqueueJob } from "@/backend/platform/qstash";
 import { getAnthropicClient, DEFAULT_UI_MODEL } from "@/backend/platform/anthropic";
 import { limitAiImprove } from "@/backend/platform/ratelimit";
@@ -189,7 +190,9 @@ import {
   nextQuestionnaireInstanceVersion,
   createQuestionnaireInstance,
   updateQuestionnaireInstance,
+  findQuestionnaireInstanceById,
   findSubmittedFormSlugs,
+  findFormResponseAnswersMeta,
   listPublishedQuestionTexts,
   listPublishedClientQuestionsForDrafts,
   findQuestionForImprove,
@@ -222,6 +225,7 @@ export class AiEngineError extends Error {
       | "AI_PROVIDER_UNAVAILABLE"
       | "AI_OUTPUT_INVALID"
       | "AI_DOCUMENT_TOO_LARGE"
+      | "AI_PDF_PAGECOUNT_FAILED"
       | "AI_IMPROVE_NOT_ENABLED"
       | "AI_IMPROVE_RATE_LIMITED"
       | "AI_IMPROVE_TEXT_TOO_LONG"
@@ -252,6 +256,11 @@ const EXTRACTION_CHUNKED_MIN_PAGES = 30;
 const EXTRACTION_CHUNK_PAGES = 25;
 const EXTRACTION_SOFT_BUDGET_MS = 600_000; // under the 800s QStash webhook maxDuration
 const EXTRACTION_MAX_OUTPUT_TOKENS = 65_536;
+// Above this size a PDF whose pages cannot be counted FAILS LOUD instead of
+// degrading to the single-call route (which cannot handle a big scan anyway).
+const EXTRACTION_PAGECOUNT_REQUIRED_BYTES = 8 * 1024 * 1024;
+// Backoff between provider retry attempts (chunk OCR / fields pass).
+const EXTRACTION_RETRY_BACKOFF_MS = [1_000, 4_000];
 // Legibility gate — sample the first pages of big PDFs instead of inlining 14MB+
 const LEGIBILITY_SAMPLE_MIN_BYTES = 4 * 1024 * 1024;
 const LEGIBILITY_SAMPLE_PAGES = 5;
@@ -1442,7 +1451,23 @@ export async function executeExtractionJob(
     try {
       pageCount = await countPdfPages(fileBytes);
     } catch (err) {
-      logger.warn({ err, caseDocumentId: doc.id }, "extract-document: countPdfPages failed — single-call route");
+      // One retry — mupdf WASM init can hiccup transiently.
+      try {
+        pageCount = await countPdfPages(fileBytes);
+      } catch {
+        // A LARGE pdf without a page count must not degrade to the single-call
+        // route: a 200-page scan would blow the inline/output limits and fail
+        // 9 minutes in with nothing to show. Fail loud instead (QStash retries;
+        // if mupdf truly can't open it, extraction is impossible anyway since
+        // the chunked route needs page-range splits).
+        if (fileBytes.length > EXTRACTION_PAGECOUNT_REQUIRED_BYTES) {
+          throw new AiEngineError("AI_PDF_PAGECOUNT_FAILED", {
+            caseDocumentId: doc.id,
+            sizeBytes: fileBytes.length,
+          });
+        }
+        logger.warn({ err, caseDocumentId: doc.id }, "extract-document: countPdfPages failed twice — small file, single-call route");
+      }
     }
   }
   if (
@@ -1597,6 +1622,47 @@ interface ChunkedExtractionProgress {
   usage: { input_tokens: number; output_tokens: number };
 }
 
+/** Backoff between provider retry attempts (attempt 1 → 1s, attempt 2 → 4s).
+ *  No-op under Vitest so retry-exhaustion tests don't wall-clock the sleeps. */
+async function sleepBackoff(attempt: number): Promise<void> {
+  if (process.env.VITEST) return;
+  const ms = EXTRACTION_RETRY_BACKOFF_MS[Math.min(attempt - 1, EXTRACTION_RETRY_BACKOFF_MS.length - 1)];
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Human-facing progress of an in-flight extraction, derived from the chunked
+ *  checkpoint. `null` when there is no checkpoint (short doc, or not started).
+ *  0–90% maps to OCR'd pages; the final fields pass owns 90–100. Consumed by
+ *  cases.getDocumentExtractionStatus → the client's "Leyendo página X de Y". */
+export interface ExtractionProgressSummary {
+  pagesDone: number;
+  pagesTotal: number;
+  pct: number;
+}
+
+/**
+ * Reads the chunked checkpoint of a document extraction and summarizes it for
+ * UI polling. Owns the `progress` jsonb shape (module-internal) so consumers
+ * never parse it themselves.
+ */
+export async function getExtractionProgressSummary(
+  caseDocumentId: string,
+): Promise<ExtractionProgressSummary | null> {
+  const row = await findExtraction(caseDocumentId);
+  const p = (row as { progress?: unknown } | null)?.progress as
+    | Partial<ChunkedExtractionProgress>
+    | null
+    | undefined;
+  if (!p || p.kind !== "chunked" || !p.parts || typeof p.parts !== "object" || !p.page_count) {
+    return null;
+  }
+  const chunkPages = p.chunk_pages ?? EXTRACTION_CHUNK_PAGES;
+  const pagesTotal = p.page_count;
+  const pagesDone = Math.min(Object.keys(p.parts).length * chunkPages, pagesTotal);
+  const pct = Math.round((pagesDone / pagesTotal) * 90);
+  return { pagesDone, pagesTotal, pct };
+}
+
 /** Loads a checkpoint if it matches the current chunking geometry; else starts fresh. */
 function parseChunkedProgress(value: unknown, pageCount: number): ChunkedExtractionProgress {
   const p = value as Partial<ChunkedExtractionProgress> | null;
@@ -1673,7 +1739,10 @@ async function runChunkedExtraction(args: {
 
     let ocrText: string | null = null;
     let lastErr: unknown = null;
-    for (let attempt = 0; attempt < 2 && ocrText === null; attempt++) {
+    // 3 attempts with backoff (1s, 4s): a 429/5xx on ONE chunk must not burn the
+    // whole run — the checkpoint keeps every previously paid chunk either way.
+    for (let attempt = 0; attempt < 3 && ocrText === null; attempt++) {
+      if (attempt > 0) await sleepBackoff(attempt);
       try {
         const response = await geminiModels.generateContent({
           model,
@@ -1754,14 +1823,19 @@ async function runChunkedExtraction(args: {
   }).join("\n\n");
 
   // Fields pass — text-only over the assembled OCR, WITHOUT the raw_text field
-  // (we already have it). Same 2-attempt validation loop as the single-call path.
+  // (we already have it). 3-attempt validation loop with backoff. Output budget
+  // matches the OCR calls (the old 8192 cap silently truncated the JSON of
+  // large schemas over a 200+ page record → AI_OUTPUT_INVALID after 9 paid
+  // minutes; responseSchema output can be verbose).
   const fieldsSchema = { type: "object", properties: baseProps, required: baseRequired };
   let extractionResult: Record<string, unknown> | null = null;
   let ajvErrors: string | null = null;
   let fieldsIn = 0;
   let fieldsOut = 0;
+  const FIELDS_ATTEMPTS = 3;
 
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < FIELDS_ATTEMPTS; attempt++) {
+    if (attempt > 0) await sleepBackoff(attempt);
     const feedbackPrompt =
       attempt > 0 && ajvErrors
         ? `\n\nCORRECTION REQUIRED: The previous response had validation errors. Fix exactly these issues:\n${ajvErrors}`
@@ -1783,7 +1857,7 @@ async function runChunkedExtraction(args: {
         ],
         config: {
           temperature: 0,
-          maxOutputTokens: 8192,
+          maxOutputTokens: EXTRACTION_MAX_OUTPUT_TOKENS,
           responseMimeType: "application/json",
           responseSchema: fieldsSchema,
         },
@@ -1791,6 +1865,15 @@ async function runChunkedExtraction(args: {
       const text = response.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
       fieldsIn += response.usageMetadata?.promptTokenCount ?? 0;
       fieldsOut += response.usageMetadata?.candidatesTokenCount ?? 0;
+
+      // Truncation guard: a response cut at the token ceiling parses as invalid
+      // JSON below, but detect it explicitly so the retry feedback is precise.
+      const finishReason = response.candidates?.[0]?.finishReason ?? null;
+      if (finishReason === "MAX_TOKENS") {
+        ajvErrors = "Response was truncated (hit the output-token ceiling). Return ONLY the JSON object, as compact as possible.";
+        extractionResult = null;
+        continue;
+      }
 
       try {
         extractionResult = JSON.parse(text) as Record<string, unknown>;
@@ -1810,7 +1893,7 @@ async function runChunkedExtraction(args: {
       break;
     } catch (err) {
       logger.error({ err, attempt, caseDocumentId: doc.id }, "extract-document: fields pass failed");
-      if (attempt === 1) {
+      if (attempt === FIELDS_ATTEMPTS - 1) {
         // Keep the checkpoint — the paid OCR survives for a reprocess.
         await upsertExtraction({
           case_document_id: doc.id,
@@ -3073,7 +3156,11 @@ const QUESTIONNAIRE_GEN_SYSTEM_BASE =
   "5. NO repitas lo que el cliente ya respondió en el I-589 ni en las preguntas base — SOLO profundiza más allá.\n" +
   "6. Las preguntas las responde el CLIENTE (source='client_answer'); usa field_type 'textarea' para relatos, " +
   "'date' para fechas y 'select'/'checkbox' con opciones cuando aplique. NUNCA uses campos de PDF.\n" +
-  "7. Redacta cada pregunta de forma clara y empática, dirigida al cliente ('usted'), bilingüe (es + en).";
+  "7. Redacta cada pregunta de forma clara y empática, dirigida al cliente ('usted'), bilingüe (es + en).\n" +
+  "8. Preguntas de DISPONIBILIDAD de evidencia ('¿Tiene usted…?', '¿Cuenta con…?'): incluye SIEMPRE una opción " +
+  "negativa/'No aplica' y, si esa evidencia NO consta en el expediente, declara `default_value` con el `value` " +
+  "EXACTO de esa opción negativa — así el cuestionario queda respondido por defecto cuando no hay nada que aportar " +
+  "y el cliente solo lo cambia si sí tiene la evidencia.";
 
 function buildQuestionnaireGenSystem(config: QuestionnaireGenConfigRow): string {
   const extra = config.generation_prompt?.trim();
@@ -3090,7 +3177,9 @@ function questionGenOutputInstructions(target: number | null): string {
     '"questions":[{"key":"q1","question_i18n":{"es":"...","en":"..."},"help_i18n":{"es":"...","en":"..."},' +
     '"field_type":"textarea|text|date|number|select|checkbox","is_required":true}]}]}. ' +
     `Genera aproximadamente ${n} preguntas repartidas en 3–6 grupos temáticos. Las claves \`key\` deben ser ` +
-    'únicas (q1, q2, …). Para "select"/"checkbox" añade "options":[{"value":"...","label_i18n":{"es":"...","en":"..."}}].'
+    'únicas (q1, q2, …). Para "select"/"checkbox" añade "options":[{"value":"...","label_i18n":{"es":"...","en":"..."}}]. ' +
+    'Una pregunta puede llevar "default_value":"<value de una opción o texto corto>" cuando la regla 8 aplique ' +
+    "(disponibilidad de evidencia que no consta en el expediente)."
   );
 }
 
@@ -3127,6 +3216,17 @@ export function materializeProposalToSchema(proposal: SegmentationProposal): Que
       const options = Array.isArray(pq.options)
         ? pq.options.map((o) => ({ value: String(o.value), label_i18n: normalizeI18n(o.label_i18n) }))
         : null;
+      // default_value only survives when it maps to a REAL option (selects) or
+      // the question is free-text — a hallucinated option value must never
+      // pre-answer a question with something the client can't even pick.
+      const rawDefault =
+        typeof pq.default_value === "string" && pq.default_value.trim() !== ""
+          ? pq.default_value.trim()
+          : null;
+      const defaultValue =
+        rawDefault && (ft === "select" || ft === "checkbox")
+          ? (options?.some((o) => o.value === rawDefault) ? rawDefault : null)
+          : rawDefault;
       const q: GeneratedQuestion = {
         id,
         question_i18n: normalizeI18n(pq.question_i18n),
@@ -3138,6 +3238,7 @@ export function materializeProposalToSchema(proposal: SegmentationProposal): Que
         source: "client_answer",
         validation: pq.validation ?? null,
         condition: null,
+        default_value: defaultValue,
       };
       withRaw.push({ q, raw: pq.condition ?? null });
       return q;
@@ -3263,15 +3364,32 @@ export function filterDraftAnswers(
   return drafts;
 }
 
+/** Gap-resolution addendum (autofill total, second pass): the questions passed
+ *  could NOT be answered from the expediente — resolve them HONESTLY instead of
+ *  leaving them blank, so the questionnaire reaches 100% coverage. */
+const QUESTIONNAIRE_GAP_RESOLUTION_ADDENDUM =
+  "\n\nMODO RESOLUCIÓN DE VACÍOS (segunda pasada): las preguntas listadas NO pudieron responderse desde el " +
+  "expediente. AHORA sí debes resolverlas TODAS, sin inventar hechos:\n" +
+  "- select/checkbox: si existe una opción negativa o de 'no aplica'/'no lo tengo', responde con el `value` EXACTO " +
+  "de esa opción (evidencia que no consta en el expediente = el cliente no la tiene por ahora).\n" +
+  "- text/textarea sobre evidencia o hechos que NO constan: escribe UNA frase honesta de no-disponibilidad en " +
+  "primera persona, p. ej. 'Por ahora no cuento con este documento.' o 'No tengo información adicional sobre esto.'\n" +
+  "- date/number sin dato en el expediente: cadena vacía (NUNCA inventes fechas ni cifras).\n" +
+  "La regla 1 (solo datos del expediente) sigue aplicando para cualquier afirmación de hechos.";
+
 /**
  * Drafts one grounded answer per client question from the same masked case
  * context the question generator used. Throws on provider failure — the caller
  * treats the whole pass as best-effort.
+ *
+ * `resolveGaps`: second-pass mode over the questions the grounded pass left
+ * empty — negative options / honest unavailability phrasing instead of blanks.
  */
 async function generateQuestionnaireDraftAnswers(input: {
   config: QuestionnaireGenConfigRow;
   inputs: ResolvedInputs;
   questions: DraftableQuestion[];
+  resolveGaps?: boolean;
 }): Promise<{ drafts: Record<string, string>; inputTokens: number; outputTokens: number; costUsd: number }> {
   const model = input.config.model || DEFAULT_GENERATION_MODEL;
   if (isAiStubEnabled()) {
@@ -3288,9 +3406,10 @@ async function generateQuestionnaireDraftAnswers(input: {
   }
 
   const extra = input.config.draft_answers_prompt?.trim();
-  const system = extra
+  let system = extra
     ? `${QUESTIONNAIRE_DRAFT_SYSTEM_BASE}\n\nINSTRUCCIONES ADICIONALES DEL SERVICIO:\n${extra}`
     : QUESTIONNAIRE_DRAFT_SYSTEM_BASE;
+  if (input.resolveGaps) system += QUESTIONNAIRE_GAP_RESOLUTION_ADDENDUM;
   const user =
     buildQuestionGenContext(input.inputs, []) +
     "\n\n## PREGUNTAS A RESPONDER (redacta el borrador de cada una)\n" +
@@ -3338,11 +3457,16 @@ export async function evaluateQuestionnairePrereqs(
 /**
  * document.uploaded watcher — the `on_new_evidence` consumer. When a NEW
  * document lands on a slug that feeds a per-case questionnaire whose current
- * instance is already READY, mark that instance `stale` (config `flag`). The
- * wizard keeps working — cases treats ready|stale alike — the flag just tells
- * staff/client the questions predate the newest evidence and a regeneration is
- * warranted. `auto` regeneration is not wired yet: degrades to flag with a warn.
- * `never` leaves the instance untouched. Best-effort: never throws (event path).
+ * instance is already READY:
+ *  - `flag`  → mark the instance `stale`. The wizard keeps working — cases
+ *    treats ready|stale alike — the flag just tells staff/client the questions
+ *    predate the newest evidence and a regeneration is warranted.
+ *  - `auto`  → REGENERATE, but ONLY when the client has not typed anything of
+ *    their own (saved answers are empty or all AI-materialized drafts): a
+ *    regeneration mints new question uuids, so auto-running over real client
+ *    work would orphan it. With client edits it degrades to `flag`.
+ *  - `never` → leave the instance untouched.
+ * Best-effort: never throws (event path).
  */
 export async function flagQuestionnairesOnNewEvidence(
   caseId: string,
@@ -3362,12 +3486,29 @@ export async function flagQuestionnairesOnNewEvidence(
       };
       const known = new Set((snapshot.documents ?? []).map((d) => d.case_document_id));
       if (known.has(caseDocumentId)) continue;
+
       if (config.on_new_evidence === "auto") {
-        logger.warn(
+        const respMeta = await findFormResponseAnswersMeta(caseId, inst.form_definition_id, inst.party_id ?? null);
+        const draftIds = new Set(respMeta?.aiDraftQuestionIds ?? []);
+        const clientEdited =
+          !!respMeta &&
+          Object.entries(respMeta.answers).some(
+            ([qid, v]) => v !== null && v !== "" && !draftIds.has(qid),
+          );
+        if (!clientEdited) {
+          const r = await startQuestionnaireGenerationCore(caseId, inst.form_definition_id, inst.party_id ?? null);
+          logger.info(
+            { caseId, instanceId: inst.id, slug: meta.requirementSlug, outcome: r.status },
+            "ai-engine: on_new_evidence=auto → regeneration kicked",
+          );
+          continue;
+        }
+        logger.info(
           { caseId, instanceId: inst.id },
-          "ai-engine: on_new_evidence=auto not wired; flagging stale instead",
+          "ai-engine: on_new_evidence=auto but client already edited — degrading to stale flag",
         );
       }
+
       await updateQuestionnaireInstance(inst.id, { status: "stale", updated_at: new Date().toISOString() });
       logger.info(
         { caseId, instanceId: inst.id, slug: meta.requirementSlug, caseDocumentId },
@@ -3445,31 +3586,43 @@ export async function startQuestionnaireGeneration(
   input: { caseId: string; formDefinitionId: string; partyId?: string | null },
 ): Promise<{ status: "skipped" | "pending_prereqs" | "queued" | "in_progress"; instanceId?: string; missing?: QuestionnairePrereqStatus }> {
   await requireCaseAccess(actor, input.caseId);
-  const partyId = input.partyId ?? null;
-  const config = await findQuestionnaireGenerationConfig(input.formDefinitionId);
+  return startQuestionnaireGenerationCore(input.caseId, input.formDefinitionId, input.partyId ?? null);
+}
+
+/**
+ * Actor-less core shared by the client/staff trigger (startQuestionnaireGeneration,
+ * which authorizes first) and the on_new_evidence=auto event consumer (already
+ * case-scoped — the event carries a verified caseId).
+ */
+async function startQuestionnaireGenerationCore(
+  caseId: string,
+  formDefinitionId: string,
+  partyId: string | null,
+): Promise<{ status: "skipped" | "pending_prereqs" | "queued" | "in_progress"; instanceId?: string; missing?: QuestionnairePrereqStatus }> {
+  const config = await findQuestionnaireGenerationConfig(formDefinitionId);
   if (!config || config.mode === "global") return { status: "skipped" };
 
-  const current = await findCurrentQuestionnaireInstance(input.caseId, input.formDefinitionId, partyId);
+  const current = await findCurrentQuestionnaireInstance(caseId, formDefinitionId, partyId);
   if (current && (current.status === "queued" || current.status === "generating")) {
     return { status: "in_progress", instanceId: current.id };
   }
 
-  const prereq = await evaluateQuestionnairePrereqs(input.caseId, partyId, config);
+  const prereq = await evaluateQuestionnairePrereqs(caseId, partyId, config);
   if (!prereq.ok) {
     if (!current || current.status !== "pending_prereqs") {
-      const version = await nextQuestionnaireInstanceVersion(input.caseId, input.formDefinitionId, partyId);
+      const version = await nextQuestionnaireInstanceVersion(caseId, formDefinitionId, partyId);
       await createQuestionnaireInstance({
-        case_id: input.caseId, form_definition_id: input.formDefinitionId, party_id: partyId,
+        case_id: caseId, form_definition_id: formDefinitionId, party_id: partyId,
         status: "pending_prereqs", version, mode: config.mode,
       });
     }
     return { status: "pending_prereqs", missing: prereq };
   }
 
-  const resolved = await resolveGenerationInputs(input.caseId, partyId, config.input_form_slugs, config.input_document_slugs);
-  const version = await nextQuestionnaireInstanceVersion(input.caseId, input.formDefinitionId, partyId);
+  const resolved = await resolveGenerationInputs(caseId, partyId, config.input_form_slugs, config.input_document_slugs);
+  const version = await nextQuestionnaireInstanceVersion(caseId, formDefinitionId, partyId);
   const instance = await createQuestionnaireInstance({
-    case_id: input.caseId, form_definition_id: input.formDefinitionId, party_id: partyId,
+    case_id: caseId, form_definition_id: formDefinitionId, party_id: partyId,
     status: "queued", version, mode: config.mode,
     inputs_snapshot: resolved as unknown as import("@/shared/database.types").Json,
     model: config.model,
@@ -3477,12 +3630,19 @@ export async function startQuestionnaireGeneration(
 
   // Dedupe on (case, form, party) — NOT the instance id — so a double-open that
   // momentarily creates two instances still enqueues at most ONE job (QStash drops
-  // the duplicate publish). The job resolves the CURRENT instance, so it always
-  // works on the live one and never double-bills.
-  const dedupeKey = `generate-questionnaire:${input.caseId}:${input.formDefinitionId}:${partyId ?? "case"}`;
+  // the duplicate publish within its dedup window). The job resolves the CURRENT
+  // instance, so it always works on the live one and never double-bills.
+  //
+  // orgId is DELIBERATELY omitted from the envelope (same rationale as
+  // enqueueLexReindex): the webhook's idempotency barrier is PERMANENT per
+  // (source, dedupeId), so an org-scoped envelope would process only the FIRST
+  // generation of this (case, form, party) ever and silently swallow every later
+  // REGENERATION (new evidence, staff regenerate) that reuses the key. QStash's
+  // publish-dedup still coalesces double-open bursts; the job is idempotent.
+  const dedupeKey = `generate-questionnaire:${caseId}:${formDefinitionId}:${partyId ?? "case"}`;
   await enqueueJob(
-    { jobKey: "generate-questionnaire", entityId: instance.id, attempt: 1, dedupeId: dedupeKey, orgId: actor.orgId,
-      caseId: input.caseId, formDefinitionId: input.formDefinitionId, partyId },
+    { jobKey: "generate-questionnaire", entityId: instance.id, attempt: 1, dedupeId: dedupeKey,
+      caseId, formDefinitionId, partyId },
     // 280s endpoint timeout (< route maxDuration 300s): stops QStash's 60s default
     // from retrying while the ≤240s Anthropic generation is still running.
     { retries: 2, timeout: "280s" },
@@ -3532,47 +3692,90 @@ export async function executeQuestionnaireGenerationJob(payload: {
     const result = await generateCaseQuestionnaire({ config, inputs, alreadyCovered });
     if (result.schema.groups.length === 0) throw new Error("generator returned no questions");
 
-    // Draft answers (autofill total) — best-effort second pass over the FINAL
-    // question list: generated uuids exist only after materialization, and the
-    // hybrid base questions come from the published version. A drafting failure
-    // never blocks the questionnaire (ready without drafts).
+    // Draft answers (autofill total) — over the FINAL question list: generated
+    // uuids exist only after materialization, and the hybrid base questions come
+    // from the published version. TWO passes: (1) grounded drafts from the
+    // expediente; (2) gap resolution for whatever pass 1 left empty (negative
+    // options / honest unavailability — issue: dynamic evidence questions must
+    // land as "no aplica", never blank). A drafting failure never blocks the
+    // questionnaire (ready without drafts) but it is NOT silent: the error is
+    // persisted on the instance and questionnaire.drafts_failed notifies staff.
     let draftAnswers: Record<string, string> | null = null;
     let draftUsage = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+    let draftsError: string | null = null;
     if (config.draft_answers_enabled) {
-      try {
-        const generatedQs: DraftableQuestion[] = result.schema.groups.flatMap((g) =>
-          g.questions.map((q) => ({
-            id: q.id,
-            question: q.question_i18n.es || q.question_i18n.en,
-            help: q.help_i18n?.es ?? null,
-            fieldType: q.field_type,
-            options: q.options?.map((o) => ({ value: o.value, label: o.label_i18n.es || o.label_i18n.en })) ?? null,
-            isRequired: q.is_required,
-          })),
-        );
-        const baseQs: DraftableQuestion[] =
-          config.mode === "hybrid"
-            ? (await listPublishedClientQuestionsForDrafts(instance.form_definition_id)).map((q) => ({
-                id: q.id,
-                question: q.question_i18n?.es ?? q.question_i18n?.en ?? "",
-                help: q.help_i18n?.es ?? null,
-                fieldType: q.field_type,
-                options:
-                  q.options?.map((o) => ({
-                    value: o.value,
-                    label: o.label_i18n?.es ?? o.label_i18n?.en ?? o.value,
-                  })) ?? null,
-                isRequired: q.is_required,
-              }))
-            : [];
-        const draftables = [...baseQs, ...generatedQs].filter((q) => q.question);
-        if (draftables.length > 0) {
-          const res = await generateQuestionnaireDraftAnswers({ config, inputs, questions: draftables });
-          draftAnswers = Object.keys(res.drafts).length > 0 ? res.drafts : null;
-          draftUsage = { inputTokens: res.inputTokens, outputTokens: res.outputTokens, costUsd: res.costUsd };
+      const generatedQs: DraftableQuestion[] = result.schema.groups.flatMap((g) =>
+        g.questions.map((q) => ({
+          id: q.id,
+          question: q.question_i18n.es || q.question_i18n.en,
+          help: q.help_i18n?.es ?? null,
+          fieldType: q.field_type,
+          options: q.options?.map((o) => ({ value: o.value, label: o.label_i18n.es || o.label_i18n.en })) ?? null,
+          isRequired: q.is_required,
+        })),
+      );
+      // Generated questions with a schema default_value are already resolved
+      // deterministically — the gap pass must not spend tokens on them.
+      const defaultedIds = new Set(
+        result.schema.groups.flatMap((g) => g.questions.filter((q) => q.default_value).map((q) => q.id)),
+      );
+      const baseQs: DraftableQuestion[] =
+        config.mode === "hybrid"
+          ? (await listPublishedClientQuestionsForDrafts(instance.form_definition_id)).map((q) => ({
+              id: q.id,
+              question: q.question_i18n?.es ?? q.question_i18n?.en ?? "",
+              help: q.help_i18n?.es ?? null,
+              fieldType: q.field_type,
+              options:
+                q.options?.map((o) => ({
+                  value: o.value,
+                  label: o.label_i18n?.es ?? o.label_i18n?.en ?? o.value,
+                })) ?? null,
+              isRequired: q.is_required,
+            }))
+          : [];
+      const draftables = [...baseQs, ...generatedQs].filter((q) => q.question);
+      if (draftables.length > 0) {
+        // 2 attempts with backoff — a transient Anthropic hiccup must not leave
+        // the client typing everything by hand.
+        for (let attempt = 0; attempt < 2; attempt++) {
+          if (attempt > 0) await sleepBackoff(attempt);
+          try {
+            const res = await generateQuestionnaireDraftAnswers({ config, inputs, questions: draftables });
+            draftUsage = { inputTokens: res.inputTokens, outputTokens: res.outputTokens, costUsd: res.costUsd };
+            let drafts = res.drafts;
+
+            // Pass 2 — gap resolution: everything still uncovered (and without a
+            // deterministic default) gets a negative-option / honest-unavailability
+            // resolution, so coverage reaches 100%.
+            const uncovered = draftables.filter(
+              (q) => !(drafts[q.id]?.trim()) && !defaultedIds.has(q.id),
+            );
+            if (uncovered.length > 0) {
+              try {
+                const gap = await generateQuestionnaireDraftAnswers({
+                  config, inputs, questions: uncovered, resolveGaps: true,
+                });
+                draftUsage = {
+                  inputTokens: draftUsage.inputTokens + gap.inputTokens,
+                  outputTokens: draftUsage.outputTokens + gap.outputTokens,
+                  costUsd: draftUsage.costUsd + gap.costUsd,
+                };
+                // Grounded drafts win; gaps only fill what stayed empty.
+                drafts = { ...gap.drafts, ...drafts };
+              } catch (gapErr) {
+                logger.warn({ err: gapErr, instanceId: instance.id }, "ai-engine: gap-resolution pass failed (grounded drafts kept)");
+              }
+            }
+
+            draftAnswers = Object.keys(drafts).length > 0 ? drafts : null;
+            draftsError = null;
+            break;
+          } catch (err) {
+            draftsError = `DRAFTS_FAILED: ${err instanceof Error ? err.message : String(err)}`;
+            logger.warn({ err, attempt, instanceId: instance.id }, "ai-engine: draft answers pass failed");
+          }
         }
-      } catch (err) {
-        logger.warn({ err, instanceId: instance.id }, "ai-engine: draft answers pass failed (non-fatal)");
       }
     }
 
@@ -3585,8 +3788,23 @@ export async function executeQuestionnaireGenerationJob(payload: {
       output_tokens: result.outputTokens + draftUsage.outputTokens,
       cost_usd: result.costUsd + draftUsage.costUsd,
       generated_at: new Date().toISOString(),
-      error: null,
+      // ready-with-failed-drafts keeps the error visible (admin chip + event) —
+      // the questionnaire works, but staff knows autofill needs a regenerate.
+      error: draftsError,
     });
+
+    if (draftsError) {
+      appEvents.emit({
+        type: "questionnaire.drafts_failed",
+        payload: {
+          caseId: instance.case_id,
+          formDefinitionId: instance.form_definition_id,
+          partyId: instance.party_id ?? null,
+          instanceId: instance.id,
+        },
+        occurredAt: new Date(),
+      });
+    }
     return "ready";
   } catch (err) {
     await updateQuestionnaireInstance(instance.id, {
@@ -3601,6 +3819,46 @@ export async function executeQuestionnaireGenerationJob(payload: {
 /** Cases reads the anchored instance's drafts at submit time (materialization
  *  with provenance) — re-exported so the module border stays index→service. */
 export { getQuestionnaireInstanceDrafts } from "./repository";
+
+/**
+ * Flat list of a questionnaire instance's generated questions (schema JSON),
+ * shaped for validation (id / field_type / options / is_required / validation /
+ * condition / default_value). Consumed by cases' completeness check — the
+ * schema jsonb stays owned by this module. Null = no instance / no schema.
+ */
+export async function getQuestionnaireInstanceSchemaQuestions(
+  instanceId: string,
+): Promise<GeneratedQuestion[] | null> {
+  const inst = await findQuestionnaireInstanceById(instanceId);
+  const schema = (inst?.schema ?? null) as { groups?: Array<{ questions?: GeneratedQuestion[] }> } | null;
+  if (!schema?.groups) return null;
+  return schema.groups.flatMap((g) => g.questions ?? []);
+}
+
+/**
+ * Full autofill view of an instance for submit-time materialization: AI drafts
+ * UNION the schema's deterministic `default_value`s (drafts win). The defaults
+ * guarantee "no aplica" lands as an ANSWER even when the drafting pass failed —
+ * a checklist/approve gated on completeness must be able to close.
+ */
+export async function getQuestionnaireInstanceAutofillValues(
+  instanceId: string,
+): Promise<Record<string, string> | null> {
+  const inst = await findQuestionnaireInstanceById(instanceId);
+  if (!inst) return null;
+  const drafts = ((inst.draft_answers ?? null) as Record<string, string> | null) ?? {};
+  const schema = (inst.schema ?? null) as {
+    groups?: Array<{ questions?: Array<{ id: string; default_value?: string | null }> }>;
+  } | null;
+  const out: Record<string, string> = { ...drafts };
+  for (const g of schema?.groups ?? []) {
+    for (const q of g.questions ?? []) {
+      const dv = typeof q.default_value === "string" && q.default_value !== "" ? q.default_value : null;
+      if (dv && !(out[q.id] && out[q.id].trim() !== "")) out[q.id] = dv;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
 
 /**
  * job-failed callback for generate-questionnaire (DOC-26 §5). When QStash exhausts
@@ -3738,6 +3996,9 @@ export interface ProposedQuestion {
   is_required?: boolean;
   position?: number;
   validation?: { regex?: string; min?: number; max?: number } | null;
+  /** Deterministic autofill: negative/"no aplica" option value for availability
+   *  questions the expediente cannot answer (validated against options). */
+  default_value?: string | null;
   /**
    * Conditional/dynamic visibility. `when.question` references ANOTHER question's
    * `key` (the materializer resolves key → question_id). Used for the Sí/No →

@@ -23,6 +23,7 @@ export const wizardLabelsMock: WizardLabels = {
   prefillFromAiDraft: "borrador redactado con IA desde tus documentos — revísalo y ajústalo",
   prefillEdited: "Lo cambiaste tú",
   prefillAiBadge: "IA",
+  prefillAiPending: "La IA está completando este campo…",
   selectPlaceholder: "Elige una opción",
   textareaPlaceholder: "Escribe aquí, o toca el micrófono para hablar…",
   checkboxYes: "Sí",

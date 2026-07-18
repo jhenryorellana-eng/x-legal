@@ -52,6 +52,7 @@ function previewLabels(lang: "es" | "en"): WizardLabels {
     prefillFromAiDraft: t("borrador redactado con IA — revísalo", "AI-drafted — review it"),
     prefillEdited: t("Lo cambiaste tú", "You changed it"),
     prefillAiBadge: t("IA", "AI"),
+    prefillAiPending: t("La IA está completando este campo…", "AI is completing this field…"),
     selectPlaceholder: t("Elige una opción", "Choose an option"),
     textareaPlaceholder: t("Escribe aquí, o toca el micrófono para hablar…", "Type here, or tap the mic…"),
     checkboxYes: t("Sí", "Yes"),

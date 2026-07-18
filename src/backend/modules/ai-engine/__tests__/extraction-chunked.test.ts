@@ -328,12 +328,14 @@ describe("executeExtractionJob — chunked OCR for large documents", () => {
     expect(lastUpsert.progress?.parts?.["0"]).toBeDefined();
   });
 
-  it("marks the extraction failed with the chunk index when OCR fails twice", async () => {
+  it("marks the extraction failed with the chunk index when OCR exhausts its 3 retries", async () => {
     mocks.gemini.generateContent.mockRejectedValue(new Error("gemini down"));
 
     const outcome = await executeExtractionJob(PAYLOAD);
 
     expect(outcome).toBe("failed");
+    // 3 attempts on the FIRST chunk only (backoff is a no-op under Vitest).
+    expect(mocks.gemini.generateContent).toHaveBeenCalledTimes(3);
     const failed = mocks.repo.upsertExtraction.mock.calls.at(-1)?.[0];
     expect(failed.status).toBe("failed");
     expect(String(failed.error)).toContain("chunk 0");

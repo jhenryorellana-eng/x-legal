@@ -46,6 +46,9 @@ export interface WizardQuestion {
   prefillValue: unknown;
   /** True when the value came from a non-client source ("Ya lo tenemos"). */
   isPrefilled: boolean;
+  /** Ola perf — an ai_field whose value is still being computed in the background.
+   *  The wizard shows a shimmer chip and polls `getAiPrefill` to patch it in. */
+  prefillPending?: boolean;
   /** The answer currently saved in the response (null if none yet). */
   currentAnswer: unknown;
   /** Conditional visibility (show/lock/require). NULL/absent = unconditional. */
@@ -138,6 +141,14 @@ export type TranslateAnswersFn = (input: {
   to: Locale;
 }) => Promise<{ ok: boolean; translations?: Record<string, string>; error?: { code: string } }>;
 
+/** Ola perf — light cache read that patches pending ai_field prefills in as the
+ *  background warm job lands them (no provider calls). Best-effort. */
+export type GetAiPrefillFn = (input: {
+  caseId: string;
+  questionIds: string[];
+  partyId: string | null;
+}) => Promise<{ ok: boolean; values?: Record<string, string> }>;
+
 /** "Mejorar con IA": server action that rewrites ONE answer (spelling/punctuation/
  *  required format) using the question's server-side instruction. Best-effort —
  *  on { ok:false } the wizard leaves the text untouched. */
@@ -194,6 +205,7 @@ export interface WizardLabels {
   prefillFromAiDraft: string; // "borrador IA desde tus documentos — revísalo"
   prefillEdited: string; // "Lo cambiaste tú"
   prefillAiBadge: string; // "IA" — marks a field autocompleted by AI from a document
+  prefillAiPending: string; // "La IA está completando este campo…" — background warm in flight
   // Field UI
   selectPlaceholder: string; // "Elige una opción"
   textareaPlaceholder: string; // "Escribe aquí, o toca el micrófono para hablar…"

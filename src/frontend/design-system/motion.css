@@ -217,6 +217,13 @@
   }
 }
 
+/* Spinner genérico (chip "La IA está completando este campo…") */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Lex en paneles staff */
 @keyframes lexpulse {
   0%,

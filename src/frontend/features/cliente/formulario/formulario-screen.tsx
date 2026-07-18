@@ -11,6 +11,7 @@ import type {
   SubmitFormFn,
   TranslateAnswersFn,
   ImproveAnswerFn,
+  GetAiPrefillFn,
 } from "@/frontend/features/form-wizard";
 
 /**
@@ -29,6 +30,8 @@ export interface FormularioScreenProps {
   labels: WizardLabels;
   saveDraft: SaveDraftFn;
   submitForm: SubmitFormFn;
+  /** Ola perf — cache poll that patches pending ai_field prefills in. */
+  getAiPrefill?: GetAiPrefillFn;
   /** Server-side translator fallback (Gemini) for the answer-translation flow. */
   translateAnswers?: TranslateAnswersFn;
   /** "Mejorar con IA" server action (per-question gating via aiImproveEnabled). */
@@ -46,6 +49,7 @@ export function FormularioScreen({
   labels,
   saveDraft,
   submitForm,
+  getAiPrefill,
   translateAnswers,
   improveAnswer,
   exitHref,
@@ -61,6 +65,7 @@ export function FormularioScreen({
       labels={labels}
       saveDraft={saveDraft}
       submitForm={submitForm}
+      getAiPrefill={getAiPrefill}
       translateAnswers={translateAnswers}
       improveAnswer={improveAnswer}
       onSubmitted={() => router.replace(`/caso/${caseId}/exito?from=formulario`)}

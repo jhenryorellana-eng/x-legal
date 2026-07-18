@@ -230,6 +230,18 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
       deepLinkTemplate: "/ventas/clientes/{caseId}/revisar/{formDefinitionId}",
     },
   ],
+  // questionnaire.drafts_failed → the case's asesora. In-app only: the
+  // questionnaire itself is READY (the client can work) — staff just needs to
+  // know the AI autofill pass failed so they can regenerate it.
+  "questionnaire.drafts_failed": [
+    {
+      type: "questionnaire.drafts_failed",
+      recipients: [{ resolverKey: "sales_of_case" }],
+      channels: { push: false, email: false },
+      category: "case_updates",
+      deepLinkTemplate: "/ventas/clientes/{caseId}",
+    },
+  ],
   // form_response.approved → client. ①②③ in-app + push + email (positive/green).
   "form_response.approved": [
     {
@@ -699,6 +711,17 @@ function renderContent(
       bodyI18n: { en: "A client completed and submitted a form.", es: "Un cliente completó y envió un formulario." },
       icon: "clipboard-check",
       color: "accent",
+    },
+    // Staff-facing (asesora): the questionnaire is ready but the AI autofill
+    // drafts failed — regenerate from the case to restore autofill.
+    "questionnaire.drafts_failed": {
+      titleI18n: { en: "AI drafts failed for a questionnaire", es: "Fallaron los borradores IA de un cuestionario" },
+      bodyI18n: {
+        en: "The questionnaire is ready, but the AI could not draft the answers. Regenerate it from the case.",
+        es: "El cuestionario está listo, pero la IA no pudo redactar los borradores. Regenéralo desde el caso.",
+      },
+      icon: "alert-circle",
+      color: "amber",
     },
     // Client-facing: the form was reviewed and approved.
     "form_response.approved": {

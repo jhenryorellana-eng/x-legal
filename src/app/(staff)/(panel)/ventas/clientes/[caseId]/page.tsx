@@ -74,7 +74,7 @@ import {
   addCaseNoteAction,
   deleteNoteAction,
 } from "../../../admin/casos/actions";
-import { getFormResponsePdfUrlAction } from "../../../admin/casos/form-actions";
+import { getFormResponsePdfUrlAction, approveFormResponseAction } from "../../../admin/casos/form-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -278,6 +278,8 @@ export default async function VentasCasoDetailPage({
       actions={{
         reviewDocument: reviewDocumentAction,
         getFilledPdfUrl: getFormResponsePdfUrlAction,
+        // RF-VAN-043 — "Marcar como Verificado" (completeness-gated approve).
+        approveForm: approveFormResponseAction,
         setRequirementVisibility: canManageDocs ? setRequirementVisibilityAction : undefined,
         registerPayment: registerPaymentAction,
         getZelleProofUploadUrl: getZelleProofUploadUrlCaseAction,

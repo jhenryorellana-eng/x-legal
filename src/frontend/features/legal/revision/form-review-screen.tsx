@@ -29,6 +29,7 @@ import {
 import { GradientBtn, GhostBtn } from "@/frontend/components/brand";
 import { toast } from "@/frontend/components/desktop";
 import { getBridge } from "@/frontend/platform-bridge";
+import { pdfErrorMessage, approveErrorMessage } from "@/frontend/features/shared-case/pdf-error";
 
 export interface ReviewDocOption {
   id: string;
@@ -57,6 +58,15 @@ export interface FormReviewStrings {
   updatePdf: string;
   updatingPdf: string;
   pdfUpdatedToast: string;
+  // Real error mapping (the update-PDF failure used to show the APPROVE copy).
+  pdfError: string;
+  pdfBlockedApproval: string;
+  pdfErrRequiredMissing: string;
+  pdfErrVersionMismatch: string;
+  pdfErrValidation: string;
+  verifyIncomplete: string;
+  pendingRequiredTitle: string;
+  approvedPdfFailed: string;
   // Reject → return to client for correction (amber, never red — RF-TRX-022)
   rejectBtn: string;
   rejectTitle: string;
@@ -76,9 +86,13 @@ export interface FormReviewActions {
   translateAnswers?: TranslateAnswersFn;
   getDocumentUrl: (input: { documentId: string }) => Promise<{ ok: boolean; url?: string; error?: { code: string } }>;
   getFilledPdfUrl: (input: { responseId: string }) => Promise<{ ok: boolean; url?: string | null; error?: { code: string } }>;
-  approve: (input: { responseId: string }) => Promise<{ ok: boolean; error?: { code: string } }>;
+  approve: (input: { responseId: string }) => Promise<{ ok: boolean; error?: { code: string; details?: Record<string, unknown> } }>;
   reject: (input: { responseId: string; reason: { en?: string; es?: string } }) => Promise<{ ok: boolean; error?: { code: string } }>;
-  generatePdf: (input: { responseId: string }) => Promise<{ ok: boolean; downloadUrl?: string; error?: { code: string } }>;
+  generatePdf: (input: { responseId: string }) => Promise<{ ok: boolean; downloadUrl?: string; error?: { code: string; details?: Record<string, unknown> } }>;
+  /** Read-only completeness (required questions still unresolved) — feeds the
+   *  "Campos obligatorios pendientes" panel so the blocking state is visible
+   *  BEFORE pressing Actualizar PDF / Aprobar. */
+  getCompleteness?: (input: { responseId: string }) => Promise<{ ok: boolean; complete?: boolean; missing?: Array<{ questionId: string; label: string }>; error?: { code: string } }>;
 }
 
 /** Fetches a URL's bytes into a blob: object URL (CSP-safe for iframes). */
@@ -204,19 +218,48 @@ export function FormReviewScreen({
     };
   }, [docId, rightTab, actions]);
 
+  // Pending required fields — visible BEFORE any button press, so a blocked
+  // "Actualizar PDF"/"Aprobar" is never a surprise. Refreshed after each action.
+  const [pendingRequired, setPendingRequired] = React.useState<Array<{ questionId: string; label: string }>>([]);
+  const refreshCompleteness = React.useCallback(async () => {
+    if (!actions.getCompleteness || !responseId) return;
+    const r = await actions.getCompleteness({ responseId }).catch(() => null);
+    if (r?.ok) setPendingRequired(r.missing ?? []);
+  }, [actions, responseId]);
+  React.useEffect(() => {
+    void refreshCompleteness();
+  }, [refreshCompleteness]);
+
+  const verifyStrings = { toastVerifyIncomplete: strings.verifyIncomplete, toastVerifyError: strings.approveError };
+  const pdfStrings = {
+    toastPdfError: strings.pdfError,
+    toastPdfBlockedApproval: strings.pdfBlockedApproval,
+    pdfErrRequiredMissing: strings.pdfErrRequiredMissing,
+    pdfErrVersionMismatch: strings.pdfErrVersionMismatch,
+    pdfErrValidation: strings.pdfErrValidation,
+  };
+
   async function handleApprove() {
     if (!responseId) return;
     setApproving(true);
     const a = await actions.approve({ responseId });
     if (!a.ok) {
       setApproving(false);
-      toast.error(strings.approveError);
+      // FORM_INCOMPLETE carries the missing list — say exactly what's pending.
+      toast.error(approveErrorMessage(a.error, verifyStrings));
+      void refreshCompleteness();
       return;
     }
-    await actions.generatePdf({ responseId });
+    // The approval SUCCEEDED even if the PDF fails — report each outcome honestly.
+    const pdf = await actions.generatePdf({ responseId });
     setApproving(false);
-    toast.success(strings.approvedToast);
+    if (pdf.ok) {
+      toast.success(strings.approvedToast);
+    } else {
+      toast.error(`${strings.approvedPdfFailed} ${pdfErrorMessage(pdf.error, pdfStrings)}`);
+    }
     setOfficialBump((n) => n + 1); // refresh the left PDF
+    void refreshCompleteness();
   }
 
   async function handleReject() {
@@ -249,11 +292,15 @@ export function FormReviewScreen({
     const r = await actions.generatePdf({ responseId });
     setUpdatingPdf(false);
     if (!r.ok) {
-      toast.error(strings.approveError);
+      // The REAL failure cause (missing required fields, approval gate, version
+      // mismatch) — this used to show the generic approve error and hid it.
+      toast.error(pdfErrorMessage(r.error, pdfStrings));
+      void refreshCompleteness();
       return;
     }
     toast.success(strings.pdfUpdatedToast);
     setOfficialBump((n) => n + 1);
+    void refreshCompleteness();
   }
 
   const panel: React.CSSProperties = {
@@ -388,6 +435,35 @@ export function FormReviewScreen({
           )}
         </div>
       </div>
+
+      {/* Pending required fields — the blocking state, visible BEFORE pressing
+          Actualizar PDF / Aprobar (amber, never red). */}
+      {pendingRequired.length > 0 && (
+        <div
+          role="status"
+          style={{
+            flexShrink: 0,
+            marginTop: 12,
+            padding: "10px 16px",
+            borderRadius: 12,
+            border: "1px solid var(--gold)",
+            background: "var(--gold-soft)",
+            color: "var(--gold-deep)",
+            fontSize: 13,
+            fontWeight: 700,
+            display: "flex",
+            gap: 8,
+            alignItems: "baseline",
+            flexWrap: "wrap",
+          }}
+        >
+          <span>{strings.pendingRequiredTitle} ({pendingRequired.length}):</span>
+          <span style={{ fontWeight: 600 }}>
+            {pendingRequired.slice(0, 6).map((m) => m.label).join(" · ")}
+            {pendingRequired.length > 6 ? " …" : ""}
+          </span>
+        </div>
+      )}
 
       {/* Pinned approve bar (full width, bottom) */}
       {(reviewed || responseId) && (

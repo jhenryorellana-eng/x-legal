@@ -25,7 +25,7 @@ import type {
 import { resolveWizardLabels } from "@/frontend/features/form-wizard";
 import { FormularioScreen } from "@/frontend/features/cliente/formulario/formulario-screen";
 import { EmptyCase } from "@/frontend/features/cliente/shared/empty-case";
-import { saveDraftAction, submitFormAction } from "./actions";
+import { saveDraftAction, submitFormAction, getAiPrefillAction } from "./actions";
 import { translateAnswersAction } from "./translate-actions";
 import { improveAnswerAction } from "./improve-actions";
 
@@ -114,6 +114,7 @@ export default async function FormularioPage({
       labels={labels}
       saveDraft={saveDraftAction}
       submitForm={submitFormAction}
+      getAiPrefill={getAiPrefillAction}
       translateAnswers={translateAnswersAction}
       improveAnswer={improveAnswerAction}
       exitHref={`/caso/${caseId}/camino`}

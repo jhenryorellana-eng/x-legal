@@ -29,6 +29,7 @@ export function resolveWizardLabels(t: (key: string) => string): WizardLabels {
     prefillFromAiDraft: t("prefillFromAiDraft"),
     prefillEdited: t("prefillEdited"),
     prefillAiBadge: t("prefillAiBadge"),
+    prefillAiPending: t("prefillAiPending"),
     selectPlaceholder: t("selectPlaceholder"),
     textareaPlaceholder: t("textareaPlaceholder"),
     checkboxYes: t("checkboxYes"),

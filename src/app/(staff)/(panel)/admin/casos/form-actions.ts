@@ -19,6 +19,7 @@ import {
   rejectFormResponse,
   generateFilledPdf,
   getFormResponsePdfUrl,
+  getFormResponseCompleteness,
   getCaseExtractions,
   staffUpdateFormAnswers,
   CaseError,
@@ -28,12 +29,15 @@ import { classifySaveError } from "@/frontend/features/form-wizard/classify-save
 
 export interface ApproveFormResult {
   ok: boolean;
-  error?: { code: string };
+  /** details carries FORM_INCOMPLETE's { count, missing: [{questionId,label}] }. */
+  error?: { code: string; details?: Record<string, unknown> };
 }
 
 /**
  * Staff approves a submitted form response (submitted → approved).
  * Required before generating the PDF when filled_by='client'.
+ * Blocks with FORM_INCOMPLETE (+missing list) when required fields are
+ * unresolved — approving IS verifying completeness (RF-VAN-043).
  *
  * @api-id API-CASE-18
  */
@@ -46,8 +50,26 @@ export async function approveFormResponseAction(input: {
     return { ok: true };
   } catch (err) {
     if (err instanceof CaseError) {
-      return { ok: false, error: { code: err.code } };
+      return { ok: false, error: { code: err.code, details: err.details as Record<string, unknown> | undefined } };
     }
+    return { ok: false, error: { code: "UNEXPECTED" } };
+  }
+}
+
+/**
+ * Field-completeness of a form response (required questions still unresolved).
+ * Feeds the review screen's "Campos obligatorios pendientes" panel and the
+ * verify button's pre-check — read-only, never calls an AI provider.
+ */
+export async function getFormCompletenessAction(input: {
+  responseId: string;
+}): Promise<{ ok: boolean; complete?: boolean; missing?: Array<{ questionId: string; label: string }>; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    const r = await getFormResponseCompleteness(actor, input.responseId);
+    return { ok: true, complete: r.complete, missing: r.missing };
+  } catch (err) {
+    if (err instanceof CaseError) return { ok: false, error: { code: err.code } };
     return { ok: false, error: { code: "UNEXPECTED" } };
   }
 }

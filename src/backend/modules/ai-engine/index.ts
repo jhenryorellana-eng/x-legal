@@ -35,6 +35,7 @@ export {
   extractRawTextFromStorage,
   completeI18n,
   reprocessExtraction,
+  getExtractionProgressSummary,
   getCostsSummary,
   getAiCostsReport,
   // Catalog editor assistance (consumed by catalog module)
@@ -48,6 +49,8 @@ export {
   getCurrentQuestionnaireInstance,
   getQuestionnaireClientState,
   getQuestionnaireInstanceDrafts,
+  getQuestionnaireInstanceAutofillValues,
+  getQuestionnaireInstanceSchemaQuestions,
   evaluateQuestionnairePrereqs,
   materializeProposalToSchema,
   // on_new_evidence watcher (consumed by register-consumers on document.uploaded)

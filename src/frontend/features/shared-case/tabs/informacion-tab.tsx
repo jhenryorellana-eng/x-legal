@@ -25,6 +25,7 @@ import { toast } from "@/frontend/components/desktop";
 import { getBridge } from "@/frontend/platform-bridge";
 import type { CaseWorkspaceVM, CaseDetailActions, FormVM } from "../types";
 import type { CasosStrings } from "../strings";
+import { pdfErrorMessage, approveErrorMessage } from "../pdf-error";
 import { SectionLabel } from "../ui";
 
 function formMeta(status: string | null, t: CasosStrings["detail"]): { pct: number; tone: "green" | "blue" | "amber"; label: string } {
@@ -83,21 +84,42 @@ export function InformacionTab({
   const viewHref = (f: FormVM) => `${base}/formulario/${f.fillFormDefinitionId}${query(f)}`;
   const reviewHref = (f: FormVM) => `${base}/revisar/${f.fillFormDefinitionId}${query(f)}`;
 
-  function pdfErrorMessage(err?: { code: string; details?: Record<string, unknown> }): string {
-    if (err?.code === "FORM_PDF_BLOCKED" && err.details?.reason === "requires_approval") return t.toastPdfBlockedApproval;
-    return t.toastPdfError;
-  }
-
   async function generatePdf(f: FormVM) {
     if (!actions.generateFilledPdf || !f.responseId) return;
     setBusy(rowKey(f));
-    const r = await actions.generateFilledPdf({ responseId: f.responseId });
-    setBusy(null);
-    if (r.ok && r.downloadUrl) {
-      toast.success(t.toastPdfGenerated);
-      getBridge().share.openExternal(r.downloadUrl);
-    } else {
-      toast.error(pdfErrorMessage(r.error));
+    try {
+      const r = await actions.generateFilledPdf({ responseId: f.responseId });
+      if (r.ok && r.downloadUrl) {
+        toast.success(t.toastPdfGenerated);
+        getBridge().share.openExternal(r.downloadUrl);
+      } else {
+        toast.error(pdfErrorMessage(r.error, t));
+      }
+    } catch {
+      toast.error(pdfErrorMessage(undefined, t));
+    } finally {
+      setBusy(null); // a transport throw must never leave the button dead
+    }
+  }
+
+  // RF-VAN-043 — "Marcar como Verificado": the asesora confirms every required
+  // field is complete (the server enforces it; FORM_INCOMPLETE lists what's
+  // missing). She never generates documents — that stays with legal.
+  async function verifyForm(f: FormVM) {
+    if (!actions.approveForm || !f.responseId) return;
+    setBusy(rowKey(f));
+    try {
+      const r = await actions.approveForm({ responseId: f.responseId });
+      if (r.ok) {
+        toast.success(t.toastVerifyDone);
+        router.refresh();
+      } else {
+        toast.error(approveErrorMessage(r.error, t));
+      }
+    } catch {
+      toast.error(approveErrorMessage(undefined, t));
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -149,6 +171,15 @@ export function InformacionTab({
                   <GhostBtn size="md" full={false} icon="doc" onClick={() => router.push(viewHref(f))}>
                     {t.viewForm}
                   </GhostBtn>
+
+                  {/* Verificar (RF-VAN-043) — submitted → approved, gated on
+                      completeness server-side. Visible to any staff surface that
+                      injects approveForm (Vanessa's main action). */}
+                  {actions.approveForm && f.responseId && f.status === "submitted" && (
+                    <GradientBtn size="md" full={false} icon="check" disabled={isBusy} onClick={() => verifyForm(f)}>
+                      {isBusy ? t.verifying : t.verifyForm}
+                    </GradientBtn>
+                  )}
 
                   {/* Generar / Regenerar — official PDF (pdf_automation) or AI letter. */}
                   {canGeneratePdf && (

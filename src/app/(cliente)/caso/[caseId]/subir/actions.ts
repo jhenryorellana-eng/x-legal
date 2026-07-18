@@ -115,6 +115,8 @@ export interface ExtractionStatusResult {
   ok: boolean;
   status?: "pending" | "completed" | "failed" | null;
   payload?: Record<string, unknown> | null;
+  /** Chunked-OCR progress ("Leyendo página X de Y") for multi-minute extractions. */
+  progress?: { pagesDone: number; pagesTotal: number; pct: number } | null;
   error?: { code: string };
 }
 
@@ -124,7 +126,7 @@ export async function getExtractionStatusAction(input: {
   try {
     const actor = await requireActor();
     const r = await getDocumentExtractionStatus(actor, input.caseDocumentId);
-    return { ok: true, status: r.status, payload: r.payload };
+    return { ok: true, status: r.status, payload: r.payload, progress: r.progress };
   } catch (err) {
     const code = err instanceof CaseError ? err.code : "UNEXPECTED";
     return { ok: false, error: { code } };

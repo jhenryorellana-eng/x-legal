@@ -88,7 +88,7 @@ import {
   addCaseNoteAction,
   deleteNoteAction,
 } from "../actions";
-import { getFormResponsePdfUrlAction, generateFilledPdfAction } from "../form-actions";
+import { getFormResponsePdfUrlAction, generateFilledPdfAction, approveFormResponseAction } from "../form-actions";
 import { getGenerationOutputUrlAction, startLetterGenerationAction, getRunStatusAction } from "../generation-actions";
 
 export const dynamic = "force-dynamic";
@@ -342,6 +342,7 @@ export default async function AdminCasoDetailPage({
         reviewDocument: reviewDocumentAction,
         getFilledPdfUrl: getFormResponsePdfUrlAction,
         generateFilledPdf: generateFilledPdfAction,
+        approveForm: approveFormResponseAction,
         getGenerationOutputUrl: getGenerationOutputUrlAction,
         startLetterGeneration: startLetterGenerationAction,
         getRunStatus: getRunStatusAction,

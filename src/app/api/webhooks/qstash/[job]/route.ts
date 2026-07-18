@@ -53,6 +53,7 @@ import { handleGenerateQuestionnaire } from "@/backend/jobs/generate-questionnai
 import { handleRunPremortem } from "@/backend/jobs/run-premortem";
 import { handleLexAnswer } from "@/backend/jobs/lex-answer";
 import { handleLexReindexCase } from "@/backend/jobs/lex-reindex-case";
+import { handleRefreshAiPrefill } from "@/backend/jobs/refresh-ai-prefill";
 
 // ---------------------------------------------------------------------------
 // Job registry — jobKey → handler
@@ -78,6 +79,8 @@ const JOB_REGISTRY: Record<string, JobHandler> = {
   // Lex case chat (staff "Lex" tab): per-question answer + knowledge reindex
   "lex-answer": handleLexAnswer,
   "lex-reindex-case": handleLexReindexCase,
+  // Ola perf — batched ai_field prefill warm-up (wizard opens never call a provider)
+  "refresh-ai-prefill": handleRefreshAiPrefill,
   "ai-budget-aggregation": handleAiBudgetAggregation,
   "job-failed": handleJobFailed,
   // F6 integrations (DOC-70, DOC-26 §2.8)

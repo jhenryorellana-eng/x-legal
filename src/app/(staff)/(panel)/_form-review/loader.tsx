@@ -30,6 +30,7 @@ import {
   rejectFormResponseAction,
   generateFilledPdfAction,
   getFormResponsePdfUrlAction,
+  getFormCompletenessAction,
 } from "@/app/(staff)/(panel)/admin/casos/form-actions";
 
 export async function FormReviewLoader({
@@ -52,6 +53,9 @@ export async function FormReviewLoader({
   const locale = (await getLocale()) as Locale;
   const tWizard = await getTranslations("cliente.formWizard");
   const t = await getTranslations("staff_ensamblador");
+  // ICU templates interpolated CLIENT-side (pdf-error mapper) — echo the
+  // placeholders back so next-intl returns the raw template.
+  const tWithVars = t as unknown as (key: string, values: Record<string, string>) => string;
   const partyId = party ?? null;
 
   let dto;
@@ -103,6 +107,14 @@ export async function FormReviewLoader({
     updatePdf: t("reviewUpdatePdf"),
     updatingPdf: t("reviewUpdatingPdf"),
     pdfUpdatedToast: t("reviewPdfUpdatedToast"),
+    pdfError: t("reviewPdfError"),
+    pdfBlockedApproval: t("reviewPdfBlockedApproval"),
+    pdfErrRequiredMissing: tWithVars("reviewPdfErrRequiredMissing", { count: "{count}", fields: "{fields}" }),
+    pdfErrVersionMismatch: t("reviewPdfErrVersionMismatch"),
+    pdfErrValidation: t("reviewPdfErrValidation"),
+    verifyIncomplete: tWithVars("reviewVerifyIncomplete", { count: "{count}", fields: "{fields}" }),
+    pendingRequiredTitle: t("reviewPendingRequiredTitle"),
+    approvedPdfFailed: t("reviewApprovedPdfFailed"),
     rejectBtn: t("reviewRejectBtn"),
     rejectTitle: t("reviewRejectTitle"),
     rejectReasonLabel: t("reviewRejectReasonLabel"),
@@ -135,6 +147,7 @@ export async function FormReviewLoader({
         approve: approveFormResponseAction,
         reject: rejectFormResponseAction,
         generatePdf: generateFilledPdfAction,
+        getCompleteness: getFormCompletenessAction,
       }}
       backHref={backHref}
     />

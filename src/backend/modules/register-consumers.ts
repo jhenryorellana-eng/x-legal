@@ -11,7 +11,7 @@
 
 import { appEvents } from "@/backend/platform/events";
 import { logger } from "@/backend/platform/logger";
-import { onDownpaymentConfirmed, onExpedienteSentToFinanceCase, onExpedientePrintedCase, appendAppointmentTimeline } from "@/backend/modules/cases";
+import { onDownpaymentConfirmed, onExpedienteSentToFinanceCase, onExpedientePrintedCase, appendAppointmentTimeline, enqueueAiPrefillWarm } from "@/backend/modules/cases";
 import { notifyFromEvent } from "@/backend/modules/notifications";
 import {
   onCaseOwnerChanged,
@@ -104,8 +104,27 @@ export function registerConsumers(): void {
   });
 
   // document.approved → notify client
+  // + ai_field prefill warm (Ola perf): an approval can change which document a
+  //   slug resolves to — refresh the cached ai_field values in the background.
+  //
+  // KNOWN GAP (accepted 2026-07-18): both events carry no partyId, so the
+  // proactive warm only covers CASE-LEVEL (party null) forms — which is every
+  // real ai_field form today (EOIR-26 / brief questionnaire). A per-party form
+  // still self-heals via getFormForClient's on-miss enqueue (which passes the
+  // real partyId) + wizard polling; it just isn't pre-warmed.
   appEvents.on("document.approved", async (event) => {
     await notifyFromEvent(event);
+    const p = (event.payload ?? {}) as { caseId?: string };
+    if (p.caseId) await enqueueAiPrefillWarm(p.caseId, null);
+  });
+
+  // extraction.completed → ai_field prefill warm (Ola perf): the extraction is
+  // the expensive input of most ai_field questions; warming HERE means the cache
+  // is hot minutes before a human opens the wizard, so opens are cache-only.
+  // (Same case-level-only gap as document.approved above.)
+  appEvents.on("extraction.completed", async (event) => {
+    const p = (event.payload ?? {}) as { caseId?: string };
+    if (p.caseId) await enqueueAiPrefillWarm(p.caseId, null);
   });
 
   // document.rejected → notify client
@@ -115,6 +134,12 @@ export function registerConsumers(): void {
 
   // form_response.submitted → notify the case's asesora (sales), client submits only
   appEvents.on("form_response.submitted", async (event) => {
+    await notifyFromEvent(event);
+  });
+
+  // questionnaire.drafts_failed → notify the case's asesora (autofill total):
+  // the questionnaire is ready but the AI drafting pass failed after retries.
+  appEvents.on("questionnaire.drafts_failed", async (event) => {
     await notifyFromEvent(event);
   });
 
