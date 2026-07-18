@@ -31,6 +31,7 @@ const {
   mockFindPersonRecord,
   mockGetCaseRequirements,
   mockFindFormDefinitionById,
+  mockFindCaseServiceId,
   mockFindFormResponse,
   mockGetPublishedAutomationVersion,
 } = vi.hoisted(() => ({
@@ -49,6 +50,7 @@ const {
   mockFindPersonRecord: vi.fn().mockResolvedValue(null),
   mockGetCaseRequirements: vi.fn(),
   mockFindFormDefinitionById: vi.fn(),
+  mockFindCaseServiceId: vi.fn(),
   mockFindFormResponse: vi.fn().mockResolvedValue(null),
   mockGetPublishedAutomationVersion: vi.fn().mockResolvedValue(null),
 }));
@@ -115,6 +117,7 @@ vi.mock("../repository", async (importOriginal) => {
     findClientDisplayName: mockFindClientDisplayName,
     findPersonRecord: mockFindPersonRecord,
     findFormDefinitionById: mockFindFormDefinitionById,
+    findCaseServiceId: mockFindCaseServiceId,
     findFormResponse: mockFindFormResponse,
   };
 });
@@ -130,6 +133,9 @@ const PHASE_ID = "11111111-1111-4111-8111-000000000001";
 const DOC_ID = "22222222-2222-4222-8222-000000000001";
 const PARTY_ANNA = "33333333-3333-4333-8333-000000000002";
 const FORM_ID = "44444444-4444-4444-8444-000000000001";
+/** The service both the case and its forms belong to (cross-service scope check). */
+const FORM_SERVICE_ID = "5e5e5e5e-5e5e-5e5e-5e5e-5e5e5e5e5e5e";
+mockFindCaseServiceId.mockResolvedValue(FORM_SERVICE_ID);
 
 function actor(role: "admin" | "sales" | "paralegal" | "finance") {
   return {
@@ -206,7 +212,7 @@ beforeEach(() => {
   mockFindFormDefinitionById.mockResolvedValue({
     id: FORM_ID, slug: "form-x", kind: "pdf_automation", filled_by: "client",
     is_per_party: false, party_roles: null, is_active: true,
-    label_i18n: { es: "F", en: "F" }, requires_documents_complete: true,
+    label_i18n: { es: "F", en: "F" }, requires_documents_complete: true, service_id: FORM_SERVICE_ID,
   });
   mockFindFormResponse.mockResolvedValue(null);
   mockGetPublishedAutomationVersion.mockResolvedValue(null);
@@ -474,7 +480,7 @@ describe("documents gate enforcement (getFormForClient / saveFormDraft)", () => 
     mockFindFormDefinitionById.mockResolvedValue({
       id: FORM_ID, slug: "intake", kind: "pdf_automation", filled_by: "client",
       is_per_party: false, party_roles: null, is_active: true,
-      label_i18n: { es: "F", en: "F" }, requires_documents_complete: false,
+      label_i18n: { es: "F", en: "F" }, requires_documents_complete: false, service_id: FORM_SERVICE_ID,
     });
     await expect(
       getFormForClient(CLIENT_ACTOR, { caseId: CASE_ID, formDefinitionId: FORM_ID, partyId: null }),

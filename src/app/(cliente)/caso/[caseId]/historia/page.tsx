@@ -18,6 +18,7 @@ import type { WizardForm, Locale } from "@/frontend/features/form-wizard";
 import { resolveWizardLabels } from "@/frontend/features/form-wizard";
 import { HistoriaScreen } from "@/frontend/features/cliente/historia/historia-screen";
 import { EmptyCase } from "@/frontend/features/cliente/shared/empty-case";
+import { formatPendingPrereqForms } from "@/frontend/features/cliente/shared/pending-prereqs";
 import { saveDraftAction, submitFormAction } from "./actions";
 import { improveAnswerAction } from "../formulario/[formId]/improve-actions";
 
@@ -83,9 +84,10 @@ export default async function HistoriaPage({
   }
 
   // Ola 3 — per-case questionnaire gates (mirror /formulario/[formId]/page.tsx).
-  // The Memorándum's fill target is a dynamic (hybrid) questionnaire; block entry
-  // until it's generated / its prerequisites (e.g. the submitted I-589) are met,
-  // instead of silently showing the base questions early.
+  // The fill target is a dynamic (hybrid) questionnaire; block entry until it's
+  // generated / its admin-configured prerequisites are met, instead of silently
+  // showing the base questions early. The prerequisite form is per SERVICE (the
+  // EOIR-26 on Apelación, the I-589 on Asilo) and is NAMED from config below.
   if (dto.questionnaireGate === "generating") {
     return <EmptyCase title={tEmpty("qGeneratingTitle")} body={tEmpty("qGeneratingBody")} lexMood="calma" />;
   }
@@ -93,10 +95,12 @@ export default async function HistoriaPage({
     return <EmptyCase title={tEmpty("qFailedTitle")} body={tEmpty("qFailedBody")} lexMood="atento" />;
   }
   if (dto.questionnaireGate === "pending_prereqs") {
+    // Name the REAL pending form(s) for this service; never a hardcoded one.
+    const pendingForms = formatPendingPrereqForms(dto.missingPrereqs, locale);
     return (
       <EmptyCase
         title={tEmpty("qPendingTitle")}
-        body={tEmpty("qPendingBody")}
+        body={pendingForms ? tEmpty("qPendingBody", { forms: pendingForms }) : tEmpty("qPendingBodyGeneric")}
         lexMood="atento"
         action={{ href: `/caso/${caseId}/formularios`, label: tEmpty("qPendingCta") }}
       />

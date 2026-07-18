@@ -43,6 +43,7 @@ const {
   mockListDocumentExtractionsForCase,
   mockFindCasePrimaryClient,
   mockFindFormDefinitionById,
+  mockFindCaseServiceId,
   // catalog mocks
   mockGetPublishedAutomationVersion,
   mockListQuestionGroups,
@@ -81,6 +82,7 @@ const {
   mockListDocumentExtractionsForCase: vi.fn(),
   mockFindCasePrimaryClient: vi.fn(),
   mockFindFormDefinitionById: vi.fn(),
+  mockFindCaseServiceId: vi.fn(),
   mockGetPublishedAutomationVersion: vi.fn(),
   mockListQuestionGroups: vi.fn().mockResolvedValue([]),
   mockListQuestions: vi.fn().mockResolvedValue([]),
@@ -182,6 +184,7 @@ vi.mock("../repository", () => ({
   listDocumentExtractionsForCase: mockListDocumentExtractionsForCase,
   findCasePrimaryClient: mockFindCasePrimaryClient,
   findFormDefinitionById: mockFindFormDefinitionById,
+  findCaseServiceId: mockFindCaseServiceId,
 }));
 
 vi.mock("@/backend/modules/catalog", () => ({
@@ -268,6 +271,14 @@ const clientActor = {
   permissions: new Map(),
 };
 
+/** The service both the case and its forms belong to (cross-service scope check). */
+const SERVICE_ID = "5e5e5e5e-5e5e-5e5e-5e5e-5e5e5e5e5e5e";
+
+// Default for every suite: the form belongs to the case's own service (the normal
+// case). `vi.clearAllMocks()` clears calls but not implementations, so this
+// survives the per-describe resets; the scope-check suite overrides it explicitly.
+mockFindCaseServiceId.mockResolvedValue(SERVICE_ID);
+
 const activeFormDef = {
   id: FORM_DEF_ID,
   slug: "form-slug",
@@ -276,6 +287,7 @@ const activeFormDef = {
   is_per_party: false,
   party_roles: null,
   is_active: true,
+  service_id: SERVICE_ID,
 };
 
 const publishedVersion = {
@@ -735,6 +747,51 @@ describe("saveFormDraft", () => {
 // ---------------------------------------------------------------------------
 // getFormForClient — questionnaire `stale` flag (on_new_evidence, ola Apelación)
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// getFormForClient — the form must belong to the CASE's own service
+// ---------------------------------------------------------------------------
+
+describe("getFormForClient — cross-service form scope check", () => {
+  const OTHER_SERVICE = "22222222-2222-2222-2222-222222222222";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRequireCaseAccess.mockResolvedValue(undefined);
+    mockFindFormResponse.mockResolvedValue(null);
+    mockGetPublishedAutomationVersion.mockResolvedValue(null);
+    mockGetQuestionnaireClientState.mockResolvedValue(null);
+    // The CASE's service stays the module default (SERVICE_ID); only the FORM's
+    // service varies per test. Overriding the case-service mock here would leak
+    // its implementation into later suites and break them.
+  });
+
+  it("rejects a formDefinitionId belonging to ANOTHER service as FORM_NOT_FOUND", async () => {
+    // `formDefinitionId` comes straight from the /formulario/[formId] URL, and
+    // requireCaseAccess only proves the actor may see the CASE. Without the scope
+    // check a client could read any other service's form through their own case.
+    mockFindFormDefinitionById.mockResolvedValue({ ...activeFormDef, service_id: OTHER_SERVICE });
+
+    await expect(
+      getFormForClient(clientActor, { caseId: CASE_ID, formDefinitionId: FORM_DEF_ID, partyId: null }),
+    ).rejects.toMatchObject({ code: "FORM_NOT_FOUND" });
+  });
+
+  it("rejects when the form's owning service cannot be resolved (fail closed)", async () => {
+    mockFindFormDefinitionById.mockResolvedValue({ ...activeFormDef, service_id: null });
+
+    await expect(
+      getFormForClient(clientActor, { caseId: CASE_ID, formDefinitionId: FORM_DEF_ID, partyId: null }),
+    ).rejects.toMatchObject({ code: "FORM_NOT_FOUND" });
+  });
+
+  it("allows a form that belongs to the case's own service", async () => {
+    mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
+
+    const dto = await getFormForClient(clientActor, { caseId: CASE_ID, formDefinitionId: FORM_DEF_ID, partyId: null });
+    expect(dto.formDefinitionId).toBe(FORM_DEF_ID);
+  });
+});
 
 describe("getFormForClient — questionnaire stale flag", () => {
   const QN_DEF = { ...activeFormDef, kind: "questionnaire" };

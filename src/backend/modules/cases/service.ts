@@ -33,6 +33,7 @@ import { writeAudit, appendCaseTimeline } from "@/backend/modules/audit";
 import type { TablesUpdate } from "@/shared/database.types";
 import { PRINCIPAL_ROLE_KEY } from "@/shared/constants/party-roles";
 import { parseConditionOrNull, deriveFieldState, type QuestionCondition } from "@/shared/form-logic/conditions";
+import { normalizeAiFieldText, buildAiFieldInstruction } from "@/shared/form-logic/ai-field-format";
 import {
   resolveEmptyPolicy,
   isVerbatimValue,
@@ -125,6 +126,8 @@ import {
   findCasePrimaryClient,
   getCaseSummariesByClient,
   findFormDefinitionById,
+  findCaseServiceId,
+  listFormDefinitionLabelsBySlugs,
   countUploadedDocsByCases,
   findCasesWithLawyerCorrections,
   findCasesWithGenerationFailed,
@@ -3960,6 +3963,44 @@ export interface AiFieldResolveInput {
   connected: { kind: string; slug: string; context_slugs?: string[] };
   instruction: string;
   model?: string | null;
+  /** Config-declared ceiling (`source_ref.max_chars`, edited from the admin form
+   *  editor). Injected into the prompt AND verified after the provider answers.
+   *  0/undefined = unbounded. See `shared/form-logic/ai-field-format`. */
+  maxChars?: number;
+}
+
+/**
+ * Parses a question's `source_ref` into a resolve input — the SINGLE place that
+ * knows the ai_field config shape. Both call sites (the prefill warm-up and the
+ * authoritative PDF fill) go through it, so a new config key can never be wired
+ * into one path and silently forgotten in the other.
+ *
+ * Returns null when the config is incomplete (no connected source / instruction),
+ * which is the caller's signal to skip the question.
+ */
+export function parseAiFieldSourceRef(
+  questionId: string,
+  sourceRef: unknown,
+): AiFieldResolveInput | null {
+  const sr = (sourceRef ?? {}) as {
+    connected?: { kind?: string; slug?: string; context_slugs?: string[] };
+    instruction?: string;
+    model?: string | null;
+    max_chars?: number;
+  };
+  if (!sr.connected?.kind || !sr.connected?.slug || !sr.instruction) return null;
+  const maxChars = typeof sr.max_chars === "number" && sr.max_chars > 0 ? sr.max_chars : 0;
+  return {
+    id: questionId,
+    connected: {
+      kind: sr.connected.kind,
+      slug: sr.connected.slug,
+      ...(sr.connected.context_slugs?.length ? { context_slugs: sr.connected.context_slugs } : {}),
+    },
+    instruction: sr.instruction,
+    model: sr.model ?? null,
+    ...(maxChars ? { maxChars } : {}),
+  };
 }
 
 /**
@@ -4008,9 +4049,40 @@ export async function resolveAiFields(
   };
 
   const out: Record<string, string> = {};
+
+  /**
+   * Shapes every provider answer of a group before it reaches the cache, the
+   * wizard or the PDF: the configured ceiling is verified and a run-on numbered
+   * list is split into one line per item. Mutates `map` in place so the single
+   * shaped value is what every consumer sees (a value shaped on the read path
+   * but cached raw would print differently than it previewed).
+   */
+  const shapeGroupAnswers = (map: Record<string, string>, group: AiFieldResolveInput[]): void => {
+    for (const f of group) {
+      const raw = map[f.id];
+      if (typeof raw !== "string" || !raw.trim()) continue;
+      const shaped = normalizeAiFieldText(raw, { maxChars: f.maxChars ?? 0 });
+      map[f.id] = shaped.text;
+      if (shaped.overflow) {
+        // Never truncated — an over-long value is surfaced, not silently cut,
+        // because mupdf's bake() would clip the overflow invisibly.
+        logger.warn(
+          { caseId, questionId: f.id, chars: shaped.text.length, maxChars: f.maxChars ?? 0 },
+          "resolveAiFields: ai_field value exceeds its configured max_chars — it may overflow the PDF widget",
+        );
+      }
+    }
+  };
+
   for (const grp of groups.values()) {
     const first = grp[0];
-    const reqs = grp.map((f) => ({ id: f.id, instruction: f.instruction }));
+    // The ceiling lives in config (source_ref.max_chars) and is appended to the
+    // prompt here, so the number is declared ONCE instead of being re-typed into
+    // each instruction's prose where it drifts from what the widget can hold.
+    const reqs = grp.map((f) => ({
+      id: f.id,
+      instruction: buildAiFieldInstruction(f.instruction, { maxChars: f.maxChars ?? 0 }),
+    }));
     const model = first.model ?? null;
     try {
       if (first.connected.kind === "document") {
@@ -4030,6 +4102,10 @@ export async function resolveAiFields(
             .update(
               JSON.stringify({
                 instruction: f.instruction,
+                // Part of the key: changing the ceiling changes the prompt AND the
+                // shaping, so a cached value computed under the old limit must not
+                // be served after the admin edits it.
+                maxChars: f.maxChars ?? 0,
                 connected: { kind: f.connected.kind, slug: f.connected.slug, ctx: ctxSlugs },
                 model,
                 docs: docsMeta.map((d) => [d.id, d.size_bytes, d.extraction_status, d.extraction_completed_at]),
@@ -4102,6 +4178,9 @@ export async function resolveAiFields(
           fields: reqs,
           model,
         });
+        // Shape BEFORE anything consumes it: `out`, the stale-fallback comparison
+        // and the cache write-back below all read the shaped value.
+        shapeGroupAnswers(resolved, grp);
         Object.assign(out, resolved);
 
         // Stale-cache fallback: a provider hiccup on a RECOMPUTE (fingerprint
@@ -4113,7 +4192,13 @@ export async function resolveAiFields(
           const empty = typeof out[f.id] !== "string" || out[f.id].trim() === "";
           const stale = cacheByQ.get(f.id);
           if (empty && stale?.value) {
-            out[f.id] = stale.value;
+            // Shape the stale value too. Cache rows written BEFORE the shaping
+            // existed hold raw provider text, and adding maxChars to the
+            // fingerprint means every one of them misses on its first read after
+            // deploy — so a provider hiccup on exactly that recompute would serve
+            // the original run-on paragraph straight into the wizard/PDF. The
+            // normalizer is idempotent, so this is a no-op for shaped rows.
+            out[f.id] = normalizeAiFieldText(stale.value, { maxChars: f.maxChars ?? 0 }).text;
             logger.warn(
               { caseId, questionId: f.id, slug: first.connected.slug },
               "resolveAiFields: provider returned empty on recompute — serving stale cached value",
@@ -4136,7 +4221,9 @@ export async function resolveAiFields(
       } else if (first.connected.kind === "ai_letter") {
         const run = await findCompletedGenerationByFormSlug(caseId, first.connected.slug, partyId);
         if (!run?.outputText) continue;
-        Object.assign(out, await aiEngine.synthesizeLetterFields({ letterText: run.outputText, fields: reqs, model }));
+        const synthesized = await aiEngine.synthesizeLetterFields({ letterText: run.outputText, fields: reqs, model });
+        shapeGroupAnswers(synthesized, grp);
+        Object.assign(out, synthesized);
       }
     } catch (err) {
       logger.warn({ err, kind: first.connected.kind, slug: first.connected.slug }, "resolveAiFields: group failed — leaving fields blank");
@@ -4219,20 +4306,8 @@ export async function warmAiFieldCacheForCase(
     const questionArrays = await Promise.all(groups.map((g) => catalog.listQuestions(g.id)));
     for (const q of questionArrays.flat()) {
       if (q.source !== "ai_field") continue;
-      const sr = (q.source_ref ?? {}) as Record<string, unknown>;
-      const connected = sr["connected"] as { kind?: string; slug?: string; context_slugs?: string[] } | undefined;
-      const instruction = sr["instruction"] as string | undefined;
-      if (!connected?.kind || !connected?.slug || !instruction) continue;
-      fields.push({
-        id: q.id,
-        connected: {
-          kind: connected.kind,
-          slug: connected.slug,
-          ...(connected.context_slugs?.length ? { context_slugs: connected.context_slugs } : {}),
-        },
-        instruction,
-        model: (sr["model"] as string | undefined) ?? null,
-      });
+      const parsed = parseAiFieldSourceRef(q.id, q.source_ref);
+      if (parsed) fields.push(parsed);
     }
   }
 
@@ -4339,13 +4414,20 @@ export interface FormForClientDto {
    * Ola 3 — per-case questionnaire state (null for normal forms / global
    * questionnaires). When set, `groups` may be empty and the wizard renders the
    * gate state instead of questions.
-   *  - pending_prereqs: complete the prerequisite form(s) first (see missingPrereqs)
+   *  - pending_prereqs: complete the admin-configured prerequisite form(s) first
+   *    (see missingPrereqs — which form that is depends on the SERVICE)
    *  - generating: the AI is preparing personalized questions
    *  - failed: generation failed (staff can retry)
    */
   questionnaireGate?: "pending_prereqs" | "generating" | "failed" | null;
-  /** Prerequisite form slugs still missing when questionnaireGate==='pending_prereqs'. */
-  missingPrereqs?: { forms: string[]; documents: string[] } | null;
+  /**
+   * What is still missing when questionnaireGate==='pending_prereqs'.
+   *
+   * `formLabels` carries the DISPLAY labels of the pending forms so the gate can
+   * NAME them. Without it the UI had to guess, and the copy hardcoded "el
+   * formulario I-589" — an Asilo form shown to Apelación clients too.
+   */
+  missingPrereqs?: { forms: string[]; documents: string[]; formLabels: I18nValue[] } | null;
   /** on_new_evidence: true when the generated questions predate newly uploaded
    *  evidence (instance flagged `stale`). The wizard still works; the UI shows
    *  an amber notice so the client/staff know a regeneration is warranted. */
@@ -4428,6 +4510,16 @@ export async function getFormForClient(
 
   const formDef = await findFormDefinitionById(input.formDefinitionId);
   if (!formDef || !formDef.is_active) throw new CaseError("FORM_NOT_FOUND");
+
+  // Scope check: `formDefinitionId` is CLIENT-SUPPLIED (the /formulario/[formId]
+  // route param) and `requireCaseAccess` only proves the actor may see the CASE —
+  // not that this form belongs to it. Without this, a client with a legitimate
+  // case could pass any other service's (or org's) form id and read its structure
+  // through their own case. Indistinguishable from a missing form on purpose.
+  const caseServiceId = await findCaseServiceId(input.caseId);
+  if (!caseServiceId || !formDef.service_id || formDef.service_id !== caseServiceId) {
+    throw new CaseError("FORM_NOT_FOUND");
+  }
 
   // Clients cannot see staff-only forms
   if (actor.kind === "client" && formDef.filled_by === "staff") {
@@ -4629,7 +4721,36 @@ export async function getFormForClient(
         questionnaireGate = status === "queued" || status === "generating" ? "generating"
           : status === "failed" ? "failed" : "pending_prereqs";
         if (questionnaireGate === "pending_prereqs" && state.prereqs) {
-          missingPrereqs = { forms: state.prereqs.missingForms, documents: state.prereqs.missingDocuments };
+          // Resolve the pending forms' labels from the SAME config that declares
+          // the prerequisite, so the gate names the real form for this service
+          // (EOIR-26 on Apelación, I-589 on Asilo, …) instead of a hardcoded one.
+          const labelBySlug = await listFormDefinitionLabelsBySlugs(
+            formDef.service_phase_id,
+            state.prereqs.missingForms,
+          );
+          const formLabels = state.prereqs.missingForms
+            .map((slug) => asI18n(labelBySlug.get(slug)))
+            .filter((l): l is I18nValue => !!l);
+          // Dropping an unresolvable slug is the safe degrade (the UI falls back
+          // to generic wording rather than inventing a form name), but it must
+          // not be SILENT: it means the client is told about fewer forms than
+          // actually gate them, and they would wait forever wondering why.
+          if (formLabels.length < state.prereqs.missingForms.length) {
+            logger.warn(
+              {
+                caseId: input.caseId,
+                formDefinitionId: input.formDefinitionId,
+                missingForms: state.prereqs.missingForms,
+                resolvedLabels: formLabels.length,
+              },
+              "getFormForClient: some prerequisite form slugs have no resolvable label — gate copy will under-report",
+            );
+          }
+          missingPrereqs = {
+            forms: state.prereqs.missingForms,
+            documents: state.prereqs.missingDocuments,
+            formLabels,
+          };
         }
       }
     }
@@ -5975,22 +6096,8 @@ async function resolveFormResponseFieldsCore(
     if (!cs.visible) continue;
     const own0 = answers[q.id];
     if (own0 !== undefined && own0 !== null && own0 !== "") continue;
-    const ref = (q.source_ref ?? {}) as {
-      connected?: { kind?: string; slug?: string; context_slugs?: string[] };
-      instruction?: string;
-      model?: string | null;
-    };
-    if (!ref.connected?.kind || !ref.connected?.slug || !ref.instruction) continue;
-    aiFieldReqs.push({
-      id: q.id,
-      connected: {
-        kind: ref.connected.kind,
-        slug: ref.connected.slug,
-        ...(ref.connected.context_slugs?.length ? { context_slugs: ref.connected.context_slugs } : {}),
-      },
-      instruction: ref.instruction,
-      model: ref.model ?? null,
-    });
+    const parsed = parseAiFieldSourceRef(q.id, q.source_ref);
+    if (parsed) aiFieldReqs.push(parsed);
   }
   const aiFieldValues = await resolveAiFields(caseId, partyId, aiFieldReqs);
 

@@ -552,6 +552,12 @@ export const SourceRefSchema = z.discriminatedUnion("source", [
       // Optional per-field model override; falls back to the per-flavor default
       // (Gemini for documents, Anthropic for ai_letter synthesis).
       model: z.string().nullable().optional(),
+      // Character ceiling for the produced text (0/absent = unbounded). Declared
+      // HERE, as data, so the admin sets it per field instead of re-typing a
+      // limit into the instruction prose. It is appended to the prompt and
+      // verified after the provider answers — an over-long value would be
+      // silently CLIPPED by the PDF widget. See shared/form-logic/ai-field-format.
+      max_chars: z.number().int().min(0).max(20000).optional(),
     }),
   }),
 ]);

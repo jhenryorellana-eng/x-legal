@@ -686,7 +686,8 @@
       "qFailedTitle": "No pudimos preparar tus preguntas",
       "qFailedBody": "Hubo un problema al generar tus preguntas. Tu equipo lo revisará y te avisará. Escríbeles si tienes dudas.",
       "qPendingTitle": "Primero completa tu formulario",
-      "qPendingBody": "Para crear tus preguntas personalizadas, primero necesitamos que completes el formulario I-589. En cuanto lo envíes, prepararemos tus preguntas.",
+      "qPendingBody": "Para crear tus preguntas personalizadas, primero necesitamos que completes {forms}. Enseguida prepararemos tus preguntas.",
+      "qPendingBodyGeneric": "Para crear tus preguntas personalizadas, primero necesitamos que completes los formularios pendientes de tu caso. En cuanto los envíes, prepararemos tus preguntas.",
       "qPendingCta": "Ver mis formularios"
     }
   },

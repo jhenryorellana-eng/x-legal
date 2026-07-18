@@ -139,6 +139,9 @@ export const FORM_EDITOR_STRINGS_ES: FormEditorStrings = {
   aiFieldContextDocs: "Documentos de contexto (opcional, máx. 5)",
   aiFieldContextDocsHint:
     "La IA también los lee para corroborar y fundamentar, pero la instrucción se aplica sobre el documento principal.",
+  aiFieldMaxChars: "Máximo de caracteres (0 = sin límite)",
+  aiFieldMaxCharsHint:
+    "Cuánto texto cabe en la casilla del PDF oficial. Se le indica a la IA y se verifica al recibir la respuesta: si se pasa, queda avisado en el registro (nunca se recorta en silencio).",
   // "Mejorar con IA" (per-question client rewrite)
   aiImproveSection: "Mejorar con IA (cliente)",
   aiImproveEnable: "Ofrecer el botón \"Mejorar con IA\" en este campo",

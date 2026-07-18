@@ -1176,17 +1176,75 @@ export async function getCaseSummariesByClient(
   }));
 }
 
-/** Finds a form definition by id. */
+/**
+ * Finds a form definition by id.
+ *
+ * Also resolves the OWNING SERVICE (via its phase) in the same round trip, so
+ * callers can verify a client-supplied `formDefinitionId` actually belongs to the
+ * case they are asking about — without paying an extra query on the wizard's
+ * read path.
+ */
 export async function findFormDefinitionById(
   formDefinitionId: string,
-): Promise<{ id: string; slug: string; kind: string; filled_by: string; is_per_party: boolean; party_roles: string[] | null; is_active: boolean; label_i18n: unknown; requires_documents_complete: boolean } | null> {
+): Promise<{ id: string; slug: string; kind: string; filled_by: string; is_per_party: boolean; party_roles: string[] | null; is_active: boolean; label_i18n: unknown; requires_documents_complete: boolean; service_phase_id: string; service_id: string | null } | null> {
   const supabase = createServiceClient();
   const { data } = await supabase
     .from("form_definitions")
-    .select("id, slug, kind, filled_by, is_per_party, party_roles, is_active, label_i18n, requires_documents_complete")
+    .select("id, slug, kind, filled_by, is_per_party, party_roles, is_active, label_i18n, requires_documents_complete, service_phase_id, service_phases!inner(service_id)")
     .eq("id", formDefinitionId)
     .maybeSingle();
-  return data ?? null;
+  if (!data) return null;
+  const phase = (data as { service_phases?: { service_id?: string } | Array<{ service_id?: string }> }).service_phases;
+  const service_id = Array.isArray(phase) ? (phase[0]?.service_id ?? null) : (phase?.service_id ?? null);
+  return { ...(data as never as Omit<Awaited<ReturnType<typeof findFormDefinitionById>> & object, "service_id">), service_id };
+}
+
+/** The service a case belongs to — used to scope-check a client-supplied form id. */
+export async function findCaseServiceId(caseId: string): Promise<string | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase.from("cases").select("service_id").eq("id", caseId).maybeSingle();
+  return data?.service_id ?? null;
+}
+
+/**
+ * Resolves the display labels of form definitions by slug, across every phase of
+ * the SERVICE that owns `phaseId`.
+ *
+ * Used to NAME the prerequisite a client still has to submit. The gate copy used
+ * to hardcode "el formulario I-589" — an Asilo form — on a screen shared by every
+ * service, so an Apelación client was told to complete a form their case does not
+ * have. The label must come from the same config the prerequisite is declared in.
+ *
+ * Scoped to the service, NOT to a single phase: a questionnaire's
+ * `prerequisite_form_slugs` is not constrained to its own phase, so a
+ * phase-scoped lookup would silently drop a cross-phase prerequisite and the
+ * client would be told to complete only some of what actually gates them.
+ *
+ * Tenancy: this uses the service-role client (RLS bypass), and there is no
+ * `org_id` filter because none is needed — a service phase belongs to exactly one
+ * service, which belongs to exactly one org, so the join can never reach another
+ * tenant's rows. The values returned are display labels, not case data.
+ */
+export async function listFormDefinitionLabelsBySlugs(
+  phaseId: string,
+  slugs: string[],
+): Promise<Map<string, unknown>> {
+  if (slugs.length === 0) return new Map();
+  const supabase = createServiceClient();
+
+  const { data: phase } = await supabase
+    .from("service_phases")
+    .select("service_id")
+    .eq("id", phaseId)
+    .maybeSingle();
+  if (!phase?.service_id) return new Map();
+
+  const { data } = await supabase
+    .from("form_definitions")
+    .select("slug, label_i18n, service_phases!inner(service_id)")
+    .eq("service_phases.service_id", phase.service_id)
+    .in("slug", slugs);
+  return new Map((data ?? []).map((r) => [r.slug as string, r.label_i18n]));
 }
 
 /** Finds a case document by ID using the server client. */

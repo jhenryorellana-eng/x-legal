@@ -25,6 +25,7 @@ import type {
 import { resolveWizardLabels } from "@/frontend/features/form-wizard";
 import { FormularioScreen } from "@/frontend/features/cliente/formulario/formulario-screen";
 import { EmptyCase } from "@/frontend/features/cliente/shared/empty-case";
+import { formatPendingPrereqForms } from "@/frontend/features/cliente/shared/pending-prereqs";
 import { saveDraftAction, submitFormAction, getAiPrefillAction } from "./actions";
 import { translateAnswersAction } from "./translate-actions";
 import { improveAnswerAction } from "./improve-actions";
@@ -83,10 +84,12 @@ export default async function FormularioPage({
     return <EmptyCase title={tEmpty("qFailedTitle")} body={tEmpty("qFailedBody")} lexMood="atento" />;
   }
   if (dto.questionnaireGate === "pending_prereqs") {
+    // Name the REAL pending form(s) for this service; never a hardcoded one.
+    const pendingForms = formatPendingPrereqForms(dto.missingPrereqs, locale);
     return (
       <EmptyCase
         title={tEmpty("qPendingTitle")}
-        body={tEmpty("qPendingBody")}
+        body={pendingForms ? tEmpty("qPendingBody", { forms: pendingForms }) : tEmpty("qPendingBodyGeneric")}
         lexMood="atento"
         action={{ href: `/caso/${caseId}/formularios`, label: tEmpty("qPendingCta") }}
       />

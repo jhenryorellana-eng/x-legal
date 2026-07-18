@@ -21,7 +21,18 @@ const SERVICE = get("SUPABASE_SERVICE_ROLE_KEY");
 
 const IVIS_ID = "85878b64-0034-4b0c-b6c0-53ff7f120c57";
 const EMAIL = "mau252004@gmail.com";
-const PASSWORD = "e2e-ivis-2026!";
+
+// NEVER hardcode this. Unlike the sibling mint-* scripts, this one targets a REAL
+// client's account (PII: A-number, passport, address), and a literal here is
+// permanently readable from git history even after the file changes — the previous
+// literal had to be treated as burned and the account rotated (2026-07-18 review).
+// Same pattern as the demo scripts: supply it at call time.
+//   E2E_CLIENT_PASSWORD='...' node docs/_evidence/apelacion-ivis/mint-ivis.cjs
+const PASSWORD = process.env.E2E_CLIENT_PASSWORD;
+if (!PASSWORD) {
+  console.error("Missing E2E_CLIENT_PASSWORD env var — refusing to run (never hardcode a real client's password).");
+  process.exit(2);
+}
 
 (async () => {
   const admin = createClient(URL, SERVICE, { auth: { persistSession: false } });

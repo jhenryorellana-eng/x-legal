@@ -565,6 +565,7 @@ function AiFieldPicker({ q, sources, strings, readOnly, onChange }: PickerProps)
     connected?: { kind?: string; slug?: string; context_slugs?: string[] };
     instruction?: string;
     model?: string | null;
+    max_chars?: number;
   };
   const kind: "document" | "ai_letter" = ref.connected?.kind === "ai_letter" ? "ai_letter" : "document";
   const slug = ref.connected?.slug ?? "";
@@ -646,6 +647,30 @@ function AiFieldPicker({ q, sources, strings, readOnly, onChange }: PickerProps)
           onChange={(e) => onChange({ source_ref: { ...ref, instruction: e.target.value } })}
           style={{ width: "100%", minHeight: 64, borderRadius: 10, border: "1.5px solid var(--line)", background: "var(--panel-2, var(--card-alt))", padding: 10, fontSize: 12.5, color: "var(--ink)", resize: "vertical", boxSizing: "border-box" }}
         />
+      </div>
+      <div>
+        <FieldLabel>{strings.aiFieldMaxChars}</FieldLabel>
+        <input
+          type="number"
+          min={0}
+          max={20000}
+          step={50}
+          value={ref.max_chars ?? ""}
+          disabled={readOnly}
+          aria-label={strings.aiFieldMaxChars}
+          placeholder="0"
+          onChange={(e) => {
+            const n = Number(e.target.value);
+            const next = { ...ref } as typeof ref;
+            // 0 / empty means "unbounded": drop the key instead of storing a zero
+            // so the saved config stays clean.
+            if (Number.isFinite(n) && n > 0) next.max_chars = Math.round(n);
+            else delete next.max_chars;
+            onChange({ source_ref: next });
+          }}
+          style={{ width: 140, height: 34, borderRadius: 10, border: "1.5px solid var(--line)", background: "var(--panel-2, var(--card-alt))", padding: "0 10px", fontSize: 12.5, color: "var(--ink)", boxSizing: "border-box" }}
+        />
+        <p style={{ margin: "6px 0 0", fontSize: 11.5, color: "var(--ink-2)" }}>{strings.aiFieldMaxCharsHint}</p>
       </div>
     </div>
   );

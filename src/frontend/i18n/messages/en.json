@@ -686,7 +686,8 @@
       "qFailedTitle": "We couldn't prepare your questions",
       "qFailedBody": "There was a problem generating your questions. Your team will review it and let you know. Message them if you have questions.",
       "qPendingTitle": "Complete your form first",
-      "qPendingBody": "To create your personalized questions, we first need you to complete the I-589 form. As soon as you submit it, we'll prepare your questions.",
+      "qPendingBody": "To create your personalized questions, we first need you to complete {forms}. Then we'll prepare your questions.",
+      "qPendingBodyGeneric": "To create your personalized questions, we first need you to complete the forms still pending on your case. As soon as you submit them, we'll prepare your questions.",
       "qPendingCta": "See my forms"
     }
   },
