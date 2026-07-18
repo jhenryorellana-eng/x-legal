@@ -2867,3 +2867,43 @@ describe("getFormForClient — ai_field prefill is CACHE-ONLY (Ola perf)", () =>
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Autofill total — submit crea la respuesta cuando el cliente no editó nada
+// ---------------------------------------------------------------------------
+
+describe("submitFormResponse — fully-prefilled form with NO prior response (found live 2026-07-18)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRequireCaseAccess.mockResolvedValue(undefined);
+    mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
+    mockGetPublishedAutomationVersion.mockResolvedValue(publishedVersion);
+    mockListQuestionGroups.mockResolvedValue([]);
+    mockListQuestions.mockResolvedValue([]);
+  });
+
+  it("creates the response through the gated first-save path and submits it", async () => {
+    // No existing response (the client edited nothing — everything was prefilled).
+    mockFindFormResponse.mockResolvedValue(null);
+    mockInsertFormResponse.mockResolvedValue({ ...draftResponse, answers: {} });
+    // 1ª relectura (fin de saveFormDraftImpl) → draft; 2ª (fin del submit) → submitted.
+    mockFindFormResponseById
+      .mockResolvedValueOnce({ ...draftResponse, answers: {} })
+      .mockResolvedValue({ ...submittedResponse });
+
+    await submitFormResponse(clientActor, {
+      caseId: CASE_ID,
+      formDefinitionId: FORM_DEF_ID,
+      partyId: null,
+    });
+
+    // The row was created (same insert the autosave uses) and then submitted.
+    expect(mockInsertFormResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ case_id: CASE_ID, form_definition_id: FORM_DEF_ID, status: "draft" }),
+    );
+    expect(mockUpdateFormResponse).toHaveBeenCalledWith(
+      RESPONSE_ID,
+      expect.objectContaining({ status: "submitted" }),
+    );
+  });
+});

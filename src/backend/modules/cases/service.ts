@@ -5225,17 +5225,26 @@ export async function submitFormResponse(
   const parsed = SubmitFormResponseSchema.parse(input);
   const partyId = parsed.partyId ?? null;
 
-  const response = await findFormResponse(parsed.caseId, parsed.formDefinitionId, partyId);
+  let response = await findFormResponse(parsed.caseId, parsed.formDefinitionId, partyId);
+  // Autofill total (found live 2026-07-18): a FULLY-prefilled form needs no
+  // client edit, so the autosave never created the response row and submit used
+  // to die FORM_NOT_SUBMITTABLE on the ideal flow (client just reviews and
+  // sends). Create the row through the SAME gated first-save path the autosave
+  // uses — documents gate, published-version freeze, questionnaire pin — so
+  // there is still no submit-side gate bypass.
+  if (!response) {
+    response = await saveFormDraftImpl(actor, {
+      caseId: parsed.caseId,
+      formDefinitionId: parsed.formDefinitionId,
+      partyId,
+      patch: {},
+    });
+  }
   // A rejected form is editable again → the client corrects and resubmits it
   // (rejected → submitted). Only 'draft' and 'rejected' are submittable states.
-  if (!response || (response.status !== "draft" && response.status !== "rejected")) {
+  if (response.status !== "draft" && response.status !== "rejected") {
     throw new CaseError("FORM_NOT_SUBMITTABLE");
   }
-  // Ola 2 gate: submit is only reachable on an EXISTING response (draft/rejected),
-  // which could only be created by passing the gate at creation time
-  // (saveFormDraftImpl). A never-started, locked form has no response and dies on
-  // the FORM_NOT_SUBMITTABLE check above — so there is no submit-side bypass to
-  // block here (assertDocumentsGate would no-op on the existing response anyway).
 
   // Autofill total (ola apelación): a per-case questionnaire response inherits
   // the instance's AI drafts PLUS the schema's deterministic default_values
