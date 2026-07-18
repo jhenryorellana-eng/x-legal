@@ -45,6 +45,18 @@ export async function findCaseById(caseId: string): Promise<CaseRow | null> {
 }
 
 /**
+ * Service-role variant of findCaseById for QStash jobs / event consumers: there
+ * is NO request session in those contexts, so the RLS-scoped read above returns
+ * null even for a real case (found live 2026-07-18 — the ai_field warm job
+ * silently no-op'd). Callers must be pre-authorized (job enqueue sites are).
+ */
+export async function findCaseByIdSystem(caseId: string): Promise<CaseRow | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase.from("cases").select("*").eq("id", caseId).maybeSingle();
+  return data ?? null;
+}
+
+/**
  * Finds a case by looking up a contract's case_id.
  * Used for idempotency check in createCaseFromContract:
  * "if the contractId already has a case, return it".

@@ -69,6 +69,7 @@ import {
 } from "./domain";
 import {
   findCaseById,
+  findCaseByIdSystem,
   findCaseByCaseId,
   findCaseByContractId,
   nextCaseNumber,
@@ -4194,9 +4195,11 @@ export async function enqueueAiPrefillWarm(caseId: string, partyId: string | nul
 export async function warmAiFieldCacheForCase(
   caseId: string,
   partyId: string | null,
-): Promise<{ fields: number; resolved: number }> {
-  const caseRow = await findCaseById(caseId);
-  if (!caseRow?.current_phase_id) return { fields: 0, resolved: 0 };
+): Promise<{ fields: number; resolved: number; why?: string }> {
+  // SYSTEM read: this runs inside a QStash job (no request session) — the
+  // RLS-scoped findCaseById returns null there and the warm silently no-ops.
+  const caseRow = await findCaseByIdSystem(caseId);
+  if (!caseRow?.current_phase_id) return { fields: 0, resolved: 0, why: "no-case-or-phase" };
 
   const catalog = (await import("@/backend/modules/catalog" as string)) as {
     listFormDefinitions?: (phaseId: string) => Promise<Array<{ id: string; kind: string }>>;
@@ -4204,7 +4207,7 @@ export async function warmAiFieldCacheForCase(
     listQuestionGroups: (versionId: string) => Promise<Array<{ id: string }>>;
     listQuestions: (groupId: string) => Promise<Array<{ id: string; source: string; source_ref: unknown }>>;
   };
-  if (!catalog.listFormDefinitions) return { fields: 0, resolved: 0 };
+  if (!catalog.listFormDefinitions) return { fields: 0, resolved: 0, why: "no-listFormDefinitions" };
 
   const defs = await catalog.listFormDefinitions(caseRow.current_phase_id);
   const fields: AiFieldResolveInput[] = [];
