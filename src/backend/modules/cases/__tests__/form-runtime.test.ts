@@ -2878,8 +2878,17 @@ describe("submitFormResponse — fully-prefilled form with NO prior response (fo
     mockRequireCaseAccess.mockResolvedValue(undefined);
     mockFindFormDefinitionById.mockResolvedValue(activeFormDef);
     mockGetPublishedAutomationVersion.mockResolvedValue(publishedVersion);
-    mockListQuestionGroups.mockResolvedValue([]);
-    mockListQuestions.mockResolvedValue([]);
+    // One catalog default-valued question: the form is fully prefilled and the
+    // fail-closed "questions unresolvable" submit guard stays satisfied.
+    mockListQuestionGroups.mockResolvedValue([{ id: "g1" }]);
+    mockListQuestions.mockResolvedValue([
+      {
+        id: "eeeeeeee-eeee-4eee-8eee-000000000201",
+        field_type: "text", is_required: true, options: null, validation: null,
+        source: "client_answer", source_ref: { default_value: "Not Detained" }, condition: null,
+        question_i18n: { es: "¿Detenido?", en: "Detained?" },
+      },
+    ]);
   });
 
   it("creates the response through the gated first-save path and submits it", async () => {
