@@ -3701,7 +3701,14 @@ async function startQuestionnaireGenerationCore(
   if (!config || config.mode === "global") return { status: "skipped" };
 
   const current = await findCurrentQuestionnaireInstance(caseId, formDefinitionId, partyId);
-  if (current && (current.status === "queued" || current.status === "generating")) {
+  // A 'generating' instance is reprocessed by its OWN QStash retries (crash-safe), so
+  // it always counts as in-progress. A 'queued' instance that never started within the
+  // staleness window is STUCK (its dispatch was dropped/failed) and must NOT block
+  // recovery forever — fall through to re-dispatch a fresh instance. (A 'queued' row
+  // normally flips to 'generating' within seconds of delivery.)
+  const queuedStuck =
+    current?.status === "queued" && Date.now() - new Date(current.updated_at).getTime() > 180_000;
+  if (current && (current.status === "generating" || current.status === "queued") && !queuedStuck) {
     return { status: "in_progress", instanceId: current.id };
   }
 
@@ -3726,18 +3733,20 @@ async function startQuestionnaireGenerationCore(
     model: config.model,
   });
 
-  // Dedupe on (case, form, party) — NOT the instance id — so a double-open that
-  // momentarily creates two instances still enqueues at most ONE job (QStash drops
-  // the duplicate publish within its dedup window). The job resolves the CURRENT
-  // instance, so it always works on the live one and never double-bills.
+  // Dedupe PER INSTANCE (the freshly-inserted row's id), NOT per (case, form,
+  // party) — otherwise QStash's publish-dedup window (~10 min) SILENTLY DROPS every
+  // retry/regeneration launched within that window (a failed generation the client
+  // re-opens, a staff "regenerate", new evidence), leaving the new instance stuck in
+  // 'queued' forever. Double-dispatch is already prevented WITHOUT the dedup: the
+  // status guard at the top (queued/generating → return in_progress) coalesces
+  // sequential double-opens, and the job runner resolves the CURRENT instance and
+  // short-circuits on a terminal/in-flight status, so even a true race processes the
+  // live instance exactly once. (Mirrors enqueueLexReindex's per-attempt dedupeId.)
   //
-  // orgId is DELIBERATELY omitted from the envelope (same rationale as
-  // enqueueLexReindex): the webhook's idempotency barrier is PERMANENT per
-  // (source, dedupeId), so an org-scoped envelope would process only the FIRST
-  // generation of this (case, form, party) ever and silently swallow every later
-  // REGENERATION (new evidence, staff regenerate) that reuses the key. QStash's
-  // publish-dedup still coalesces double-open bursts; the job is idempotent.
-  const dedupeKey = `generate-questionnaire:${caseId}:${formDefinitionId}:${partyId ?? "case"}`;
+  // orgId stays omitted so the webhook takes the no-barrier path (route.ts §4, which
+  // only claims when BOTH dedupeId AND orgId are present) — a PERMANENT (org,
+  // dedupeId) barrier would swallow every regeneration after the first.
+  const dedupeKey = `generate-questionnaire:${caseId}:${formDefinitionId}:${partyId ?? "case"}:${instance.id}`;
   await enqueueJob(
     { jobKey: "generate-questionnaire", entityId: instance.id, attempt: 1, dedupeId: dedupeKey,
       caseId, formDefinitionId, partyId },
