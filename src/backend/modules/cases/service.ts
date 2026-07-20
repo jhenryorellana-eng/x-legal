@@ -1802,6 +1802,13 @@ export async function reviewDocument(
   input: ReviewDocumentInput,
 ): Promise<void> {
   can(actor, "cases", "edit");
+  // Aprobar/rechazar documentos es función legal: restringido a admin + paralegal
+  // aunque otros roles tengan cases:edit (finanzas lo tiene desde 2026-07-20 para
+  // crear casos, pero NO debe revisar documentos). Espeja el guard secundario de
+  // setRequirementVisibility/advanceCaseMilestone/updateCaseParty.
+  if (actor.role !== "admin" && actor.role !== "paralegal") {
+    throw new AuthzError("forbidden_module");
+  }
   const parsed = ReviewDocumentSchema.parse(input);
 
   const doc = await findDocumentById(parsed.documentId);

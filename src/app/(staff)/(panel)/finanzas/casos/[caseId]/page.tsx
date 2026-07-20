@@ -144,8 +144,10 @@ export default async function FinanzasCasoDetailPage({
     })),
   }));
 
-  // Finance is view-only on the cases module → no doc management / calendar edits
-  // (an admin visiting this route keeps those affordances).
+  // Finance holds cases:edit since 2026-07-20 (for case intake), but document
+  // MANAGEMENT (visibility toggles, translation) and calendar stay admin-only here.
+  // Approve/reject is separately restricted to admin+paralegal INSIDE reviewDocument
+  // (legal function) — the module permission alone no longer implies doc review.
   const canManageDocs = actor.role === "admin";
   const canManageCalendar = actor.role === "admin";
   // The operations phase boundary — Andrium (finance) or admin.

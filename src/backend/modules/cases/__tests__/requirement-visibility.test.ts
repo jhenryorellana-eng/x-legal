@@ -34,6 +34,8 @@ const {
   mockFindCaseServiceId,
   mockFindFormResponse,
   mockGetPublishedAutomationVersion,
+  mockFindDocumentById,
+  mockUpdateDocument,
 } = vi.hoisted(() => ({
   mockCan: vi.fn(),
   mockRequireCaseAccess: vi.fn().mockResolvedValue(undefined),
@@ -53,6 +55,8 @@ const {
   mockFindCaseServiceId: vi.fn(),
   mockFindFormResponse: vi.fn().mockResolvedValue(null),
   mockGetPublishedAutomationVersion: vi.fn().mockResolvedValue(null),
+  mockFindDocumentById: vi.fn().mockResolvedValue(null),
+  mockUpdateDocument: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/backend/platform/authz", () => ({
@@ -119,10 +123,12 @@ vi.mock("../repository", async (importOriginal) => {
     findFormDefinitionById: mockFindFormDefinitionById,
     findCaseServiceId: mockFindCaseServiceId,
     findFormResponse: mockFindFormResponse,
+    findDocumentById: mockFindDocumentById,
+    updateDocument: mockUpdateDocument,
   };
 });
 
-import { setRequirementVisibility, getDocumentsMatrix, getDocumentsGateStatus, getFormForClient, saveFormDraft, CaseError } from "../service";
+import { setRequirementVisibility, getDocumentsMatrix, getDocumentsGateStatus, getFormForClient, saveFormDraft, reviewDocument, CaseError } from "../service";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -307,6 +313,47 @@ describe("setRequirementVisibility", () => {
         hidden: true,
       }),
     ).rejects.toMatchObject({ code: "DOC_REQUIREMENT_NOT_FOUND" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reviewDocument — approve/reject is a LEGAL function (admin + paralegal only).
+// Regression guard for 2026-07-20: granting finance cases:edit (so it can create
+// cases) must NOT let finance approve/reject case documents. The secondary role
+// check throws before any repository work (can() is mocked no-op here on purpose,
+// so this isolates MY guard, independent of the module-permission check).
+// ---------------------------------------------------------------------------
+
+describe("reviewDocument authz (legal-only: admin + paralegal)", () => {
+  it("finance is denied even with cases:edit (forbidden_module, no DB write)", async () => {
+    await expect(
+      reviewDocument(actor("finance"), { documentId: DOC_ID, verdict: "approve" }),
+    ).rejects.toMatchObject({ reason: "forbidden_module" });
+    expect(mockFindDocumentById).not.toHaveBeenCalled();
+    expect(mockUpdateDocument).not.toHaveBeenCalled();
+  });
+
+  it("sales is denied (forbidden_module)", async () => {
+    await expect(
+      reviewDocument(actor("sales"), { documentId: DOC_ID, verdict: "reject", reason: { es: "x", en: "x" } }),
+    ).rejects.toMatchObject({ reason: "forbidden_module" });
+    expect(mockUpdateDocument).not.toHaveBeenCalled();
+  });
+
+  it("admin passes the role guard (reaches the doc lookup → DOC_NOT_FOUND, not forbidden_module)", async () => {
+    mockFindDocumentById.mockResolvedValueOnce(null);
+    await expect(
+      reviewDocument(actor("admin"), { documentId: DOC_ID, verdict: "approve" }),
+    ).rejects.toMatchObject({ code: "DOC_NOT_FOUND" });
+    expect(mockFindDocumentById).toHaveBeenCalledWith(DOC_ID);
+  });
+
+  it("paralegal passes the role guard (reaches the doc lookup → DOC_NOT_FOUND)", async () => {
+    mockFindDocumentById.mockResolvedValueOnce(null);
+    await expect(
+      reviewDocument(actor("paralegal"), { documentId: DOC_ID, verdict: "approve" }),
+    ).rejects.toMatchObject({ code: "DOC_NOT_FOUND" });
+    expect(mockFindDocumentById).toHaveBeenCalledWith(DOC_ID);
   });
 });
 
