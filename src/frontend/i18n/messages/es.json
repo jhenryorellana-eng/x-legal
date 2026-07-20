@@ -1535,6 +1535,16 @@
       "emptySub": "Los casos nacen cuando Vanessa convierte un lead y el cliente firma.",
       "emptyFilteredTitle": "Ningún caso coincide con estos filtros.",
       "errorTitle": "No pudimos cargar los casos.",
+      "actionError": {
+        "permission": "No tienes permiso para crear casos. Pídele a un administrador que te habilite.",
+        "session": "Tu sesión expiró. Vuelve a iniciar sesión e inténtalo de nuevo.",
+        "address": "Revisa la dirección del cliente (calle, ciudad, estado y código postal).",
+        "email": "El correo electrónico del cliente no es válido.",
+        "phone": "El teléfono del cliente no es válido.",
+        "plan": "Revisa el precio, la cuota inicial y el número de cuotas.",
+        "signingLink": "El caso se creó, pero no se pudo generar el enlace de firma. Reenvíalo desde la ficha del caso.",
+        "generic": "No se pudo completar la acción. Inténtalo de nuevo."
+      },
       "retry": "Reintentar",
       "planWith": "Con abogado",
       "planSelf": "Sin abogado",

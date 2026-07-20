@@ -18,8 +18,13 @@ type RolePreset = Record<ModuleKey, { view: boolean; edit: boolean }>;
 const MATRIX: Record<ModuleKey, { sales: Cell; paralegal: Cell; finance: Cell }> = {
   dashboard: { sales: "V", paralegal: "V", finance: "V" },
   leads: { sales: "E", paralegal: "-", finance: "-" },
-  clients: { sales: "V", paralegal: "V", finance: "V" },
-  cases: { sales: "V", paralegal: "E", finance: "V" },
+  // Finanzas/Operaciones (Andrium) hace intake: puede crear clientes y casos
+  // desde "Nuevo caso" (clients:edit habilita provisionClientUser/updateClientAddress;
+  // cases:edit habilita createCaseFromContract + enviar/reenviar el contrato a firma).
+  // Decisión de Henry 2026-07-20 (supersede el preset view-only anterior). La gestión
+  // documental sigue restringida a admin en la ficha (canManageDocs === role admin).
+  clients: { sales: "V", paralegal: "V", finance: "E" },
+  cases: { sales: "V", paralegal: "E", finance: "E" },
   // Citas/agenda son responsabilidad de Ventas (Vanessa). El paralegal (Diana)
   // NO gestiona citas → sin acceso a calendar (decisión de Henry, 2026-07-09;
   // supersede DOC-22 §6 / DOC-54 §0.2 que daban al paralegal agenda read-only).

@@ -1535,6 +1535,16 @@
       "emptySub": "Cases are created when Vanessa converts a lead and the client signs.",
       "emptyFilteredTitle": "No case matches these filters.",
       "errorTitle": "We couldn't load the cases.",
+      "actionError": {
+        "permission": "You don't have permission to create cases. Ask an administrator to enable it.",
+        "session": "Your session expired. Sign in again and retry.",
+        "address": "Check the client's address (street, city, state and ZIP code).",
+        "email": "The client's email address is not valid.",
+        "phone": "The client's phone number is not valid.",
+        "plan": "Check the price, the downpayment and the number of installments.",
+        "signingLink": "The case was created, but the signing link could not be generated. Resend it from the case file.",
+        "generic": "The action could not be completed. Please try again."
+      },
       "retry": "Retry",
       "planWith": "With attorney",
       "planSelf": "Without attorney",

@@ -8,7 +8,7 @@
 
 export { SharedCaseView, type SharedCaseViewProps } from "./shared-case-view";
 export { buildTabs, type TabConfig, type BuildTabsInput } from "./build-tabs";
-export { buildCasosStrings, interp, type CasosStrings, type CasosLocale } from "./strings";
+export { buildCasosStrings, interp, resolveCasosActionError, type CasosStrings, type CasosLocale } from "./strings";
 export type {
   CaseWorkspaceVM,
   CaseRutaVM,

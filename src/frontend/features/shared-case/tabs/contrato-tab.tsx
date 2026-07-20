@@ -16,7 +16,7 @@ import { toast } from "@/frontend/components/desktop/toast";
 import { getBridge } from "@/frontend/platform-bridge";
 import type { CaseWorkspaceVM, CaseDetailActions } from "../types";
 import type { CasosStrings } from "../strings";
-import { interp } from "../strings";
+import { interp, resolveCasosActionError } from "../strings";
 import { formatCents, SectionLabel } from "../ui";
 
 export function ContratoTab({
@@ -45,7 +45,7 @@ export function ContratoTab({
     if (res.ok) {
       setSent("sent");
       toast.success(t.contractSentToast);
-    } else toast.error(strings.errorTitle);
+    } else toast.error(resolveCasosActionError(res.error?.code, strings));
   }
 
   async function onResend() {
@@ -54,7 +54,7 @@ export function ContratoTab({
     const res = await actions.resendSigningLink({ contractId });
     setBusy(null);
     if (res.ok) toast.success(t.linkResent);
-    else toast.error(strings.errorTitle);
+    else toast.error(resolveCasosActionError(res.error?.code, strings));
   }
 
   async function onCopyLink() {

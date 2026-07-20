@@ -667,16 +667,21 @@ describe("Permission preset — DOC-22 §6 matrix", () => {
     expect(perms.find((p) => p.module_key === "community")).toBeUndefined();
   });
 
-  it("finance preset: billing=E, accounting=E, cases=V, catalog=-", async () => {
+  // Henry 2026-07-20: Finanzas/Operaciones (Andrium) hace intake y crea casos
+  // desde "Nuevo caso" → clients=E + cases=E (antes eran view-only).
+  it("finance preset: billing=E, accounting=E, clients=E, cases=E, catalog=-", async () => {
     const perms = await getPresetsForRole("finance");
     const billing = perms.find((p) => p.module_key === "billing");
     const accounting = perms.find((p) => p.module_key === "accounting");
     const cases = perms.find((p) => p.module_key === "cases");
+    const clients = perms.find((p) => p.module_key === "clients");
 
     expect(billing?.can_edit).toBe(true);
     expect(accounting?.can_edit).toBe(true);
-    expect(cases?.can_edit).toBe(false);
+    expect(cases?.can_edit).toBe(true);
     expect(cases?.can_view).toBe(true);
+    expect(clients?.can_edit).toBe(true);
+    expect(clients?.can_view).toBe(true);
     expect(perms.find((p) => p.module_key === "catalog")).toBeUndefined();
     expect(perms.find((p) => p.module_key === "employees")).toBeUndefined();
   });

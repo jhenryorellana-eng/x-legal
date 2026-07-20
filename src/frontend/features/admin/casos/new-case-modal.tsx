@@ -34,7 +34,7 @@ import { GhostBtn } from "@/frontend/components/brand/ghost-btn";
 import { Icon } from "@/frontend/components/brand/icon";
 import { Chip } from "@/frontend/components/brand/chip";
 import { toast } from "@/frontend/components/desktop/toast";
-import type { CasosStrings } from "@/frontend/features/shared-case";
+import { resolveCasosActionError, type CasosStrings } from "@/frontend/features/shared-case";
 
 export interface NewCasePlan {
   kind: "self" | "with_lawyer";
@@ -440,7 +440,9 @@ export function NewCaseModal({
       setSigningLink(res.signingUrl);
       setStep(4);
     } else {
-      toast.error(res.error?.message ?? strings.errorTitle);
+      // Map the stable error code to a real reason (permission, invalid data, …).
+      // The old fallback showed "No pudimos cargar los casos." for every failure.
+      toast.error(res.error?.message ?? resolveCasosActionError(res.error?.code, strings));
     }
   }
 
