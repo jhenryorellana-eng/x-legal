@@ -353,7 +353,12 @@ const DATASET_ITEMS = [
       form_definition_id: briefId,
       system_prompt: SYSTEM_PROMPT,
       input_document_slugs: ["asilo-presentado-completo-con-anexos", "decision-y-orden-del-juez-de-inmigracion", "evidencias-sustentatorias"],
-      input_form_slugs: ["escrito-de-apelacion-cuestionario"],
+      // EOIR-26A (Fee Waiver) is OPTIONAL: when the appellant submits it, its answers
+      // arrive as `### Formulario: eoir-26a` in the prompt; when Vanessa hid it (or the
+      // appellant paid the fee) the slug resolves to nothing and is silently omitted —
+      // so the brief mentions the fee waiver ONLY when it actually applies (see the
+      // conditional instruction in SYSTEM_PROMPT / drafts/system-prompt.txt).
+      input_form_slugs: ["escrito-de-apelacion-cuestionario", "eoir-26a"],
       dataset_id: datasetId,
       model: "claude-sonnet-4-6",
       max_output_tokens: 16000,

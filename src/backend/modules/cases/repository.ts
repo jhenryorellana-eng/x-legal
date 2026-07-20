@@ -26,6 +26,7 @@ export type CaseMemberRow = Tables<"case_members">;
 export type CasePartyRow = Tables<"case_parties">;
 export type CasePhaseHistoryRow = Tables<"case_phase_history">;
 export type CaseRequirementOverrideRow = Tables<"case_requirement_overrides">;
+export type CaseFormOverrideRow = Tables<"case_form_overrides">;
 
 // ---------------------------------------------------------------------------
 // Cases
@@ -1216,11 +1217,11 @@ export async function getCaseSummariesByClient(
  */
 export async function findFormDefinitionById(
   formDefinitionId: string,
-): Promise<{ id: string; slug: string; kind: string; filled_by: string; is_per_party: boolean; party_roles: string[] | null; is_active: boolean; label_i18n: unknown; requires_documents_complete: boolean; service_phase_id: string; service_id: string | null } | null> {
+): Promise<{ id: string; slug: string; kind: string; filled_by: string; is_per_party: boolean; is_required: boolean; party_roles: string[] | null; is_active: boolean; label_i18n: unknown; requires_documents_complete: boolean; service_phase_id: string; service_id: string | null } | null> {
   const supabase = createServiceClient();
   const { data } = await supabase
     .from("form_definitions")
-    .select("id, slug, kind, filled_by, is_per_party, party_roles, is_active, label_i18n, requires_documents_complete, service_phase_id, service_phases!inner(service_id)")
+    .select("id, slug, kind, filled_by, is_per_party, is_required, party_roles, is_active, label_i18n, requires_documents_complete, service_phase_id, service_phases!inner(service_id)")
     .eq("id", formDefinitionId)
     .maybeSingle();
   if (!data) return null;
@@ -1556,6 +1557,90 @@ export async function deleteRequirementOverride(
     throw new Error(
       `cases.repository: deleteRequirementOverride failed — ${error.message}`,
     );
+  }
+}
+
+// ── Form visibility overrides (case_form_overrides — mirrors the requirement
+// overrides above, but for form_definitions). Ola apelación EOIR-26A. ──────────
+
+/** All form-visibility overrides for a case (both parties). */
+export async function getFormOverrides(caseId: string): Promise<CaseFormOverrideRow[]> {
+  const supabase = await createServerClient();
+  const { data } = await supabase
+    .from("case_form_overrides")
+    .select("*")
+    .eq("case_id", caseId);
+
+  return data ?? [];
+}
+
+/**
+ * Finds an existing override for the (case, form, party) triple. NULL party_id is
+ * distinct in the unique index, so the service does find-or-create (not upsert) to
+ * avoid duplicate null-party rows — same discipline as findRequirementOverride.
+ */
+export async function findFormOverride(
+  caseId: string,
+  formDefinitionId: string,
+  partyId: string | null,
+): Promise<CaseFormOverrideRow | null> {
+  const supabase = await createServerClient();
+  let query = supabase
+    .from("case_form_overrides")
+    .select("*")
+    .eq("case_id", caseId)
+    .eq("form_definition_id", formDefinitionId);
+
+  query = partyId ? query.eq("party_id", partyId) : query.is("party_id", null);
+
+  const { data } = await query.maybeSingle();
+  return data ?? null;
+}
+
+/** Inserts a form-visibility override row. Returns the created row. */
+export async function insertFormOverride(
+  row: TablesInsert<"case_form_overrides">,
+): Promise<CaseFormOverrideRow> {
+  const supabase = await createServiceClient();
+  const { data, error } = await supabase
+    .from("case_form_overrides")
+    .insert(row)
+    .select()
+    .single();
+
+  if (error || !data) {
+    throw new Error(`cases.repository: insertFormOverride failed — ${error?.message}`);
+  }
+  return data;
+}
+
+/** Updates a form-visibility override row by ID. */
+export async function updateFormOverride(
+  id: string,
+  fields: TablesUpdate<"case_form_overrides">,
+): Promise<void> {
+  const supabase = await createServiceClient();
+  const { error } = await supabase
+    .from("case_form_overrides")
+    .update({ ...fields, updated_at: new Date().toISOString() })
+    .eq("id", id);
+
+  if (error) {
+    throw new Error(`cases.repository: updateFormOverride failed — ${error.message}`);
+  }
+}
+
+/** Deletes a form-visibility override row (restores the default = shown). */
+export async function deleteFormOverride(caseId: string, overrideId: string): Promise<void> {
+  const supabase = await createServiceClient();
+  const { error } = await supabase
+    .from("case_form_overrides")
+    .delete()
+    .eq("id", overrideId)
+    .eq("case_id", caseId);
+
+  if (error) {
+    throw new Error(`cases.repository: deleteFormOverride failed — ${error.message}`);
   }
 }
 

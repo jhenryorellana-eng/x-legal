@@ -34,6 +34,7 @@ const ORIGINS: { id: QuestionSource; key: string; icon: Parameters<typeof Icon>[
   { id: "document_extraction", key: "originDoc", icon: "doc" },
   { id: "generation_output", key: "originGen", icon: "sparkle" },
   { id: "profile", key: "originProfile", icon: "shield" },
+  { id: "computed", key: "originComputed", icon: "plus" },
 ];
 
 export interface QuestionCardProps {
@@ -269,7 +270,7 @@ export function QuestionCard({
           {/* Origin segmented selector */}
           <div>
             <FieldLabel>{strings.origin}</FieldLabel>
-            <div role="radiogroup" aria-label={strings.origin} style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6 }}>
+            <div role="radiogroup" aria-label={strings.origin} style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
               {ORIGINS.map((o) => {
                 const on = q.source === o.id;
                 return (
@@ -321,7 +322,7 @@ export function QuestionCard({
                 </div>
               </>
             )}
-            {q.source !== "client_answer" && (
+            {q.source !== "client_answer" && q.source !== "computed" && (
               <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--ink-2)", lineHeight: 1.4 }}>{strings.originNotShown}</p>
             )}
 
@@ -336,6 +337,9 @@ export function QuestionCard({
             )}
             {q.source === "ai_field" && (
               <AiFieldPicker q={q} sources={sources} strings={strings} readOnly={readOnly} onChange={onChange} />
+            )}
+            {q.source === "computed" && (
+              <ComputedPicker q={q} siblings={siblingQuestions} strings={strings} readOnly={readOnly} onChange={onChange} />
             )}
           </div>
 
@@ -396,9 +400,78 @@ function defaultRef(source: QuestionSource): Record<string, unknown> | null {
       return { profile_field: "" };
     case "ai_field":
       return { connected: { kind: "document", slug: "" }, instruction: "" };
+    case "computed":
+      return { op: "sum", inputs: [] };
     default:
       return null;
   }
+}
+
+/**
+ * Picker for a `computed` total (EOIR-26A 1.A / 2.B / Part-3 TOTAL): pick the
+ * operation and the operand questions. Order matters for `subtract` (first minus
+ * the rest), so selected operands are numbered in click order. The field is never
+ * shown to the client — it is derived at fill time (shared/form-logic/computed).
+ */
+function ComputedPicker({
+  q,
+  siblings,
+  strings,
+  readOnly,
+  onChange,
+}: {
+  q: QuestionVM;
+  siblings: { id: string; label: string }[];
+  strings: FormEditorStrings;
+  readOnly: boolean;
+  onChange: (patch: Partial<QuestionVM>) => void;
+}) {
+  const ref = (q.source_ref ?? {}) as { op?: string; inputs?: string[] };
+  const op = ref.op === "subtract" ? "subtract" : "sum";
+  const inputs = Array.isArray(ref.inputs) ? ref.inputs.filter((x): x is string => typeof x === "string") : [];
+  const toggle = (id: string) => {
+    const next = inputs.includes(id) ? inputs.filter((x) => x !== id) : [...inputs, id];
+    onChange({ source_ref: { op, inputs: next } });
+  };
+  return (
+    <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
+      <p style={{ margin: 0, fontSize: 12, color: "var(--ink-2)", lineHeight: 1.4 }}>{strings.computedNote}</p>
+      <div>
+        <FieldLabel>{strings.computedOp}</FieldLabel>
+        <SelectInput
+          value={op}
+          disabled={readOnly}
+          aria-label={strings.computedOp}
+          onChange={(e) => onChange({ source_ref: { op: e.target.value, inputs } })}
+        >
+          <option value="sum">{strings.computedOpSum}</option>
+          <option value="subtract">{strings.computedOpSubtract}</option>
+        </SelectInput>
+      </div>
+      <div>
+        <FieldLabel>{strings.computedInputs}</FieldLabel>
+        {siblings.length === 0 ? (
+          <p style={{ margin: 0, fontSize: 12, color: "var(--gold-deep)" }}>{strings.computedNoSiblings}</p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 220, overflowY: "auto" }}>
+            {siblings.map((s) => {
+              const idx = inputs.indexOf(s.id);
+              const checked = idx >= 0;
+              return (
+                <label
+                  key={s.id}
+                  style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--ink-2)", cursor: readOnly ? "default" : "pointer" }}
+                >
+                  <input type="checkbox" checked={checked} disabled={readOnly} onChange={() => toggle(s.id)} aria-label={s.label} />
+                  <span>{checked ? `${idx + 1}. ` : ""}{s.label}</span>
+                </label>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function OptionsEditor({

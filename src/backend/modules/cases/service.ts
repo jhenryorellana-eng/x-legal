@@ -34,6 +34,7 @@ import type { TablesUpdate } from "@/shared/database.types";
 import { PRINCIPAL_ROLE_KEY } from "@/shared/constants/party-roles";
 import { countsAsAnswered, parseProvenanceMap } from "@/shared/constants/answer-provenance";
 import { parseConditionOrNull, deriveFieldState, type QuestionCondition } from "@/shared/form-logic/conditions";
+import { resolveComputedValues } from "@/shared/form-logic/computed";
 import { normalizeAiFieldText, buildAiFieldInstruction } from "@/shared/form-logic/ai-field-format";
 import {
   resolveEmptyPolicy,
@@ -95,6 +96,11 @@ import {
   insertRequirementOverride,
   updateRequirementOverride,
   deleteRequirementOverride,
+  getFormOverrides,
+  findFormOverride,
+  insertFormOverride,
+  updateFormOverride,
+  deleteFormOverride,
   getCaseParties,
   updateClientProfileName,
   updatePersonRecordName,
@@ -199,6 +205,7 @@ export class CaseError extends Error {
       | "DOC_LOCKED"
       | "DOC_REVIEWED"
       | "FORM_NOT_FOUND"
+      | "FORM_NOT_OPTIONAL"
       | "FORM_VERSION_NOT_PUBLISHED"
       | "FORM_VERSION_MISMATCH"
       | "FORM_NOT_EDITABLE_BY_CLIENT"
@@ -1989,6 +1996,92 @@ export async function setRequirementVisibility(
     {
       after: {
         requirementId: input.requirementId,
+        partyId: input.partyId,
+        hidden: input.hidden,
+      },
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// setFormVisibility — staff hides/shows an OPTIONAL form per case. Mirrors
+// setRequirementVisibility (documents) for form_definitions. Ola apelación
+// (EOIR-26A Fee Waiver). Backed by case_form_overrides.is_hidden.
+// ---------------------------------------------------------------------------
+
+export interface SetFormVisibilityInput {
+  caseId: string;
+  formDefinitionId: string;
+  /** Specific party instance (per-party forms) or null for the whole form. */
+  partyId: string | null;
+  /** true → hide from client; false → restore (delete the override). */
+  hidden: boolean;
+}
+
+/**
+ * Hides or restores an OPTIONAL form for a single case so it no longer shows to
+ * the client — e.g. the EOIR-26A Fee Waiver when the appellant will pay the fee.
+ *
+ * Decisions (confirmed): only admin + sales may toggle; only optional forms
+ * (form_definitions.is_required=false) can be hidden — required forms are always
+ * shown. Restoring deletes the override (back to the default = shown).
+ */
+export async function setFormVisibility(
+  actor: Actor,
+  input: SetFormVisibilityInput,
+): Promise<void> {
+  can(actor, "cases", "edit");
+  // Only admin + sales configure case forms (paralegal/finance excluded).
+  if (actor.kind !== "staff" || (actor.role !== "admin" && actor.role !== "sales")) {
+    throw new AuthzError("forbidden_module");
+  }
+  await requireCaseAccess(actor, input.caseId);
+
+  const caseRow = await findCaseById(input.caseId);
+  if (!caseRow) throw new CaseError("CASE_NOT_FOUND");
+
+  const formDef = await findFormDefinitionById(input.formDefinitionId);
+  // Scope: the form must belong to THIS case's service — a client-suppliable id
+  // must not toggle another service's form through this case.
+  if (!formDef || !formDef.is_active || formDef.service_id !== caseRow.service_id) {
+    throw new CaseError("FORM_NOT_FOUND");
+  }
+
+  // Only OPTIONAL forms may be hidden (required forms are always shown).
+  if (input.hidden && formDef.is_required) {
+    throw new CaseError("FORM_NOT_OPTIONAL");
+  }
+
+  const existing = await findFormOverride(input.caseId, input.formDefinitionId, input.partyId);
+
+  if (input.hidden) {
+    if (existing) {
+      await updateFormOverride(existing.id, { is_hidden: true });
+    } else {
+      await insertFormOverride({
+        case_id: input.caseId,
+        form_definition_id: input.formDefinitionId,
+        party_id: input.partyId,
+        is_hidden: true,
+        created_by: actor.userId,
+      });
+    }
+  } else {
+    // Restore. Nothing was hidden → nothing to do, and NO audit event (a phantom
+    // "shown" for a form that was never hidden would pollute the trail).
+    if (!existing) return;
+    // A form override only ever carries visibility → delete it (clean default).
+    await deleteFormOverride(input.caseId, existing.id);
+  }
+
+  await writeAudit(
+    actor,
+    input.hidden ? "case.form.hidden" : "case.form.shown",
+    "case_form_overrides",
+    input.caseId,
+    {
+      after: {
+        formDefinitionId: input.formDefinitionId,
         partyId: input.partyId,
         hidden: input.hidden,
       },
@@ -3932,6 +4025,13 @@ export async function resolveBySource(
     return formatProfileValue(raw, format);
   }
 
+  // `computed` is NOT resolved here: a total needs the answers of its sibling
+  // questions, which this per-question dispatch does not have. It is pre-resolved
+  // by resolveComputedValues (shared/form-logic/computed) in the fill/preview/
+  // validation paths, which own the full question set. Returning null here keeps
+  // any stray single-question caller safe (a computed field is never client-facing).
+  if (source === "computed") return null;
+
   return null;
 }
 
@@ -4589,7 +4689,11 @@ export async function getFormForClient(
     let aiPrefillMisses = 0;
 
     groups = await Promise.all(rawGroups.map(async (g, gIdx) => {
-      const rawQuestions = rawQuestionsByGroup[gIdx];
+      // `computed` totals are derived at fill time from the client's line items —
+      // never shown in the wizard (they are not client_answer, and resolveBySource
+      // cannot resolve them per-question). The client sees the inputs; the PDF gets
+      // the totals.
+      const rawQuestions = rawQuestionsByGroup[gIdx].filter((q) => q.source !== "computed");
 
       const questions: FormQuestionDto[] = await Promise.all(rawQuestions.map(async (q) => {
         // client_answer questions with a catalog default_value get the same
@@ -4811,6 +4915,12 @@ export interface ClientFormListItem {
   /** Path to the generated official PDF (null = not generated yet). */
   filledPdfPath: string | null;
   position: number;
+  /** False = optional form (form_definitions.is_required=false): eligible to be
+   *  hidden per-case by admin/sales. Required forms are always shown. */
+  isRequired: boolean;
+  /** True = admin/sales hid this form for this case. Excluded from the client list;
+   *  the staff read (includeStaff) keeps it so it can be shown with a chip + restored. */
+  isHidden: boolean;
   /** Ola 2 soft-gate: true when this form is locked because the case's visible
    *  documents aren't 100% uploaded yet (and the form is not exempted). The list
    *  shows a "Bloqueado" pill; opening it is still hard-gated in getFormForClient. */
@@ -4833,7 +4943,7 @@ export interface ClientFormListItem {
 export async function getClientFormsForCase(
   actor: Actor,
   caseId: string,
-  opts?: { includeStaff?: boolean },
+  opts?: { includeStaff?: boolean; includeHidden?: boolean },
 ): Promise<ClientFormListItem[]> {
   await requireCaseAccess(actor, caseId);
 
@@ -4848,6 +4958,7 @@ export async function getClientFormsForCase(
         kind: string;
         filled_by: string;
         is_per_party: boolean;
+        is_required: boolean;
         position: number;
         companion_questionnaire_id: string | null;
         requires_documents_complete: boolean;
@@ -4857,6 +4968,19 @@ export async function getClientFormsForCase(
   if (!catalog.listFormDefinitions) return [];
 
   const defs = await catalog.listFormDefinitions(caseRow.current_phase_id);
+
+  // Per-case form-visibility overrides (case_form_overrides): admin/sales can hide
+  // an OPTIONAL form for this case. A hide with party_id=null hides the whole form;
+  // a party-scoped hide (per-party forms) hides just that party's instance. The
+  // client list drops hidden entries; the staff read (includeStaff) keeps them so
+  // they can be shown with a chip + restored.
+  const formOverrides = await getFormOverrides(caseId);
+  const hiddenKeys = new Set(
+    formOverrides.filter((o) => o.is_hidden).map((o) => `${o.form_definition_id}|${o.party_id ?? ""}`),
+  );
+  const isFormHidden = (formDefId: string, partyId: string | null): boolean =>
+    hiddenKeys.has(`${formDefId}|`) || (partyId ? hiddenKeys.has(`${formDefId}|${partyId}`) : false);
+  const isRequiredById = new Map(defs.map((d) => [d.id, d.is_required]));
 
   // Ola 2 soft-gate: compute the documents gate ONCE for the whole list, so each
   // card can show whether it's locked (the hard gate in getFormForClient is the
@@ -4911,6 +5035,8 @@ export async function getClientFormsForCase(
           responseId: resp?.id ?? null,
           filledPdfPath: resp?.filled_pdf_path ?? null,
           position: d.position,
+          isRequired: isRequiredById.get(d.id) ?? true,
+          isHidden: isFormHidden(d.id, p.id),
           locked: isLocked(requiresDocsById.get(fillId) ?? d.requires_documents_complete, !!resp),
         });
       }
@@ -4928,12 +5054,20 @@ export async function getClientFormsForCase(
         responseId: resp?.id ?? null,
         filledPdfPath: resp?.filled_pdf_path ?? null,
         position: d.position,
+        isRequired: isRequiredById.get(d.id) ?? true,
+        isHidden: isFormHidden(d.id, null),
         locked: isLocked(requiresDocsById.get(fillId) ?? d.requires_documents_complete, !!resp),
       });
     }
   }
 
-  return items.sort((a, b) => a.position - b.position);
+  // The client never sees a hidden form. Staff surfaces that MANAGE visibility
+  // (admin/sales) pass includeHidden so a hidden form stays visible — with its
+  // isHidden flag — to be shown with a chip and restored. The handoff checklist
+  // (includeStaff) does NOT set includeHidden: a hidden optional form must not
+  // block the handoff, so it stays excluded there too.
+  const visible = opts?.includeHidden ? items : items.filter((it) => !it.isHidden);
+  return visible.sort((a, b) => a.position - b.position);
 }
 
 // ---------------------------------------------------------------------------
@@ -5309,6 +5443,16 @@ async function saveFormDraftImpl(
       if (unknownKeys.length > 0) {
         throw new CaseError("FORM_VERSION_MISMATCH", { unknownKeys });
       }
+      // Derived totals (source='computed') are recomputed at fill time and are NEVER
+      // client-writable — the wizard doesn't render them. Silently DROP any computed
+      // key from the patch (defense in depth) so a stale/buggy client can't persist a
+      // value that would otherwise shadow the real total. Dropping (not throwing) keeps
+      // the rest of the autosave working.
+      const computedIds = new Set(
+        questions.filter((q) => (q as { source?: string }).source === "computed").map((q) => q.id),
+      );
+      const patch = parsed.patch as Record<string, unknown>;
+      for (const k of Object.keys(patch)) if (computedIds.has(k)) delete patch[k];
     }
   }
 
@@ -5452,6 +5596,11 @@ export async function submitFormResponse(
     const effective: Record<string, unknown> = { ...answers };
     for (const q of questions as Array<QuestionValidationRule & { source?: string; source_ref?: unknown }>) {
       const src = q.source ?? "client_answer";
+      // `computed` totals are derived at fill time and validated there; they are
+      // never client-answered and their formatted value ("1,400.00") isn't a bare
+      // number — validating them here would only produce false errors. (Also
+      // excluded from validateAnswerTypes below.)
+      if (src === "computed") continue;
       // client_answer questions resolve nothing — EXCEPT when the catalog gave
       // them a default_value (ola apelación): the wizard showed it as a prefill
       // and the PDF will stamp it, so validation must see it too.
@@ -5471,7 +5620,10 @@ export async function submitFormResponse(
         // leave empty — a genuinely missing required value still surfaces below
       }
     }
-    const errors = validateAnswerTypes(effective, questions);
+    const errors = validateAnswerTypes(
+      effective,
+      questions.filter((q) => ((q as { source?: string }).source ?? "client_answer") !== "computed"),
+    );
     if (errors.length > 0) {
       throw new CaseError("FORM_VALIDATION_FAILED", { errors });
     }
@@ -5595,7 +5747,9 @@ async function computeFormResponseCompleteness(
     for (const q of questions) {
       const src = q.source ?? "client_answer";
       const hasClientDefault = src === "client_answer" && hasClientDefaultValue(q.source_ref);
-      if ((src === "client_answer" && !hasClientDefault) || src === "ai_field") continue;
+      // `computed` totals are derived at fill time (never empty); excluded from the
+      // completeness gate exactly like ai_field, and from validateAnswerTypes below.
+      if ((src === "client_answer" && !hasClientDefault) || src === "ai_field" || src === "computed") continue;
       if (!isEmpty(effective[q.id])) continue;
       try {
         const resolved = await resolveBySource(
@@ -5616,7 +5770,10 @@ async function computeFormResponseCompleteness(
       const rows = await findAiFieldCacheRows(response.case_id, response.party_id, aiIds);
       for (const r of rows) if (isEmpty(effective[r.question_id])) effective[r.question_id] = r.value;
     }
-    const requiredErrors = validateAnswerTypes(effective, questions).filter((e) => e.code === "required");
+    const requiredErrors = validateAnswerTypes(
+      effective,
+      questions.filter((q) => (q.source ?? "client_answer") !== "computed"),
+    ).filter((e) => e.code === "required");
     const byId = new Map(questions.map((q) => [q.id, q]));
     for (const e of requiredErrors) {
       missing.push({ questionId: e.questionId, label: labelOf(byId.get(e.questionId)?.question_i18n, e.questionId) });
@@ -6269,12 +6426,18 @@ async function resolveFormResponseFieldsCore(
     const c = parseConditionOrNull(q.condition);
     if (c) conditionSourceIds.add(c.when.question);
   }
-  const conditionAnswers: Record<string, unknown> = { ...answers };
+  // Derived totals (EOIR-26A 1.A / 2.B / Part-3 TOTAL): resolved deterministically
+  // from sibling answers (shared/form-logic/computed). Computed BEFORE the condition
+  // overlay so a condition may reference a total, and read by the fill loop below.
+  // Never client-facing — the client types the line items, the totals are derived.
+  const computedValues = resolveComputedValues(questions, answers);
+  const conditionAnswers: Record<string, unknown> = { ...answers, ...computedValues };
   // One memo cache for the WHOLE core resolution (condition overlay + fill loop):
   // the same doc/extraction/profile rows back many questions.
   const coreResolveCache: FormResolveCache = {};
   for (const q of questions) {
-    if (!conditionSourceIds.has(q.id) || q.source === "ai_field") continue;
+    // computed already seeded into conditionAnswers above; ai_field excluded (expensive).
+    if (!conditionSourceIds.has(q.id) || q.source === "ai_field" || q.source === "computed") continue;
     const own = answers[q.id];
     if (own !== undefined && own !== null && own !== "") continue;
     const resolved = await resolveBySource(
@@ -6401,7 +6564,13 @@ async function resolveFormResponseFieldsCore(
     // the client actually typed — resolveBySource(profile) would otherwise discard it.
     const own = answers[q.id];
     let resolved: unknown;
-    if (own !== undefined && own !== null && own !== "") {
+    if (q.source === "computed") {
+      // A derived total is DETERMINISTIC and must NEVER be overridable by a raw
+      // answer (unlike ai_field, whose prefill is intentionally staff-editable).
+      // Recompute it unconditionally — even if a stale/buggy client somehow wrote a
+      // value under this question's id, the FILED total is always the real sum.
+      resolved = computedValues[q.id] ?? null;
+    } else if (own !== undefined && own !== null && own !== "") {
       resolved = own;
     } else if (q.source === "ai_field") {
       // Pre-resolved in the batch above (one provider call per source).

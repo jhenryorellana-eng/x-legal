@@ -598,6 +598,26 @@ describe("saveFormDraft", () => {
     expect(result.id).toBe(RESPONSE_ID);
   });
 
+  it("drops a computed question's key from the patch (a client can't poison a derived total)", async () => {
+    mockFindFormResponse.mockResolvedValue(draftResponse);
+    mockListQuestionGroups.mockResolvedValue([{ id: "grp1" }]);
+    mockListQuestions.mockResolvedValue([
+      { id: "inc1", field_type: "number", is_required: true, options: null, validation: null, source: "client_answer" },
+      { id: "total", field_type: "number", is_required: false, options: null, validation: null, source: "computed" },
+    ]);
+    mockFindFormResponseById.mockResolvedValue({ ...draftResponse, answers: { inc1: "100" } });
+
+    await saveFormDraft(clientActor, {
+      caseId: CASE_ID,
+      formDefinitionId: FORM_DEF_ID,
+      partyId: null,
+      patch: { inc1: "100", total: "9999" }, // a stale/buggy client tries to write the total
+    });
+
+    // The computed key is stripped; only the real line item survives the merge.
+    expect(mockMergeFormAnswers).toHaveBeenCalledWith(RESPONSE_ID, { inc1: "100" });
+  });
+
   it("accepts a Postgres-valid but non-RFC-4122 UUID caseId (zUuid, regression)", async () => {
     mockFindFormResponse.mockResolvedValue(draftResponse);
     mockFindFormResponseById.mockResolvedValue({ ...draftResponse, answers: { q1: "x" } });

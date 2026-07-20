@@ -7,8 +7,9 @@
  * (wizard de catálogo, paso "Expediente").
  *
  * Siembra:
- *  - apelacion       → orden canónico BIA (EOIR-26 → Brief → Motion-to-Remand evidence
- *                      → decisión del IJ → asilo subyacente → identificación)
+ *  - apelacion       → orden oficial de presentación BIA (EOIR-26A Fee Waiver ARRIBA si aplica →
+ *                      EOIR-26 → Brief → Motion-to-Remand evidence → decisión del IJ →
+ *                      asilo subyacente → identificación; Certificado de Servicio dentro del brief)
  *  - asilo-politico  → orden USCIS asilo afirmativo (I-589 → memo → por familiar → evidencia)
  *  - reforzar-asilo  → memo de refuerzo → por familiar → evidencia
  *
@@ -36,29 +37,33 @@ const ok = (step, extra = "") => console.log(`OK   [${step}] ${extra}`);
 
 const GUIDES = {
   apelacion: `BIA APPEAL PACKAGE — CANONICAL FILING ORDER (Board of Immigration Appeals, EOIR).
-Assemble the case file EXACTLY in this order:
-1. "Form EOIR-26 — Notice of Appeal": the filled EOIR-26 form (automated_form artifact).
-2. "Brief in Support of Appeal": the appeal brief generated for this case (ai_generation artifact).
+Assemble the case file EXACTLY in this order. This MIRRORS the official physical order the appellant
+files with the BIA: the Fee Waiver Request goes ON TOP so the Board never mistakes the packet for an
+unpaid filing and rejects the whole thing (EOIR-26A guide §5). Order:
+1. "Form EOIR-26A — Fee Waiver Request": the filled EOIR-26A form (automated_form artifact). It is
+   OPTIONAL — when the context contains NO EOIR-26A (the appellant paid the fee), SKIP this section
+   entirely. When present it goes FIRST, on top of everything.
+2. "Form EOIR-26 — Notice of Appeal": the filled EOIR-26 form (automated_form artifact).
+3. "Brief in Support of Appeal": the appeal brief generated for this case (ai_generation artifact).
    The brief's cited exhibits are filed automatically right behind it by the system — do NOT create
    a separate section for exhibits and do NOT classify exhibit files as uploaded documents.
-3. "New Evidence in Support of Motion to Remand": an 'other' section grouping the client's NEW
+4. "New Evidence in Support of Motion to Remand": an 'other' section grouping the client's NEW
    supporting evidence uploaded for the appeal (requirement "Evidencias sustentatorias" / supporting
    evidence). This evidence was NOT part of the original asylum record and supports remand under
    8 C.F.R. § 1003.2(c).
-4. "Decision and Order of the Immigration Judge": an 'other' section with the IJ decision being
+5. "Decision and Order of the Immigration Judge": an 'other' section with the IJ decision being
    appealed (requirement "Decisión y orden del Juez de Inmigración").
-5. "Asylum Application as Filed (Form I-589 with Annexes)": an 'other' section with the complete
+6. "Asylum Application as Filed (Form I-589 with Annexes)": an 'other' section with the complete
    asylum package exactly as originally filed (requirement "Asilo presentado completo con anexos").
-6. A 'party' section for the appellant with the passport (requirement "Pasaporte del apelante")
+7. A 'party' section for the appellant with the passport (requirement "Pasaporte del apelante")
    and any other identity documents — use the standard party-section title format
    ("Documents of the {role}: {name}").
-Rules: use the quoted section titles above verbatim. If the context contains OTHER filled appeal forms
-beyond the EOIR-26 (e.g. Form EOIR-26A — Fee Waiver Request), file each as its own 'document'
-section IMMEDIATELY AFTER the Brief section and BEFORE the new evidence. Do NOT create a
-"Certificate of Service" or "Proof of Service" section — it is already included inside the brief
-document itself. Certified English translations are always filed IMMEDIATELY BEFORE the original
-foreign-language document (8 C.F.R. § 1003.33) — the system interleaves them automatically. If an
-expected artifact is missing from the context, skip its section — never invent ids.`,
+Rules: use the quoted section titles above verbatim. Do NOT create a standalone "Certificate of
+Service" / "Proof of Service" section — the Certificate of Service is already included inside the
+brief document itself and prints at the end of it (i.e. after the main filings). Certified English
+translations are always filed IMMEDIATELY BEFORE the original foreign-language document
+(8 C.F.R. § 1003.33) — the system interleaves them automatically. If an expected artifact is missing
+from the context, skip its section — never invent ids.`,
 
   "asilo-politico": `AFFIRMATIVE ASYLUM PACKAGE — CANONICAL FILING ORDER (USCIS):
 1. "Form I-589 — Application for Asylum": the filled I-589 form (automated_form artifact).

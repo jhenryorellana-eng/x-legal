@@ -418,8 +418,12 @@ function NumberField(props: FieldProps) {
       onFocus={() => setFocused(true)}
       onBlur={() => {
         setFocused(false);
-        // Normalise on blur (comma → dot, strip stray separators).
-        const norm = v.replace(",", ".").trim();
+        // Normalise on blur under the US convention (the one parseMoneyNumber assumes):
+        // '.' is the decimal, ',' is a thousands separator. Drop the thousands commas to
+        // a canonical numeric form. NEVER rewrite a comma to a dot — "1,400.00" would
+        // become the unparseable "1.400.00", which a computed money total reads as 0 and
+        // silently drops the line item (a wrong-but-plausible fee-waiver total).
+        const norm = v.replace(/,/g, "").trim();
         if (norm !== v) props.onChange(norm);
         props.onBlur();
       }}

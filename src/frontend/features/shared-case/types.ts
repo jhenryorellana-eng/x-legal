@@ -141,6 +141,10 @@ export interface FormVM {
   responseId: string | null;
   /** Whether the official filled PDF already exists (drives Generar vs Regenerar). */
   hasPdf: boolean;
+  /** False = optional form (eligible to be hidden per-case by admin/sales). */
+  isRequired: boolean;
+  /** True = admin/sales hid this form for this case (shown to staff with a chip). */
+  isHidden: boolean;
 }
 
 export interface GenerationVM {
@@ -558,6 +562,17 @@ export interface CaseDetailActions {
   approveForm?: (input: {
     responseId: string;
   }) => Promise<{ ok: boolean; error?: { code: string; details?: Record<string, unknown> } }>;
+  /**
+   * Hide/restore an OPTIONAL form for this case (EOIR-26A Fee Waiver). Only admin
+   * and sales surfaces inject it — the tab shows the toggle only when present and
+   * the form is optional (`!isRequired`). Backed by setFormVisibility.
+   */
+  toggleFormVisibility?: (input: {
+    caseId: string;
+    formDefinitionId: string;
+    partyId: string | null;
+    hidden: boolean;
+  }) => Promise<{ ok: boolean; error?: { code: string } }>;
   /**
    * AI-letter generation actions (Generaciones tab — Ola 2). Optional; only staff
    * surfaces that authorize generation inject them.

@@ -51,6 +51,7 @@ import { mapStatusToPill, buildRutaVM, mapStatementInstallments } from "../../..
 import {
   reviewDocumentAction,
   setRequirementVisibilityAction,
+  setFormVisibilityAction,
   registerPaymentAction,
   getZelleProofUploadUrlCaseAction,
   getZelleProofViewUrlCaseAction,
@@ -107,7 +108,7 @@ export default async function VentasCasoDetailPage({
     getAccountStatement(actor, caseId).catch(() => null),
     getContractForCase(actor, caseId).catch(() => null),
     getTimeline(actor, caseId, { limit: 8 }).catch(() => ({ items: [], nextCursor: null })),
-    getClientFormsForCase(actor, caseId).catch(() => []),
+    getClientFormsForCase(actor, caseId, { includeHidden: true }).catch(() => []),
     getRunsForCase(actor, caseId).catch(() => []),
     getDocumentsMatrix(actor, caseId, { includeHidden: true }).catch(() => null),
     getCaseRuta(actor, caseId).catch(() => null),
@@ -176,6 +177,8 @@ export default async function VentasCasoDetailPage({
     filledBy: f.filledBy,
     responseId: f.responseId,
     hasPdf: f.filledPdfPath !== null,
+    isRequired: f.isRequired,
+    isHidden: f.isHidden,
   }));
   const formsDone = formsVm.filter((f) => f.status === "submitted" || f.status === "approved").length;
 
@@ -281,6 +284,7 @@ export default async function VentasCasoDetailPage({
         // RF-VAN-043 — "Marcar como Verificado" (completeness-gated approve).
         approveForm: approveFormResponseAction,
         setRequirementVisibility: canManageDocs ? setRequirementVisibilityAction : undefined,
+        toggleFormVisibility: canManageDocs ? setFormVisibilityAction : undefined,
         registerPayment: registerPaymentAction,
         getZelleProofUploadUrl: getZelleProofUploadUrlCaseAction,
         getZelleProofViewUrl: getZelleProofViewUrlCaseAction,

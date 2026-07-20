@@ -123,6 +123,31 @@ export function InformacionTab({
     }
   }
 
+  // Admin/sales hide/restore an OPTIONAL form for this case (EOIR-26A Fee Waiver).
+  // Only surfaces that inject `toggleFormVisibility` (admin / ventas) show the button.
+  async function toggleVisibility(f: FormVM) {
+    if (!actions.toggleFormVisibility) return;
+    setBusy(rowKey(f));
+    try {
+      const r = await actions.toggleFormVisibility({
+        caseId,
+        formDefinitionId: f.id,
+        partyId: f.partyId,
+        hidden: !f.isHidden,
+      });
+      if (r.ok) {
+        toast.success(f.isHidden ? t.toastFormShown : t.toastFormHidden);
+        router.refresh();
+      } else {
+        toast.error(t.toastFormVisibilityError);
+      }
+    } catch {
+      toast.error(t.toastFormVisibilityError);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <Card>
       <SectionLabel icon="form">{t.formsTitle}</SectionLabel>
@@ -154,12 +179,18 @@ export function InformacionTab({
               !!f.responseId &&
               (f.hasPdf || f.status === "submitted" || f.status === "approved");
             return (
-              <div key={rowKey(f)} className="formcard">
+              <div key={rowKey(f)} className="formcard" style={f.isHidden ? { opacity: 0.6 } : undefined}>
                 <ProgressRing pct={m.pct} size={46} stroke={6} aria-label={f.label} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <p style={{ margin: 0, fontSize: 14, fontWeight: 800, color: "var(--ink)" }}>{f.label}</p>
                   {f.partyName && (
                     <p style={{ margin: "2px 0 0", fontSize: 12.5, color: "var(--ink-3)", fontWeight: 700 }}>{f.partyName}</p>
+                  )}
+                  {(!f.isRequired || f.isHidden) && (
+                    <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+                      {!f.isRequired && <Chip tone="blue">{t.formOptional}</Chip>}
+                      {f.isHidden && <Chip tone="amber">{t.formHidden}</Chip>}
+                    </div>
                   )}
                 </div>
                 <Chip tone={m.tone} dot>
@@ -205,6 +236,20 @@ export function InformacionTab({
                     <GradientBtn size="md" full={false} icon="chevR" onClick={() => router.push(reviewHref(f))}>
                       {t.openReview}
                     </GradientBtn>
+                  )}
+
+                  {/* Ocultar / Mostrar al cliente — only for OPTIONAL forms, only on
+                      surfaces that inject the action (admin / ventas). EOIR-26A. */}
+                  {actions.toggleFormVisibility && !f.isRequired && (
+                    <GhostBtn
+                      size="md"
+                      full={false}
+                      icon={f.isHidden ? "check" : "lock"}
+                      disabled={isBusy}
+                      onClick={() => toggleVisibility(f)}
+                    >
+                      {f.isHidden ? t.showForm : t.hideForm}
+                    </GhostBtn>
                   )}
                 </div>
               </div>

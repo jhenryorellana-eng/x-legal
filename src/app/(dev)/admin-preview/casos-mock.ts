@@ -173,8 +173,8 @@ export const caseWorkspaceVmMock: CaseWorkspaceVM = {
     { id: "t2", title: "Caso creado", occurredAt: new Date().toISOString(), actorKind: "team", icon: "file-plus" },
   ],
   forms: [
-    { id: "f1", fillFormDefinitionId: "f1", kind: "pdf_automation", label: "Datos del solicitante", status: "approved", partyId: "p1", partyName: "María González", filledBy: "client", responseId: "r-f1", hasPdf: true },
-    { id: "f2", fillFormDefinitionId: "f2", kind: "ai_letter", label: "Relato de asilo", status: "draft", partyId: null, partyName: null, filledBy: "client", responseId: null, hasPdf: false },
+    { id: "f1", fillFormDefinitionId: "f1", kind: "pdf_automation", label: "Datos del solicitante", status: "approved", partyId: "p1", partyName: "María González", filledBy: "client", responseId: "r-f1", hasPdf: true, isRequired: true, isHidden: false },
+    { id: "f2", fillFormDefinitionId: "f2", kind: "ai_letter", label: "Relato de asilo", status: "draft", partyId: null, partyName: null, filledBy: "client", responseId: null, hasPdf: false, isRequired: true, isHidden: false },
   ],
   formsDone: 1,
   formsTotal: 2,

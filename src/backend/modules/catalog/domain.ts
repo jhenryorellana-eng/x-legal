@@ -10,6 +10,7 @@
 import { z } from "zod";
 import { GENERATION_MODELS } from "@/shared/constants/ai-models";
 import { ConditionSchema } from "@/shared/form-logic/conditions";
+import { ComputedSourceRefSchema, parseComputedSourceRef, findComputedCycle } from "@/shared/form-logic/computed";
 import { FIELD_EMPTY_POLICIES, VERSION_EMPTY_POLICIES } from "@/shared/form-logic/empty-policy";
 import {
   PARTY_ROLE_KEYS,
@@ -64,12 +65,17 @@ export const FieldTypeSchema = z.enum([
 // connected source (a client document the AI INTERPRETS, or an ai_letter
 // generation the AI SYNTHESIZES), guided by a per-field instruction. See
 // resolveAiFields (ai-engine) + resolveBySource (cases). Etapa B.
+// 'computed' = a derived total: an exact arithmetic function (sum/subtract) of
+// other questions' answers, resolved deterministically at fill time — never shown
+// to the client, never sent to AI. See shared/form-logic/computed.ts (EOIR-26A
+// 1.A / 2.B / Part-3 TOTAL). Ola apelación EOIR-26A.
 export const QuestionSourceSchema = z.enum([
   "client_answer",
   "document_extraction",
   "generation_output",
   "profile",
   "ai_field",
+  "computed",
 ]);
 /** What an ai_field connects to: a client-uploaded document or an ai_letter output. */
 export const AiFieldConnectedKindSchema = z.enum(["document", "ai_letter"]);
@@ -560,6 +566,13 @@ export const SourceRefSchema = z.discriminatedUnion("source", [
       max_chars: z.number().int().min(0).max(20000).optional(),
     }),
   }),
+  z.object({
+    source: z.literal("computed"),
+    // A derived total: `op` over the answers of the `inputs` questions (ids in the
+    // same version). See shared/form-logic/computed.ts. The operand ids are checked
+    // to exist (and not self-reference) at publication in validateSourceRef.
+    source_ref: ComputedSourceRefSchema,
+  }),
 ]);
 
 // Per-question "Mejorar con IA" config (migration 0086). null = the client
@@ -835,6 +848,21 @@ export interface VersionCtx {
    * does NOT require a predefined extraction_schema — only that the document exists.
    */
   allDocumentSlugs: string[];
+  /**
+   * ALL question ids in the version being validated. Populated by
+   * validateVersionPublication so a `computed` source can be checked to reference
+   * only existing operand questions. Absent → the computed operand-existence check
+   * is skipped (unit tests that validate a single question in isolation).
+   */
+  questionIds?: ReadonlySet<string>;
+  /**
+   * Question id → source, for the version being validated. Populated alongside
+   * questionIds. Used to reject a `computed` operand whose source the evaluator
+   * cannot read (resolveComputedValues only reads client_answer values and other
+   * computed totals — a profile/document_extraction/ai_field operand would silently
+   * contribute 0). Absent → the operand-source check is skipped.
+   */
+  questionSourceById?: ReadonlyMap<string, string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1028,6 +1056,13 @@ export function validateVersionPublication(input: {
 
   const detectedNames = new Set(version.detected_fields.map((f) => f.pdf_field_name));
   const seenPdfNames = new Map<string, Question>();
+  // Give validateSourceRef the full id set + id→source map so a `computed` source can
+  // be checked to reference only existing operand questions of a readable source.
+  const ctxWithIds: VersionCtx = {
+    ...ctx,
+    questionIds: new Set(questions.map((q) => q.id)),
+    questionSourceById: new Map(questions.map((q) => [q.id, q.source])),
+  };
 
   for (const q of questions) {
     // (a) bilingual text
@@ -1066,7 +1101,16 @@ export function validateVersionPublication(input: {
     }
 
     // (e) source_ref validation
-    issues.push(...validateSourceRef(q, ctx));
+    issues.push(...validateSourceRef(q, ctxWithIds));
+  }
+
+  // (e2) computed graph must be acyclic (a multi-hop A→B→A cycle passes the per-question
+  // self-reference check but would ship silent $0.00 totals).
+  const computedCycle = findComputedCycle(questions);
+  if (computedCycle) {
+    issues.push(
+      blocking("CATALOG_SOURCE_REF_INVALID", `ciclo de campos calculados: ${computedCycle.join(" → ")}.`),
+    );
   }
 
   // (f) unmapped fields → WARNING
@@ -1232,6 +1276,57 @@ export function validateSourceRef(q: Question, ctx: VersionCtx): PublicationIssu
             ];
       }
       return [blocking("CATALOG_SOURCE_REF_INVALID", `ai_field.connected.kind "${kind}" inválido.`)];
+    }
+    case "computed": {
+      const ref = parseComputedSourceRef(q.source_ref);
+      if (!ref) {
+        return [
+          blocking(
+            "CATALOG_SOURCE_REF_INVALID",
+            "computed requiere { op: 'sum'|'subtract', inputs: [questionId, …] }.",
+          ),
+        ];
+      }
+      // subtract is minuend − sum(rest): it needs at least two operands to mean a
+      // subtraction (a 1-input copy should be expressed as `sum`).
+      if (ref.op === "subtract" && ref.inputs.length < 2) {
+        return [
+          blocking("CATALOG_SOURCE_REF_INVALID", "computed 'subtract' requiere al menos 2 inputs."),
+        ];
+      }
+      if (ref.inputs.includes(q.id)) {
+        return [blocking("CATALOG_SOURCE_REF_INVALID", "una pregunta computed no puede referirse a sí misma.")];
+      }
+      // Operand existence (only when the full id set is available — i.e. at publish).
+      if (ctx.questionIds) {
+        const missing = ref.inputs.filter((id) => !ctx.questionIds!.has(id));
+        if (missing.length > 0) {
+          return [
+            blocking(
+              "CATALOG_SOURCE_REF_INVALID",
+              `computed referencia preguntas inexistentes: "${missing.join('", "')}".`,
+            ),
+          ];
+        }
+      }
+      // Operand source: the evaluator (resolveComputedValues) only reads client_answer
+      // values and other computed totals. A profile/document_extraction/ai_field operand
+      // would silently contribute 0 → a wrong-but-plausible total. Reject it at publish.
+      if (ctx.questionSourceById) {
+        const badSource = ref.inputs.filter((id) => {
+          const src = ctx.questionSourceById!.get(id);
+          return src !== undefined && src !== "client_answer" && src !== "computed";
+        });
+        if (badSource.length > 0) {
+          return [
+            blocking(
+              "CATALOG_SOURCE_REF_INVALID",
+              `computed solo puede operar preguntas 'client_answer' o 'computed'; inválidas: "${badSource.join('", "')}".`,
+            ),
+          ];
+        }
+      }
+      return [];
     }
     default:
       return [];

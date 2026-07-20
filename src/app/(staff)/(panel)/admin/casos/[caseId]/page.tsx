@@ -58,6 +58,7 @@ import { mapStatusToPill, buildRutaVM, buildPreMortemTargets, mapPreMortemReport
 import {
   reviewDocumentAction,
   setRequirementVisibilityAction,
+  setFormVisibilityAction,
   advanceCasePhaseAction,
   advanceCaseMilestoneAction,
   registerPaymentAction,
@@ -123,7 +124,7 @@ export default async function AdminCasoDetailPage({
     getAccountStatement(actor, caseId).catch(() => null),
     getContractForCase(actor, caseId).catch(() => null),
     getTimeline(actor, caseId, { limit: 8 }).catch(() => ({ items: [], nextCursor: null })),
-    getClientFormsForCase(actor, caseId).catch(() => []),
+    getClientFormsForCase(actor, caseId, { includeHidden: true }).catch(() => []),
     getRunsForCase(actor, caseId).catch(() => []),
     actor.role === "admin"
       ? getValidationsForCase(actor, caseId).catch(() => [])
@@ -207,6 +208,8 @@ export default async function AdminCasoDetailPage({
     filledBy: f.filledBy,
     responseId: f.responseId,
     hasPdf: f.filledPdfPath !== null,
+    isRequired: f.isRequired,
+    isHidden: f.isHidden,
   }));
   const formsDone = formsVm.filter((f) => f.status === "submitted" || f.status === "approved").length;
 
@@ -350,6 +353,7 @@ export default async function AdminCasoDetailPage({
         getPreMortemStatus: getPreMortemStatusAction,
         cancelPreMortem: cancelPreMortemAction,
         setRequirementVisibility: canManageDocs ? setRequirementVisibilityAction : undefined,
+        toggleFormVisibility: canManageDocs ? setFormVisibilityAction : undefined,
         advanceCasePhase: canAdvancePhase ? advanceCasePhaseAction : undefined,
         advanceCaseMilestone: canAdvancePhase ? advanceCaseMilestoneAction : undefined,
         registerPayment: registerPaymentAction,

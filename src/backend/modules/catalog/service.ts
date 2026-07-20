@@ -20,6 +20,7 @@ import { isPartyRoleKey } from "@/shared/constants/party-roles";
 import { GENERATION_MODELS } from "@/shared/constants/ai-models";
 import { detectPosture, type PostureCondition, type PostureRule } from "./domain";
 import { deriveFieldState, parseConditionOrNull, type QuestionCondition } from "@/shared/form-logic/conditions";
+import { resolveComputedValues } from "@/shared/form-logic/computed";
 import { resolveEmptyPolicy, type VersionEmptyPolicy, type FieldEmptyPolicy } from "@/shared/form-logic/empty-policy";
 import type { ProposedQuestion } from "@/backend/modules/ai-engine";
 import { detectAcroFields as platformDetectAcroFields, fillAcroForm, extractPdfText, backfillNaTextFields } from "@/backend/platform/pdf";
@@ -1699,6 +1700,21 @@ export async function generateTestPdf(
     tree.groups.filter((g) => (g as { do_not_fill?: boolean | null }).do_not_fill === true).map((g) => g.id),
   );
 
+  // Derived totals (computed) are resolved from the sample line items and merged so
+  // the preview PDF shows the same 1.A / 2.B / TOTAL boxes the filed PDF will (SAME
+  // shared arithmetic as production generateFilledPdf).
+  const effectiveAnswers: Record<string, unknown> = {
+    ...input.sample_answers,
+    ...resolveComputedValues(
+      tree.questions.map((q) => ({
+        id: q.id,
+        source: (q as { source?: string }).source ?? "client_answer",
+        source_ref: (q as { source_ref?: unknown }).source_ref ?? null,
+      })),
+      input.sample_answers,
+    ),
+  };
+
   for (const q of tree.questions) {
     if (doNotFillGroups.has(q.group_id)) continue; // do-not-fill section → blank
 
@@ -1713,12 +1729,12 @@ export async function generateTestPdf(
 
     // Conditional/dynamic: skip a field hidden by its condition (left blank, like
     // production); a condition can also flip whether it counts as a required gap.
-    const condState = deriveFieldState(parseConditionOrNull(q.condition), q.is_required, input.sample_answers);
+    const condState = deriveFieldState(parseConditionOrNull(q.condition), q.is_required, effectiveAnswers);
     if (!condState.visible) continue;
 
     const answerId = q.id;
-    const rawVal = input.sample_answers[answerId];
-    const hasAnswer = answerId in input.sample_answers && rawVal !== "" && rawVal != null;
+    const rawVal = effectiveAnswers[answerId];
+    const hasAnswer = answerId in effectiveAnswers && rawVal !== "" && rawVal != null;
 
     if (hasAnswer) {
       if (q.field_type === "multiselect" && optionFields) {

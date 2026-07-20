@@ -50,6 +50,7 @@ import {
   updateCaseParty,
   reviewDocument,
   setRequirementVisibility,
+  setFormVisibility,
   advanceCasePhase,
   advanceCaseMilestone,
   startDocumentUpload,
@@ -484,6 +485,22 @@ export async function setRequirementVisibilityAction(input: {
   try {
     const actor = await requireActor();
     await setRequirementVisibility(actor, input);
+    return { ok: true };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+/** Admin/sales hides or restores an OPTIONAL form for a case (EOIR-26A Fee Waiver). */
+export async function setFormVisibilityAction(input: {
+  caseId: string;
+  formDefinitionId: string;
+  partyId: string | null;
+  hidden: boolean;
+}): Promise<{ ok: boolean; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    await setFormVisibility(actor, input);
     return { ok: true };
   } catch (err) {
     return mapErr(err);

@@ -179,6 +179,8 @@ export default async function FinanzasCasoDetailPage({
     filledBy: f.filledBy,
     responseId: f.responseId,
     hasPdf: f.filledPdfPath !== null,
+    isRequired: f.isRequired,
+    isHidden: f.isHidden,
   }));
   const formsDone = formsVm.filter((f) => f.status === "submitted" || f.status === "approved").length;
 

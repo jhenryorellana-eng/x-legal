@@ -16,7 +16,8 @@ export type QuestionSource =
   | "document_extraction"
   | "generation_output"
   | "profile"
-  | "ai_field";
+  | "ai_field"
+  | "computed";
 
 export type FieldType = "text" | "number" | "date" | "checkbox" | "select" | "textarea" | "multiselect";
 
