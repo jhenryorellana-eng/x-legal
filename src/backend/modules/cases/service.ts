@@ -4780,14 +4780,19 @@ export async function getFormForClient(
   let questionnaireStale = false;
   if (formDef.kind === "questionnaire") {
     const aiEngine = (await import("@/backend/modules/ai-engine" as string)) as {
-      getQuestionnaireClientState: (caseId: string, formDefinitionId: string, partyId: string | null) => Promise<{ isDynamic: boolean; mode: string; autoTrigger: boolean; instance: { status: string; schema: unknown; draft_answers?: Record<string, string> | null } | null; prereqs: { ok: boolean; missingForms: string[]; missingDocuments: string[] } | null }>;
+      getQuestionnaireClientState: (caseId: string, formDefinitionId: string, partyId: string | null) => Promise<{ isDynamic: boolean; mode: string; autoTrigger: boolean; stuckQueued: boolean; instance: { status: string; schema: unknown; draft_answers?: Record<string, string> | null } | null; prereqs: { ok: boolean; missingForms: string[]; missingDocuments: string[] } | null }>;
       startQuestionnaireGeneration: (actor: Actor, input: { caseId: string; formDefinitionId: string; partyId?: string | null }) => Promise<unknown>;
       getCurrentQuestionnaireInstance: (caseId: string, formDefinitionId: string, partyId: string | null) => Promise<{ status: string; schema: unknown; draft_answers?: Record<string, string> | null } | null>;
     };
     const state = await aiEngine.getQuestionnaireClientState(input.caseId, input.formDefinitionId, partyId);
     if (state.isDynamic) {
       let instance = state.instance;
-      const needsGen = !instance || instance.status === "pending_prereqs" || instance.status === "failed";
+      // A stuck 'queued' instance (dispatch lost) must self-heal when the client
+      // re-opens the form: treat it like a failed one so the auto-trigger re-kicks
+      // generation. startQuestionnaireGeneration's guard then re-dispatches a fresh
+      // instance with a per-instance dedupeId (a healthy queued/generating short-circuits).
+      const needsGen =
+        !instance || instance.status === "pending_prereqs" || instance.status === "failed" || state.stuckQueued;
       // Lazy auto-trigger: when the client opens the questionnaire with prerequisites
       // met and nothing generating/ready yet, kick off generation now.
       if (actor.kind === "client" && state.autoTrigger && state.prereqs?.ok && needsGen) {

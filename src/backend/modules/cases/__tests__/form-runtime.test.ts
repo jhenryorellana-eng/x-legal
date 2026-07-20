@@ -57,6 +57,7 @@ const {
   mockSynthesizeLetterFields,
   mockGetCurrentQuestionnaireInstance,
   mockGetQuestionnaireClientState,
+  mockStartQuestionnaireGeneration,
   mockGetQuestionnaireInstanceDrafts,
   mockGetQuestionnaireInstanceSchemaQuestions,
   mockFindCaseByIdSystem,
@@ -98,6 +99,7 @@ const {
   mockSynthesizeLetterFields: vi.fn().mockResolvedValue({}),
   mockGetCurrentQuestionnaireInstance: vi.fn().mockResolvedValue(null),
   mockGetQuestionnaireClientState: vi.fn(),
+  mockStartQuestionnaireGeneration: vi.fn().mockResolvedValue({ status: "queued" }),
   mockGetQuestionnaireInstanceDrafts: vi.fn().mockResolvedValue(null),
   mockGetQuestionnaireInstanceSchemaQuestions: vi.fn().mockResolvedValue(null),
   mockFindCaseByIdSystem: vi.fn().mockResolvedValue(null),
@@ -237,6 +239,7 @@ vi.mock("@/backend/modules/ai-engine", () => ({
   synthesizeLetterFields: mockSynthesizeLetterFields,
   getCurrentQuestionnaireInstance: mockGetCurrentQuestionnaireInstance,
   getQuestionnaireClientState: mockGetQuestionnaireClientState,
+  startQuestionnaireGeneration: mockStartQuestionnaireGeneration,
   getQuestionnaireInstanceDrafts: mockGetQuestionnaireInstanceDrafts,
   getQuestionnaireInstanceSchemaQuestions: mockGetQuestionnaireInstanceSchemaQuestions,
   // Autofill total: drafts ∪ schema default_values. The submit path consumes
@@ -841,17 +844,26 @@ describe("getFormForClient — cross-service form scope check", () => {
 describe("getFormForClient — questionnaire stale flag", () => {
   const QN_DEF = { ...activeFormDef, kind: "questionnaire" };
 
-  function dynamicState(instanceStatus: string) {
+  function dynamicState(
+    instanceStatus: string,
+    opts: { autoTrigger?: boolean; stuckQueued?: boolean; prereqsOk?: boolean } = {},
+  ) {
     return {
       isDynamic: true,
       mode: "automatic",
       hybridLayout: "append_group",
-      autoTrigger: false,
+      autoTrigger: opts.autoTrigger ?? false,
       allowClientTrigger: false,
+      stuckQueued: opts.stuckQueued ?? false,
       instance: { status: instanceStatus, schema: { groups: [] } },
-      prereqs: null,
+      prereqs: opts.prereqsOk === undefined ? null : { ok: opts.prereqsOk, missingForms: [], missingDocuments: [] },
     };
   }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRequireCaseAccess.mockResolvedValue(undefined);
+  });
 
   it("surfaces questionnaireStale=true when the current instance predates new evidence", async () => {
     mockFindFormDefinitionById.mockResolvedValue(QN_DEF);
@@ -874,6 +886,39 @@ describe("getFormForClient — questionnaire stale flag", () => {
     const dto = await getFormForClient(clientActor, { caseId: CASE_ID, formDefinitionId: FORM_DEF_ID, partyId: null });
 
     expect(dto.questionnaireStale).toBeFalsy();
+  });
+
+  it("re-kicks generation when the current 'queued' instance is stuck (dispatch lost)", async () => {
+    // A 'queued' row past the staleness window means its QStash dispatch was dropped.
+    // Re-opening the form as the client must self-heal by re-triggering generation —
+    // otherwise the instance is stuck forever and the client sees a frozen spinner.
+    mockFindFormDefinitionById.mockResolvedValue(QN_DEF);
+    mockFindFormResponse.mockResolvedValue(null);
+    mockGetPublishedAutomationVersion.mockResolvedValue(null);
+    mockGetQuestionnaireClientState.mockResolvedValue(
+      dynamicState("queued", { autoTrigger: true, stuckQueued: true, prereqsOk: true }),
+    );
+
+    await getFormForClient(clientActor, { caseId: CASE_ID, formDefinitionId: FORM_DEF_ID, partyId: null });
+
+    expect(mockStartQuestionnaireGeneration).toHaveBeenCalledWith(
+      clientActor,
+      { caseId: CASE_ID, formDefinitionId: FORM_DEF_ID, partyId: null },
+    );
+  });
+
+  it("does NOT re-kick generation for a healthy (recent) 'queued' instance", async () => {
+    // A fresh queued row is dispatched and about to run; re-triggering would be noise.
+    mockFindFormDefinitionById.mockResolvedValue(QN_DEF);
+    mockFindFormResponse.mockResolvedValue(null);
+    mockGetPublishedAutomationVersion.mockResolvedValue(null);
+    mockGetQuestionnaireClientState.mockResolvedValue(
+      dynamicState("queued", { autoTrigger: true, stuckQueued: false, prereqsOk: true }),
+    );
+
+    await getFormForClient(clientActor, { caseId: CASE_ID, formDefinitionId: FORM_DEF_ID, partyId: null });
+
+    expect(mockStartQuestionnaireGeneration).not.toHaveBeenCalled();
   });
 });
 
@@ -2680,6 +2725,7 @@ describe("getFormForClient — AI draft prefill (questionnaire)", () => {
       hybridLayout: "append_group",
       autoTrigger: false,
       allowClientTrigger: false,
+      stuckQueued: false,
       instance: { status: "ready", schema: instanceSchema, draft_answers: drafts },
       prereqs: null,
     };

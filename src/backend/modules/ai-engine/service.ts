@@ -3628,6 +3628,14 @@ export async function getCurrentQuestionnaireInstance(
 }
 
 export type QuestionnaireMode = "global" | "automatic" | "hybrid";
+/**
+ * A 'queued' instance normally flips to 'generating' within seconds of QStash
+ * delivery. If it hasn't within this window its dispatch was dropped/lost and the
+ * row is STUCK — recovery must re-dispatch a fresh instance. Single source of truth
+ * for both the generation guard (startQuestionnaireGenerationCore) and the client
+ * auto-trigger signal (getQuestionnaireClientState.stuckQueued).
+ */
+const QUESTIONNAIRE_QUEUED_STALE_MS = 180_000;
 export interface QuestionnaireClientState {
   mode: QuestionnaireMode;
   /** false when the questionnaire has no config or is global (render base questions). */
@@ -3636,6 +3644,12 @@ export interface QuestionnaireClientState {
   autoTrigger: boolean;
   allowClientTrigger: boolean;
   instance: QuestionnaireInstanceRow | null;
+  /**
+   * true when `instance` is a 'queued' row past the staleness window — its dispatch
+   * was lost, so the client-side auto-trigger must treat it like a failed instance
+   * and re-kick generation (the generation guard then re-dispatches a fresh one).
+   */
+  stuckQueued: boolean;
   /** Only computed when there is no ready instance yet. */
   prereqs: QuestionnairePrereqStatus | null;
 }
@@ -3655,11 +3669,17 @@ export async function getQuestionnaireClientState(
   if (!config || config.mode === "global") {
     return {
       mode: "global", isDynamic: false, hybridLayout: "append_group",
-      autoTrigger: false, allowClientTrigger: false, instance: null, prereqs: null,
+      autoTrigger: false, allowClientTrigger: false, instance: null, stuckQueued: false, prereqs: null,
     };
   }
   const instance = await findCurrentQuestionnaireInstance(caseId, formDefinitionId, partyId);
-  const needsPrereqCheck = !instance || instance.status === "pending_prereqs" || instance.status === "failed";
+  const stuckQueued =
+    instance?.status === "queued" &&
+    Date.now() - new Date(instance.updated_at).getTime() > QUESTIONNAIRE_QUEUED_STALE_MS;
+  // A stuck 'queued' row is a dead instance for prereq purposes too — recompute so the
+  // client can re-trigger against fresh prerequisites.
+  const needsPrereqCheck =
+    !instance || instance.status === "pending_prereqs" || instance.status === "failed" || stuckQueued;
   const prereqs = needsPrereqCheck ? await evaluateQuestionnairePrereqs(caseId, partyId, config) : null;
   return {
     mode: config.mode as QuestionnaireMode,
@@ -3668,6 +3688,7 @@ export async function getQuestionnaireClientState(
     autoTrigger: config.auto_trigger,
     allowClientTrigger: config.allow_client_trigger,
     instance,
+    stuckQueued,
     prereqs,
   };
 }
@@ -3707,7 +3728,8 @@ async function startQuestionnaireGenerationCore(
   // recovery forever — fall through to re-dispatch a fresh instance. (A 'queued' row
   // normally flips to 'generating' within seconds of delivery.)
   const queuedStuck =
-    current?.status === "queued" && Date.now() - new Date(current.updated_at).getTime() > 180_000;
+    current?.status === "queued" &&
+    Date.now() - new Date(current.updated_at).getTime() > QUESTIONNAIRE_QUEUED_STALE_MS;
   if (current && (current.status === "generating" || current.status === "queued") && !queuedStuck) {
     return { status: "in_progress", instanceId: current.id };
   }
