@@ -362,3 +362,58 @@ describe("getQuestionnaireInstanceAnsweredValues — provenance decides", () => 
     expect(await getQuestionnaireInstanceAnsweredValues(INSTANCE)).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// executeQuestionnaireGenerationJob — the schema call must NOT swallow failures
+// (regression: a max_tokens truncation was masked as "generator returned no
+// questions", hiding the real cause — an 18-question bilingual schema overflowed
+// the 8000-token cap and parsed to nothing).
+// ---------------------------------------------------------------------------
+
+describe("executeQuestionnaireGenerationJob — schema generation surfaces the real error", () => {
+  function stoppedMessage(text: string, stopReason: string) {
+    return {
+      content: [{ type: "text", text }],
+      usage: { input_tokens: 100, output_tokens: 8000 },
+      stop_reason: stopReason,
+      model: "claude-sonnet-4-6",
+    };
+  }
+
+  it("fails with a truncation error (not 'no questions') when the schema hits max_tokens", async () => {
+    // First (and only) stream call is the question-gen call; return a truncated
+    // half-object with stop_reason=max_tokens.
+    mocks.setResponder(() => stoppedMessage('{"groups":[{"title_i18n":{"es":"Sobre', "max_tokens"));
+
+    const outcome = await executeQuestionnaireGenerationJob({
+      caseId: INSTANCE.case_id,
+      formDefinitionId: INSTANCE.form_definition_id,
+      partyId: null,
+    });
+
+    expect(outcome).toBe("failed");
+    const failed = mocks.repo.updateQuestionnaireInstance.mock.calls.find(
+      (c) => c[1]?.status === "failed",
+    )?.[1] as Record<string, unknown>;
+    expect(failed).toBeDefined();
+    expect(String(failed.error)).toContain("truncated at max_tokens");
+    // The drafts call must never run once the schema failed.
+    expect(mocks.anthropicClient.messages.stream).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails with a parse error (not 'no questions') when the schema call returns non-JSON", async () => {
+    mocks.setResponder(() => stoppedMessage("Lo siento, no puedo generar esto ahora.", "end_turn"));
+
+    const outcome = await executeQuestionnaireGenerationJob({
+      caseId: INSTANCE.case_id,
+      formDefinitionId: INSTANCE.form_definition_id,
+      partyId: null,
+    });
+
+    expect(outcome).toBe("failed");
+    const failed = mocks.repo.updateQuestionnaireInstance.mock.calls.find(
+      (c) => c[1]?.status === "failed",
+    )?.[1] as Record<string, unknown>;
+    expect(String(failed.error)).toContain("not parseable JSON");
+  });
+});

@@ -3373,22 +3373,32 @@ async function generateCaseQuestionnaire(input: {
   }
   const system = buildQuestionnaireGenSystem(input.config, input.posturePlaybook);
   const user = buildQuestionGenContext(input.inputs, input.alreadyCovered) + questionGenOutputInstructions(input.config.target_question_count);
-  try {
-    const client = getAnthropicClient();
-    const r = await callAnthropic(client, { model, system, user, maxTokens: 8000, timeoutMs: 240_000 });
-    const parsed = stripFencesAndParse<{ groups?: ProposedGroup[] }>(r.text);
-    const proposal: SegmentationProposal = { groups: Array.isArray(parsed?.groups) ? parsed.groups : [] };
-    return {
-      schema: materializeProposalToSchema(proposal, materializeOpts),
-      model,
-      inputTokens: r.usage.inputTokens,
-      outputTokens: r.usage.outputTokens,
-      costUsd: computeAnthropicCost(r.usage, model) ?? 0,
-    };
-  } catch (err) {
-    logger.warn({ err }, "ai-engine: generateCaseQuestionnaire failed");
-    return { schema: { groups: [] }, model, inputTokens: 0, outputTokens: 0, costUsd: 0 };
+  const client = getAnthropicClient();
+  // target_question_count questions as bilingual (es/en) JSON — each with help,
+  // options, validation, condition, and grounded prefills — is a large payload.
+  // 8000 tokens truncated it mid-object for an 18-question hybrid over a full
+  // asylum record: the JSON parsed to nothing and surfaced as the useless
+  // "generator returned no questions". Give the schema real headroom, and widen
+  // the client timeout to match (still under the 280s job endpoint timeout).
+  const r = await callAnthropic(client, { model, system, user, maxTokens: 16000, timeoutMs: 270_000 });
+  // A truncated or unparseable response must NOT masquerade as "the model
+  // returned nothing": throw the real reason so the instance error is actionable
+  // (and the failure is retried on its true cause, not swallowed to empty groups).
+  if (r.stopReason === "max_tokens") {
+    throw new Error(`questionnaire generation truncated at max_tokens (${r.text.length} chars) — raise maxTokens`);
   }
+  const parsed = stripFencesAndParse<{ groups?: ProposedGroup[] }>(r.text);
+  if (!parsed || !Array.isArray(parsed.groups)) {
+    throw new Error(`questionnaire generator output was not parseable JSON (stop=${r.stopReason}, ${r.text.length} chars)`);
+  }
+  const proposal: SegmentationProposal = { groups: parsed.groups };
+  return {
+    schema: materializeProposalToSchema(proposal, materializeOpts),
+    model,
+    inputTokens: r.usage.inputTokens,
+    outputTokens: r.usage.outputTokens,
+    costUsd: computeAnthropicCost(r.usage, model) ?? 0,
+  };
 }
 
 // ---------------------------------------------------------------------------
