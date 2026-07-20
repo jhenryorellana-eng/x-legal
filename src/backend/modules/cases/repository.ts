@@ -644,6 +644,10 @@ export async function updateFormResponse(
      *  drafts) with their provenance ids, written at submit time. */
     answers: import("@/shared/database.types").Json;
     ai_draft_question_ids: import("@/shared/database.types").Json;
+    /** Wave 1 — provenance per question id (supersedes ai_draft_question_ids). */
+    answer_provenance: import("@/shared/database.types").Json;
+    /** Wave 1 — audited staff override of the coverage warning; null clears it. */
+    low_coverage_ack: import("@/shared/database.types").Json | null;
   }>,
 ): Promise<void> {
   const supabase = createServiceClient();
@@ -717,6 +721,32 @@ export async function findDocumentExtractionByCaseDocId(
     .eq("case_document_id", caseDocumentId)
     .maybeSingle();
   return data ?? null;
+}
+
+/**
+ * Completed extraction payload of a case's document for a given requirement slug.
+ * Used to resolve the procedural posture; returns null when the document was never
+ * uploaded or its extraction has not completed — the caller must not guess.
+ */
+export async function findExtractionPayloadBySlug(
+  caseId: string,
+  requirementSlug: string,
+): Promise<Record<string, unknown> | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("case_documents")
+    .select("id, required_document_types!inner(slug), document_extractions(status, payload)")
+    .eq("case_id", caseId)
+    .eq("required_document_types.slug", requirementSlug)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const raw = (data as { document_extractions?: unknown } | null)?.document_extractions;
+  const ext = Array.isArray(raw) ? raw[0] : raw;
+  const row = ext as { status?: string; payload?: unknown } | undefined;
+  if (!row || row.status !== "completed") return null;
+  return (row.payload ?? {}) as Record<string, unknown>;
 }
 
 /**
@@ -2031,3 +2061,24 @@ export async function findCasesWithRfeInProgress(
   if (error) throw new Error(`cases.repository: findCasesWithRfeInProgress — ${error.message}`);
   return [...new Set((data ?? []).map((r) => r.case_id))];
 }
+
+/** Stores the deterministically-resolved procedural posture on the case. */
+export async function updateCasePosture(caseId: string, posture: string | null): Promise<void> {
+  const supabase = createServiceClient();
+  const { error } = await supabase.from("cases").update({ detected_posture: posture }).eq("id", caseId);
+  if (error) throw new Error(`cases.repo.updateCasePosture: ${error.message}`);
+}
+
+/** Active postures of a service, projected to what the detection loop needs. */
+export async function listServicePosturesForService(
+  serviceId: string,
+): Promise<Array<{ slug: string; sourceDocumentSlug: string }>> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("service_postures")
+    .select("slug, source_document_slug")
+    .eq("service_id", serviceId)
+    .eq("is_active", true);
+  return (data ?? []).map((r) => ({ slug: r.slug, sourceDocumentSlug: r.source_document_slug }));
+}
+

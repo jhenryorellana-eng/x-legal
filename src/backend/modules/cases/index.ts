@@ -47,6 +47,10 @@ export {
   approveFormResponse,
   getFormResponseCompleteness,
   rejectFormResponse,
+  reopenQuestionnaireForClientInput,
+  // Procedural posture (Wave 2)
+  applyPostureToCase,
+  getCasePosturePlaybook,
   generateFilledPdf,
   resolveFormResponseFieldValues,
   resolveFormResponseFieldValuesSystem,

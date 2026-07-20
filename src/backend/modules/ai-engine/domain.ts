@@ -13,6 +13,8 @@
  * @module ai-engine/domain
  */
 
+import { createHash } from "node:crypto";
+
 import type { QuestionCondition } from "@/shared/form-logic/conditions";
 
 // ---------------------------------------------------------------------------
@@ -229,6 +231,14 @@ export interface ResolvedInputs {
   forms: Array<{
     slug: string;
     answers: Record<string, unknown>;
+    /**
+     * Question wordings whose answer was withheld from the prompt because it was
+     * AI-fabricated (`ai_gap_filled`). Rendered as an explicit gap block so the
+     * drafting model knows what it may NOT assert — silence would invite it to
+     * fill the hole itself, and passing the filler through let the brief quote a
+     * sentence the client never wrote.
+     */
+    declaredGaps?: string[];
   }>;
 }
 
@@ -815,6 +825,22 @@ export function buildCaseContextBlocks(inputs: ResolvedInputs): string[] {
     }
   }
 
+  // 2b. DECLARED GAPS — questions whose answer was withheld as AI-fabricated.
+  // Naming them beats omitting them: an unexplained absence invites the model to
+  // fill the hole, whereas an explicit "unanswered, do not assert" is a boundary.
+  const gapForms = inputs.forms.filter((f) => (f.declaredGaps?.length ?? 0) > 0);
+  if (gapForms.length > 0) {
+    parts.push("\n## VACÍOS DECLARADOS (SIN RESPUESTA DEL CLIENTE)");
+    parts.push(
+      "Estas preguntas NO fueron respondidas por el cliente. NO afirmes nada sobre ellas, " +
+        "no supongas la respuesta y no las presentes como hechos del expediente.",
+    );
+    for (const form of gapForms) {
+      parts.push(`\n### Formulario: ${form.slug}`);
+      for (const question of form.declaredGaps ?? []) parts.push(`- ${question}`);
+    }
+  }
+
   // 3. FULL DOCUMENT TEXTS (raw_text)
   if (inputs.documents.length > 0) {
     parts.push("\n## TEXTO COMPLETO DE DOCUMENTOS");
@@ -876,6 +902,12 @@ export type QuestionnaireFieldType = (typeof QUESTIONNAIRE_FIELD_TYPES)[number];
 export interface GeneratedQuestion {
   /** Stable uuid — answers are keyed by this id (survives regeneration). */
   id: string;
+  /**
+   * Semantic identity (hash of the normalized Spanish text). The materializer
+   * matches on this to reuse `id` across regenerations, so client answers are not
+   * orphaned when the questionnaire is regenerated (D2b).
+   */
+  question_key?: string;
   question_i18n: { es: string; en: string };
   help_i18n: { es: string; en: string } | null;
   field_type: QuestionnaireFieldType;
@@ -895,6 +927,17 @@ export interface GeneratedQuestion {
    * for completeness (a checklist gated on it must be able to close).
    */
   default_value?: string | null;
+  /**
+   * Where this question can be answered from, AFTER code verification
+   * (see resolveAnswerableFrom). Absent on pre-Wave-1 instances.
+   */
+  answerable_from?: AnswerableFrom;
+  /**
+   * Verified prefill for `record_confirm` questions — a value the record actually
+   * supports, which the client accepts with one tap. Null for every other kind:
+   * the wizard must never show an unverified value as "según tu expediente".
+   */
+  prefill_value?: string | null;
 }
 export interface GeneratedGroup {
   id: string;
@@ -905,6 +948,115 @@ export interface GeneratedGroup {
 /** The full generated questionnaire stored in case_questionnaire_instances.schema. */
 export interface QuestionnaireSchema {
   groups: GeneratedGroup[];
+}
+
+// ---------------------------------------------------------------------------
+// Question contract (Wave 1 / D2) — what a question can be answered FROM
+// ---------------------------------------------------------------------------
+
+/**
+ * Where the answer to a generated question can legitimately come from.
+ *
+ * Case U26-000038 showed why this must be explicit. The generator produced
+ * merits-appeal questions ("what did the judge say about your credibility?") for
+ * a case decided by PRETERMISSION — the judge never reached the merits, so no such
+ * finding exists in any document. Those questions were unanswerable by
+ * construction, the drafting pass honestly could not answer them, and a
+ * gap-resolution pass then fabricated 15 first-person sentences saying the client
+ * had no information. Naming the contract makes the impossible case visible
+ * instead of papering over it.
+ */
+export const ANSWERABLE_FROM = ["record_confirm", "record", "client_only"] as const;
+export type AnswerableFrom = (typeof ANSWERABLE_FROM)[number];
+
+/** A citation the model must supply to justify a `record_confirm` prefill. */
+export interface EvidenceRef {
+  /** Document slug/label the span was taken from (advisory — not trusted). */
+  document?: string | null;
+  /** Text the model claims appears verbatim in the record. Verified in code. */
+  span: string;
+}
+
+/**
+ * Comparison normal form: accent-, case- and punctuation-insensitive, with runs
+ * of whitespace collapsed. Used both for question identity and for checking a
+ * model's citation against the real record, so OCR/extraction noise (curly
+ * quotes, stray hyphens, double spaces) does not cause false negatives.
+ */
+function normalizeForMatch(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/\p{Mn}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Stable semantic identity for a question, derived from its Spanish text.
+ *
+ * Regenerating a questionnaire mints fresh uuids, which would orphan every answer
+ * the client already gave (in the real case, the 9 good ones). Matching on this
+ * key lets the materializer REUSE the previous uuid when the same question comes
+ * back, so answers survive a regeneration.
+ */
+export function questionKeyOf(textEs: string): string {
+  return createHash("sha256").update(normalizeForMatch(textEs)).digest("hex").slice(0, 16);
+}
+
+/**
+ * Verifies, IN CODE, what the model claimed about a question — never trusting the
+ * claim itself, and never asking a second model to arbitrate (a second pass with
+ * different context can disagree with the first and there is no tie-breaker).
+ *
+ * `record_confirm` survives only when a cited span genuinely occurs in the record
+ * AND the proposed prefill is contained in that span. That single rule kills
+ * hallucinated prefills deterministically: a prefill the record does not support
+ * cannot be shown to the client as "según tu expediente".
+ *
+ * Validation may only DEGRADE (→ `client_only`, no prefill). It never promotes:
+ * a question the model called client-only stays client-only even if evidence
+ * happens to validate, because the model had a reason to ask.
+ *
+ * A MISSING claim falls back to `record`, not `client_only`. That is deliberate:
+ * with the gap-filler gone, letting the drafting pass try is harmless — an
+ * unanswerable question now yields an EMPTY draft and the gate blocks on it.
+ * Defaulting to `client_only` instead would mean that any prompt drift (a model
+ * that ignores the field) silently turns the whole questionnaire into manual
+ * typing. Only `record_confirm`, which shows the client a value attributed to
+ * their own file, is fail-closed.
+ */
+export function resolveAnswerableFrom(input: {
+  claimed: string | undefined | null;
+  prefillValue: string | null;
+  evidenceRefs: EvidenceRef[] | null;
+  corpus: string;
+}): { answerableFrom: AnswerableFrom; prefillValue: string | null } {
+  const degraded = { answerableFrom: "client_only" as const, prefillValue: null };
+  const claimed = typeof input.claimed === "string" ? input.claimed.trim() : "";
+
+  if (claimed === "client_only") return degraded;
+  // Unannotated questions behave as before: draftable, but never prefilled.
+  if (claimed !== "record_confirm") return { answerableFrom: "record", prefillValue: null };
+
+  const prefill = (input.prefillValue ?? "").trim();
+  const refs = input.evidenceRefs ?? [];
+  if (!prefill || refs.length === 0) return degraded;
+
+  const corpus = normalizeForMatch(input.corpus);
+  const needle = normalizeForMatch(prefill);
+  if (!corpus || !needle) return degraded;
+
+  const supported = refs.some((ref) => {
+    const span = normalizeForMatch(typeof ref?.span === "string" ? ref.span : "");
+    if (!span) return false;
+    // 1) the citation must really exist in the record, and
+    // 2) the prefill must be supported by that citation.
+    return corpus.includes(span) && span.includes(needle);
+  });
+
+  return supported ? { answerableFrom: "record_confirm", prefillValue: prefill } : degraded;
 }
 
 function buildFormatInstructions(outputLanguage: string, maxOutputTokens: number): string {

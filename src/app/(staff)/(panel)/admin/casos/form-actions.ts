@@ -17,6 +17,7 @@ import { requireActor, AuthzError } from "@/backend/modules/identity";
 import {
   approveFormResponse,
   rejectFormResponse,
+  reopenQuestionnaireForClientInput,
   generateFilledPdf,
   getFormResponsePdfUrl,
   getFormResponseCompleteness,
@@ -98,6 +99,45 @@ export async function rejectFormResponseAction(input: {
       correctionDueAt: input.correctionDueAt ?? null,
     });
     return { ok: true };
+  } catch (err) {
+    if (err instanceof CaseError) {
+      return { ok: false, error: { code: err.code } };
+    }
+    return { ok: false, error: { code: "UNEXPECTED" } };
+  }
+}
+
+export interface ReopenQuestionnaireResult {
+  ok: boolean;
+  error?: { code: string };
+  /** Question ids whose value was cleared, so the UI can say how many to answer. */
+  clearedQuestionIds?: string[];
+  keptCount?: number;
+}
+
+/**
+ * Staff hands a questionnaire back to the client, clearing every answer that does
+ * not count as answered (fabricated filler, or legacy rows of unknown provenance)
+ * while KEEPING the question ids and the answers that do count.
+ *
+ * Needed because hardening the completeness gate would otherwise strand any case
+ * approved under the old behaviour: it can no longer be approved, and nothing
+ * could return it to the client. Regenerating is not a substitute — it mints new
+ * question ids and would orphan the answers the client genuinely gave.
+ */
+export async function reopenQuestionnaireForClientInputAction(input: {
+  responseId: string;
+  reason?: { en?: string; es?: string };
+  correctionDueAt?: string | null;
+}): Promise<ReopenQuestionnaireResult> {
+  try {
+    const actor = await requireActor();
+    const out = await reopenQuestionnaireForClientInput(actor, {
+      responseId: input.responseId,
+      reason: input.reason,
+      correctionDueAt: input.correctionDueAt ?? null,
+    });
+    return { ok: true, clearedQuestionIds: out.clearedQuestionIds, keptCount: out.keptCount };
   } catch (err) {
     if (err instanceof CaseError) {
       return { ok: false, error: { code: err.code } };

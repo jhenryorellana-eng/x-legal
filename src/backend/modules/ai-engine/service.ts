@@ -133,7 +133,16 @@ import {
   type GeneratedGroup,
   type GeneratedQuestion,
   type QuestionnaireFieldType,
+  questionKeyOf,
+  resolveAnswerableFrom,
+  type EvidenceRef,
 } from "./domain";
+
+import {
+  type AnswerProvenance,
+  countsAsAnswered,
+  parseProvenanceMap,
+} from "@/shared/constants/answer-provenance";
 
 import {
   findRunById,
@@ -154,6 +163,7 @@ import {
   getOrgCostContext,
   type AiCostReportRow,
   findExtraction,
+  findPreviousQuestionnaireSchema,
   upsertExtraction,
   findTranslation,
   findTranslationById,
@@ -3160,13 +3170,34 @@ const QUESTIONNAIRE_GEN_SYSTEM_BASE =
   "8. Preguntas de DISPONIBILIDAD de evidencia ('¿Tiene usted…?', '¿Cuenta con…?'): incluye SIEMPRE una opción " +
   "negativa/'No aplica' y, si esa evidencia NO consta en el expediente, declara `default_value` con el `value` " +
   "EXACTO de esa opción negativa — así el cuestionario queda respondido por defecto cuando no hay nada que aportar " +
-  "y el cliente solo lo cambia si sí tiene la evidencia.";
+  "y el cliente solo lo cambia si sí tiene la evidencia.\n" +
+  "9. CLASIFICA CADA PREGUNTA con `answerable_from` — de dónde puede salir la respuesta:\n" +
+  "   - `record_confirm`: el expediente YA contiene la respuesta. Declara `prefill_value` (el dato concreto) y " +
+  "`evidence_refs`:[{\"document\":\"<slug>\",\"span\":\"<CITA VERBATIM del expediente que contiene ese dato>\"}]. " +
+  "El cliente solo tendrá que confirmarlo con un toque. El `span` se VERIFICA contra el expediente: si no aparece " +
+  "literalmente, o si `prefill_value` no está contenido en él, la pregunta se degrada automáticamente y pierde el " +
+  "prellenado. NO cites de memoria: copia el texto exacto.\n" +
+  "   - `record`: el expediente permite redactar un borrador, pero no hay un dato puntual que confirmar.\n" +
+  "   - `client_only`: la respuesta SOLO existe en la memoria del cliente (lo que se dijo en una audiencia, lo que " +
+  "sintió, hechos posteriores). NO inventes un prellenado para estas: se le preguntarán directamente.\n" +
+  "10. Si el expediente NO permite responder una pregunta, eso NO es un problema: márcala `client_only`. Es " +
+  "preferible una pregunta honesta sin respuesta a un cuestionario que parece completo y está vacío.";
 
-function buildQuestionnaireGenSystem(config: QuestionnaireGenConfigRow): string {
+function buildQuestionnaireGenSystem(
+  config: QuestionnaireGenConfigRow,
+  posturePlaybook?: string | null,
+): string {
   const extra = config.generation_prompt?.trim();
-  return extra
+  let system = extra
     ? `${QUESTIONNAIRE_GEN_SYSTEM_BASE}\n\nINSTRUCCIONES ADICIONALES DEL SERVICIO:\n${extra}`
     : QUESTIONNAIRE_GEN_SYSTEM_BASE;
+  // Posture goes LAST so it can veto the generic rules above. Without it the
+  // generator asked a pretermission case what the judge found on credibility —
+  // a decision that was never made, so the question was unanswerable by
+  // construction and no amount of retrieval could have saved it.
+  const playbook = posturePlaybook?.trim();
+  if (playbook) system += `\n\nPOSTURA PROCESAL DEL CASO (PRIORITARIO SOBRE LO ANTERIOR):\n${playbook}`;
+  return system;
 }
 
 function questionGenOutputInstructions(target: number | null): string {
@@ -3179,7 +3210,10 @@ function questionGenOutputInstructions(target: number | null): string {
     `Genera aproximadamente ${n} preguntas repartidas en 3–6 grupos temáticos. Las claves \`key\` deben ser ` +
     'únicas (q1, q2, …). Para "select"/"checkbox" añade "options":[{"value":"...","label_i18n":{"es":"...","en":"..."}}]. ' +
     'Una pregunta puede llevar "default_value":"<value de una opción o texto corto>" cuando la regla 8 aplique ' +
-    "(disponibilidad de evidencia que no consta en el expediente)."
+    "(disponibilidad de evidencia que no consta en el expediente).\n" +
+    'CADA pregunta DEBE declarar "answerable_from":"record_confirm"|"record"|"client_only" (regla 9). ' +
+    'Solo cuando sea "record_confirm", añade además "prefill_value":"<dato concreto>" y ' +
+    '"evidence_refs":[{"document":"<slug>","span":"<cita verbatim del expediente>"}].'
   );
 }
 
@@ -3196,19 +3230,57 @@ const QUESTIONNAIRE_STUB_PROPOSAL: SegmentationProposal = {
   ],
 };
 
+/** Options for {@link materializeProposalToSchema}. */
+export interface MaterializeOptions {
+  /**
+   * The schema currently stored on the instance. Questions whose `question_key`
+   * matches one already there REUSE its uuid, so answers the client has already
+   * given survive a regeneration instead of being orphaned (D2b).
+   */
+  previousSchema?: QuestionnaireSchema | null;
+  /**
+   * The case record the proposal was generated from (extraction raw_text +
+   * previous answers). Every `record_confirm` claim is checked against THIS text;
+   * without it, no prefill can be verified and all such claims degrade.
+   */
+  recordCorpus?: string | null;
+}
+
 /**
- * Turns an AI SegmentationProposal into the immutable per-case schema: mints a
+ * Turns an AI SegmentationProposal into the immutable per-case schema: assigns a
  * stable uuid per group/question (answers key off these, surviving regeneration)
  * and resolves each condition's `key` reference to the real uuid (dropping
- * unresolved / self references — fail-safe). Pure.
+ * unresolved / self references — fail-safe). Pure except for uuid minting.
+ *
+ * Two Wave-1 responsibilities beyond shaping:
+ *  - IDENTITY (D2b): reuse the previous uuid for a question that comes back, keyed
+ *    by `question_key` (normalized text), regardless of group or position.
+ *  - CONTRACT (D2): verify each `answerable_from` claim against the record via
+ *    `resolveAnswerableFrom`. Verification only degrades; a degraded question
+ *    becomes required so the client must answer what the record cannot.
  */
-export function materializeProposalToSchema(proposal: SegmentationProposal): QuestionnaireSchema {
+export function materializeProposalToSchema(
+  proposal: SegmentationProposal,
+  opts: MaterializeOptions = {},
+): QuestionnaireSchema {
   const keyToId = new Map<string, string>();
   const withRaw: Array<{ q: GeneratedQuestion; raw: ProposedQuestion["condition"] }> = [];
 
+  // question_key → uuid from the instance being replaced.
+  const previousIds = new Map<string, string>();
+  for (const g of opts.previousSchema?.groups ?? []) {
+    for (const q of g.questions ?? []) {
+      const key = q.question_key || questionKeyOf(q.question_i18n?.es ?? "");
+      if (key && !previousIds.has(key)) previousIds.set(key, q.id);
+    }
+  }
+  const corpus = opts.recordCorpus ?? "";
+
   const groups: GeneratedGroup[] = proposal.groups.map((g, gi) => {
     const questions = (g.questions ?? []).map((pq, qi): GeneratedQuestion => {
-      const id = randomUUID();
+      const questionI18n = normalizeI18n(pq.question_i18n);
+      const questionKey = questionKeyOf(questionI18n.es);
+      const id = previousIds.get(questionKey) ?? randomUUID();
       if (typeof pq.key === "string" && pq.key) keyToId.set(pq.key, id);
       const ft = QUESTIONNAIRE_FIELD_TYPES.includes(pq.field_type as QuestionnaireFieldType)
         ? (pq.field_type as QuestionnaireFieldType)
@@ -3227,18 +3299,31 @@ export function materializeProposalToSchema(proposal: SegmentationProposal): Que
         rawDefault && (ft === "select" || ft === "checkbox")
           ? (options?.some((o) => o.value === rawDefault) ? rawDefault : null)
           : rawDefault;
+      const verdict = resolveAnswerableFrom({
+        claimed: pq.answerable_from,
+        prefillValue: typeof pq.prefill_value === "string" ? pq.prefill_value : null,
+        evidenceRefs: Array.isArray(pq.evidence_refs) ? pq.evidence_refs : null,
+        corpus,
+      });
+      const degraded = pq.answerable_from === "record_confirm" && verdict.answerableFrom !== "record_confirm";
       const q: GeneratedQuestion = {
         id,
-        question_i18n: normalizeI18n(pq.question_i18n),
+        question_key: questionKey,
+        question_i18n: questionI18n,
         help_i18n: pq.help_i18n ? normalizeI18n(pq.help_i18n) : null,
         field_type: ft,
         options,
-        is_required: pq.is_required ?? false,
+        // A claim the record could not back becomes the client's to answer, so it
+        // must be required — otherwise a degraded question silently disappears
+        // from the gate and the brief is written without it.
+        is_required: degraded ? true : (pq.is_required ?? false),
         position: pq.position ?? qi,
         source: "client_answer",
         validation: pq.validation ?? null,
         condition: null,
         default_value: defaultValue,
+        answerable_from: verdict.answerableFrom,
+        prefill_value: verdict.prefillValue,
       };
       withRaw.push({ q, raw: pq.condition ?? null });
       return q;
@@ -3271,12 +3356,22 @@ async function generateCaseQuestionnaire(input: {
   config: QuestionnaireGenConfigRow;
   inputs: ResolvedInputs;
   alreadyCovered: string[];
+  /** Posture prompt fragment resolved from the case (Wave 2). */
+  posturePlaybook?: string | null;
+  /** Schema of the instance being replaced — lets question ids (and therefore the
+   *  client's existing answers) survive the regeneration. */
+  previousSchema?: QuestionnaireSchema | null;
 }): Promise<{ schema: QuestionnaireSchema; model: string; inputTokens: number; outputTokens: number; costUsd: number }> {
   const model = input.config.model || DEFAULT_GENERATION_MODEL;
+  // The exact text the model was shown IS the corpus every record_confirm claim
+  // is verified against — deriving it any other way would let a prefill validate
+  // against something the model never actually read.
+  const recordCorpus = buildQuestionGenContext(input.inputs, []);
+  const materializeOpts: MaterializeOptions = { previousSchema: input.previousSchema ?? null, recordCorpus };
   if (isAiStubEnabled()) {
-    return { schema: materializeProposalToSchema(QUESTIONNAIRE_STUB_PROPOSAL), model, inputTokens: 0, outputTokens: 0, costUsd: 0 };
+    return { schema: materializeProposalToSchema(QUESTIONNAIRE_STUB_PROPOSAL, materializeOpts), model, inputTokens: 0, outputTokens: 0, costUsd: 0 };
   }
-  const system = buildQuestionnaireGenSystem(input.config);
+  const system = buildQuestionnaireGenSystem(input.config, input.posturePlaybook);
   const user = buildQuestionGenContext(input.inputs, input.alreadyCovered) + questionGenOutputInstructions(input.config.target_question_count);
   try {
     const client = getAnthropicClient();
@@ -3284,7 +3379,7 @@ async function generateCaseQuestionnaire(input: {
     const parsed = stripFencesAndParse<{ groups?: ProposedGroup[] }>(r.text);
     const proposal: SegmentationProposal = { groups: Array.isArray(parsed?.groups) ? parsed.groups : [] };
     return {
-      schema: materializeProposalToSchema(proposal),
+      schema: materializeProposalToSchema(proposal, materializeOpts),
       model,
       inputTokens: r.usage.inputTokens,
       outputTokens: r.usage.outputTokens,
@@ -3364,32 +3459,36 @@ export function filterDraftAnswers(
   return drafts;
 }
 
-/** Gap-resolution addendum (autofill total, second pass): the questions passed
- *  could NOT be answered from the expediente — resolve them HONESTLY instead of
- *  leaving them blank, so the questionnaire reaches 100% coverage. */
-const QUESTIONNAIRE_GAP_RESOLUTION_ADDENDUM =
-  "\n\nMODO RESOLUCIÓN DE VACÍOS (segunda pasada): las preguntas listadas NO pudieron responderse desde el " +
-  "expediente. AHORA sí debes resolverlas TODAS, sin inventar hechos:\n" +
-  "- select/checkbox: si existe una opción negativa o de 'no aplica'/'no lo tengo', responde con el `value` EXACTO " +
-  "de esa opción (evidencia que no consta en el expediente = el cliente no la tiene por ahora).\n" +
-  "- text/textarea sobre evidencia o hechos que NO constan: escribe UNA frase honesta de no-disponibilidad en " +
-  "primera persona, p. ej. 'Por ahora no cuento con este documento.' o 'No tengo información adicional sobre esto.'\n" +
-  "- date/number sin dato en el expediente: cadena vacía (NUNCA inventes fechas ni cifras).\n" +
-  "La regla 1 (solo datos del expediente) sigue aplicando para cualquier afirmación de hechos.";
+/**
+ * REMOVED in Wave 1 — `QUESTIONNAIRE_GAP_RESOLUTION_ADDENDUM`.
+ *
+ * A second pass used to take every question the record could not answer and
+ * resolve it "honestly" so coverage would reach 100%. For free text that meant a
+ * first-person sentence like "Por ahora no cuento con este documento." In case
+ * U26-000038 it produced 15 of 25 answers; the completeness gate accepted them,
+ * staff approved the form, and those sentences flowed into the appeal brief as
+ * the client's own testimony about her hearing.
+ *
+ * The addendum is DELETED rather than moved behind a config flag: it existed only
+ * so the gate could close, and the gate no longer counts fabricated answers.
+ * The legitimate part of its job — picking a real negative option when the record
+ * shows the client has no such evidence — is already covered by `default_value`
+ * (validated against the question's real options in materializeProposalToSchema)
+ * and lands as `schema_default`, not as invented prose.
+ */
 
 /**
  * Drafts one grounded answer per client question from the same masked case
  * context the question generator used. Throws on provider failure — the caller
  * treats the whole pass as best-effort.
  *
- * `resolveGaps`: second-pass mode over the questions the grounded pass left
- * empty — negative options / honest unavailability phrasing instead of blanks.
+ * Single pass by design: a question the record cannot answer stays EMPTY and is
+ * surfaced to the client as theirs to answer.
  */
 async function generateQuestionnaireDraftAnswers(input: {
   config: QuestionnaireGenConfigRow;
   inputs: ResolvedInputs;
   questions: DraftableQuestion[];
-  resolveGaps?: boolean;
 }): Promise<{ drafts: Record<string, string>; inputTokens: number; outputTokens: number; costUsd: number }> {
   const model = input.config.model || DEFAULT_GENERATION_MODEL;
   if (isAiStubEnabled()) {
@@ -3406,10 +3505,9 @@ async function generateQuestionnaireDraftAnswers(input: {
   }
 
   const extra = input.config.draft_answers_prompt?.trim();
-  let system = extra
+  const system = extra
     ? `${QUESTIONNAIRE_DRAFT_SYSTEM_BASE}\n\nINSTRUCCIONES ADICIONALES DEL SERVICIO:\n${extra}`
     : QUESTIONNAIRE_DRAFT_SYSTEM_BASE;
-  if (input.resolveGaps) system += QUESTIONNAIRE_GAP_RESOLUTION_ADDENDUM;
   const user =
     buildQuestionGenContext(input.inputs, []) +
     "\n\n## PREGUNTAS A RESPONDER (redacta el borrador de cada una)\n" +
@@ -3689,7 +3787,26 @@ export async function executeQuestionnaireGenerationJob(payload: {
       ? await listPublishedQuestionTexts(instance.form_definition_id)
       : [];
 
-    const result = await generateCaseQuestionnaire({ config, inputs, alreadyCovered });
+    // Recover the schema of the instance this regeneration replaces so question
+    // ids — and the answers keyed off them — survive (D2b). The row the job fills
+    // is freshly inserted (startQuestionnaireGeneration bumps the version and
+    // flips is_current), so it starts schema-less; fall back to the previous
+    // version's schema. On a first-ever generation there is none, and every id is
+    // legitimately new.
+    const previousSchema = ((instance.schema as unknown) ??
+      (await findPreviousQuestionnaireSchema(
+        instance.case_id,
+        instance.form_definition_id,
+        instance.party_id ?? null,
+        instance.version,
+      ))) as QuestionnaireSchema | null;
+    // Posture is resolved on extraction.completed; read it here so a regeneration
+    // always reflects the latest known posture of the case.
+    const casesMod = (await import("@/backend/modules/cases")) as {
+      getCasePosturePlaybook: (caseId: string) => Promise<string | null>;
+    };
+    const posturePlaybook = await casesMod.getCasePosturePlaybook(instance.case_id);
+    const result = await generateCaseQuestionnaire({ config, inputs, alreadyCovered, previousSchema, posturePlaybook });
     if (result.schema.groups.length === 0) throw new Error("generator returned no questions");
 
     // Draft answers (autofill total) — over the FINAL question list: generated
@@ -3714,10 +3831,24 @@ export async function executeQuestionnaireGenerationJob(payload: {
           isRequired: q.is_required,
         })),
       );
-      // Generated questions with a schema default_value are already resolved
-      // deterministically — the gap pass must not spend tokens on them.
+      // Deterministically resolved already — no LLM budget spent on them, and
+      // their provenance is schema_default, not an AI draft.
       const defaultedIds = new Set(
         result.schema.groups.flatMap((g) => g.questions.filter((q) => q.default_value).map((q) => q.id)),
+      );
+      // Verified one-tap prefills (record_confirm): the client confirms these,
+      // so drafting prose for them would be wasted tokens and a second source of truth.
+      const prefilledIds = new Set(
+        result.schema.groups.flatMap((g) =>
+          g.questions.filter((q) => q.answerable_from === "record_confirm" && q.prefill_value).map((q) => q.id),
+        ),
+      );
+      // `client_only` lives solely in the client's memory. Asking the model for a
+      // draft can only produce a fabricated one — exactly the failure being fixed.
+      const clientOnlyIds = new Set(
+        result.schema.groups.flatMap((g) =>
+          g.questions.filter((q) => q.answerable_from === "client_only").map((q) => q.id),
+        ),
       );
       const baseQs: DraftableQuestion[] =
         config.mode === "hybrid"
@@ -3734,7 +3865,9 @@ export async function executeQuestionnaireGenerationJob(payload: {
               isRequired: q.is_required,
             }))
           : [];
-      const draftables = [...baseQs, ...generatedQs].filter((q) => q.question);
+      const draftables = [...baseQs, ...generatedQs].filter(
+        (q) => q.question && !clientOnlyIds.has(q.id) && !prefilledIds.has(q.id) && !defaultedIds.has(q.id),
+      );
       if (draftables.length > 0) {
         // 2 attempts with backoff — a transient Anthropic hiccup must not leave
         // the client typing everything by hand.
@@ -3743,31 +3876,12 @@ export async function executeQuestionnaireGenerationJob(payload: {
           try {
             const res = await generateQuestionnaireDraftAnswers({ config, inputs, questions: draftables });
             draftUsage = { inputTokens: res.inputTokens, outputTokens: res.outputTokens, costUsd: res.costUsd };
-            let drafts = res.drafts;
+            const drafts = res.drafts;
 
-            // Pass 2 — gap resolution: everything still uncovered (and without a
-            // deterministic default) gets a negative-option / honest-unavailability
-            // resolution, so coverage reaches 100%.
-            const uncovered = draftables.filter(
-              (q) => !(drafts[q.id]?.trim()) && !defaultedIds.has(q.id),
-            );
-            if (uncovered.length > 0) {
-              try {
-                const gap = await generateQuestionnaireDraftAnswers({
-                  config, inputs, questions: uncovered, resolveGaps: true,
-                });
-                draftUsage = {
-                  inputTokens: draftUsage.inputTokens + gap.inputTokens,
-                  outputTokens: draftUsage.outputTokens + gap.outputTokens,
-                  costUsd: draftUsage.costUsd + gap.costUsd,
-                };
-                // Grounded drafts win; gaps only fill what stayed empty.
-                drafts = { ...gap.drafts, ...drafts };
-              } catch (gapErr) {
-                logger.warn({ err: gapErr, instanceId: instance.id }, "ai-engine: gap-resolution pass failed (grounded drafts kept)");
-              }
-            }
-
+            // Wave 1: NO second pass. A question the record cannot answer stays
+            // empty and reaches the client as theirs to answer. Manufacturing a
+            // "no tengo información" sentence here is what let a 36%-covered
+            // questionnaire pass the gate and reach the appeal brief.
             draftAnswers = Object.keys(drafts).length > 0 ? drafts : null;
             draftsError = null;
             break;
@@ -3779,10 +3893,30 @@ export async function executeQuestionnaireGenerationJob(payload: {
       }
     }
 
+    // Provenance is written HERE and only here — the generation job is the single
+    // authoritative writer, so submit/edit paths can copy it without drift.
+    // Anything not listed stays absent, which reads as "unanswered" downstream.
+    const draftProvenance: Record<string, AnswerProvenance> = {};
+    for (const g of result.schema.groups) {
+      for (const q of g.questions) {
+        if (q.answerable_from === "record_confirm" && q.prefill_value) {
+          // Not answered yet: the client still has to tap Confirm. It becomes
+          // client_confirmed at that point (or client_edited if they correct it).
+          continue;
+        }
+        if (q.default_value) draftProvenance[q.id] = "schema_default";
+      }
+    }
+    for (const qid of Object.keys(draftAnswers ?? {})) {
+      // Every surviving draft came from the single grounded pass.
+      draftProvenance[qid] = "ai_grounded";
+    }
+
     await updateQuestionnaireInstance(instance.id, {
       status: "ready",
       schema: result.schema as unknown as import("@/shared/database.types").Json,
       draft_answers: draftAnswers as unknown as import("@/shared/database.types").Json,
+      draft_provenance: draftProvenance as unknown as import("@/shared/database.types").Json,
       model: result.model,
       input_tokens: result.inputTokens + draftUsage.inputTokens,
       output_tokens: result.outputTokens + draftUsage.outputTokens,
@@ -3851,6 +3985,49 @@ export async function getQuestionnaireInstanceAutofillValues(
     groups?: Array<{ questions?: Array<{ id: string; default_value?: string | null }> }>;
   } | null;
   const out: Record<string, string> = { ...drafts };
+  for (const g of schema?.groups ?? []) {
+    for (const q of g.questions ?? []) {
+      const dv = typeof q.default_value === "string" && q.default_value !== "" ? q.default_value : null;
+      if (dv && !(out[q.id] && out[q.id].trim() !== "")) out[q.id] = dv;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/**
+ * The subset of autofill that COUNTS as answered for the completeness gate.
+ *
+ * Deliberately NOT the same as {@link getQuestionnaireInstanceAutofillValues}:
+ * the wizard shows the client everything it has, but the gate certifies that a
+ * form is ready to be filed. Those are different questions, and conflating them
+ * is precisely how case U26-000038 was approved — the gate accepted 15 fabricated
+ * "Por ahora no cuento con información" sentences because they were present, not
+ * because anyone had answered.
+ *
+ * A value counts only when its provenance says so (see countsAsAnswered):
+ *  - `ai_gap_filled` never counts — it is fabricated by definition.
+ *  - `unknown` never counts — pre-migration rows are not evidence of an answer,
+ *    so legacy instances re-open for review instead of silently passing.
+ * Schema defaults always count: they are deterministic and were validated against
+ * the question's real options, so a checklist gated on one can still close.
+ */
+export async function getQuestionnaireInstanceAnsweredValues(
+  instanceId: string,
+): Promise<Record<string, string> | null> {
+  const inst = await findQuestionnaireInstanceById(instanceId);
+  if (!inst) return null;
+  const drafts = ((inst.draft_answers ?? null) as Record<string, string> | null) ?? {};
+  const provenance = parseProvenanceMap(inst.draft_provenance);
+  const schema = (inst.schema ?? null) as {
+    groups?: Array<{ questions?: Array<{ id: string; default_value?: string | null }> }>;
+  } | null;
+
+  const out: Record<string, string> = {};
+  for (const [qid, value] of Object.entries(drafts)) {
+    if (typeof value !== "string" || value.trim() === "") continue;
+    if (!countsAsAnswered(provenance[qid] ?? "unknown")) continue;
+    out[qid] = value;
+  }
   for (const g of schema?.groups ?? []) {
     for (const q of g.questions ?? []) {
       const dv = typeof q.default_value === "string" && q.default_value !== "" ? q.default_value : null;
@@ -3999,6 +4176,16 @@ export interface ProposedQuestion {
   /** Deterministic autofill: negative/"no aplica" option value for availability
    *  questions the expediente cannot answer (validated against options). */
   default_value?: string | null;
+  /**
+   * Wave 1 / D2 — the model's CLAIM about where this question can be answered
+   * from ('record_confirm' | 'record' | 'client_only'). Never trusted as-is:
+   * `resolveAnswerableFrom` verifies it against the record and may only degrade it.
+   */
+  answerable_from?: string;
+  /** Proposed one-tap answer for a `record_confirm` claim. Verified in code. */
+  prefill_value?: string | null;
+  /** Verbatim spans the model claims back `prefill_value`. Checked against the record. */
+  evidence_refs?: EvidenceRef[] | null;
   /**
    * Conditional/dynamic visibility. `when.question` references ANOTHER question's
    * `key` (the materializer resolves key → question_id). Used for the Sí/No →

@@ -1449,3 +1449,90 @@ export function isFkViolation(err: unknown): boolean {
   const e = err as { code?: string; message?: string };
   return e.code === "23503";
 }
+
+// ---------------------------------------------------------------------------
+// Procedural posture (Wave 2 / D3) — config-as-data, evaluated deterministically
+// ---------------------------------------------------------------------------
+
+/**
+ * How a case was actually decided, which governs what it is even possible to ask
+ * the client about.
+ *
+ * Case U26-000038 was decided by PRETERMISSION — the judge granted DHS's motion
+ * and never reached the merits. No credibility finding, no particular-social-group
+ * analysis and no relocation analysis exist anywhere in the record. The question
+ * generator, unaware of this, produced merits-appeal questions that were
+ * unanswerable BY CONSTRUCTION, the drafting pass could not answer them, and the
+ * old gap-filler papered over the hole. Naming the posture is what stops that at
+ * the source.
+ *
+ * Deliberately narrow, so a declarative rule set cannot rot into a rules engine.
+ * A posture may do exactly three things:
+ *   1. add required source documents,
+ *   2. inject a prompt fragment into the question playbook,
+ *   3. set flags.
+ * No priorities, no ordering, no nested logic — and detection reads STRUCTURED
+ * extraction fields, never regex over raw_text.
+ */
+export type PostureOperator = "equals" | "not_equals" | "is_true" | "is_false" | "in";
+
+export interface PostureCondition {
+  /** Top-level key of the decision document's extraction payload. */
+  field: string;
+  op: PostureOperator;
+  value?: unknown;
+}
+
+export interface PostureRule {
+  slug: string;
+  /** Flat AND. An empty list never matches — a catch-all posture is a bug. */
+  conditions: PostureCondition[];
+  /** Documents this posture makes mandatory (drives the hard source gate). */
+  requiredSourceSlugs: string[];
+  /** Extra instructions appended to the question-generation system prompt. */
+  questionPlaybookPrompt: string | null;
+}
+
+function evalCondition(payload: Record<string, unknown>, c: PostureCondition): boolean {
+  const present = Object.prototype.hasOwnProperty.call(payload, c.field);
+  const actual = payload[c.field];
+  switch (c.op) {
+    case "equals":
+      return present && actual === c.value;
+    // Absence is not a value: an extraction that never produced the field cannot
+    // be said to differ from anything.
+    case "not_equals":
+      return present && actual !== c.value;
+    // Strict booleans only. `"false"` and `0` are extraction noise, not answers.
+    case "is_true":
+      return actual === true;
+    case "is_false":
+      return actual === false;
+    case "in":
+      return present && Array.isArray(c.value) && c.value.includes(actual);
+    default:
+      return false; // unknown operator → never matches
+  }
+}
+
+/**
+ * Picks the posture a decision's extraction payload satisfies.
+ *
+ * Precedence is SPECIFICITY (number of conditions), computed here in code —
+ * never a priority column, which is how such tables become unmaintainable. Ties
+ * break by slug so the same payload always yields the same posture across runs.
+ * Returns null when nothing matches: the caller must surface "unknown posture",
+ * never guess one.
+ */
+export function detectPosture(
+  payload: Record<string, unknown>,
+  rules: PostureRule[],
+): PostureRule | null {
+  const matches = rules.filter(
+    (r) => r.conditions.length > 0 && r.conditions.every((c) => evalCondition(payload, c)),
+  );
+  if (matches.length === 0) return null;
+  return matches.sort(
+    (a, b) => b.conditions.length - a.conditions.length || a.slug.localeCompare(b.slug),
+  )[0];
+}

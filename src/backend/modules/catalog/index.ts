@@ -9,6 +9,9 @@
 
 // Runtime resolution (consumed by: cases, contracts, ai-engine)
 export {
+  // Procedural posture (Wave 2 — consumed by cases on extraction.completed)
+  resolvePostureForService,
+  getPostureBySlug,
   getCaseRequirements,
   getPublicCatalog,
   getServiceDetailBySlug,

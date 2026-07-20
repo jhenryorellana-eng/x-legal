@@ -221,6 +221,19 @@ export async function listPhases(serviceId: string): Promise<ServicePhaseRow[]> 
   return data ?? [];
 }
 
+/** Active procedural postures of a service, for deterministic posture detection. */
+export async function listServicePostures(
+  serviceId: string,
+): Promise<Array<Tables<"service_postures">>> {
+  const { data, error } = await db()
+    .from("service_postures")
+    .select("*")
+    .eq("service_id", serviceId)
+    .eq("is_active", true);
+  if (error) throw new Error(`catalog.repo.listServicePostures: ${error.message}`);
+  return data ?? [];
+}
+
 export async function findPhaseById(id: string): Promise<ServicePhaseRow | null> {
   const { data } = await db().from("service_phases").select("*").eq("id", id).maybeSingle();
   return data;

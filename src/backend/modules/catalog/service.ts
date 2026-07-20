@@ -18,6 +18,7 @@ import { writeAudit } from "@/backend/modules/audit";
 import { PROFILE_SOURCE_FIELDS } from "@/shared/constants/profile-fields";
 import { isPartyRoleKey } from "@/shared/constants/party-roles";
 import { GENERATION_MODELS } from "@/shared/constants/ai-models";
+import { detectPosture, type PostureCondition, type PostureRule } from "./domain";
 import { deriveFieldState, parseConditionOrNull, type QuestionCondition } from "@/shared/form-logic/conditions";
 import { resolveEmptyPolicy, type VersionEmptyPolicy, type FieldEmptyPolicy } from "@/shared/form-logic/empty-policy";
 import type { ProposedQuestion } from "@/backend/modules/ai-engine";
@@ -3511,5 +3512,85 @@ export async function getDatasetDetail(
     },
     items: items as unknown as DatasetItem[],
     usage,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Procedural posture (Wave 2 / D3)
+// ---------------------------------------------------------------------------
+
+export interface ResolvedPosture {
+  slug: string;
+  labelI18n: { es?: string; en?: string };
+  /** Appended to the question-generation system prompt. This is the ONLY thing a
+   *  posture does: shape the questions. Documents are ordinary catalog requirements. */
+  questionPlaybookPrompt: string | null;
+}
+
+/** Parses a stored `detection` jsonb into typed conditions, dropping malformed ones. */
+function parseDetection(raw: unknown): PostureCondition[] {
+  if (!Array.isArray(raw)) return [];
+  const out: PostureCondition[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const c = item as { field?: unknown; op?: unknown; value?: unknown };
+    if (typeof c.field !== "string" || !c.field) continue;
+    if (typeof c.op !== "string") continue;
+    out.push({ field: c.field, op: c.op as PostureCondition["op"], value: c.value });
+  }
+  return out;
+}
+
+/**
+ * Resolves a case's procedural posture from an already-extracted decision payload.
+ *
+ * Read-only and deterministic: the same payload always yields the same posture.
+ * Returns null when nothing matches — "unknown posture" is a real answer that the
+ * caller must surface, and guessing one is how a case ends up being asked
+ * questions about a decision that was never made.
+ *
+ * @api-id (internal — consumed by cases on extraction.completed)
+ */
+export async function resolvePostureForService(input: {
+  serviceId: string;
+  /** Slug of the document whose extraction payload is being evaluated. */
+  documentSlug: string;
+  extractionPayload: Record<string, unknown>;
+}): Promise<ResolvedPosture | null> {
+  const rows = await repo.listServicePostures(input.serviceId);
+  const rules: PostureRule[] = rows
+    // A posture only ever reads the document it declares, so an unrelated
+    // extraction landing first cannot mis-trigger it.
+    .filter((r) => r.source_document_slug === input.documentSlug)
+    .map((r) => ({
+      slug: r.slug,
+      conditions: parseDetection(r.detection),
+      requiredSourceSlugs: r.required_source_slugs ?? [],
+      questionPlaybookPrompt: r.question_playbook_prompt,
+    }));
+
+  const match = detectPosture(input.extractionPayload, rules);
+  if (!match) return null;
+
+  const row = rows.find((r) => r.slug === match.slug);
+  return {
+    slug: match.slug,
+    labelI18n: (row?.label_i18n ?? {}) as { es?: string; en?: string },
+    questionPlaybookPrompt: match.questionPlaybookPrompt,
+  };
+}
+
+/** Looks up a posture by slug (used once it is already stored on the case). */
+export async function getPostureBySlug(
+  serviceId: string,
+  slug: string,
+): Promise<ResolvedPosture | null> {
+  const rows = await repo.listServicePostures(serviceId);
+  const row = rows.find((r) => r.slug === slug);
+  if (!row) return null;
+  return {
+    slug: row.slug,
+    labelI18n: (row.label_i18n ?? {}) as { es?: string; en?: string },
+    questionPlaybookPrompt: row.question_playbook_prompt,
   };
 }

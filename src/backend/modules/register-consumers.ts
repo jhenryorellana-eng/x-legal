@@ -11,7 +11,7 @@
 
 import { appEvents } from "@/backend/platform/events";
 import { logger } from "@/backend/platform/logger";
-import { onDownpaymentConfirmed, onExpedienteSentToFinanceCase, onExpedientePrintedCase, appendAppointmentTimeline, enqueueAiPrefillWarm } from "@/backend/modules/cases";
+import { onDownpaymentConfirmed, onExpedienteSentToFinanceCase, onExpedientePrintedCase, appendAppointmentTimeline, enqueueAiPrefillWarm, applyPostureToCase } from "@/backend/modules/cases";
 import { notifyFromEvent } from "@/backend/modules/notifications";
 import {
   onCaseOwnerChanged,
@@ -23,7 +23,7 @@ import {
 } from "@/backend/modules/kanban";
 import { onContractSigned as onContractSignedBilling } from "@/backend/modules/billing";
 import { ensureCaseConversation, syncCaseParticipants, postSystemMessage } from "@/backend/modules/messaging";
-import { registerAiEngineConsumers, flagQuestionnairesOnNewEvidence } from "@/backend/modules/ai-engine";
+import { registerAiEngineConsumers, flagQuestionnairesOnNewEvidence, enqueueLexReindex } from "@/backend/modules/ai-engine";
 import { captureFromRun } from "@/backend/modules/exhibits";
 import { attachReadyExhibits } from "@/backend/modules/expediente";
 import { registerIntegrationsConsumers } from "@/backend/modules/integrations";
@@ -124,7 +124,16 @@ export function registerConsumers(): void {
   // (Same case-level-only gap as document.approved above.)
   appEvents.on("extraction.completed", async (event) => {
     const p = (event.payload ?? {}) as { caseId?: string };
-    if (p.caseId) await enqueueAiPrefillWarm(p.caseId, null);
+    if (!p.caseId) return;
+    // Posture FIRST: it governs what the questionnaire may even ask, so it must be
+    // resolved before any generation reads the case. Best-effort by design.
+    await applyPostureToCase(p.caseId);
+    await enqueueAiPrefillWarm(p.caseId, null);
+    // Re-index Lex now that a document's text exists. document.uploaded already
+    // enqueues a reindex, but that races the extraction; firing here too GUARANTEES
+    // a freshly-extracted document (e.g. the DHS Motion to Pretermit) becomes
+    // readable by every staff member's Lex chat without waiting for the next event.
+    await enqueueLexReindex(p.caseId);
   });
 
   // document.rejected → notify client

@@ -24,6 +24,7 @@ import { createServiceClient } from "@/backend/platform/supabase";
 import { logger } from "@/backend/platform/logger";
 import { toVectorLiteral } from "@/backend/platform/embeddings";
 import { DEFAULT_TZ } from "@/shared/period";
+import { parseProvenanceMap } from "@/shared/constants/answer-provenance";
 import type { Tables, TablesInsert, TablesUpdate } from "@/shared/database.types";
 import type { ConfigSnapshot, ChunkProgress, SectionedProgress, DatasetItem } from "./domain";
 
@@ -99,6 +100,34 @@ export async function findCurrentQuestionnaireInstance(
   q = partyId ? q.eq("party_id", partyId) : q.is("party_id", null);
   const { data } = await q.maybeSingle();
   return data ?? null;
+}
+
+/**
+ * Schema of the most recent PRIOR instance for (case, form, party) — the one a
+ * regeneration is replacing. `startQuestionnaireGeneration` inserts a fresh row
+ * (new version, is_current=true) and flips the old one to is_current=false, so the
+ * row the job fills starts schema-less; this recovers the previous schema so
+ * question_key reuse can keep the client's answers from being orphaned (D2b).
+ */
+export async function findPreviousQuestionnaireSchema(
+  caseId: string,
+  formDefinitionId: string,
+  partyId: string | null,
+  beforeVersion: number,
+): Promise<unknown | null> {
+  const client = createServiceClient();
+  let q = client
+    .from("case_questionnaire_instances")
+    .select("schema, version")
+    .eq("case_id", caseId)
+    .eq("form_definition_id", formDefinitionId)
+    .lt("version", beforeVersion)
+    .not("schema", "is", null)
+    .order("version", { ascending: false })
+    .limit(1);
+  q = partyId ? q.eq("party_id", partyId) : q.is("party_id", null);
+  const { data } = await q.maybeSingle();
+  return (data as { schema?: unknown } | null)?.schema ?? null;
 }
 
 export async function findQuestionnaireInstanceById(
@@ -1324,6 +1353,8 @@ export async function loadResolvedInputs(snapshot: ConfigSnapshot): Promise<{
   forms: Array<{
     slug: string;
     answers: Record<string, unknown>;
+    /** Questions whose answer was withheld as AI-fabricated (see the loop below). */
+    declaredGaps: string[];
   }>;
 }> {
   const client = createServiceClient();
@@ -1371,7 +1402,7 @@ export async function loadResolvedInputs(snapshot: ConfigSnapshot): Promise<{
   for (const formRef of snapshot.resolved_inputs.forms) {
     const { data } = await client
       .from("case_form_responses")
-      .select("answers")
+      .select("answers, answer_provenance")
       .eq("id", formRef.response_id)
       .maybeSingle();
 
@@ -1380,11 +1411,26 @@ export async function loadResolvedInputs(snapshot: ConfigSnapshot): Promise<{
       // Re-key by human-readable question text so the prompt reads
       // "¿Pregunta?: respuesta" instead of "uuid: respuesta" (the AI needs wording).
       const labels = await loadQuestionLabelsForResponse(formRef.response_id);
+      const provenance = parseProvenanceMap(data.answer_provenance);
       const answers: Record<string, unknown> = {};
+      const declaredGaps: string[] = [];
       for (const [questionId, value] of Object.entries(rawAnswers)) {
-        answers[labels.get(questionId) ?? questionId] = value;
+        const label = labels.get(questionId) ?? questionId;
+        // Excludes ONLY what we know was fabricated — deliberately stricter than
+        // the completeness gate, which also blocks on `unknown`.
+        //
+        // The asymmetry is the point. Blocking an `unknown` costs a review and is
+        // reversible; DROPPING one would delete real client testimony because of a
+        // migration artifact (0095 backfilled every pre-existing answer to
+        // `unknown`, including the 9 genuinely grounded ones in the real case).
+        // Over-blocking is cheap; over-deleting destroys evidence.
+        if ((provenance[questionId] ?? "unknown") === "ai_gap_filled") {
+          declaredGaps.push(label);
+          continue;
+        }
+        answers[label] = value;
       }
-      forms.push({ slug: formRef.slug, answers });
+      forms.push({ slug: formRef.slug, answers, declaredGaps });
     }
   }
 

@@ -58,6 +58,10 @@ const {
   mockGetCurrentQuestionnaireInstance,
   mockGetQuestionnaireClientState,
   mockGetQuestionnaireInstanceDrafts,
+  mockGetQuestionnaireInstanceSchemaQuestions,
+  mockFindCaseByIdSystem,
+  mockListUploadedRequirementSlugs,
+  mockGetPostureBySlug,
   mockMergeFormAnswersIfEmpty,
   // audit mocks
   mockWriteAudit,
@@ -95,6 +99,10 @@ const {
   mockGetCurrentQuestionnaireInstance: vi.fn().mockResolvedValue(null),
   mockGetQuestionnaireClientState: vi.fn(),
   mockGetQuestionnaireInstanceDrafts: vi.fn().mockResolvedValue(null),
+  mockGetQuestionnaireInstanceSchemaQuestions: vi.fn().mockResolvedValue(null),
+  mockFindCaseByIdSystem: vi.fn().mockResolvedValue(null),
+  mockListUploadedRequirementSlugs: vi.fn().mockResolvedValue([]),
+  mockGetPostureBySlug: vi.fn().mockResolvedValue(null),
   mockMergeFormAnswersIfEmpty: vi.fn().mockResolvedValue(null),
   mockWriteAudit: vi.fn().mockResolvedValue(undefined),
   mockAppendCaseTimeline: vi.fn().mockResolvedValue(undefined),
@@ -134,6 +142,12 @@ vi.mock("@/backend/modules/audit", () => ({
 }));
 
 vi.mock("../repository", () => ({
+  // Wave 2 — posture source gate
+  findCaseByIdSystem: mockFindCaseByIdSystem,
+  listUploadedRequirementSlugs: mockListUploadedRequirementSlugs,
+  findExtractionPayloadBySlug: vi.fn().mockResolvedValue(null),
+  updateCasePosture: vi.fn().mockResolvedValue(undefined),
+  listServicePosturesForService: vi.fn().mockResolvedValue([]),
   // Existing repo functions (stubs for tests not under test here)
   findCaseById: vi.fn().mockResolvedValue(null),
   findCaseByCaseId: vi.fn().mockResolvedValue(null),
@@ -193,6 +207,9 @@ vi.mock("@/backend/modules/catalog", () => ({
   listQuestions: mockListQuestions,
   getCaseRequirements: vi.fn(),
   getCatalogFirstPhase: vi.fn(),
+  // Wave 2 — posture lookups (source gate + question playbook)
+  getPostureBySlug: mockGetPostureBySlug,
+  resolvePostureForService: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("@/backend/platform/storage", () => ({
@@ -221,9 +238,17 @@ vi.mock("@/backend/modules/ai-engine", () => ({
   getCurrentQuestionnaireInstance: mockGetCurrentQuestionnaireInstance,
   getQuestionnaireClientState: mockGetQuestionnaireClientState,
   getQuestionnaireInstanceDrafts: mockGetQuestionnaireInstanceDrafts,
+  getQuestionnaireInstanceSchemaQuestions: mockGetQuestionnaireInstanceSchemaQuestions,
   // Autofill total: drafts ∪ schema default_values. The submit path consumes
   // THIS one; same mock fn keeps the provenance assertions unchanged.
   getQuestionnaireInstanceAutofillValues: mockGetQuestionnaireInstanceDrafts,
+  // The COMPLETENESS gate consumes this stricter, provenance-filtered variant.
+  // Aliased to the same fn here on purpose: these fixtures predate the split and
+  // their drafts all represent legitimately grounded answers, so the gate should
+  // see them. The filtering itself is unit-tested in ai-engine, where it lives.
+  // It MUST stay bound — the gate now fails closed, so an unbound name would
+  // block every approve instead of silently skipping the check.
+  getQuestionnaireInstanceAnsweredValues: mockGetQuestionnaireInstanceDrafts,
 }));
 
 vi.mock("@/backend/platform/crypto", () => ({
@@ -496,7 +521,7 @@ describe("validateAnswerTypes", () => {
 // Service: saveFormDraft
 // ---------------------------------------------------------------------------
 
-import { saveFormDraft, staffUpdateFormAnswers, submitFormResponse, approveFormResponse, generateFilledPdf, resolveFormResponseFieldValues, resolveBySource, resolveAiFields, getCaseExtractions, getFormForClient } from "../service";
+import { saveFormDraft, staffUpdateFormAnswers, submitFormResponse, approveFormResponse, generateFilledPdf, resolveFormResponseFieldValues, resolveBySource, resolveAiFields, getCaseExtractions, getFormForClient, reopenQuestionnaireForClientInput } from "../service";
 
 describe("saveFormDraft", () => {
   beforeEach(() => {
@@ -2971,5 +2996,158 @@ describe("submitFormResponse — fully-prefilled form with NO prior response (fo
       RESPONSE_ID,
       expect.objectContaining({ status: "submitted" }),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Wave 1 — reopenQuestionnaireForClientInput
+// ---------------------------------------------------------------------------
+
+describe("completeness gate — fails CLOSED when the questionnaire check breaks", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCan.mockReturnValue(undefined);
+    mockRequireCaseAccess.mockResolvedValue(undefined);
+  });
+
+  it("blocks approve instead of certifying the form when the check throws", async () => {
+    // Regression. This check used to be wrapped in a try/catch that only did
+    // logger.warn(..."skipped"), so ANY error in it made the form pass as
+    // complete — the gate silently dropping the very thing it exists to verify.
+    // The bug hid in plain sight: when the ai-engine binding was momentarily
+    // missing, 848 tests stayed green while the questionnaire was never checked.
+    mockFindFormResponseById.mockResolvedValue({
+      ...submittedResponse,
+      questionnaire_instance_id: "33333333-3333-4333-8333-333333333333",
+    });
+    mockGetQuestionnaireInstanceSchemaQuestions.mockRejectedValue(new Error("ai-engine unavailable"));
+
+    await expect(
+      approveFormResponse(staffActor, { responseId: RESPONSE_ID }),
+    ).rejects.toThrow("FORM_INCOMPLETE");
+
+    expect(mockUpdateFormResponse).not.toHaveBeenCalledWith(
+      RESPONSE_ID,
+      expect.objectContaining({ status: "approved" }),
+    );
+  });
+});
+
+describe("reopenQuestionnaireForClientInput", () => {
+  const INSTANCE_ID_R = "22222222-2222-4222-8222-222222222222";
+
+  /** An approved response shaped like the real case: nothing the client wrote. */
+  function reopenable(answers: Record<string, unknown>, provenance: Record<string, string>) {
+    return {
+      ...approvedResponse,
+      questionnaire_instance_id: INSTANCE_ID_R,
+      answers,
+      answer_provenance: provenance,
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCan.mockReturnValue(undefined);
+    mockRequireCaseAccess.mockResolvedValue(undefined);
+  });
+
+  it("clears fabricated answers, KEEPS the real ones, and hands the form back", async () => {
+    mockFindFormResponseById.mockResolvedValue(
+      reopenable(
+        { good: "Testimonio real de la clienta.", filler: "Por ahora no cuento con información." },
+        { good: "ai_grounded", filler: "ai_gap_filled" },
+      ),
+    );
+
+    const out = await reopenQuestionnaireForClientInput(staffActor, { responseId: RESPONSE_ID });
+
+    expect(out.clearedQuestionIds).toEqual(["filler"]);
+    expect(out.keptCount).toBe(1);
+    expect(mockUpdateFormResponse).toHaveBeenCalledWith(
+      RESPONSE_ID,
+      expect.objectContaining({
+        status: "rejected",
+        answers: { good: "Testimonio real de la clienta." },
+        answer_provenance: { good: "ai_grounded" },
+        // A previous override must never survive: the new state needs a new signature.
+        low_coverage_ack: null,
+      }),
+    );
+  });
+
+  it("clears legacy 'unknown' answers — the state migration 0095 left the real case in", async () => {
+    const answers: Record<string, unknown> = {};
+    const provenance: Record<string, string> = {};
+    for (let i = 0; i < 25; i++) {
+      answers["q" + i] = "texto " + i;
+      provenance["q" + i] = "unknown";
+    }
+    mockFindFormResponseById.mockResolvedValue(reopenable(answers, provenance));
+
+    const out = await reopenQuestionnaireForClientInput(staffActor, { responseId: RESPONSE_ID });
+
+    expect(out.clearedQuestionIds).toHaveLength(25);
+    expect(out.keptCount).toBe(0);
+  });
+
+  it("never clears what the client authored", async () => {
+    mockFindFormResponseById.mockResolvedValue(
+      reopenable(
+        { typed: "Lo escribí yo", tapped: "Confirmado", def: "no_new_evidence", bad: "relleno" },
+        { typed: "client_edited", tapped: "client_confirmed", def: "schema_default", bad: "ai_gap_filled" },
+      ),
+    );
+
+    const out = await reopenQuestionnaireForClientInput(staffActor, { responseId: RESPONSE_ID });
+
+    expect(out.clearedQuestionIds).toEqual(["bad"]);
+    expect(out.keptCount).toBe(3);
+  });
+
+  it("notifies the client and writes an audit trail of what was cleared", async () => {
+    mockFindFormResponseById.mockResolvedValue(reopenable({ a: "x" }, { a: "ai_gap_filled" }));
+
+    await reopenQuestionnaireForClientInput(staffActor, { responseId: RESPONSE_ID });
+
+    expect(mockAppendCaseTimeline).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "form_response.rejected", visibleToClient: true }),
+    );
+    expect(mockWriteAudit).toHaveBeenCalledWith(
+      staffActor,
+      "case.form_response.reopened",
+      "case_form_responses",
+      RESPONSE_ID,
+      { clearedQuestionIds: ["a"], keptCount: 0 },
+    );
+  });
+
+  it("refuses a response that is not a questionnaire", async () => {
+    mockFindFormResponseById.mockResolvedValue({ ...approvedResponse, questionnaire_instance_id: null });
+
+    await expect(
+      reopenQuestionnaireForClientInput(staffActor, { responseId: RESPONSE_ID }),
+    ).rejects.toThrow("FORM_NOT_SUBMITTABLE");
+  });
+
+  it("refuses a draft response (nothing to hand back yet)", async () => {
+    mockFindFormResponseById.mockResolvedValue({
+      ...draftResponse,
+      questionnaire_instance_id: INSTANCE_ID_R,
+    });
+
+    await expect(
+      reopenQuestionnaireForClientInput(staffActor, { responseId: RESPONSE_ID }),
+    ).rejects.toThrow("FORM_NOT_SUBMITTABLE");
+  });
+
+  it("enforces the cross-tenant guard before touching anything", async () => {
+    mockFindFormResponseById.mockResolvedValue(reopenable({ a: "x" }, { a: "ai_gap_filled" }));
+    mockRequireCaseAccess.mockRejectedValue(new Error("FORBIDDEN"));
+
+    await expect(
+      reopenQuestionnaireForClientInput(staffActor, { responseId: RESPONSE_ID }),
+    ).rejects.toThrow("FORBIDDEN");
+    expect(mockUpdateFormResponse).not.toHaveBeenCalled();
   });
 });

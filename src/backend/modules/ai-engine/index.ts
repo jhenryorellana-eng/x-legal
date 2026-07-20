@@ -50,6 +50,7 @@ export {
   getQuestionnaireClientState,
   getQuestionnaireInstanceDrafts,
   getQuestionnaireInstanceAutofillValues,
+  getQuestionnaireInstanceAnsweredValues,
   getQuestionnaireInstanceSchemaQuestions,
   evaluateQuestionnairePrereqs,
   materializeProposalToSchema,
@@ -194,4 +195,4 @@ export type {
   ExtractionCompletedPayload,
 } from "./events";
 
-export { registerAiEngineConsumers } from "./events";
+export { registerAiEngineConsumers, enqueueLexReindex } from "./events";

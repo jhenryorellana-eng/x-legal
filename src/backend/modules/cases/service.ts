@@ -32,6 +32,7 @@ import { writeAudit, appendCaseTimeline } from "@/backend/modules/audit";
 
 import type { TablesUpdate } from "@/shared/database.types";
 import { PRINCIPAL_ROLE_KEY } from "@/shared/constants/party-roles";
+import { countsAsAnswered, parseProvenanceMap } from "@/shared/constants/answer-provenance";
 import { parseConditionOrNull, deriveFieldState, type QuestionCondition } from "@/shared/form-logic/conditions";
 import { normalizeAiFieldText, buildAiFieldInstruction } from "@/shared/form-logic/ai-field-format";
 import {
@@ -71,6 +72,9 @@ import {
 import {
   findCaseById,
   findCaseByIdSystem,
+  findExtractionPayloadBySlug,
+  updateCasePosture,
+  listServicePosturesForService,
   findCaseByCaseId,
   findCaseByContractId,
   nextCaseNumber,
@@ -5650,15 +5654,17 @@ async function computeFormResponseCompleteness(
           validation: unknown;
           condition: unknown;
         }> | null>;
-        getQuestionnaireInstanceAutofillValues: (instanceId: string) => Promise<Record<string, string> | null>;
+        getQuestionnaireInstanceAnsweredValues: (instanceId: string) => Promise<Record<string, string> | null>;
       };
       const schemaQs = await aiEngine.getQuestionnaireInstanceSchemaQuestions(response.questionnaire_instance_id);
       if (schemaQs && schemaQs.length > 0) {
-        // Not-yet-materialized autofill (drafts + "no aplica" defaults) counts
-        // as answered — materialization happens at submit, but the gate must
-        // agree with what the wizard shows.
+        // Not-yet-materialized autofill counts as answered ONLY when its
+        // provenance earns it (grounded draft, verified prefill, schema default).
+        // This deliberately diverges from what the wizard displays: approving is
+        // certifying that every required field really resolves, and a fabricated
+        // "no tengo información" is the absence of an answer, not an answer.
         const autofill =
-          (await aiEngine.getQuestionnaireInstanceAutofillValues(response.questionnaire_instance_id)) ?? {};
+          (await aiEngine.getQuestionnaireInstanceAnsweredValues(response.questionnaire_instance_id)) ?? {};
         const effective: Record<string, unknown> = { ...answers };
         for (const [qid, v] of Object.entries(autofill)) {
           if (isEmpty(effective[qid])) effective[qid] = v;
@@ -5671,7 +5677,13 @@ async function computeFormResponseCompleteness(
         }
       }
     } catch (err) {
-      logger.warn({ err, responseId: response.id }, "completeness: questionnaire schema check failed (skipped)");
+      // FAIL CLOSED. This used to warn and skip, which meant any error in the
+      // questionnaire check silently certified the form as complete — the gate
+      // dropping precisely the part it exists to verify. Approving is attesting
+      // that every required field resolves; if we cannot verify that, we must not
+      // attest it.
+      logger.error({ err, responseId: response.id }, "completeness: questionnaire schema check failed (blocking)");
+      missing.push({ questionId: response.questionnaire_instance_id, label: "Cuestionario (no verificable)" });
     }
   }
 
@@ -5829,6 +5841,199 @@ export async function rejectFormResponse(
     response.id,
     { after: { status: "rejected" } },
   );
+}
+
+// ---------------------------------------------------------------------------
+// Wave 2 — procedural posture (D3)
+// ---------------------------------------------------------------------------
+
+type CatalogPostureApi = {
+  resolvePostureForService: (input: {
+    serviceId: string;
+    documentSlug: string;
+    extractionPayload: Record<string, unknown>;
+  }) => Promise<{ slug: string; questionPlaybookPrompt: string | null } | null>;
+  getPostureBySlug: (
+    serviceId: string,
+    slug: string,
+  ) => Promise<{ slug: string; questionPlaybookPrompt: string | null } | null>;
+};
+
+/**
+ * Re-resolves a case's procedural posture from its decision extraction and stores
+ * it on the case. Idempotent, deterministic, best-effort (event path — never throws).
+ *
+ * Runs on `extraction.completed`: the posture governs what it is even possible to
+ * ask the client, so it must be known before the questionnaire is generated.
+ * A null result is STORED as null — "unknown posture" is a real answer, and the
+ * cost of guessing one is a questionnaire full of unanswerable questions.
+ */
+export async function applyPostureToCase(caseId: string): Promise<string | null> {
+  try {
+    const kase = await findCaseByIdSystem(caseId);
+    if (!kase?.service_id) return null;
+
+    const catalog = (await import("@/backend/modules/catalog")) as unknown as CatalogPostureApi;
+    const postures = await listServicePosturesForService(kase.service_id);
+    if (postures.length === 0) return null;
+
+    // Each posture declares the single document it reads, so an unrelated
+    // extraction landing first cannot mis-trigger one.
+    for (const documentSlug of new Set(postures.map((p) => p.sourceDocumentSlug))) {
+      const payload = await findExtractionPayloadBySlug(caseId, documentSlug);
+      if (!payload) continue;
+      const match = await catalog.resolvePostureForService({
+        serviceId: kase.service_id,
+        documentSlug,
+        extractionPayload: payload,
+      });
+      if (!match) continue;
+      if (kase.detected_posture !== match.slug) {
+        await updateCasePosture(caseId, match.slug);
+      }
+      return match.slug;
+    }
+    return null;
+  } catch (err) {
+    logger.warn({ err, caseId }, "posture: detection failed (case left unchanged)");
+    return null;
+  }
+}
+
+/**
+ * The posture's prompt fragment for a case, or null. Consumed by the questionnaire
+ * generator so a pretermission case is never asked what the judge found on the
+ * merits — a decision that does not exist.
+ */
+export async function getCasePosturePlaybook(caseId: string): Promise<string | null> {
+  try {
+    const kase = await findCaseByIdSystem(caseId);
+    if (!kase?.service_id || !kase.detected_posture) return null;
+    const catalog = (await import("@/backend/modules/catalog")) as unknown as CatalogPostureApi;
+    const posture = await catalog.getPostureBySlug(kase.service_id, kase.detected_posture);
+    return posture?.questionPlaybookPrompt ?? null;
+  } catch (err) {
+    logger.warn({ err, caseId }, "posture: playbook lookup failed");
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Wave 1 — reopen a questionnaire whose answers were never really answered
+// ---------------------------------------------------------------------------
+
+const ReopenQuestionnaireSchema = z.object({
+  responseId: zUuid,
+  reason: z
+    .object({
+      en: z.string().trim().optional(),
+      es: z.string().trim().optional(),
+    })
+    .optional(),
+  correctionDueAt: z.string().nullable().optional(),
+});
+
+export type ReopenQuestionnaireInput = z.infer<typeof ReopenQuestionnaireSchema>;
+
+/**
+ * Returns a questionnaire response to the client, CLEARING every answer that does
+ * not count as answered while keeping its question id.
+ *
+ * Why this exists. Before Wave 1 a second AI pass fabricated an answer for every
+ * question the record could not cover, the completeness gate accepted it, and the
+ * form was approved. Case U26-000038 was approved with 15 of 25 answers reading
+ * "Por ahora no cuento con información" in the client's own voice. Hardening the
+ * gate alone would leave such a case stuck: it can no longer be approved, and
+ * nothing can hand it back.
+ *
+ * Regenerating instead is NOT an option: it mints fresh question uuids (only
+ * `question_key` reuse saves them), so it would orphan every answer the client
+ * genuinely gave. This clears values IN PLACE and preserves ids.
+ *
+ * Answers that DO count (client-authored, grounded drafts, verified prefills,
+ * schema defaults) are kept — the client re-reads them, they do not retype them.
+ * Any prior low-coverage override is dropped: a fresh decision must be signed
+ * against the new state, never inherited.
+ */
+export async function reopenQuestionnaireForClientInput(
+  actor: Actor,
+  input: ReopenQuestionnaireInput,
+): Promise<{ clearedQuestionIds: string[]; keptCount: number }> {
+  can(actor, "cases", "edit");
+  const parsed = ReopenQuestionnaireSchema.parse(input);
+
+  const response = await findFormResponseById(parsed.responseId);
+  if (!response) throw new CaseError("FORM_RESPONSE_NOT_FOUND");
+  // Cross-tenant guard (same as approve/reject): findFormResponseById bypasses RLS.
+  await requireCaseAccess(actor, response.case_id);
+
+  if (!response.questionnaire_instance_id) throw new CaseError("FORM_NOT_SUBMITTABLE");
+  if (response.status !== "approved" && response.status !== "submitted") {
+    throw new CaseError("FORM_NOT_SUBMITTABLE");
+  }
+
+  const answers = (response.answers ?? {}) as Record<string, unknown>;
+  const provenance = parseProvenanceMap(response.answer_provenance);
+  const nextAnswers: Record<string, unknown> = {};
+  const nextProvenance: Record<string, string> = {};
+  const clearedQuestionIds: string[] = [];
+
+  for (const [questionId, value] of Object.entries(answers)) {
+    const p = provenance[questionId] ?? "unknown";
+    if (countsAsAnswered(p)) {
+      nextAnswers[questionId] = value;
+      nextProvenance[questionId] = p;
+      continue;
+    }
+    clearedQuestionIds.push(questionId);
+  }
+
+  await updateFormResponse(response.id, {
+    answers: nextAnswers as unknown as import("@/shared/database.types").Json,
+    answer_provenance: nextProvenance as unknown as import("@/shared/database.types").Json,
+    status: "rejected",
+    reviewed_by: actor.userId,
+    reviewed_at: new Date().toISOString(),
+    rejection_reason_i18n: (parsed.reason ?? {
+      es: "Necesitamos que respondas algunas preguntas que solo tú puedes contestar.",
+      en: "We need you to answer some questions only you can answer.",
+    }) as unknown as import("@/shared/database.types").Json,
+    correction_due_at: parsed.correctionDueAt ?? null,
+    low_coverage_ack: null,
+  });
+
+  await appEvents.emitAndWait({
+    type: "form_response.rejected",
+    payload: {
+      caseId: response.case_id,
+      responseId: response.id,
+      formDefinitionId: response.form_definition_id,
+      partyId: response.party_id,
+    },
+    occurredAt: new Date(),
+  });
+
+  await writeTimeline({
+    caseId: response.case_id,
+    eventType: "form_response.rejected",
+    actorKind: "team",
+    actorUserId: actor.userId,
+    visibleToClient: true,
+    titleI18n: {
+      en: "Questionnaire reopened for your input",
+      es: "Cuestionario reabierto para que lo completes",
+    },
+  });
+
+  await writeAudit(
+    actor,
+    "case.form_response.reopened",
+    "case_form_responses",
+    response.id,
+    { clearedQuestionIds, keptCount: Object.keys(nextAnswers).length },
+  );
+
+  return { clearedQuestionIds, keptCount: Object.keys(nextAnswers).length };
 }
 
 // ---------------------------------------------------------------------------

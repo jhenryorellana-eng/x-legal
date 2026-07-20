@@ -1173,6 +1173,7 @@ export type Database = {
       case_form_responses: {
         Row: {
           ai_draft_question_ids: Json | null
+          answer_provenance: Json | null
           answers: Json
           answers_translated: Json
           automation_version_id: string | null
@@ -1182,6 +1183,7 @@ export type Database = {
           filled_pdf_path: string | null
           form_definition_id: string
           id: string
+          low_coverage_ack: Json | null
           party_id: string | null
           questionnaire_instance_id: string | null
           rejection_reason_i18n: Json | null
@@ -1195,6 +1197,7 @@ export type Database = {
         }
         Insert: {
           ai_draft_question_ids?: Json | null
+          answer_provenance?: Json | null
           answers?: Json
           answers_translated?: Json
           automation_version_id?: string | null
@@ -1204,6 +1207,7 @@ export type Database = {
           filled_pdf_path?: string | null
           form_definition_id: string
           id?: string
+          low_coverage_ack?: Json | null
           party_id?: string | null
           questionnaire_instance_id?: string | null
           rejection_reason_i18n?: Json | null
@@ -1217,6 +1221,7 @@ export type Database = {
         }
         Update: {
           ai_draft_question_ids?: Json | null
+          answer_provenance?: Json | null
           answers?: Json
           answers_translated?: Json
           automation_version_id?: string | null
@@ -1226,6 +1231,7 @@ export type Database = {
           filled_pdf_path?: string | null
           form_definition_id?: string
           id?: string
+          low_coverage_ack?: Json | null
           party_id?: string | null
           questionnaire_instance_id?: string | null
           rejection_reason_i18n?: Json | null
@@ -1798,6 +1804,7 @@ export type Database = {
           cost_usd: number | null
           created_at: string
           draft_answers: Json | null
+          draft_provenance: Json | null
           error: string | null
           form_definition_id: string
           generated_at: string | null
@@ -1819,6 +1826,7 @@ export type Database = {
           cost_usd?: number | null
           created_at?: string
           draft_answers?: Json | null
+          draft_provenance?: Json | null
           error?: string | null
           form_definition_id: string
           generated_at?: string | null
@@ -1840,6 +1848,7 @@ export type Database = {
           cost_usd?: number | null
           created_at?: string
           draft_answers?: Json | null
+          draft_provenance?: Json | null
           error?: string | null
           form_definition_id?: string
           generated_at?: string | null
@@ -2174,6 +2183,7 @@ export type Database = {
           current_owner_id: string | null
           current_phase_id: string | null
           current_stage: string
+          detected_posture: string | null
           id: string
           internal_note: string | null
           opened_at: string | null
@@ -2197,6 +2207,7 @@ export type Database = {
           current_owner_id?: string | null
           current_phase_id?: string | null
           current_stage?: string
+          detected_posture?: string | null
           id?: string
           internal_note?: string | null
           opened_at?: string | null
@@ -2220,6 +2231,7 @@ export type Database = {
           current_owner_id?: string | null
           current_phase_id?: string | null
           current_stage?: string
+          detected_posture?: string | null
           id?: string
           internal_note?: string | null
           opened_at?: string | null
@@ -5251,6 +5263,56 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "service_plans_service_id_fkey"
+            columns: ["service_id"]
+            isOneToOne: false
+            referencedRelation: "services"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      service_postures: {
+        Row: {
+          created_at: string
+          detection: Json
+          id: string
+          is_active: boolean
+          label_i18n: Json
+          question_playbook_prompt: string | null
+          required_source_slugs: string[]
+          service_id: string
+          slug: string
+          source_document_slug: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          detection?: Json
+          id?: string
+          is_active?: boolean
+          label_i18n: Json
+          question_playbook_prompt?: string | null
+          required_source_slugs?: string[]
+          service_id: string
+          slug: string
+          source_document_slug: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          detection?: Json
+          id?: string
+          is_active?: boolean
+          label_i18n?: Json
+          question_playbook_prompt?: string | null
+          required_source_slugs?: string[]
+          service_id?: string
+          slug?: string
+          source_document_slug?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "service_postures_service_id_fkey"
             columns: ["service_id"]
             isOneToOne: false
             referencedRelation: "services"

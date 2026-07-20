@@ -304,6 +304,7 @@ import {
   deriveCoverContext,
   AiEngineError,
 } from "../service";
+import { questionKeyOf } from "../domain";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -2109,5 +2110,120 @@ describe("flagQuestionnairesOnNewEvidence", () => {
   it("never throws (best-effort event consumer)", async () => {
     mocks.repo.findCaseDocumentMeta.mockRejectedValue(new Error("db down"));
     await expect(flagQuestionnairesOnNewEvidence(CASE, NEW_DOC)).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * D2b — a regeneration must not orphan answers the client already gave. The real
+ * case has 9 good answers among 25; minting fresh uuids would destroy them, which
+ * is what made `reopenQuestionnaireForClientInput` impossible before this.
+ */
+describe("materializeProposalToSchema — identity survives regeneration", () => {
+  const proposal = {
+    groups: [
+      {
+        title_i18n: { es: "Grupo", en: "Group" },
+        questions: [
+          { key: "q1", question_i18n: { es: "¿Qué dijo el juez?", en: "What did the judge say?" }, field_type: "textarea", is_required: true },
+          { key: "q2", question_i18n: { es: "¿Tienes evidencia nueva?", en: "Any new evidence?" }, field_type: "textarea", is_required: false },
+        ],
+      },
+    ],
+  };
+
+  it("stamps a deterministic question_key derived from the Spanish text", () => {
+    const schema = materializeProposalToSchema(proposal);
+    const q = schema.groups[0].questions[0];
+    expect(q.question_key).toBe(questionKeyOf("¿Qué dijo el juez?"));
+  });
+
+  it("REUSES the previous uuid when the same question comes back", () => {
+    const first = materializeProposalToSchema(proposal);
+    const second = materializeProposalToSchema(proposal, { previousSchema: first });
+
+    expect(second.groups[0].questions[0].id).toBe(first.groups[0].questions[0].id);
+    expect(second.groups[0].questions[1].id).toBe(first.groups[0].questions[1].id);
+  });
+
+  it("reuses ids even when the question moved to another group or position", () => {
+    const first = materializeProposalToSchema(proposal);
+    const reordered = {
+      groups: [
+        {
+          title_i18n: { es: "Otro grupo", en: "Other group" },
+          questions: [
+            { key: "qA", question_i18n: { es: "¿Tienes evidencia nueva?", en: "Any new evidence?" }, field_type: "textarea", is_required: false },
+          ],
+        },
+        {
+          title_i18n: { es: "Grupo", en: "Group" },
+          questions: [
+            { key: "qB", question_i18n: { es: "¿Qué dijo el juez?", en: "What did the judge say?" }, field_type: "textarea", is_required: true },
+          ],
+        },
+      ],
+    };
+    const second = materializeProposalToSchema(reordered, { previousSchema: first });
+
+    expect(second.groups[0].questions[0].id).toBe(first.groups[0].questions[1].id);
+    expect(second.groups[1].questions[0].id).toBe(first.groups[0].questions[0].id);
+  });
+
+  it("mints a fresh uuid for a genuinely new question", () => {
+    const first = materializeProposalToSchema(proposal);
+    const grown = {
+      groups: [
+        {
+          title_i18n: { es: "Grupo", en: "Group" },
+          questions: [
+            ...proposal.groups[0].questions,
+            { key: "q3", question_i18n: { es: "¿Hubo intérprete?", en: "Was there an interpreter?" }, field_type: "textarea", is_required: false },
+          ],
+        },
+      ],
+    };
+    const second = materializeProposalToSchema(grown, { previousSchema: first });
+    const knownIds = new Set(first.groups[0].questions.map((q) => q.id));
+
+    expect(knownIds.has(second.groups[0].questions[2].id)).toBe(false);
+  });
+
+  it("applies the evidence contract, degrading an unsupported record_confirm", () => {
+    const schema = materializeProposalToSchema(
+      {
+        groups: [
+          {
+            title_i18n: { es: "G", en: "G" },
+            questions: [
+              {
+                key: "ok",
+                question_i18n: { es: "¿Confirmas los grupos sociales?", en: "Confirm the social groups?" },
+                field_type: "textarea",
+                answerable_from: "record_confirm",
+                prefill_value: "seven particular social groups",
+                evidence_refs: [{ document: "asilo", span: "a brief proposing seven particular social groups" }],
+              },
+              {
+                key: "bad",
+                question_i18n: { es: "¿Confirmas la credibilidad?", en: "Confirm credibility?" },
+                field_type: "textarea",
+                answerable_from: "record_confirm",
+                prefill_value: "the judge found you not credible",
+                evidence_refs: [{ document: "decision", span: "the Court found Respondent not credible" }],
+              },
+            ],
+          },
+        ],
+      },
+      { recordCorpus: "counsel filed a brief proposing seven particular social groups." },
+    );
+
+    const [ok, bad] = schema.groups[0].questions;
+    expect(ok.answerable_from).toBe("record_confirm");
+    expect(ok.prefill_value).toBe("seven particular social groups");
+    expect(bad.answerable_from).toBe("client_only");
+    expect(bad.prefill_value).toBeNull();
+    // A degraded question must be answered by the client — never left optional.
+    expect(bad.is_required).toBe(true);
   });
 });

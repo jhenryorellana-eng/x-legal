@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => {
     listPublishedQuestionTexts: vi.fn().mockResolvedValue([]),
     listPublishedClientQuestionsForDrafts: vi.fn().mockResolvedValue([]),
     getQuestionnaireInstanceDrafts: vi.fn(),
+    findQuestionnaireInstanceById: vi.fn(),
+    findPreviousQuestionnaireSchema: vi.fn().mockResolvedValue(null),
     // import-graph stubs
     findRunById: vi.fn(), findActiveRun: vi.fn(), maxVersion: vi.fn(), insertRun: vi.fn(),
     updateRunStatus: vi.fn(), completeRun: vi.fn(), markRunFailed: vi.fn(), isCancelled: vi.fn(),
@@ -101,7 +103,7 @@ vi.mock("@/shared/constants/ai-models", () => ({
   GENERATION_MODELS: ["claude-sonnet-4-6", "claude-opus-4-7", "claude-fable-5", "claude-haiku-4-5"],
 }));
 
-import { executeQuestionnaireGenerationJob } from "../service";
+import { executeQuestionnaireGenerationJob, getQuestionnaireInstanceAnsweredValues } from "../service";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -180,7 +182,7 @@ beforeEach(() => {
 });
 
 describe("executeQuestionnaireGenerationJob — draft answers", () => {
-  it("runs a second call and persists drafts for generated AND base questions", async () => {
+  it("persists drafts for generated AND base questions in a single pass", async () => {
     mocks.setResponder((args) => {
       const user = String(args.messages[0]?.content ?? "");
       if (mocks.streamCalls.length === 1) return textMessage(QUESTIONS_JSON);
@@ -274,5 +276,89 @@ describe("executeQuestionnaireGenerationJob — draft answers", () => {
 
     expect(outcome).toBe("ready");
     expect(mocks.anthropicClient.messages.stream).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Wave 1 — the completeness gate's contract: what actually COUNTS as answered
+// ---------------------------------------------------------------------------
+
+describe("getQuestionnaireInstanceAnsweredValues — provenance decides", () => {
+  const INSTANCE = "11111111-1111-4111-8111-111111111111";
+
+  function instance(
+    draftAnswers: unknown,
+    draftProvenance: unknown,
+    defaults: Array<{ id: string; default_value: string }> = [],
+  ) {
+    return {
+      id: INSTANCE,
+      draft_answers: draftAnswers,
+      draft_provenance: draftProvenance,
+      schema: { groups: [{ questions: defaults }] },
+    };
+  }
+
+  it("counts grounded drafts and schema defaults", async () => {
+    mocks.repo.findQuestionnaireInstanceById.mockResolvedValue(
+      instance({ g1: "Respuesta fundada en el expediente." }, { g1: "ai_grounded" }, [
+        { id: "d1", default_value: "no_new_evidence" },
+      ]),
+    );
+    expect(await getQuestionnaireInstanceAnsweredValues(INSTANCE)).toEqual({
+      g1: "Respuesta fundada en el expediente.",
+      d1: "no_new_evidence",
+    });
+  });
+
+  it("EXCLUDES ai_gap_filled — the regression that approved a 36%-covered case", async () => {
+    mocks.repo.findQuestionnaireInstanceById.mockResolvedValue(
+      instance(
+        { g1: "Respuesta fundada.", f1: "Por ahora no cuento con esta información." },
+        { g1: "ai_grounded", f1: "ai_gap_filled" },
+      ),
+    );
+    expect(await getQuestionnaireInstanceAnsweredValues(INSTANCE)).toEqual({ g1: "Respuesta fundada." });
+  });
+
+  it("EXCLUDES unknown — legacy rows re-open for review instead of passing silently", async () => {
+    // Exactly the state migration 0095 left the real case in: 25 answers, all
+    // backfilled to 'unknown'. The gate must block, not certify.
+    const drafts: Record<string, string> = {};
+    const prov: Record<string, string> = {};
+    for (let i = 0; i < 25; i++) {
+      drafts["q" + i] = "texto " + i;
+      prov["q" + i] = "unknown";
+    }
+    mocks.repo.findQuestionnaireInstanceById.mockResolvedValue(instance(drafts, prov));
+
+    expect(await getQuestionnaireInstanceAnsweredValues(INSTANCE)).toBeNull();
+  });
+
+  it("counts client_edited and client_confirmed", async () => {
+    mocks.repo.findQuestionnaireInstanceById.mockResolvedValue(
+      instance({ a: "lo escribí yo", b: "confirmado" }, { a: "client_edited", b: "client_confirmed" }),
+    );
+    expect(await getQuestionnaireInstanceAnsweredValues(INSTANCE)).toEqual({
+      a: "lo escribí yo",
+      b: "confirmado",
+    });
+  });
+
+  it("treats a draft with no provenance entry as unknown (fail-closed)", async () => {
+    mocks.repo.findQuestionnaireInstanceById.mockResolvedValue(instance({ orphan: "valor" }, {}));
+    expect(await getQuestionnaireInstanceAnsweredValues(INSTANCE)).toBeNull();
+  });
+
+  it("ignores blank values regardless of provenance", async () => {
+    mocks.repo.findQuestionnaireInstanceById.mockResolvedValue(
+      instance({ a: "   ", b: "real" }, { a: "ai_grounded", b: "ai_grounded" }),
+    );
+    expect(await getQuestionnaireInstanceAnsweredValues(INSTANCE)).toEqual({ b: "real" });
+  });
+
+  it("returns null for a missing instance", async () => {
+    mocks.repo.findQuestionnaireInstanceById.mockResolvedValue(null);
+    expect(await getQuestionnaireInstanceAnsweredValues(INSTANCE)).toBeNull();
   });
 });

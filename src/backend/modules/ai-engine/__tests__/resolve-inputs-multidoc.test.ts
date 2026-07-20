@@ -202,3 +202,62 @@ describe("loadResolvedInputs — document labels", () => {
     expect(loaded.documents[0].label).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Wave 1 regression — what the DRAFTING PROMPT is allowed to see
+// ---------------------------------------------------------------------------
+
+describe("loadResolvedInputs — form answers filtered by provenance", () => {
+  function formSnapshot(): ConfigSnapshot {
+    return {
+      resolved_inputs: { documents: [], forms: [{ slug: "cuestionario", response_id: "resp-1" }] },
+    } as unknown as ConfigSnapshot;
+  }
+
+  /** Queues the two reads loadResolvedInputs makes per form: the answers row, then
+   *  the labels row (loadQuestionLabelsForResponse). No automation version → the
+   *  answers stay keyed by question id, which keeps the assertions readable. */
+  function queueForm(answers: unknown, answerProvenance: unknown) {
+    mocks.queues.set("case_form_responses", [
+      { data: { answers, answer_provenance: answerProvenance } },
+      { data: null },
+    ]);
+    mocks.queues.set("form_automation_versions", [{ data: null }]);
+  }
+
+  it("drops ai_gap_filled answers into declaredGaps instead of the prompt", async () => {
+    // The exact failure being fixed: a fabricated first-person sentence reaching
+    // the drafting model as if the client had testified to it.
+    queueForm(
+      { good: "Testimonio real.", filler: "Por ahora no cuento con información." },
+      { good: "ai_grounded", filler: "ai_gap_filled" },
+    );
+
+    const loaded = await loadResolvedInputs(formSnapshot());
+
+    expect(loaded.forms[0].answers).toEqual({ good: "Testimonio real." });
+    expect(loaded.forms[0].declaredGaps).toEqual(["filler"]);
+  });
+
+  it("KEEPS answers of unknown provenance — deliberately laxer than the gate", async () => {
+    // Migration 0095 backfilled every pre-existing answer to 'unknown', including
+    // genuinely grounded ones. The gate blocks on those (a review is cheap and
+    // reversible); the prompt must NOT drop them, because that would delete real
+    // client testimony over a migration artifact.
+    queueForm({ legacy: "Respuesta real de un caso antiguo." }, { legacy: "unknown" });
+
+    const loaded = await loadResolvedInputs(formSnapshot());
+
+    expect(loaded.forms[0].answers).toEqual({ legacy: "Respuesta real de un caso antiguo." });
+    expect(loaded.forms[0].declaredGaps).toEqual([]);
+  });
+
+  it("keeps answers with no provenance column at all (pre-0095 rows)", async () => {
+    queueForm({ a: "x" }, null);
+
+    const loaded = await loadResolvedInputs(formSnapshot());
+
+    expect(loaded.forms[0].answers).toEqual({ a: "x" });
+    expect(loaded.forms[0].declaredGaps).toEqual([]);
+  });
+});
