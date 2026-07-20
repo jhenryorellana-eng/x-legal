@@ -786,9 +786,8 @@ export function EnsambladorView({ caseId, vm, actions }: EnsambladorViewProps) {
       {/* Two-column grid                                                      */}
       {/* ------------------------------------------------------------------ */}
       <div
+        className="grid2"
         style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr",
           gap: 20,
           marginTop: 20,
           alignItems: "start",

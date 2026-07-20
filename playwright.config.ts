@@ -142,6 +142,22 @@ export default defineConfig({
       dependencies: ["diana-setup"],
     },
 
+    // ── Staff mobile mode (≤860px) — responsive + a11y overhaul ──
+    // Reuses the Vanessa session; finanzas routes run under the admin
+    // storageState via a per-describe test.use override.
+    {
+      name: "staff-mobile",
+      use: {
+        ...devices["iPhone 14"],
+        browserName: "chromium",
+        viewport: { width: 390, height: 844 },
+        locale: "es-ES",
+        storageState: "e2e/.auth/vanessa.json",
+      },
+      testMatch: /.*\.staffmobile\.spec\.ts/,
+      dependencies: ["vanessa-setup"],
+    },
+
     // ── Carlos (demo client) — F4 §4.3 client side ───────────────
     {
       name: "carlos-setup",

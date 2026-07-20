@@ -321,43 +321,57 @@ export function CitasView(props: CitasViewProps) {
           ))}
         </div>
       ) : (
-        <div className="cal-grid" style={{ gridTemplateColumns: `64px repeat(${dayCount}, 1fr)` }}>
-          <div className="cal-corner" />
-          {props.calDays.slice(0, dayCount).map((d, i) => (
-            <div key={i} className={`cal-dayhead${d.isToday ? " today" : ""}`}>
-              <div className="d">{d.weekdayLabel}</div>
-              <div className="n">{d.dayNumber}</div>
-            </div>
-          ))}
-          {props.hours.map((h, slot) => (
-            <React.Fragment key={h}>
-              <div className="cal-time">{h}</div>
-              {props.calDays.slice(0, dayCount).map((_, dayIdx) => {
-                const ev = visibleEvents.find((e) => e.dayIndex === dayIdx && e.slotIndex === slot);
-                return (
-                  <div key={dayIdx} className={`cal-cell${ev ? "" : " empty"}`} onClick={ev ? undefined : () => setModalOpen(true)}>
-                    {!ev && (
+        <div className="scroll-x">
+          <div
+            className="cal-grid"
+            style={{ gridTemplateColumns: `64px repeat(${dayCount}, 1fr)`, minWidth: dayCount > 1 ? 720 : undefined }}
+          >
+            <div className="cal-corner" />
+            {props.calDays.slice(0, dayCount).map((d, i) => (
+              <div key={i} className={`cal-dayhead${d.isToday ? " today" : ""}`}>
+                <div className="d">{d.weekdayLabel}</div>
+                <div className="n">{d.dayNumber}</div>
+              </div>
+            ))}
+            {props.hours.map((h, slot) => (
+              <React.Fragment key={h}>
+                <div className="cal-time">{h}</div>
+                {props.calDays.slice(0, dayCount).map((d, dayIdx) => {
+                  const ev = visibleEvents.find((e) => e.dayIndex === dayIdx && e.slotIndex === slot);
+                  if (ev) {
+                    return (
+                      <div key={dayIdx} className="cal-cell">
+                        <button
+                          type="button"
+                          className={`cal-evt ${KIND_CLASS[ev.kind]}${ev.done ? " evt-done" : ""}`}
+                          style={{ top: 3, bottom: 3 }}
+                          onClick={() => setOpenId(ev.id)}
+                        >
+                          {ev.name}
+                          {ev.done ? " · ✓" : ""}
+                          <small>{ev.seqLabel}</small>
+                        </button>
+                      </div>
+                    );
+                  }
+                  return (
+                    <button
+                      key={dayIdx}
+                      type="button"
+                      className="cal-cell empty"
+                      style={{ textAlign: "inherit" }}
+                      aria-label={`${strings.newAppt}: ${d.weekdayLabel} ${d.dayNumber}, ${h}`}
+                      onClick={() => setModalOpen(true)}
+                    >
                       <span className="cell-add">
                         <MSym name="add" size={22} />
                       </span>
-                    )}
-                    {ev && (
-                      <button
-                        type="button"
-                        className={`cal-evt ${KIND_CLASS[ev.kind]}${ev.done ? " evt-done" : ""}`}
-                        style={{ top: 3, bottom: 3 }}
-                        onClick={() => setOpenId(ev.id)}
-                      >
-                        {ev.name}
-                        {ev.done ? " · ✓" : ""}
-                        <small>{ev.seqLabel}</small>
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-            </React.Fragment>
-          ))}
+                    </button>
+                  );
+                })}
+              </React.Fragment>
+            ))}
+          </div>
         </div>
       )}
 

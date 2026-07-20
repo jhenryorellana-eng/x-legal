@@ -120,6 +120,31 @@ export function SharedCaseView({
   );
   // Shown when a locked tab is clicked before the case is active.
   const [lockedHint, setLockedHint] = React.useState(false);
+  // Tab button refs — roving tabindex + focus-follow keyboard navigation
+  // (ARIA tabs pattern) over the .subtabs bar.
+  const tabRefs = React.useRef<Partial<Record<CaseTabId, HTMLButtonElement | null>>>({});
+
+  // ARIA tabs keyboard pattern: arrows move activation AND focus (focus-follow,
+  // matching the click-to-activate semantics); Home/End jump to the ends.
+  // Locked (aria-disabled) tabs are skipped — they cannot be activated.
+  function handleTabListKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    const enabled = tabs.filter((tab) => !tab.locked);
+    if (enabled.length === 0) return;
+    const current = enabled.findIndex((tab) => tab.id === active);
+    let next = -1;
+    if (event.key === "ArrowRight") next = (current + 1) % enabled.length;
+    else if (event.key === "ArrowLeft") next = (current - 1 + enabled.length) % enabled.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = enabled.length - 1;
+    else return;
+    event.preventDefault();
+    const target = enabled[next];
+    setActive(target.id);
+    setLockedHint(false);
+    const el = tabRefs.current[target.id];
+    el?.focus();
+    el?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
   // Pre-Mortem: which document is selected in the tab (seeded by the deep-link and
   // by the per-item "Pre-Mortem" buttons in Generaciones / Información).
   const [preMortemTarget, setPreMortemTarget] = React.useState<string | null>(initialTarget ?? null);
@@ -273,7 +298,7 @@ export function SharedCaseView({
       )}
 
       {/* Tab bar (.subtabs design) */}
-      <div className="subtabs" role="tablist">
+      <div className="subtabs" role="tablist" onKeyDown={handleTabListKeyDown}>
         {tabs.map((tab) => {
           const on = active === tab.id;
           if (tab.locked) {
@@ -284,6 +309,7 @@ export function SharedCaseView({
                 aria-selected={false}
                 aria-disabled
                 type="button"
+                tabIndex={-1}
                 className="subtab"
                 title={t.lockedTabHint}
                 onClick={() => setLockedHint(true)}
@@ -300,6 +326,10 @@ export function SharedCaseView({
               role="tab"
               aria-selected={on}
               type="button"
+              tabIndex={on ? 0 : -1}
+              ref={(el) => {
+                tabRefs.current[tab.id] = el;
+              }}
               className={`subtab ${on ? "on" : ""}`}
               onClick={() => {
                 setActive(tab.id);

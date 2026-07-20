@@ -484,7 +484,7 @@ export function DocumentosTab({
           </>
         }
       >
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div className="grid2" style={{ gap: 12 }}>
           <Field label={t.rejectReasonEs} value={reasonEs} onChange={setReasonEs} />
           <Field label={t.rejectReasonEn} value={reasonEn} onChange={setReasonEn} />
         </div>

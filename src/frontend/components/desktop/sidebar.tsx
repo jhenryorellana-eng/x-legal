@@ -78,6 +78,7 @@ export function Sidebar({ panelLabel, groups, user, footerSlot, open }: SidebarP
 
   return (
     <aside
+      id="staff-sidebar"
       className="staff-sidebar"
       data-open={open ? "true" : "false"}
       style={{

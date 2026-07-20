@@ -256,6 +256,8 @@ export function ValidacionesListView({ vm }: ValidacionesListViewProps) {
       ) : (
         <Card>
           <div style={{ padding: 4 }}>
+            <div className="scroll-x">
+              <div style={{ minWidth: 700 }}>
             {/* Table header */}
             <div
               style={{
@@ -391,6 +393,8 @@ export function ValidacionesListView({ vm }: ValidacionesListViewProps) {
                   </button>
                 );
               })}
+            </div>
+              </div>
             </div>
           </div>
         </Card>

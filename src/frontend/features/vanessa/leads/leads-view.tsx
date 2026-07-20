@@ -24,7 +24,7 @@ import { MSym } from "../shared/msym";
 import { Chip, sourceMeta } from "../shared/ui";
 import { LexBubble } from "../shared/lex";
 import { useToast } from "../shared/toast-bridge";
-import { Modal } from "@/frontend/components/desktop";
+import { Modal, KanbanMoveMenu } from "@/frontend/components/desktop";
 import { NotesModal, type NoteView, type NoteVisibility, type NotesStrings } from "@/frontend/features/shared-case/notes";
 import {
   useKanbanColumns,
@@ -217,13 +217,10 @@ export function LeadsView({
     void actions.contactLead({ leadId: card.leadId, channel }).catch(() => {});
   };
 
-  const drop = async (col: LeadColumnVM) => {
-    const id = dragId;
-    setDragId(null);
-    setOverCol(null);
-    if (!id) return;
-    const card = cards.find((c) => c.id === id);
-    if (!card || card.columnId === col.id) return;
+  // Single move path shared by drag & drop and the per-card "Mover a…" menu
+  // (DOC-01 §5.3): same optimistic update, same mutation, same revert+toast.
+  const moveCardTo = async (card: LeadCardVM, col: LeadColumnVM) => {
+    if (card.columnId === col.id) return;
 
     if (col.isTerminalLost) {
       setLostFor({ card, toColumnId: col.id });
@@ -235,13 +232,13 @@ export function LeadsView({
     const prev = cards;
     setCards((cs) =>
       cs.map((c) =>
-        c.id === id
+        c.id === card.id
           ? { ...c, columnId: col.id, uncontacted: false }
           : c,
       ),
     );
     const res = await actions.moveCard({
-      cardId: id,
+      cardId: card.id,
       toColumnId: col.id,
       toPosition: 0,
     });
@@ -256,6 +253,16 @@ export function LeadsView({
     if (col.isTerminalWon) {
       onNewCase({ name: card.name, phone: card.phone, leadId: card.leadId });
     }
+  };
+
+  const drop = async (col: LeadColumnVM) => {
+    const id = dragId;
+    setDragId(null);
+    setOverCol(null);
+    if (!id) return;
+    const card = cards.find((c) => c.id === id);
+    if (!card) return;
+    await moveCardTo(card, col);
   };
 
   const confirmLost = async () => {
@@ -472,6 +479,16 @@ export function LeadsView({
                             </span>
                           )}
                         </button>
+                        <KanbanMoveMenu
+                          columns={cols.columns}
+                          currentColumnId={c.columnId}
+                          onMove={(columnId) => {
+                            const target = cols.columns.find((x) => x.id === columnId);
+                            if (target) void moveCardTo(c, target);
+                          }}
+                          locale={locale}
+                          triggerClassName="kmini"
+                        />
                         <span className="kcard-age">{c.ageLabel}</span>
                       </div>
                     </div>

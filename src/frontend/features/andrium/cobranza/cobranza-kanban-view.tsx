@@ -33,7 +33,7 @@ import Link from "next/link";
 import { MSym } from "@/frontend/features/vanessa/shared/msym";
 import { Chip } from "@/frontend/features/vanessa/shared/ui";
 import { useToast } from "@/frontend/features/vanessa/shared/toast-bridge";
-import { Modal } from "@/frontend/components/desktop";
+import { Modal, KanbanMoveMenu } from "@/frontend/components/desktop";
 import { NotesModal, type NoteView, type NoteVisibility, type NotesStrings } from "@/frontend/features/shared-case/notes";
 import { LexBoardBubble, type LexBubbleVM } from "@/frontend/features/lex";
 
@@ -337,6 +337,22 @@ export function CobranzaKanbanView({
   // Drag & drop handlers
   // -------------------------------------------------------------------------
 
+  // Single move path shared by drag & drop and the per-card "Mover a…" menu
+  // (DOC-01 §5.3): same optimistic update, same mutation, same revert+toast.
+  const moveCardTo = async (card: CollectionCardVM, col: CollectionColumnVM) => {
+    if (card.columnId === col.id) return;
+
+    // Optimistic update
+    const prev = cards;
+    setCards((cs) => cs.map((c) => c.id === card.id ? { ...c, columnId: col.id } : c));
+
+    const res = await actions.moveCard({ cardId: card.id, toColumnId: col.id, toPosition: 0 });
+    if (!res.ok) {
+      setCards(prev);
+      toast.error(strings.moveError);
+    }
+  };
+
   const handleDrop = async (col: CollectionColumnVM) => {
     const id = dragId;
     setDragId(null);
@@ -344,17 +360,8 @@ export function CobranzaKanbanView({
     if (!id) return;
 
     const card = cards.find((c) => c.id === id);
-    if (!card || card.columnId === col.id) return;
-
-    // Optimistic update
-    const prev = cards;
-    setCards((cs) => cs.map((c) => c.id === id ? { ...c, columnId: col.id } : c));
-
-    const res = await actions.moveCard({ cardId: id, toColumnId: col.id, toPosition: 0 });
-    if (!res.ok) {
-      setCards(prev);
-      toast.error(strings.moveError);
-    }
+    if (!card) return;
+    await moveCardTo(card, col);
   };
 
   // -------------------------------------------------------------------------
@@ -526,14 +533,7 @@ export function CobranzaKanbanView({
 
       {/* ── KPI Strip (DOC-55 §0.5) ── */}
       {kpi && (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
-            gap: 12,
-            marginBottom: 20,
-          }}
-        >
+        <div className="kpi-row">
           {/* KPI 1: Recaudado del mes — variante hot */}
           <div
             className="kpi-card kpi-hot"
@@ -776,6 +776,12 @@ export function CobranzaKanbanView({
                     colColor={tokenToVar(col.color)}
                     isDragging={dragId === card.id}
                     strings={strings}
+                    locale={locale}
+                    columns={sortedColumns}
+                    onMove={(columnId) => {
+                      const target = sortedColumns.find((x) => x.id === columnId);
+                      if (target) void moveCardTo(card, target);
+                    }}
                     onDragStart={() => setDragId(card.id)}
                     onDragEnd={() => { setDragId(null); setOverCol(null); }}
                     onOpenNotes={() => setNotesCard(card)}
@@ -940,6 +946,9 @@ function CollectionCard({
   colColor,
   isDragging,
   strings,
+  locale,
+  columns,
+  onMove,
   onDragStart,
   onDragEnd,
   onOpenNotes,
@@ -950,6 +959,9 @@ function CollectionCard({
   colColor: string;
   isDragging: boolean;
   strings: CobranzaKanbanStrings;
+  locale: "es" | "en";
+  columns: CollectionColumnVM[];
+  onMove: (columnId: string) => void;
   onDragStart: () => void;
   onDragEnd: () => void;
   onOpenNotes: () => void;
@@ -963,7 +975,7 @@ function CollectionCard({
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
     >
-      {/* Row 1: case number + service chip */}
+      {/* Row 1: case number + service chip + "Mover a…" menu (DOC-01 §5.3) */}
       <div className="kcard-top">
         <span style={{ fontSize: 12, fontWeight: 800, color: "var(--ink-2)", flex: "none" }}>
           {card.caseNumber}
@@ -987,6 +999,14 @@ function CollectionCard({
             {card.serviceLabel}
           </span>
         )}
+        <KanbanMoveMenu
+          columns={columns}
+          currentColumnId={card.columnId}
+          onMove={onMove}
+          locale={locale}
+          triggerClassName="kmini"
+          triggerStyle={card.serviceLabel ? { flex: "none" } : { marginLeft: "auto", flex: "none" }}
+        />
       </div>
 
       {/* Row 2: client name — links to case billing */}

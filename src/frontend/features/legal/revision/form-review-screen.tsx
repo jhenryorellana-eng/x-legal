@@ -323,7 +323,7 @@ export function FormReviewScreen({
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 96px)" }}>
+    <div style={{ display: "flex", flexDirection: "column" }}>
       <div style={{ marginBottom: 12 }}>
         <button
           type="button"
@@ -334,7 +334,7 @@ export function FormReviewScreen({
         </button>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 16, flex: 1, minHeight: 0 }}>
+      <div className="split-view" style={{ gap: 16, flex: 1, minHeight: 0 }}>
         {/* LEFT — official auto-filled PDF */}
         <div style={panel}>
           <div style={{ flexShrink: 0, padding: "12px 14px", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
@@ -344,7 +344,7 @@ export function FormReviewScreen({
             {officialLoading ? (
               <div style={centered}>{strings.loadingDoc}</div>
             ) : officialUrl ? (
-              <iframe title="pdf-oficial" src={officialUrl} style={{ width: "100%", height: "100%", border: "none" }} />
+              <iframe title="pdf-oficial" src={officialUrl} style={{ width: "100%", height: "100%", minHeight: 420, border: "none" }} />
             ) : (
               <div style={centered}>{strings.officialEmpty}</div>
             )}
@@ -426,7 +426,7 @@ export function FormReviewScreen({
                 {docLoading ? (
                   <div style={centered}>{strings.loadingDoc}</div>
                 ) : docUrl ? (
-                  <iframe title="documento" src={docUrl} style={{ width: "100%", height: "100%", border: "none" }} />
+                  <iframe title="documento" src={docUrl} style={{ width: "100%", height: "100%", minHeight: 420, border: "none" }} />
                 ) : (
                   <div style={centered}>{strings.docSelectPlaceholder}</div>
                 )}

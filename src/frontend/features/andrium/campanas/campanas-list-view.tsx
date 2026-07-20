@@ -117,61 +117,65 @@ export function CampanasListView({ vm, actions }: CampanasListViewProps) {
         </Card>
       ) : (
         <Card style={{ padding: 0, overflow: "hidden" }}>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1.4fr 1.6fr 110px 130px 90px 60px",
-              gap: 10,
-              padding: "10px 16px",
-              background: "var(--hover, rgba(47,107,255,0.04))",
-              borderBottom: "1px solid var(--line)",
-              fontSize: 11,
-              fontWeight: 800,
-              letterSpacing: "0.05em",
-              color: "var(--ink-3)",
-              textTransform: "uppercase",
-            }}
-          >
-            <span>{tt(locale, "Nombre", "Name")}</span>
-            <span>{tt(locale, "Asunto", "Subject")}</span>
-            <span>{tt(locale, "Audiencia", "Audience")}</span>
-            <span>{tt(locale, "Estado", "Status")}</span>
-            <span style={{ textAlign: "right" }}>{tt(locale, "Enviados", "Sent")}</span>
-            <span />
-          </div>
-
-          {vm.items.map((c) => {
-            const meta = STATUS_META[c.status];
-            return (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => router.push(`/finanzas/campanas/${c.id}`)}
+          <div className="scroll-x">
+            <div style={{ minWidth: 820 }}>
+              <div
                 style={{
                   display: "grid",
                   gridTemplateColumns: "1.4fr 1.6fr 110px 130px 90px 60px",
                   gap: 10,
-                  alignItems: "center",
-                  width: "100%",
-                  textAlign: "left",
-                  padding: "12px 16px",
+                  padding: "10px 16px",
+                  background: "var(--hover, rgba(47,107,255,0.04))",
                   borderBottom: "1px solid var(--line)",
-                  background: "none",
-                  border: "none",
-                  borderBottomStyle: "solid",
-                  cursor: "pointer",
-                  color: "var(--ink)",
+                  fontSize: 11,
+                  fontWeight: 800,
+                  letterSpacing: "0.05em",
+                  color: "var(--ink-3)",
+                  textTransform: "uppercase",
                 }}
               >
-                <span style={{ fontSize: 14, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
-                <span style={{ fontSize: 13, color: "var(--ink-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.subject}</span>
-                <span style={{ fontSize: 12, color: "var(--ink-2)" }}>{audienceLabel(c.audienceKind, locale)}</span>
-                <span><Chip tone={meta.tone}>{tt(locale, meta.es, meta.en)}</Chip></span>
-                <span style={{ textAlign: "right", fontSize: 13, fontWeight: 700 }}>{c.sentCount || "—"}</span>
-                <span style={{ textAlign: "right" }}><Icon name="chevR" size={16} color="var(--ink-3)" /></span>
-              </button>
-            );
-          })}
+                <span>{tt(locale, "Nombre", "Name")}</span>
+                <span>{tt(locale, "Asunto", "Subject")}</span>
+                <span>{tt(locale, "Audiencia", "Audience")}</span>
+                <span>{tt(locale, "Estado", "Status")}</span>
+                <span style={{ textAlign: "right" }}>{tt(locale, "Enviados", "Sent")}</span>
+                <span />
+              </div>
+
+              {vm.items.map((c) => {
+                const meta = STATUS_META[c.status];
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => router.push(`/finanzas/campanas/${c.id}`)}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1.4fr 1.6fr 110px 130px 90px 60px",
+                      gap: 10,
+                      alignItems: "center",
+                      width: "100%",
+                      textAlign: "left",
+                      padding: "12px 16px",
+                      borderBottom: "1px solid var(--line)",
+                      background: "none",
+                      border: "none",
+                      borderBottomStyle: "solid",
+                      cursor: "pointer",
+                      color: "var(--ink)",
+                    }}
+                  >
+                    <span style={{ fontSize: 14, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
+                    <span style={{ fontSize: 13, color: "var(--ink-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.subject}</span>
+                    <span style={{ fontSize: 12, color: "var(--ink-2)" }}>{audienceLabel(c.audienceKind, locale)}</span>
+                    <span><Chip tone={meta.tone}>{tt(locale, meta.es, meta.en)}</Chip></span>
+                    <span style={{ textAlign: "right", fontSize: 13, fontWeight: 700 }}>{c.sentCount || "—"}</span>
+                    <span style={{ textAlign: "right" }}><Icon name="chevR" size={16} color="var(--ink-3)" /></span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </Card>
       )}
 

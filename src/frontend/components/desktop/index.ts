@@ -16,6 +16,11 @@ export {
 } from "./data-table";
 export { EmptyState, type EmptyStateProps, type EmptyStateAction } from "./empty-state";
 export { Modal, type ModalProps } from "./modal";
+export {
+  KanbanMoveMenu,
+  type KanbanMoveMenuProps,
+  type KanbanMoveMenuColumn,
+} from "./kanban-move-menu";
 export { SidePanel, type SidePanelProps } from "./side-panel";
 export { Switch, type DesktopSwitchProps } from "./switch";
 export { Skeleton, type SkeletonProps } from "./skeleton";

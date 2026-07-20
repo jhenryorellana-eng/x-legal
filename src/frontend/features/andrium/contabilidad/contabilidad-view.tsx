@@ -473,7 +473,7 @@ export function ContabilidadView({ vm, actions }: ContabilidadViewProps) {
             <Icon name="chevR" size={18} color="var(--accent)" />
           </GhostBtn>
         </div>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
           <a href={exportHref} target="_blank" rel="noopener noreferrer">
             <GhostBtn size="md" full={false} style={{ height: 40, padding: "0 16px", borderRadius: 999 }}>
               <Icon name="external" size={15} color="var(--accent)" /> {tt(locale, "Exportar CSV", "Export CSV")}
@@ -486,7 +486,7 @@ export function ContabilidadView({ vm, actions }: ContabilidadViewProps) {
       </div>
 
       {/* KPI row */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 8 }}>
+      <div className="grid3" style={{ marginBottom: 8 }}>
         <div>
           <Kpi icon="dollar" label={tt(locale, "Ingresos del mes", "Income this month")} value={usd(vm.summary.incomeCents)} />
           <div style={{ marginTop: 6 }}><DeltaBadge pct={vm.summary.deltaIncomePct} locale={locale} /></div>
@@ -502,7 +502,7 @@ export function ContabilidadView({ vm, actions }: ContabilidadViewProps) {
       </div>
 
       {/* Category breakdown + collection metrics */}
-      <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 16, margin: "20px 0" }}>
+      <div className="cols2" style={{ gap: 16, margin: "20px 0" }}>
         <Card>
           <p style={{ fontSize: 14, fontWeight: 800, color: "var(--ink)", margin: "0 0 14px" }}>
             {tt(locale, "Desglose por categoría", "Breakdown by category")}
@@ -591,41 +591,45 @@ export function ContabilidadView({ vm, actions }: ContabilidadViewProps) {
 
       {/* Libro table */}
       <Card style={{ padding: 0, overflow: "hidden" }}>
-        {/* Header row */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "92px 88px 1.3fr 1.6fr 96px 120px 84px",
-            gap: 10,
-            padding: "10px 14px",
-            background: "var(--hover, rgba(47,107,255,0.04))",
-            borderBottom: "1px solid var(--line)",
-            fontSize: 11,
-            fontWeight: 800,
-            letterSpacing: "0.05em",
-            color: "var(--ink-3)",
-            textTransform: "uppercase",
-          }}
-        >
-          <span>{tt(locale, "Fecha", "Date")}</span>
-          <span>{tt(locale, "Tipo", "Type")}</span>
-          <span>{tt(locale, "Categoría", "Category")}</span>
-          <span>{tt(locale, "Descripción", "Description")}</span>
-          <span>{tt(locale, "Origen", "Origin")}</span>
-          <span style={{ textAlign: "right" }}>{tt(locale, "Monto", "Amount")}</span>
-          <span />
-        </div>
+        <div className="scroll-x">
+          <div style={{ minWidth: 760 }}>
+            {/* Header row */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "92px 88px 1.3fr 1.6fr 96px 120px 84px",
+                gap: 10,
+                padding: "10px 14px",
+                background: "var(--hover, rgba(47,107,255,0.04))",
+                borderBottom: "1px solid var(--line)",
+                fontSize: 11,
+                fontWeight: 800,
+                letterSpacing: "0.05em",
+                color: "var(--ink-3)",
+                textTransform: "uppercase",
+              }}
+            >
+              <span>{tt(locale, "Fecha", "Date")}</span>
+              <span>{tt(locale, "Tipo", "Type")}</span>
+              <span>{tt(locale, "Categoría", "Category")}</span>
+              <span>{tt(locale, "Descripción", "Description")}</span>
+              <span>{tt(locale, "Origen", "Origin")}</span>
+              <span style={{ textAlign: "right" }}>{tt(locale, "Monto", "Amount")}</span>
+              <span />
+            </div>
 
-        {filtered.length === 0 ? (
-          <div style={{ padding: "48px 0", textAlign: "center" }}>
-            <Lex mood="calma" size={78} />
-            <p style={{ marginTop: 14, color: "var(--ink-2)" }}>
-              {tt(locale, "Sin asientos para los filtros actuales.", "No entries for the current filters.")}
-            </p>
+            {filtered.length === 0 ? (
+              <div style={{ padding: "48px 0", textAlign: "center" }}>
+                <Lex mood="calma" size={78} />
+                <p style={{ marginTop: 14, color: "var(--ink-2)" }}>
+                  {tt(locale, "Sin asientos para los filtros actuales.", "No entries for the current filters.")}
+                </p>
+              </div>
+            ) : (
+              filtered.map((item) => <LedgerRow key={item.id} item={item} locale={locale} onEdit={openEdit} />)
+            )}
           </div>
-        ) : (
-          filtered.map((item) => <LedgerRow key={item.id} item={item} locale={locale} onEdit={openEdit} />)
-        )}
+        </div>
       </Card>
 
       {cursor && (

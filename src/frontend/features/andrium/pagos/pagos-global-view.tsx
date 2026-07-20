@@ -654,6 +654,9 @@ export function PagosGlobalView({ vm, tEs: _tEs, tEn: _tEn }: PagosGlobalViewPro
           marginBottom: 24,
           borderBottom: "2px solid var(--line)",
           paddingBottom: 0,
+          // On narrow (mobile) widths the three tabs exceed the viewport; let the
+          // bar scroll horizontally instead of forcing document-level overflow.
+          overflowX: "auto",
         }}
       >
         {TABS.map((tab) => {
@@ -668,6 +671,7 @@ export function PagosGlobalView({ vm, tEs: _tEs, tEn: _tEn }: PagosGlobalViewPro
               id={`tab-${tab.id}`}
               onClick={() => setActiveTab(tab.id)}
               style={{
+                flexShrink: 0,
                 background: "none",
                 border: "none",
                 borderBottom: isActive ? "2.5px solid var(--accent)" : "2.5px solid transparent",

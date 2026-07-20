@@ -406,7 +406,7 @@ export function CampanaEditorView({ vm, actions }: CampanaEditorViewProps) {
           <p style={{ fontSize: 14, fontWeight: 800, color: "var(--ink)", margin: "0 0 14px" }}>
             {tt(locale, "Entrega", "Delivery")}
           </p>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
+          <div className="grid-auto" style={{ gap: 12 }}>
             {([
               ["total", tt(locale, "Audiencia", "Audience"), "var(--ink)"],
               ["sent", tt(locale, "Enviados", "Sent"), "var(--green)"],
@@ -434,7 +434,7 @@ export function CampanaEditorView({ vm, actions }: CampanaEditorViewProps) {
         </Card>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+      <div className="grid2" style={{ gap: 20 }}>
         {/* Left: editor fields */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <Card>

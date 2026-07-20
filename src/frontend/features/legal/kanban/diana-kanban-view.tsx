@@ -29,9 +29,11 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { MSym } from "@/frontend/features/vanessa/shared/msym";
 import { Chip } from "@/frontend/features/vanessa/shared/ui";
 import { useToast } from "@/frontend/features/vanessa/shared/toast-bridge";
+import { KanbanMoveMenu } from "@/frontend/components/desktop";
 import { Icon, ICON_NAMES, type IconName } from "@/frontend/components/brand";
 import {
   useKanbanColumns,
@@ -278,14 +280,10 @@ export function DianaKanbanView({
   // Card drag & drop handlers
   // -------------------------------------------------------------------------
 
-  const handleDrop = async (col: CaseColumnVM) => {
-    const id = dragId;
-    setDragId(null);
-    setOverCol(null);
-    if (!id) return;
-
-    const card = cards.find((c) => c.id === id);
-    if (!card || card.columnId === col.id) return;
+  // Single move path shared by drag & drop and the per-card "Mover a…" menu
+  // (DOC-01 §5.3): same optimistic update, same mutation, same revert+toast.
+  const moveCardTo = async (card: CaseCardVM, col: CaseColumnVM) => {
+    if (card.columnId === col.id) return;
 
     // Drop at the end of the destination column (positions are 1-indexed; the
     // backend re-packs gaps). Counting the cards already there gives the slot.
@@ -293,13 +291,24 @@ export function DianaKanbanView({
 
     // Optimistic update
     const prev = cards;
-    setCards((cs) => cs.map((c) => c.id === id ? { ...c, columnId: col.id } : c));
+    setCards((cs) => cs.map((c) => c.id === card.id ? { ...c, columnId: col.id } : c));
 
-    const res = await actions.moveCard({ cardId: id, toColumnId: col.id, toPosition });
+    const res = await actions.moveCard({ cardId: card.id, toColumnId: col.id, toPosition });
     if (!res.ok) {
       setCards(prev);
       toast.error(strings.moveError);
     }
+  };
+
+  const handleDrop = async (col: CaseColumnVM) => {
+    const id = dragId;
+    setDragId(null);
+    setOverCol(null);
+    if (!id) return;
+
+    const card = cards.find((c) => c.id === id);
+    if (!card) return;
+    await moveCardTo(card, col);
   };
 
   // -------------------------------------------------------------------------
@@ -502,6 +511,11 @@ export function DianaKanbanView({
                     isDragging={dragId === card.id}
                     strings={strings}
                     locale={locale}
+                    columns={sortedColumns}
+                    onMove={(columnId) => {
+                      const target = sortedColumns.find((x) => x.id === columnId);
+                      if (target) void moveCardTo(card, target);
+                    }}
                     onDragStart={() => setDragId(card.id)}
                     onDragEnd={() => { setDragId(null); setOverCol(null); }}
                     onOpenNotes={() => setNotesCard(card)}
@@ -547,6 +561,8 @@ function CaseCard({
   isDragging,
   strings,
   locale,
+  columns,
+  onMove,
   onDragStart,
   onDragEnd,
   onOpenNotes,
@@ -556,11 +572,14 @@ function CaseCard({
   isDragging: boolean;
   strings: DianaKanbanStrings;
   locale: "es" | "en";
+  columns: CaseColumnVM[];
+  onMove: (columnId: string) => void;
   onDragStart: () => void;
   onDragEnd: () => void;
   onOpenNotes: () => void;
 }) {
 
+  const router = useRouter();
   const statusColor = statusDotColor(card.caseStatus);
   const railColor =
     card.alerts.rfeInProgress && !card.alerts.rfeOverdue ? "#f59e0b" : statusColor;
@@ -572,6 +591,14 @@ function CaseCard({
       draggable
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
+      // Keyboard access (mirrors the leads board): the card is focusable and
+      // Enter opens the case. The `currentTarget === target` guard keeps Enter
+      // presses on nested controls (links, notes, move menu) from double-firing.
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && e.currentTarget === e.target) router.push(caseHref);
+      }}
+      aria-label={strings.openCaseAria.replace("{caseNumber}", card.caseNumber)}
       style={{ paddingLeft: 15, ...(card.isInactive ? { opacity: 0.6 } : null) }}
     >
       {/* Left status rail — amber while an RFE is in progress */}
@@ -589,7 +616,7 @@ function CaseCard({
         }}
       />
 
-      {/* Eyebrow: case number */}
+      {/* Eyebrow: case number + "Mover a…" menu (DOC-01 §5.3) */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
         <span
           style={{
@@ -602,6 +629,14 @@ function CaseCard({
         >
           {card.caseNumber}
         </span>
+        <KanbanMoveMenu
+          columns={columns}
+          currentColumnId={card.columnId}
+          onMove={onMove}
+          locale={locale}
+          triggerClassName="kmini"
+          triggerStyle={{ marginLeft: "auto" }}
+        />
       </div>
 
       {/* Client identity — the card's anchor (monogram tinted by the service colour) */}

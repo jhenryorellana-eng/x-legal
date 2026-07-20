@@ -5,8 +5,10 @@
  * (inline-styled, group bubbles from Wave 2), so the prototype's `.bub` / `.th-body`
  * / `.th-input` classes are intentionally NOT ported here.
  *
- * Tokens (--accent, --panel, --ink*, --line, --glass*, --accent-soft, --brand-*,
+ * Tokens (--accent, --panel, --ink*, --line, --accent-soft, --brand-*,
  * --shadow-*) come from the staff design system (vanessa.css / tokens.css).
+ * The panel surface is SOLID (--panel); below the 860px staff-mobile
+ * breakpoint it goes full-screen instead of floating.
  * Less-certain tokens carry inline fallbacks.
  * ============================================================================= */
 
@@ -57,16 +59,28 @@
   flex-direction: column;
   border-radius: 24px;
   overflow: hidden;
-  background: var(--glass, var(--panel, #fff));
-  backdrop-filter: blur(24px) saturate(150%);
-  -webkit-backdrop-filter: blur(24px) saturate(150%);
-  border: 1px solid var(--glass-brd, var(--line));
+  background: var(--panel, var(--card, #fff));
+  border: 1px solid var(--line);
   box-shadow: var(--shadow-lg, 0 18px 48px rgba(11, 27, 51, 0.16));
   animation: bubin 0.32s cubic-bezier(0.4, 0.8, 0.3, 1) both;
 }
-@media (max-width: 480px) {
-  .msg-panel { right: 12px; left: 12px; bottom: 12px; width: auto; height: min(640px, 86vh); }
-  .msg-launch { right: 16px; bottom: 16px; }
+/* Staff mobile mode (same breakpoint as the shell drawer): the floating panel
+   becomes a full-screen surface. Height mirrors the text-scale zoom guard from
+   globals.css (.surface-staff) so the 1.12x text scale never overflows. */
+@media (max-width: 860px) {
+  .msg-panel {
+    inset: 0;
+    width: 100%;
+    height: calc(100dvh / var(--text-scale, 1));
+    border-radius: 0;
+    border: none;
+  }
+  .msg-panel .conv-list { padding-bottom: calc(10px + var(--safe-bottom, 0px)); }
+  .msg-panel .chat-composer { padding-bottom: calc(10px + var(--safe-bottom, 0px)); }
+  .msg-launch {
+    right: 16px;
+    bottom: calc(16px + var(--safe-bottom, 0px));
+  }
 }
 
 .msg-head {

@@ -41,6 +41,9 @@ export interface NotificationCenterProps {
   /** Reports the live unread count to the host (badge). */
   onUnreadChange?: (unread: number) => void;
   variant?: "page" | "popover";
+  /** Extra control rendered in the header row (the bell passes its mobile-only
+   * close button here). */
+  headerAction?: React.ReactNode;
 }
 
 function tt(locale: "es" | "en", es: string, en: string) {
@@ -88,7 +91,7 @@ function colorVar(color: string): string {
 }
 
 export function NotificationCenter({
-  userId, locale, initial, initialCursor, actions, onUnreadChange, variant = "page",
+  userId, locale, initial, initialCursor, actions, onUnreadChange, variant = "page", headerAction,
 }: NotificationCenterProps) {
   const router = useRouter();
   const [items, setItems] = React.useState<NotificationVM[]>(initial);
@@ -152,15 +155,18 @@ export function NotificationCenter({
         <span style={{ fontFamily: "var(--font-title)", fontWeight: 800, fontSize: variant === "popover" ? 15 : 20, color: "var(--ink)" }}>
           {tt(locale, "Avisos", "Notifications")}
         </span>
-        {items.some((n) => !n.read) && (
-          <button type="button" onClick={handleMarkAll}
-            style={{ background: "none", border: "none", color: "var(--accent)", fontSize: 12.5, fontWeight: 700, cursor: "pointer", padding: 4 }}>
-            {tt(locale, "Marcar todo como leído", "Mark all as read")}
-          </button>
-        )}
+        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {items.some((n) => !n.read) && (
+            <button type="button" onClick={handleMarkAll}
+              style={{ background: "none", border: "none", color: "var(--accent)", fontSize: 12.5, fontWeight: 700, cursor: "pointer", padding: 4 }}>
+              {tt(locale, "Marcar todo como leído", "Mark all as read")}
+            </button>
+          )}
+          {headerAction}
+        </span>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, overflowY: "auto", maxHeight: variant === "popover" ? 420 : undefined }}>
+      <div className="nc-list" style={{ display: "flex", flexDirection: "column", gap: 6, overflowY: "auto" }}>
         {items.length === 0 && (
           <p style={{ textAlign: "center", color: "var(--ink-3)", fontSize: 13.5, padding: "32px 12px" }}>
             {tt(locale, "No tienes avisos por ahora.", "You have no notifications yet.")}

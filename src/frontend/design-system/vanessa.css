@@ -2147,3 +2147,60 @@
     transition: none !important;
   }
 }
+
+/* =============================================================================
+ * Responsive & accessibility layer (staff mobile overhaul)
+ *
+ * Generic, reusable utilities so views stop carrying breakpoint-dependent
+ * layout in inline styles (which no media query can reach). Breakpoints follow
+ * the shell convention: 1180px (dense grids relax), 860px (staff mobile mode),
+ * 560px (phone stacking).
+ * ========================================================================== */
+
+/* Fluid N-up grid (metric/KPI strips) — collapses without media queries. */
+.surface-staff .grid-auto {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 16px;
+}
+
+/* Horizontal scroll wrapper for fixed-track rows (ledger, list headers).
+ * Pair with an inline `minWidth` on the inner container. */
+.surface-staff .scroll-x {
+  overflow-x: auto;
+}
+
+/* Side-by-side workspace (preview + editor). Stacks ≤1180px and frees the
+ * height. The 100dvh height carries the text-scale zoom guard (globals.css). */
+.surface-staff .split-view {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+  height: calc(100dvh / var(--text-scale, 1) - 96px);
+}
+@media (max-width: 1180px) {
+  .surface-staff .split-view {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+}
+
+/* Touch targets ≥44×44px on coarse pointers (RNF-038, DOC-01 §8.2). Desktop
+ * keeps the exact prototype sizes; touch devices grow the effective area. */
+@media (pointer: coarse) {
+  .surface-staff .kmini,
+  .surface-staff .kcol-menu,
+  .surface-staff .mini-btn,
+  .surface-staff .task-check,
+  .surface-staff .range-pill button,
+  .surface-staff .vbtn-sm {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  /* The "+" affordance of empty calendar cells is hover-only on desktop;
+   * keep it faintly visible on touch so the cells read as tappable. */
+  .surface-staff .cal-cell.empty .cell-add {
+    opacity: 0.45;
+  }
+}

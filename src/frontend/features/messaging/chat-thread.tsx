@@ -274,7 +274,7 @@ export function ChatThread({ vm, actions, locale }: ChatThreadProps) {
       {/* Composer (participants only). Staff with case access but no participation
           get a read-only notice instead of a composer that would always fail. */}
       {vm.viewerCanPost ? (
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 8, padding: "10px 12px", borderTop: "1px solid var(--line)", background: "var(--card)" }}>
+        <div className="chat-composer" style={{ display: "flex", alignItems: "flex-end", gap: 8, padding: "10px 12px", borderTop: "1px solid var(--line)", background: "var(--card)" }}>
           <input ref={fileRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.heic,.webp" style={{ display: "none" }}
             onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); e.target.value = ""; }} />
           <GhostBtn size="md" full={false} onClick={() => fileRef.current?.click()} disabled={uploading}

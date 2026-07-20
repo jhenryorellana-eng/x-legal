@@ -4,6 +4,10 @@
  * NotificationBell — staff topbar bell with a live unread badge + a popover
  * notification center. The NotificationCenter stays mounted (popover toggled via
  * visibility) so its realtime subscription keeps the badge live while closed.
+ *
+ * Styling lives in design-system/notifications.css (inline styles can't be
+ * reached by media queries): desktop = 380px anchored popover; staff mobile
+ * mode (≤860px) = full-screen surface with a visible close button.
  */
 
 import * as React from "react";
@@ -32,8 +36,12 @@ export function NotificationBell({
   const [unread, setUnread] = React.useState(initialUnread);
   const actions = React.useMemo(() => buildNotificationActions(raw, locale), [raw, locale]);
   const rootRef = React.useRef<HTMLDivElement>(null);
+  const buttonRef = React.useRef<HTMLButtonElement>(null);
 
-  // Close on outside click.
+  const close = React.useCallback(() => setOpen(false), []);
+
+  // Close on outside click (desktop pattern; harmless in full-screen mode
+  // because the popover covers the whole viewport).
   React.useEffect(() => {
     if (!open) return;
     function onDoc(e: MouseEvent) {
@@ -43,11 +51,33 @@ export function NotificationBell({
     return () => document.removeEventListener("mousedown", onDoc);
   }, [open]);
 
+  // Close on Escape; return focus to the bell button on close.
+  React.useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setOpen(false);
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  const wasOpen = React.useRef(false);
+  React.useEffect(() => {
+    if (wasOpen.current && !open) buttonRef.current?.focus();
+    wasOpen.current = open;
+  }, [open]);
+
   return (
     <div ref={rootRef} style={{ position: "relative" }}>
       <button
+        ref={buttonRef}
         type="button"
         aria-label={label}
+        aria-expanded={open}
+        aria-haspopup="dialog"
         onClick={() => setOpen((o) => !o)}
         style={{
           position: "relative", display: "inline-grid", placeItems: "center",
@@ -70,12 +100,11 @@ export function NotificationBell({
       </button>
 
       <div
-        style={{
-          position: "absolute", right: 0, top: 50, width: 380, maxWidth: "90vw", zIndex: 40,
-          display: open ? "block" : "none",
-          background: "var(--card)", border: "1px solid var(--line)", borderRadius: 16,
-          boxShadow: "0 18px 50px rgba(0,0,0,0.18)", padding: "4px 10px 12px",
-        }}
+        className="bell-popover"
+        data-open={open}
+        role="dialog"
+        aria-modal="true"
+        aria-label={label}
       >
         <NotificationCenter
           userId={userId}
@@ -85,6 +114,16 @@ export function NotificationBell({
           actions={actions}
           onUnreadChange={setUnread}
           variant="popover"
+          headerAction={
+            <button
+              type="button"
+              className="bell-close"
+              aria-label={locale === "es" ? "Cerrar avisos" : "Close notifications"}
+              onClick={close}
+            >
+              <Icon name="x" size={20} color="currentColor" />
+            </button>
+          }
         />
       </div>
     </div>

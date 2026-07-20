@@ -234,7 +234,7 @@ export function SeguimientoView({ vm, actions }: { vm: SeguimientoVM; actions: S
 
       {/* Lifecycle strip + win-back */}
       <Card style={{ marginBottom: 20 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
+        <div className="grid3" style={{ gap: 14 }}>
           {([
             ["before", tt(locale, "Antes", "Before"), tt(locale, "Prospectos y anuncios (ventas).", "Prospects & ads (sales)."), "var(--accent)"],
             ["during", tt(locale, "Durante", "During"), tt(locale, "Avisos de progreso, comunidad y correos.", "Progress alerts, community & emails."), "var(--gold-deep)"],

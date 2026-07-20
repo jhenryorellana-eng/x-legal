@@ -79,12 +79,26 @@ export function StaffShell({
 }: StaffShellProps) {
   const [pending, startTransition] = React.useTransition();
   const [navOpen, setNavOpen] = React.useState(false);
+  const menuButtonRef = React.useRef<HTMLButtonElement>(null);
   const pathname = usePathname();
 
   // Close the mobile nav drawer whenever the route changes (link tapped).
   React.useEffect(() => {
     setNavOpen(false);
   }, [pathname]);
+
+  // Escape closes the mobile nav drawer and returns focus to the hamburger.
+  React.useEffect(() => {
+    if (!navOpen) return;
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setNavOpen(false);
+        menuButtonRef.current?.focus();
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [navOpen]);
 
   function handleLogout() {
     startTransition(() => logoutAction());
@@ -150,6 +164,8 @@ export function StaffShell({
           }}
           onLogout={handleLogout}
           onMenuClick={() => setNavOpen(true)}
+          navOpen={navOpen}
+          menuButtonRef={menuButtonRef}
           menuLabel={messages.panelLabel}
           bellSlot={
             notifications ? (

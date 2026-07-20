@@ -29,11 +29,15 @@ export interface TopbarProps {
   bellSlot?: React.ReactNode;
   /** Opens the mobile nav drawer (≤860px). Renders a hamburger when provided. */
   onMenuClick?: () => void;
+  /** Mobile drawer open state — drives aria-expanded on the hamburger. */
+  navOpen?: boolean;
+  /** Ref to the hamburger — the shell returns focus here when the drawer closes. */
+  menuButtonRef?: React.Ref<HTMLButtonElement>;
   /** Accessible label for the hamburger. */
   menuLabel?: string;
 }
 
-export function Topbar({ messages, onLogout, bellSlot, onMenuClick, menuLabel }: TopbarProps) {
+export function Topbar({ messages, onLogout, bellSlot, onMenuClick, navOpen, menuButtonRef, menuLabel }: TopbarProps) {
   return (
     <header
       style={{
@@ -56,6 +60,9 @@ export function Topbar({ messages, onLogout, bellSlot, onMenuClick, menuLabel }:
         type="button"
         className="staff-menu-btn"
         onClick={onMenuClick}
+        ref={menuButtonRef}
+        aria-expanded={navOpen}
+        aria-controls="staff-sidebar"
         aria-label={menuLabel ?? "Menú"}
         style={{
           placeItems: "center",
