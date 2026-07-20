@@ -299,6 +299,10 @@ const clientActor = {
   permissions: new Map(),
 };
 
+// Finance (Andrium) holds cases:edit for intake but must NOT approve/reject forms
+// nor reopen questionnaires (legal functions) — Henry 2026-07-20.
+const financeActor = { ...staffActor, role: "finance" as const };
+
 /** The service both the case and its forms belong to (cross-service scope check). */
 const SERVICE_ID = "5e5e5e5e-5e5e-5e5e-5e5e-5e5e5e5e5e5e";
 
@@ -3096,6 +3100,30 @@ describe("completeness gate — fails CLOSED when the questionnaire check breaks
       RESPONSE_ID,
       expect.objectContaining({ status: "approved" }),
     );
+  });
+});
+
+// Regression guard for 2026-07-20: finance got cases:edit (for case intake) but
+// must NOT approve/reject forms nor reopen questionnaires. The secondary role guard
+// throws before any DB work (can() is mocked no-op, isolating the role guard).
+describe("legal-only role guard — finance denied", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCan.mockReturnValue(undefined);
+    mockRequireCaseAccess.mockResolvedValue(undefined);
+  });
+
+  it("approveFormResponse denies finance (forbidden_module, no DB read)", async () => {
+    await expect(
+      approveFormResponse(financeActor, { responseId: RESPONSE_ID }),
+    ).rejects.toMatchObject({ reason: "forbidden_module" });
+    expect(mockFindFormResponseById).not.toHaveBeenCalled();
+  });
+
+  it("reopenQuestionnaireForClientInput denies finance (forbidden_module)", async () => {
+    await expect(
+      reopenQuestionnaireForClientInput(financeActor, { responseId: RESPONSE_ID }),
+    ).rejects.toMatchObject({ reason: "forbidden_module" });
   });
 });
 

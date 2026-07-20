@@ -342,6 +342,9 @@ export async function startGeneration(
   input: GenerationRequest,
 ): Promise<StartGenerationResult> {
   can(actor, "cases", "edit");
+  // Disparar generaciones de IA (jobs pagados) es función legal — admin+paralegal
+  // only. Finance tiene cases:edit para intake, no para esto. Henry 2026-07-20.
+  if (actor.role !== "admin" && actor.role !== "paralegal") throw new AuthzError("forbidden_module");
   await requireCaseAccess(actor, input.caseId);
   const p = GenerationRequestSchema.parse(input);
 
@@ -1228,6 +1231,8 @@ export async function cancelGeneration(
   runId: string,
 ): Promise<void> {
   can(actor, "cases", "edit");
+  // Cancelar generaciones es función legal — admin+paralegal only. Henry 2026-07-20.
+  if (actor.role !== "admin" && actor.role !== "paralegal") throw new AuthzError("forbidden_module");
   const run = await findRunById(runId);
   if (!run) throw new AiEngineError("AI_RUN_NOT_FOUND");
   // Cross-tenant guard: findRunById fetches by UUID globally; verify the actor
@@ -1997,6 +2002,8 @@ export async function reprocessExtraction(
   caseDocumentId: string,
 ): Promise<void> {
   can(actor, "cases", "edit");
+  // Reprocesar extracción es función legal — admin+paralegal only. Henry 2026-07-20.
+  if (actor.role !== "admin" && actor.role !== "paralegal") throw new AuthzError("forbidden_module");
   const existing = await findExtraction(caseDocumentId);
   const n = existing ? ((existing as unknown as Record<string, number>)["attempt"] ?? 0) + 1 : 1;
 

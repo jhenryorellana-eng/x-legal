@@ -2126,6 +2126,9 @@ export async function changeCaseStatus(
   input: ChangeStatusInput,
 ): Promise<void> {
   can(actor, "cases", "edit");
+  // admin+paralegal only — finance's cases:edit is for intake, not case-status
+  // mutations (cancel/on-hold). Henry 2026-07-20.
+  if (actor.role !== "admin" && actor.role !== "paralegal") throw new AuthzError("forbidden_module");
   const parsed = ChangeStatusSchema.parse(input);
 
   const caseRow = await findCaseById(parsed.caseId);
@@ -5864,6 +5867,9 @@ export async function approveFormResponse(
   input: ApproveFormResponseInput,
 ): Promise<void> {
   can(actor, "cases", "edit");
+  // Aprobar formularios es función legal — admin+paralegal only (finance views,
+  // no aprueba/rechaza). Henry 2026-07-20.
+  if (actor.role !== "admin" && actor.role !== "paralegal") throw new AuthzError("forbidden_module");
   const parsed = ApproveFormResponseSchema.parse(input);
 
   const response = await findFormResponseById(parsed.responseId);
@@ -5957,6 +5963,8 @@ export async function rejectFormResponse(
   input: RejectFormResponseInput,
 ): Promise<void> {
   can(actor, "cases", "edit");
+  // Rechazar formularios es función legal — admin+paralegal only. Henry 2026-07-20.
+  if (actor.role !== "admin" && actor.role !== "paralegal") throw new AuthzError("forbidden_module");
   const parsed = RejectFormResponseSchema.parse(input);
 
   const response = await findFormResponseById(parsed.responseId);
@@ -6129,6 +6137,8 @@ export async function reopenQuestionnaireForClientInput(
   input: ReopenQuestionnaireInput,
 ): Promise<{ clearedQuestionIds: string[]; keptCount: number }> {
   can(actor, "cases", "edit");
+  // Reabrir el cuestionario es función legal — admin+paralegal only. Henry 2026-07-20.
+  if (actor.role !== "admin" && actor.role !== "paralegal") throw new AuthzError("forbidden_module");
   const parsed = ReopenQuestionnaireSchema.parse(input);
 
   const response = await findFormResponseById(parsed.responseId);
