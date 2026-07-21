@@ -128,6 +128,7 @@ import {
   type RunContext,
   buildCaseContextBlocks,
   buildQuestionGenContext,
+  GENERATION_MULTI_DOC_CHAR_BUDGET,
   QUESTIONNAIRE_FIELD_TYPES,
   type QuestionnaireSchema,
   type GeneratedGroup,
@@ -165,6 +166,7 @@ import {
   findExtraction,
   findPreviousQuestionnaireSchema,
   upsertExtraction,
+  updateExtractionDigest,
   findTranslation,
   findTranslationById,
   insertTranslation,
@@ -266,6 +268,18 @@ const EXTRACTION_CHUNKED_MIN_PAGES = 30;
 const EXTRACTION_CHUNK_PAGES = 25;
 const EXTRACTION_SOFT_BUDGET_MS = 600_000; // under the 800s QStash webhook maxDuration
 const EXTRACTION_MAX_OUTPUT_TOKENS = 65_536;
+// Gemini's inline-request payload caps around 20MB. A 25-page range of hi-res
+// scans can exceed it (a low-page-count / high-DPI document within the 50MB
+// upload cap), so a range whose sub-PDF is larger than this is split by page
+// BEFORE the call — the ceiling is never hit and no page is dropped.
+const EXTRACTION_INLINE_MAX_BYTES = 18 * 1024 * 1024;
+// Digest: a bounded, page-cited summary of a large document, computed once so the
+// generation prompt can COVER the middle a head-tail clip would otherwise drop.
+// Output cap keeps it well under the smallest generation budget.
+const EXTRACTION_DIGEST_MAX_OUTPUT_TOKENS = 8_192;
+// Only documents that could actually be clipped downstream (the smallest budget is
+// the multi-doc one) get a digest — smaller records are shown to the model whole.
+const EXTRACTION_DIGEST_MIN_CHARS = GENERATION_MULTI_DOC_CHAR_BUDGET;
 // Above this size a PDF whose pages cannot be counted FAILS LOUD instead of
 // degrading to the single-call route (which cannot handle a big scan anyway).
 const EXTRACTION_PAGECOUNT_REQUIRED_BYTES = 8 * 1024 * 1024;
@@ -1720,6 +1734,155 @@ function parseChunkedProgress(value: unknown, pageCount: number): ChunkedExtract
  *  4. One final text-only fields pass over the assembled raw_text (the full
  *     document view matters for synthesis fields like persecution_summary).
  */
+const DIGEST_PROMPT =
+  "Eres un paralegal que resume un documento legal para un abogado. Produce un RESUMEN FIEL y " +
+  "estructurado en español que cubra TODAS las secciones del documento (para que no se pierda nada), " +
+  "CON citas de rango de página (el texto trae marcadores `=== Pages N-M ===` — cítalos). Incluye " +
+  "hechos clave, nombres, fechas, afirmaciones y citas textuales BREVES de las declaraciones críticas. " +
+  "NO inventes ni infieras nada que no esté en el texto: si algo no consta, no lo menciones. Sé conciso " +
+  "pero COMPLETO en cobertura. Devuelve solo texto plano, sin comentarios ni encabezados de respuesta.";
+
+/**
+ * Builds a bounded, page-cited digest of the assembled OCR text via a single
+ * faithful (temperature 0) Gemini call. BEST-EFFORT: any failure returns null so
+ * it never blocks or fails an extraction — the digest is optional and generation
+ * falls back to the head-tail clip when it is absent. One call over the full
+ * raw_text (Gemini's context easily holds a 200+ page record) — cheaper and
+ * simpler than a per-chunk map-reduce, and it sees the document whole.
+ */
+async function buildDocumentDigest(args: {
+  rawText: string;
+  model: string;
+  geminiModels: ReturnType<typeof getGeminiModels>;
+  caseDocumentId: string;
+}): Promise<{ digestText: string; inputTokens: number; outputTokens: number } | null> {
+  try {
+    const response = await args.geminiModels.generateContent({
+      model: args.model,
+      contents: [
+        { role: "user", parts: [{ text: `${DIGEST_PROMPT}\n\nDOCUMENTO (OCR):\n\n${args.rawText}` }] },
+      ],
+      config: { temperature: 0, maxOutputTokens: EXTRACTION_DIGEST_MAX_OUTPUT_TOKENS },
+    });
+    const digestText = (response.candidates?.[0]?.content?.parts?.[0]?.text ?? "").trim();
+    if (!digestText) return null;
+    return {
+      digestText,
+      inputTokens: response.usageMetadata?.promptTokenCount ?? 0,
+      outputTokens: response.usageMetadata?.candidatesTokenCount ?? 0,
+    };
+  } catch (err) {
+    logger.warn(
+      { err, caseDocumentId: args.caseDocumentId },
+      "extract-document: digest generation failed (optional — falling back to clip)",
+    );
+    return null;
+  }
+}
+
+/**
+ * OCRs a [startPage, endPage) page range to plain text via Gemini vision. A
+ * response truncated at the output-token ceiling (finishReason "MAX_TOKENS")
+ * would silently drop the tail of a dense range, so the range is BISECTED and
+ * each half re-OCR'd (recursively) — each half fits the budget. A single page
+ * that still truncates is degenerate (no real page exceeds 65k output tokens):
+ * keep what came back and warn, never lose it silently. Transient errors and
+ * empty transcriptions retry (3×). Throws only when a range exhausts its
+ * retries — the caller fails the chunk with its page numbers. `usage`
+ * accumulates provider tokens across every sub-call so cost stays honest
+ * (RNF-041) even when a range is subdivided.
+ */
+async function ocrPageRangeText(args: {
+  fileBytes: Uint8Array;
+  startPage: number;
+  endPage: number;
+  model: string;
+  geminiModels: ReturnType<typeof getGeminiModels>;
+  usage: { input_tokens: number; output_tokens: number };
+  caseDocumentId: string;
+}): Promise<string> {
+  const { fileBytes, startPage, endPage, model, geminiModels, usage, caseDocumentId } = args;
+  const chunkBytes = await extractPdfPageRange(fileBytes, startPage, endPage);
+
+  // Split by page BEFORE the call if the sub-PDF is too big for an inline request
+  // (hi-res scans): each half is re-OCR'd and joined, so the ~20MB ceiling is
+  // never hit. A single page that still exceeds it is degenerate — fall through
+  // and let the call surface a real error rather than fail silently.
+  if (chunkBytes.length > EXTRACTION_INLINE_MAX_BYTES && endPage - startPage > 1) {
+    const mid = startPage + Math.floor((endPage - startPage) / 2);
+    const left = await ocrPageRangeText({ ...args, startPage, endPage: mid });
+    const right = await ocrPageRangeText({ ...args, startPage: mid, endPage });
+    return `${left}\n${right}`;
+  }
+  const chunkBase64 = Buffer.from(chunkBytes).toString("base64");
+
+  let lastErr: unknown = null;
+  // 3 attempts with backoff (1s, 4s): a 429/5xx or an empty transcription on ONE
+  // range must not burn the run — the caller's checkpoint keeps every paid chunk.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await sleepBackoff(attempt);
+    try {
+      const response = await geminiModels.generateContent({
+        model,
+        contents: [
+          {
+            role: "user",
+            parts: [
+              { inlineData: { mimeType: "application/pdf", data: chunkBase64 } },
+              {
+                text:
+                  "Transcribe the complete text of this document segment, in reading order. " +
+                  "Output plain text only — no summaries, no commentary, no markdown fences. " +
+                  "Preserve headings and paragraph breaks.",
+              },
+            ],
+          },
+        ],
+        config: {
+          temperature: 0,
+          maxOutputTokens: EXTRACTION_MAX_OUTPUT_TOKENS,
+          responseMimeType: "text/plain",
+        },
+      });
+      usage.input_tokens += response.usageMetadata?.promptTokenCount ?? 0;
+      usage.output_tokens += response.usageMetadata?.candidatesTokenCount ?? 0;
+      const text = response.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+      const finishReason = response.candidates?.[0]?.finishReason ?? null;
+
+      // Truncated at the token ceiling — the tail of this range is missing. Bisect
+      // and re-OCR each half (each fits the budget) rather than accept the cut.
+      if (finishReason === "MAX_TOKENS" && endPage - startPage > 1) {
+        const mid = startPage + Math.floor((endPage - startPage) / 2);
+        const left = await ocrPageRangeText({ ...args, startPage, endPage: mid });
+        const right = await ocrPageRangeText({ ...args, startPage: mid, endPage });
+        return `${left}\n${right}`;
+      }
+      if (finishReason === "MAX_TOKENS") {
+        logger.warn(
+          { caseDocumentId, page: startPage + 1 },
+          "extract-document: single-page OCR truncated at the token ceiling — kept partial text",
+        );
+        return text;
+      }
+
+      // An empty transcription of a whole range is suspicious (transient/refusal):
+      // retry. A genuinely blank page returns "" and, after retries, is accepted.
+      if (text.trim() === "" && attempt < 2) {
+        lastErr = new Error("empty OCR transcription");
+        continue;
+      }
+      return text;
+    } catch (err) {
+      lastErr = err;
+      logger.warn(
+        { err, attempt, startPage, endPage, caseDocumentId },
+        "extract-document: chunk OCR call failed",
+      );
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
 async function runChunkedExtraction(args: {
   doc: { id: string; caseId: string; mimeType: string };
   fileBytes: Uint8Array;
@@ -1749,52 +1912,25 @@ async function runChunkedExtraction(args: {
 
     const startPage = i * EXTRACTION_CHUNK_PAGES;
     const endPage = Math.min(startPage + EXTRACTION_CHUNK_PAGES, pageCount);
-    const chunkBytes = await extractPdfPageRange(fileBytes, startPage, endPage);
-    const chunkBase64 = Buffer.from(chunkBytes).toString("base64");
 
-    let ocrText: string | null = null;
-    let lastErr: unknown = null;
-    // 3 attempts with backoff (1s, 4s): a 429/5xx on ONE chunk must not burn the
-    // whole run — the checkpoint keeps every previously paid chunk either way.
-    for (let attempt = 0; attempt < 3 && ocrText === null; attempt++) {
-      if (attempt > 0) await sleepBackoff(attempt);
-      try {
-        const response = await geminiModels.generateContent({
-          model,
-          contents: [
-            {
-              role: "user",
-              parts: [
-                { inlineData: { mimeType: "application/pdf", data: chunkBase64 } },
-                {
-                  text:
-                    "Transcribe the complete text of this document segment, in reading order. " +
-                    "Output plain text only — no summaries, no commentary, no markdown fences. " +
-                    "Preserve headings and paragraph breaks.",
-                },
-              ],
-            },
-          ],
-          config: {
-            temperature: 0,
-            maxOutputTokens: EXTRACTION_MAX_OUTPUT_TOKENS,
-            responseMimeType: "text/plain",
-          },
-        });
-        ocrText = response.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-        progress.usage.input_tokens += response.usageMetadata?.promptTokenCount ?? 0;
-        progress.usage.output_tokens += response.usageMetadata?.candidatesTokenCount ?? 0;
-      } catch (err) {
-        lastErr = err;
-        logger.warn(
-          { err, attempt, chunk: i, caseDocumentId: doc.id },
-          "extract-document: chunk OCR call failed",
-        );
-      }
-    }
-
-    if (ocrText === null) {
-      const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
+    // OCR the 25-page range. A range whose transcription hits the token ceiling
+    // is bisected inside the helper (never silently truncated); transient
+    // failures/empty responses retry there. A range that exhausts its retries
+    // throws — fail the chunk with its page numbers (the checkpoint keeps the
+    // paid chunks so a QStash retry resumes).
+    let ocrText: string;
+    try {
+      ocrText = await ocrPageRangeText({
+        fileBytes,
+        startPage,
+        endPage,
+        model,
+        geminiModels,
+        usage: progress.usage,
+        caseDocumentId: doc.id,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       await upsertExtraction({
         case_document_id: doc.id,
         status: "failed",
@@ -1933,8 +2069,23 @@ async function runChunkedExtraction(args: {
     return "failed";
   }
 
-  const inputTokens = progress.usage.input_tokens + fieldsIn;
-  const outputTokens = progress.usage.output_tokens + fieldsOut;
+  // Digest (best-effort): only for a record large enough to be clipped downstream.
+  // Covers the middle a head-tail clip would drop, so the questionnaire/brief
+  // generator sees every section. Never blocks completion — a failure returns null.
+  let digestText: string | null = null;
+  let digestIn = 0;
+  let digestOut = 0;
+  if (rawText.length > EXTRACTION_DIGEST_MIN_CHARS) {
+    const digest = await buildDocumentDigest({ rawText, model, geminiModels, caseDocumentId: doc.id });
+    if (digest) {
+      digestText = digest.digestText;
+      digestIn = digest.inputTokens;
+      digestOut = digest.outputTokens;
+    }
+  }
+
+  const inputTokens = progress.usage.input_tokens + fieldsIn + digestIn;
+  const outputTokens = progress.usage.output_tokens + fieldsOut + digestOut;
   const costUsd = computeGeminiCost({ inputTokens, outputTokens });
 
   await upsertExtraction({
@@ -1950,6 +2101,10 @@ async function runChunkedExtraction(args: {
     error: null,
     progress: null,
   });
+
+  // Persist the digest separately (best-effort): a missing column pre-migration
+  // is logged, never thrown — the completed extraction above already stands.
+  if (digestText) await updateExtractionDigest(doc.id, digestText);
 
   await emitExtractionCompleted({ caseId: doc.caseId, caseDocumentId: doc.id });
 
@@ -2216,6 +2371,60 @@ function stripMarkdownFence(text: string): string {
   return m ? m[1].trim() : trimmed;
 }
 
+/** Index at which to split a long text for re-translation: the paragraph break
+ *  (`\n\n`) nearest the midpoint, else the nearest line break, else the raw
+ *  midpoint. Returns the offset AFTER the break so neither half repeats it. */
+function paragraphSplitPoint(text: string): number {
+  const mid = Math.floor(text.length / 2);
+  const before = text.lastIndexOf("\n\n", mid);
+  const after = text.indexOf("\n\n", mid);
+  const paraBreaks = [before, after].filter((i) => i > 0);
+  if (paraBreaks.length) {
+    const best = paraBreaks.reduce((a, b) => (Math.abs(a - mid) <= Math.abs(b - mid) ? a : b));
+    return best + 2;
+  }
+  const nl = text.lastIndexOf("\n", mid);
+  if (nl > 0) return nl + 1;
+  return mid;
+}
+
+/**
+ * Translates a text via Gemini, bisecting on truncation. A translation cut at the
+ * output-token ceiling (finishReason "MAX_TOKENS") drops the tail of the document
+ * silently — instead, split the SOURCE at a paragraph boundary near the midpoint
+ * and translate each half (each fits the budget), then join. A text too small to
+ * split that still truncates is degenerate: keep what came back. `usage`
+ * accumulates provider tokens across every sub-call so cost stays honest (RNF-041).
+ */
+async function translateTextSegmented(args: {
+  text: string;
+  promptText: string;
+  model: string;
+  geminiModels: ReturnType<typeof getGeminiModels>;
+  usage: { input_tokens: number; output_tokens: number };
+}): Promise<string> {
+  const { text, promptText, model, geminiModels, usage } = args;
+  const response = await geminiModels.generateContent({
+    model,
+    contents: [{ role: "user", parts: [{ text: `${promptText}\n\n---\n${text}` }] }],
+    config: { temperature: 0.2, maxOutputTokens: 65536 },
+  });
+  usage.input_tokens += response.usageMetadata?.promptTokenCount ?? 0;
+  usage.output_tokens += response.usageMetadata?.candidatesTokenCount ?? 0;
+  const out = stripMarkdownFence(response.candidates?.[0]?.content?.parts?.[0]?.text ?? "");
+  const finishReason = response.candidates?.[0]?.finishReason ?? null;
+
+  if (finishReason === "MAX_TOKENS") {
+    const splitAt = paragraphSplitPoint(text);
+    if (splitAt > 0 && splitAt < text.length) {
+      const left = await translateTextSegmented({ ...args, text: text.slice(0, splitAt) });
+      const right = await translateTextSegmented({ ...args, text: text.slice(splitAt) });
+      return `${left}\n\n${right}`;
+    }
+  }
+  return out;
+}
+
 /**
  * Executes document translation via Gemini.
  * @internal
@@ -2251,27 +2460,24 @@ export async function executeTranslationJob(
   let outputTokens = 0;
 
   try {
-    let response;
-
     if (source.rawText) {
-      // Use raw_text directly (no PDF resend)
-      response = await geminiModels.generateContent({
+      // Translate the already-OCR'd text (no PDF resend). Segmented: a document
+      // whose translation would exceed the output-token ceiling is split by
+      // paragraph and re-translated per half, so a 200+ page record never
+      // truncates silently (the raw single call capped at 65k output tokens).
+      const usage = { input_tokens: 0, output_tokens: 0 };
+      translatedText = await translateTextSegmented({
+        text: source.rawText,
+        promptText,
         model,
-        contents: [
-          {
-            role: "user",
-            parts: [
-              { text: `${promptText}\n\n---\n${source.rawText}` },
-            ],
-          },
-        ],
-        config: {
-          temperature: 0.2,
-          maxOutputTokens: 65536,
-        },
+        geminiModels,
+        usage,
       });
+      inputTokens = usage.input_tokens;
+      outputTokens = usage.output_tokens;
     } else if (source.storagePath) {
-      // Fetch PDF and translate multimodal
+      // Fallback for a document with no extraction (typically small: a passport,
+      // a supporting letter). Fetch the PDF and translate multimodal in one call.
       const { createServiceClient } = await import("@/backend/platform/supabase");
       const supabase = createServiceClient();
       const { data: fileData } = await supabase.storage
@@ -2281,7 +2487,7 @@ export async function executeTranslationJob(
       const fileBytes = fileData ? new Uint8Array(await fileData.arrayBuffer()) : new Uint8Array();
       const fileBase64 = Buffer.from(fileBytes).toString("base64");
 
-      response = await geminiModels.generateContent({
+      const response = await geminiModels.generateContent({
         model,
         contents: [
           {
@@ -2302,6 +2508,17 @@ export async function executeTranslationJob(
           maxOutputTokens: 65536,
         },
       });
+      inputTokens = response.usageMetadata?.promptTokenCount ?? 0;
+      outputTokens = response.usageMetadata?.candidatesTokenCount ?? 0;
+      // A single multimodal call cannot page-split, so a large scan would truncate
+      // here silently. Fail loud and actionable instead: the document must be
+      // extracted first (chunked OCR) so translation runs over raw_text (segmented).
+      if (response.candidates?.[0]?.finishReason === "MAX_TOKENS") {
+        throw new Error(
+          "AI_TRANSLATION_TRUNCATED: multimodal translation hit the output-token ceiling — extract the document first so translation runs over raw_text",
+        );
+      }
+      translatedText = stripMarkdownFence(response.candidates?.[0]?.content?.parts?.[0]?.text ?? "");
     } else {
       // No source text AND no source PDF — this is a data gap, NOT a success.
       // Marking it 'completed' with empty text would poison the UNIQUE
@@ -2320,10 +2537,6 @@ export async function executeTranslationJob(
       );
       return "failed";
     }
-
-    translatedText = stripMarkdownFence(response.candidates?.[0]?.content?.parts?.[0]?.text ?? "");
-    inputTokens = response.usageMetadata?.promptTokenCount ?? 0;
-    outputTokens = response.usageMetadata?.candidatesTokenCount ?? 0;
 
     // Validate translation (not empty, reasonable length)
     if (!translatedText.trim()) {
@@ -3379,33 +3592,63 @@ async function generateCaseQuestionnaire(input: {
     return { schema: materializeProposalToSchema(QUESTIONNAIRE_STUB_PROPOSAL, materializeOpts), model, inputTokens: 0, outputTokens: 0, costUsd: 0 };
   }
   const system = buildQuestionnaireGenSystem(input.config, input.posturePlaybook);
-  const user = buildQuestionGenContext(input.inputs, input.alreadyCovered) + questionGenOutputInstructions(input.config.target_question_count);
-  const client = getAnthropicClient();
   // target_question_count questions as bilingual (es/en) JSON — each with help,
   // options, validation, condition, and grounded prefills — is a large payload.
   // 8000 tokens truncated it mid-object for an 18-question hybrid over a full
   // asylum record: the JSON parsed to nothing and surfaced as the useless
   // "generator returned no questions". Give the schema real headroom, and widen
   // the client timeout to match (still under the 280s job endpoint timeout).
-  const r = await callAnthropic(client, { model, system, user, maxTokens: 16000, timeoutMs: 270_000 });
-  // A truncated or unparseable response must NOT masquerade as "the model
-  // returned nothing": throw the real reason so the instance error is actionable
-  // (and the failure is retried on its true cause, not swallowed to empty groups).
-  if (r.stopReason === "max_tokens") {
-    throw new Error(`questionnaire generation truncated at max_tokens (${r.text.length} chars) — raise maxTokens`);
+  const baseUser = buildQuestionGenContext(input.inputs, input.alreadyCovered) + questionGenOutputInstructions(input.config.target_question_count);
+  const client = getAnthropicClient();
+
+  // The generator is non-deterministic: the SAME record intermittently returns
+  // `groups:[]` or non-JSON, then yields a valid schema on a re-ask (seen in
+  // prod: 3 empty responses before success). A single shot let one flaky
+  // response fail the whole questionnaire with no recovery — the drafts pass
+  // already retries, so the schema call must too. `max_tokens` is NOT retried:
+  // it is a size/config problem (re-asking truncates again), so it surfaces
+  // immediately. Usage accumulates across attempts so cost stays honest (RNF-041).
+  const QUESTION_GEN_ATTEMPTS = 3;
+  let usageAccum: AnthropicUsage = { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 };
+  let lastReason = "";
+  for (let attempt = 0; attempt < QUESTION_GEN_ATTEMPTS; attempt++) {
+    if (attempt > 0) await sleepBackoff(attempt);
+    const user =
+      attempt === 0
+        ? baseUser
+        : `${baseUser}\n\nYour previous response yielded no questions (${lastReason}). ` +
+          `Return ONLY the JSON object with a NON-EMPTY "groups" array that follows the schema.`;
+    const r = await callAnthropic(client, { model, system, user, maxTokens: 16000, timeoutMs: 270_000 });
+    usageAccum = addUsage(usageAccum, r.usage);
+    // A truncated response must NOT masquerade as "the model returned nothing",
+    // and must NOT be retried (it would truncate again): throw the real reason.
+    if (r.stopReason === "max_tokens") {
+      throw new Error(`questionnaire generation truncated at max_tokens (${r.text.length} chars) — raise maxTokens`);
+    }
+    const parsed = stripFencesAndParse<{ groups?: ProposedGroup[] }>(r.text);
+    if (!parsed || !Array.isArray(parsed.groups)) {
+      lastReason = `not parseable JSON (stop=${r.stopReason}, ${r.text.length} chars)`;
+      continue;
+    }
+    if (parsed.groups.length === 0) {
+      lastReason = `empty groups (stop=${r.stopReason})`;
+      continue;
+    }
+    const proposal: SegmentationProposal = { groups: parsed.groups };
+    return {
+      schema: materializeProposalToSchema(proposal, materializeOpts),
+      model,
+      inputTokens: usageAccum.inputTokens,
+      outputTokens: usageAccum.outputTokens,
+      costUsd: computeAnthropicCost(usageAccum, model) ?? 0,
+    };
   }
-  const parsed = stripFencesAndParse<{ groups?: ProposedGroup[] }>(r.text);
-  if (!parsed || !Array.isArray(parsed.groups)) {
-    throw new Error(`questionnaire generator output was not parseable JSON (stop=${r.stopReason}, ${r.text.length} chars)`);
-  }
-  const proposal: SegmentationProposal = { groups: parsed.groups };
-  return {
-    schema: materializeProposalToSchema(proposal, materializeOpts),
-    model,
-    inputTokens: r.usage.inputTokens,
-    outputTokens: r.usage.outputTokens,
-    costUsd: computeAnthropicCost(r.usage, model) ?? 0,
-  };
+  // Every attempt produced empty/unparseable output — surface the true cause. A
+  // valid record never legitimately yields zero questions, so this is a real
+  // failure, not "nothing to ask".
+  throw new Error(
+    `questionnaire generator produced no usable questions after ${QUESTION_GEN_ATTEMPTS} attempts — last: ${lastReason}`,
+  );
 }
 
 // ---------------------------------------------------------------------------

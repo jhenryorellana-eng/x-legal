@@ -417,3 +417,93 @@ describe("executeQuestionnaireGenerationJob — schema generation surfaces the r
     expect(String(failed.error)).toContain("not parseable JSON");
   });
 });
+
+// ---------------------------------------------------------------------------
+// executeQuestionnaireGenerationJob — the schema call RETRIES on transient
+// empty/unparseable output (documented LLM non-determinism: the same record
+// intermittently returns `groups:[]` or garbage, then succeeds on a re-ask).
+// The drafts pass already retries; the schema call must too, or one flaky
+// response fails the whole questionnaire with no recovery.
+// ---------------------------------------------------------------------------
+
+describe("executeQuestionnaireGenerationJob — schema generation retries on transient failure", () => {
+  beforeEach(() => {
+    // Isolate the schema call: no drafts pass so stream calls == schema attempts.
+    mocks.repo.findQuestionnaireGenerationConfig.mockResolvedValue({ ...CONFIG, draft_answers_enabled: false });
+  });
+
+  it("retries and succeeds when the first response has empty groups", async () => {
+    let call = 0;
+    mocks.setResponder(() => {
+      call++;
+      return call === 1 ? textMessage(JSON.stringify({ groups: [] })) : textMessage(QUESTIONS_JSON);
+    });
+
+    const outcome = await executeQuestionnaireGenerationJob({
+      caseId: INSTANCE.case_id,
+      formDefinitionId: INSTANCE.form_definition_id,
+      partyId: null,
+    });
+
+    expect(outcome).toBe("ready");
+    expect(mocks.anthropicClient.messages.stream).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries and succeeds when the first response is unparseable", async () => {
+    let call = 0;
+    mocks.setResponder(() => {
+      call++;
+      return call === 1 ? textMessage("no puedo generar esto") : textMessage(QUESTIONS_JSON);
+    });
+
+    const outcome = await executeQuestionnaireGenerationJob({
+      caseId: INSTANCE.case_id,
+      formDefinitionId: INSTANCE.form_definition_id,
+      partyId: null,
+    });
+
+    expect(outcome).toBe("ready");
+    expect(mocks.anthropicClient.messages.stream).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives up after the attempt ceiling when every response is empty", async () => {
+    mocks.setResponder(() => textMessage(JSON.stringify({ groups: [] })));
+
+    const outcome = await executeQuestionnaireGenerationJob({
+      caseId: INSTANCE.case_id,
+      formDefinitionId: INSTANCE.form_definition_id,
+      partyId: null,
+    });
+
+    expect(outcome).toBe("failed");
+    expect(mocks.anthropicClient.messages.stream).toHaveBeenCalledTimes(3);
+    const failed = mocks.repo.updateQuestionnaireInstance.mock.calls.find(
+      (c) => c[1]?.status === "failed",
+    )?.[1] as Record<string, unknown>;
+    expect(String(failed.error)).toContain("no usable questions");
+  });
+
+  it("does NOT retry a max_tokens truncation (config problem, not flakiness)", async () => {
+    // A truncated half-object with stop_reason=max_tokens must fail on the FIRST
+    // attempt: re-asking would truncate again, so it is non-retryable.
+    mocks.setResponder(() => ({
+      content: [{ type: "text", text: '{"groups":[{"title_i18n":{"es":"Sobre' }],
+      usage: { input_tokens: 100, output_tokens: 16000 },
+      stop_reason: "max_tokens",
+      model: "claude-sonnet-4-6",
+    }));
+
+    const outcome = await executeQuestionnaireGenerationJob({
+      caseId: INSTANCE.case_id,
+      formDefinitionId: INSTANCE.form_definition_id,
+      partyId: null,
+    });
+
+    expect(outcome).toBe("failed");
+    expect(mocks.anthropicClient.messages.stream).toHaveBeenCalledTimes(1);
+    const failed = mocks.repo.updateQuestionnaireInstance.mock.calls.find(
+      (c) => c[1]?.status === "failed",
+    )?.[1] as Record<string, unknown>;
+    expect(String(failed.error)).toContain("truncated at max_tokens");
+  });
+});

@@ -2938,6 +2938,7 @@ export type Database = {
           completed_at: string | null
           cost_usd: number | null
           created_at: string
+          digest_text: string | null
           error: string | null
           id: string
           input_tokens: number | null
@@ -2954,6 +2955,7 @@ export type Database = {
           completed_at?: string | null
           cost_usd?: number | null
           created_at?: string
+          digest_text?: string | null
           error?: string | null
           id?: string
           input_tokens?: number | null
@@ -2970,6 +2972,7 @@ export type Database = {
           completed_at?: string | null
           cost_usd?: number | null
           created_at?: string
+          digest_text?: string | null
           error?: string | null
           id?: string
           input_tokens?: number | null

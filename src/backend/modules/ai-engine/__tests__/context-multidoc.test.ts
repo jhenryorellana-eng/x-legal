@@ -133,4 +133,37 @@ describe("buildCaseContextBlocks — multi-document slugs", () => {
     const joined = buildCaseContextBlocks(inputs).join("\n");
     expect(joined).not.toContain("truncado por presupuesto");
   });
+
+  it("covers the omitted middle with the digest when a clipped doc has one", () => {
+    const huge = "A".repeat(GENERATION_DOC_CHAR_BUDGET + 50_000);
+    const inputs: ResolvedInputs = {
+      documents: [
+        {
+          slug: "asilo-presentado-completo-con-anexos",
+          extractionPayload: {},
+          rawText: huge,
+          digestText: "RESUMEN pág 100-150: la declarante narra su persecución.",
+        },
+      ],
+      forms: [],
+    };
+
+    const joined = buildCaseContextBlocks(inputs).join("\n");
+    // The digest (covering the pages that would be dropped) is present...
+    expect(joined).toContain("RESUMEN pág 100-150: la declarante narra su persecución.");
+    // ...instead of the legacy black-hole marker, and verbatim edges remain.
+    expect(joined).not.toContain("truncado por presupuesto");
+    expect(joined).toContain("A".repeat(1000));
+  });
+
+  it("falls back to the legacy head-tail clip when a clipped doc has NO digest", () => {
+    const huge = "C".repeat(GENERATION_DOC_CHAR_BUDGET + 50_000);
+    const inputs: ResolvedInputs = {
+      documents: [doc("asilo-presentado-completo-con-anexos", huge)],
+      forms: [],
+    };
+    const joined = buildCaseContextBlocks(inputs).join("\n");
+    // No digest → the current behaviour (visible clip marker) is preserved.
+    expect(joined).toContain("truncado por presupuesto");
+  });
 });

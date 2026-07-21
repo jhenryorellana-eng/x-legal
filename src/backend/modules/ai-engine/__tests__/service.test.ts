@@ -780,6 +780,43 @@ describe("executeTranslationJob", () => {
     );
   });
 
+  it("splits the source text and re-translates each half when the output truncates at the token ceiling", async () => {
+    const para1 = "Primer parrafo del acta con mucho detalle narrativo.";
+    const para2 = "Segundo parrafo del acta con aun mas detalle narrativo.";
+    mocks.repo.findTranslationById.mockResolvedValue(PROCESSING_ROW);
+    mocks.repo.getTranslationSource.mockResolvedValue({
+      rawText: `${para1}\n\n${para2}`,
+      storagePath: null,
+      mimeType: null,
+    });
+    // The whole text truncates (MAX_TOKENS); each half fits and translates fully.
+    mocks.geminiModels.generateContent.mockImplementation(async (call: Record<string, any>) => {
+      const sent = String(call.contents[0].parts[0].text ?? "");
+      if (sent.includes(para1) && sent.includes(para2)) {
+        return {
+          candidates: [{ content: { parts: [{ text: "TRUNCATED-HALF" }] }, finishReason: "MAX_TOKENS" }],
+          usageMetadata: { promptTokenCount: 50, candidatesTokenCount: 65536 },
+        };
+      }
+      const text = sent.includes(para1) ? "First paragraph." : "Second paragraph.";
+      return {
+        candidates: [{ content: { parts: [{ text }] } }],
+        usageMetadata: { promptTokenCount: 20, candidatesTokenCount: 10 },
+      };
+    });
+    mocks.repo.getCaseDocumentForAi.mockResolvedValue({ id: CASE_DOC_ID, caseId: CASE_ID });
+    mocks.pdf.renderCertifiedTranslationPdf.mockResolvedValue(new Uint8Array([1]));
+    mocks.storage.uploadBytesToStorage.mockResolvedValue("ok");
+
+    const outcome = await executeTranslationJob(JOB);
+
+    expect(outcome).toBe("completed");
+    const completed = mocks.repo.completeTranslation.mock.calls.at(-1)?.[1] as Record<string, any>;
+    expect(completed.translatedText).toContain("First paragraph.");
+    expect(completed.translatedText).toContain("Second paragraph.");
+    expect(completed.translatedText).not.toContain("TRUNCATED-HALF");
+  });
+
   it("strips a Markdown code fence the model may wrap the answer in", async () => {
     mocks.repo.findTranslationById.mockResolvedValue(PROCESSING_ROW);
     mocks.repo.getTranslationSource.mockResolvedValue({ rawText: "Acta.", storagePath: null, mimeType: null });

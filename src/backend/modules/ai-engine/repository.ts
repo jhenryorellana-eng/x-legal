@@ -27,6 +27,7 @@ import { DEFAULT_TZ } from "@/shared/period";
 import { parseProvenanceMap } from "@/shared/constants/answer-provenance";
 import type { Tables, TablesInsert, TablesUpdate } from "@/shared/database.types";
 import type { ConfigSnapshot, ChunkProgress, SectionedProgress, DatasetItem } from "./domain";
+import { GENERATION_MULTI_DOC_CHAR_BUDGET } from "./domain";
 
 // ---------------------------------------------------------------------------
 // Row type aliases
@@ -1094,6 +1095,26 @@ export async function upsertExtraction(
   return data;
 }
 
+/**
+ * Persists the extraction digest, separately from the main completion upsert and
+ * BEST-EFFORT: a missing column (migration not yet applied) or a write hiccup is
+ * logged, never thrown — the digest is optional (downstream falls back to the
+ * head-tail clip when it is absent), so it must never fail an extraction.
+ */
+export async function updateExtractionDigest(caseDocumentId: string, digestText: string): Promise<void> {
+  const client = createServiceClient();
+  const { error } = await client
+    .from("document_extractions")
+    .update({ digest_text: digestText })
+    .eq("case_document_id", caseDocumentId);
+  if (error) {
+    logger.warn(
+      { err: error, caseDocumentId },
+      "ai-engine: updateExtractionDigest failed (digest is optional — falling back to clip)",
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Document translations
 // ---------------------------------------------------------------------------
@@ -1382,11 +1403,27 @@ export async function loadResolvedInputs(snapshot: ConfigSnapshot): Promise<{
         (docRow as { original_filename?: string | null } | null)?.original_filename ??
         undefined;
 
+      const rawText = data.raw_text ?? "";
+      // Only a document large enough to be clipped downstream needs its digest;
+      // fetch it separately and error-tolerantly (a missing column pre-migration
+      // returns an error → digestText stays undefined → the clip still applies).
+      let digestText: string | undefined;
+      if (rawText.length > GENERATION_MULTI_DOC_CHAR_BUDGET) {
+        const { data: digestRow } = await client
+          .from("document_extractions")
+          .select("digest_text")
+          .eq("id", docRef.extraction_id)
+          .maybeSingle();
+        const dt = (digestRow as { digest_text?: string | null } | null)?.digest_text;
+        if (dt) digestText = dt;
+      }
+
       documents.push({
         slug: docRef.slug,
         extractionPayload: (data.payload as Record<string, unknown>) ?? {},
-        rawText: data.raw_text ?? "",
+        rawText,
         ...(label ? { label } : {}),
+        ...(digestText ? { digestText } : {}),
       });
 
       // Calibration signal for the generation char budgets (head-tail clip):

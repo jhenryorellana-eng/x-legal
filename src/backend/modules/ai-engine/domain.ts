@@ -227,6 +227,11 @@ export interface ResolvedInputs {
     /** Human file label (display_name/original_filename) — distinguishes the N
      *  coexisting documents of an allow_multiple slug in the prompt. */
     label?: string;
+    /** Bounded, page-cited digest of the whole document, computed once at
+     *  extraction. Used to cover the middle of a document too large to fit the
+     *  char budget verbatim (instead of head-tail clipping it into a black hole).
+     *  Absent for pre-digest extractions → the legacy clip still applies. */
+    digestText?: string;
   }>;
   forms: Array<{
     slug: string;
@@ -771,6 +776,39 @@ function budgetDocText(text: string, budget: number): string {
   return headTailClip(text, budget, "documento");
 }
 
+/** Renders a document body within `budget`. Under budget → verbatim (byte-identical
+ *  to the legacy path). Over budget WITH a digest → verbatim head+tail plus the
+ *  page-cited digest, so the omitted middle is covered instead of dropped. Over
+ *  budget WITHOUT a digest (pre-digest extractions) → the legacy head-tail clip. */
+function renderDocBody(text: string, digestText: string | undefined, budget: number): string {
+  if (text.length <= budget) return text;
+  const digest = digestText?.trim();
+  if (digest) return headTailWithDigest(text, digest, budget);
+  return budgetDocText(text, budget);
+}
+
+/** Head+tail verbatim (exact grounding at the edges) with the page-cited digest
+ *  filling the middle that would otherwise be a black hole. Stays within `budget`
+ *  so N documents still fit one context: the digest is capped at half the budget
+ *  and the remaining budget is split 60/40 head/tail. */
+function headTailWithDigest(text: string, digest: string, budget: number): string {
+  const digestCap = Math.floor(budget * 0.5);
+  const digestBody = digest.length > digestCap ? `${digest.slice(0, digestCap)} […]` : digest;
+  const digestBlock =
+    "\n[RESUMEN COMPLETO DEL DOCUMENTO — con citas de página, cubre las secciones no incluidas verbatim abajo]\n" +
+    `${digestBody}\n` +
+    "[FIN DEL RESUMEN — a continuación, extractos verbatim del documento]\n\n";
+  const verbatimBudget = Math.max(2_000, budget - digestBlock.length);
+  const head = Math.floor(verbatimBudget * 0.6);
+  const tail = verbatimBudget - head;
+  return (
+    digestBlock +
+    text.slice(0, head) +
+    "\n\n[... porción central omitida verbatim; su contenido está en el RESUMEN de arriba ...]\n\n" +
+    text.slice(text.length - tail)
+  );
+}
+
 /** Sanitizes a client-typed file label (case_documents.display_name) before it is
  *  interpolated next to prompt delimiters: strips newlines/quotes and collapses
  *  `---` runs so a malicious or unlucky filename can't forge document boundaries. */
@@ -846,7 +884,13 @@ export function buildCaseContextBlocks(inputs: ResolvedInputs): string[] {
     parts.push("\n## TEXTO COMPLETO DE DOCUMENTOS");
     for (const [idx, doc] of inputs.documents.entries()) {
       parts.push(`\n--- INICIO DOCUMENTO: ${docMeta[idx].heading} ---`);
-      parts.push(budgetDocText(maskPii(doc.rawText), docMeta[idx].budget));
+      parts.push(
+        renderDocBody(
+          maskPii(doc.rawText),
+          doc.digestText ? maskPii(doc.digestText) : undefined,
+          docMeta[idx].budget,
+        ),
+      );
       parts.push(`--- FIN DOCUMENTO: ${docMeta[idx].heading} ---`);
     }
   }

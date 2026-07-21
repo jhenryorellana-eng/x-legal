@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => {
   const repo = {
     findExtraction: vi.fn(),
     upsertExtraction: vi.fn(),
+    updateExtractionDigest: vi.fn().mockResolvedValue(undefined),
     getCaseDocumentForAi: vi.fn(),
     // import-graph stubs (not exercised here)
     findRunById: vi.fn(),
@@ -174,6 +175,14 @@ function blobOf(bytes: Uint8Array) {
 function geminiText(text: string, inTok = 100, outTok = 50) {
   return {
     candidates: [{ content: { parts: [{ text }] } }],
+    usageMetadata: { promptTokenCount: inTok, candidatesTokenCount: outTok },
+  };
+}
+
+/** Gemini response cut at the output-token ceiling (finishReason MAX_TOKENS). */
+function geminiStopped(text: string, finishReason: string, inTok = 100, outTok = 65536) {
+  return {
+    candidates: [{ content: { parts: [{ text }] }, finishReason }],
     usageMetadata: { promptTokenCount: inTok, candidatesTokenCount: outTok },
   };
 }
@@ -339,6 +348,120 @@ describe("executeExtractionJob — chunked OCR for large documents", () => {
     const failed = mocks.repo.upsertExtraction.mock.calls.at(-1)?.[0];
     expect(failed.status).toBe("failed");
     expect(String(failed.error)).toContain("chunk 0");
+  });
+
+  it("bisects a chunk whose OCR truncates at the token ceiling instead of losing the tail", async () => {
+    // 31 pages → chunked route (page count >30) → chunks [0,25) and [25,31). The
+    // first chunk's full-range OCR truncates (MAX_TOKENS); its two halves ([0,12)
+    // and [12,25)) fit. The tail must NOT be silently dropped: the range is
+    // re-OCR'd in halves and both are assembled in order.
+    mocks.repo.getCaseDocumentForAi.mockResolvedValue(docFixture({ sizeBytes: 14 * 1024 * 1024 }));
+    mocks.pdf.countPdfPages.mockResolvedValue(31);
+    mocks.pdf.extractPdfPageRange.mockImplementation(
+      async (_b: Uint8Array, start: number, end: number) => new Uint8Array([start, end]),
+    );
+    mocks.gemini.generateContent.mockImplementation(async (call: Record<string, any>) => {
+      if (call.config.responseMimeType === "text/plain") {
+        const [start, end] = Array.from(Buffer.from(call.contents[0].parts[0].inlineData.data, "base64"));
+        if (start === 0 && end === 25) return geminiStopped(`trunc-${start}-${end}`, "MAX_TOKENS");
+        return geminiText(`ocr-${start}-${end}`);
+      }
+      return geminiText(JSON.stringify({ a_number: "244-132-587" }));
+    });
+
+    const outcome = await executeExtractionJob(PAYLOAD);
+
+    expect(outcome).toBe("completed");
+    const completed = mocks.repo.upsertExtraction.mock.calls.at(-1)?.[0];
+    // The truncated full-range text is discarded; the two halves are used, in order.
+    expect(completed.raw_text).not.toContain("trunc-0-25");
+    const iLeft = completed.raw_text.indexOf("ocr-0-12");
+    const iRight = completed.raw_text.indexOf("ocr-12-25");
+    expect(iLeft).toBeGreaterThanOrEqual(0);
+    expect(iRight).toBeGreaterThan(iLeft);
+  });
+
+  it("bisects a chunk whose inline bytes exceed the request limit before calling Gemini", async () => {
+    // 31 pages → chunks [0,25) and [25,31). The first chunk's sub-PDF is oversized
+    // for an inline request (>18MB); it must be split by page BEFORE the call, so
+    // the ~20MB inline ceiling is never hit and no page is dropped.
+    mocks.repo.getCaseDocumentForAi.mockResolvedValue(docFixture({ sizeBytes: 14 * 1024 * 1024 }));
+    mocks.pdf.countPdfPages.mockResolvedValue(31);
+    const OVERSIZED = 19 * 1024 * 1024;
+    mocks.pdf.extractPdfPageRange.mockImplementation(
+      async (_b: Uint8Array, start: number, end: number) =>
+        start === 0 && end === 25 ? new Uint8Array(OVERSIZED) : new Uint8Array([start, end]),
+    );
+    mocks.gemini.generateContent.mockImplementation(async (call: Record<string, any>) => {
+      if (call.config.responseMimeType === "text/plain") {
+        const [start, end] = Array.from(Buffer.from(call.contents[0].parts[0].inlineData.data, "base64"));
+        return geminiText(`ocr-${start}-${end}`);
+      }
+      return geminiText(JSON.stringify({ a_number: "244-132-587" }));
+    });
+
+    const outcome = await executeExtractionJob(PAYLOAD);
+
+    expect(outcome).toBe("completed");
+    // No OCR call carried the oversized payload — it was split first.
+    const ocrCalls = mocks.gemini.generateContent.mock.calls.filter(
+      (c) => c[0].config.responseMimeType === "text/plain",
+    );
+    const sentSizes = ocrCalls.map(
+      (c) => Buffer.from(c[0].contents[0].parts[0].inlineData.data, "base64").length,
+    );
+    expect(Math.max(...sentSizes)).toBeLessThan(OVERSIZED);
+    const completed = mocks.repo.upsertExtraction.mock.calls.at(-1)?.[0];
+    expect(completed.raw_text).toContain("ocr-0-12");
+    expect(completed.raw_text).toContain("ocr-12-25");
+  });
+
+  it("computes and persists a page-cited digest for a record large enough to be clipped", async () => {
+    // 4 chunks × 30k chars → assembled raw_text >80k → eligible for a digest.
+    mocks.repo.getCaseDocumentForAi.mockResolvedValue(docFixture({ sizeBytes: 14 * 1024 * 1024 }));
+    mocks.pdf.countPdfPages.mockResolvedValue(100);
+    mocks.pdf.extractPdfPageRange.mockImplementation(
+      async (_b: Uint8Array, start: number, end: number) => new Uint8Array([start, end]),
+    );
+    const bigChunk = "X".repeat(30_000);
+    mocks.gemini.generateContent.mockImplementation(async (call: Record<string, any>) => {
+      if (call.config.responseMimeType === "text/plain") return geminiText(bigChunk); // OCR chunk
+      if (call.config.responseSchema) return geminiText(JSON.stringify({ a_number: "244-132-587" })); // fields
+      return geminiText("RESUMEN págs 1-100: hechos clave del expediente."); // digest (no schema, no mime)
+    });
+
+    const outcome = await executeExtractionJob(PAYLOAD);
+
+    expect(outcome).toBe("completed");
+    // The digest is persisted separately from the completion upsert.
+    expect(mocks.repo.updateExtractionDigest).toHaveBeenCalledWith(
+      DOC_ID,
+      "RESUMEN págs 1-100: hechos clave del expediente.",
+    );
+    // The digest call carried the faithful prompt over the assembled OCR, no schema.
+    const digestCall = mocks.gemini.generateContent.mock.calls.find(
+      (c) => !c[0].config.responseMimeType && !c[0].config.responseSchema,
+    )?.[0];
+    expect(digestCall).toBeDefined();
+    expect(digestCall.contents[0].parts[0].text).toContain("paralegal");
+    expect(digestCall.contents[0].parts[0].text).toContain("XXXXX");
+  });
+
+  it("skips the digest for a small chunked record (fits the budget verbatim)", async () => {
+    mocks.repo.getCaseDocumentForAi.mockResolvedValue(docFixture({ sizeBytes: 14 * 1024 * 1024 }));
+    mocks.pdf.countPdfPages.mockResolvedValue(100);
+    mocks.pdf.extractPdfPageRange.mockImplementation(
+      async (_b: Uint8Array, start: number, end: number) => new Uint8Array([start, end]),
+    );
+    mocks.gemini.generateContent.mockImplementation(async (call: Record<string, any>) => {
+      if (call.config.responseMimeType === "text/plain") return geminiText("corto"); // tiny OCR
+      return geminiText(JSON.stringify({ a_number: "244-132-587" }));
+    });
+
+    const outcome = await executeExtractionJob(PAYLOAD);
+
+    expect(outcome).toBe("completed");
+    expect(mocks.repo.updateExtractionDigest).not.toHaveBeenCalled();
   });
 
   it("rejects documents over the shared 50MB cap with an updated message", async () => {
