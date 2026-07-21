@@ -36,9 +36,9 @@ const STATEMENT_SECTIONS = [
     guidance: "First person, pro se; the decision appealed (IJ name, court, date); relief denied (only what the decision denied) and that removal was ordered; end with 'The reasons for my appeal are as follows:'.", type: "prose" },
   { key: "reasons", heading: "Numbered reasons", min_words: 80, max_tokens: 1600,
     guidance: "One IJ error per number, each 'The Immigration Judge erred in [ruling], because [specific finding/conclusion]'. Cover every dispositive ground of the decision (unchallenged ground = waived). No merged topics, no deep analysis.", type: "list" },
-  { key: "reservation", heading: "Brief reservation", min_words: 20, max_tokens: 250,
+  { key: "reservation", heading: "Brief reservation", min_words: 20, max_tokens: 450,
     guidance: "A brief will be filed after the transcript/briefing schedule; this list is not exhaustive.", type: "prose" },
-  { key: "closing", heading: "Prayer & signature", min_words: 15, max_tokens: 300,
+  { key: "closing", heading: "Prayer & signature", min_words: 15, max_tokens: 700,
     guidance: "Request reverse, or vacate & remand; 'Respectfully submitted,'; signature line; name; 'Respondent, Pro Se'; Address/City-State-ZIP/Telephone/Date blanks.", type: "static" },
 ];
 
