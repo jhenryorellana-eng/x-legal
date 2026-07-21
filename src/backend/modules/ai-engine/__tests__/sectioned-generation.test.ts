@@ -158,6 +158,13 @@ describe("assemblePrompt — anti-invention rules injection", () => {
     expect(a.system[0].text).toContain(DEFAULT_GENERATION_RULES);
   });
 
+  it("R2 forbids reclassifying a documented event as a legal figure the record does not state", () => {
+    // Guards against the Ivis regression: an EWI entry became "two prior deportations".
+    const a = assemblePrompt(snapshot({ rules_enabled: true }), EMPTY_INPUTS, NO_DATASET);
+    expect(a.system[0].text).toContain("reclassify a documented event");
+    expect(a.system[0].text).toContain("EWI");
+  });
+
   it("uses custom rules_text when provided", () => {
     const a = assemblePrompt(snapshot({ rules_enabled: true, rules_text: "CUSTOM RULE X" }), EMPTY_INPUTS, NO_DATASET);
     expect(a.system[0].text).toContain("CUSTOM RULE X");

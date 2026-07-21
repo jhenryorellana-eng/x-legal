@@ -1,7 +1,7 @@
 # Guía detallada para crear el documento "Statement of Reasons for Appeal"
 
 **Para:** Equipo legal — USALatino Prime
-**Caso de referencia:** Ticllacuri Capcha, A241-133-706 (apelación ante la BIA)
+**Ejemplo ilustrativo (datos ficticios):** los nombres, A-Numbers, cortes y montos que aparecen en esta guía son de MUESTRA — no pertenecen a ningún caso real. Los datos del caso que se valida provienen exclusivamente del material fuente del expediente.
 **Fecha de la guía:** 20 de julio de 2026
 **Verificado contra:** BIA Practice Manual / EOIR Policy Manual (justice.gov/eoir) y 8 C.F.R. § 1003.1
 
@@ -65,9 +65,9 @@ BOARD OF IMMIGRATION APPEALS
 Debajo del encabezado, los datos que identifican el caso:
 
 - El nombre de la persona en mayúsculas, seguido de "Respondent-Appellant" (la persona que apela).
-- El número de expediente: `File No.: A241-133-706`.
+- El número de expediente: `File No.: A[A-NUMBER]` (el A-Number real del caso, tomado de la orden del juez).
 - La frase `In Removal Proceedings` (en proceso de remoción).
-- Una línea que diga de qué corte viene: `Appeal from the decision of the Salt Lake City Immigration Court`.
+- Una línea que diga de qué corte viene: `Appeal from the decision of the [IMMIGRATION COURT] Immigration Court`.
 
 ### Bloque 3 — El título del documento (centrado)
 En negrita y subrayado:
@@ -96,8 +96,6 @@ Cierra este bloque con dos frases importantes:
 - Una frase de cierre pidiendo lo que se busca: que la BIA **revoque** la decisión, o que la **anule y devuelva** el caso a la corte.
 - `Respectfully submitted,` (respetuosamente presentado).
 - La línea de firma, el nombre, "Respondent, Pro Se", y espacios para domicilio y fecha.
-
-> **Nota para el validador (Pre-Mortem):** el documento generado lleva tokens técnicos que el sistema sustituye de forma **determinista** al renderizar: `{{APPELLANT_SIGNATURE}}` (firma estampada del apelante o una línea imprimible), `{{CURRENT_DATE}}` (fecha de hoy) y el bloque de dirección del apelante `{{APPELLANT_ADDRESS}}` / `{{APPELLANT_CITY_STATE_ZIP}}` / `{{APPELLANT_TELEPHONE}}` (dirección postal confirmada del apelante, tomada del EOIR-26 ítem #10 / I-589; si faltara, una línea imprimible). Son **placeholders intencionales**: el bloque de dirección **ya no va en blanco** — **no reportes estos tokens ni un bloque de dirección lleno como error o texto faltante.**
 
 ---
 
@@ -163,7 +161,7 @@ Consejos para que cada punto sea fuerte:
 
 ## 9. Modelo completo (plantilla lista para adaptar)
 
-A continuación, un modelo en inglés que respeta todas las reglas anteriores. Reemplaza lo que va entre corchetes y ajusta las razones a lo que realmente ocurrió en el caso.
+A continuación, un modelo en inglés que respeta todas las reglas anteriores. **Es un EJEMPLO ILUSTRATIVO con datos ficticios**: reemplaza cada `[PLACEHOLDER]` con los datos reales del caso y ajusta las razones a lo que realmente ocurrió.
 
 ```
                     UNITED STATES DEPARTMENT OF JUSTICE
@@ -172,31 +170,31 @@ A continuación, un modelo en inglés que respeta todas las reglas anteriores. R
 
 In the Matter of:
 
-JAIME OCTAVIO TICLLACURI CAPCHA,
+[RESPONDENT FULL NAME],
             Respondent-Appellant.
 _______________________________________________________________
 
-File No.:  A241-133-706
+File No.:  A[A-NUMBER]
 In Removal Proceedings
-Appeal from the decision of the Salt Lake City Immigration Court
+Appeal from the decision of the [IMMIGRATION COURT] Immigration Court
 
 
              RESPONDENT'S STATEMENT OF REASONS FOR APPEAL
                      (Attachment to Form EOIR-26)
 
 
-I, Jaime Octavio Ticllacuri Capcha, am the Respondent in the above-
+I, [Respondent Full Name], am the Respondent in the above-
 captioned matter, and I am proceeding without an attorney (pro se). I
 respectfully appeal to the Board of Immigration Appeals from the decision
-of Immigration Judge Christopher Greer of the Salt Lake City Immigration
-Court, entered on July 8, 2026, which denied my applications for asylum,
-for withholding of removal under section 241(b)(3) of the Immigration and
-Nationality Act, and for protection under the Convention Against Torture,
-and which ordered me removed to Peru. The reasons for my appeal are as
-follows:
+of Immigration Judge [IMMIGRATION JUDGE NAME] of the [IMMIGRATION COURT]
+Immigration Court, entered on [DECISION DATE], which denied my applications
+for asylum, for withholding of removal under section 241(b)(3) of the
+Immigration and Nationality Act, and for protection under the Convention
+Against Torture, and which ordered me removed to [COUNTRY]. The reasons for
+my appeal are as follows:
 
 1.  The Immigration Judge erred in denying my application for asylum. I
-    left Peru because a criminal organization extorted me, threatened me,
+    left [COUNTRY] because a criminal organization extorted me, threatened me,
     pursued me, and threatened to kill me. The Immigration Judge did not
     correctly evaluate the evidence of the harm I suffered and the harm I
     fear if I return.
@@ -213,7 +211,7 @@ follows:
     by the record.
 
 4.  The Immigration Judge erred in denying protection under the Convention
-    Against Torture. If I am returned to Peru, it is more likely than not
+    Against Torture. If I am returned to [COUNTRY], it is more likely than not
     that I would be tortured with the consent or acquiescence of a public
     official.
 
@@ -240,7 +238,7 @@ Respectfully submitted,
 
 
 ______________________________________
-Jaime Octavio Ticllacuri Capcha
+[Respondent Full Name]
 Respondent, Pro Se
 
 Address: ______________________________________
@@ -257,7 +255,7 @@ Esta Declaración de Razones **no se presenta sola**. Va dentro del paquete de a
 
 1. **Form EOIR-26** (el formulario, firmado) — en el campo de razones se escribe "See attached Statement of Reasons for Appeal".
 2. **Statement of Reasons for Appeal** (esta hoja, firmada).
-3. **Copia del recibo de pago** de la tasa ($1,030) — obligatorio.
+3. **Comprobante de la tasa** — según el caso: la **copia del recibo de pago** de la tasa (la tarifa vigente del EOIR-26, $1,030 en 2026) **o**, si el cliente solicita exención, el **Fee Waiver Request (Form EOIR-26A)**. Uno de los dos, no ambos.
 4. **Proof of Service** (constancia de que se envió copia al abogado del gobierno).
 
 Todo el paquete debe **llegar a la BIA (o subirse por ECAS) a más tardar el 7 de agosto de 2026**, y se envía además una copia completa a la oficina del Chief Counsel (el abogado del gobierno).

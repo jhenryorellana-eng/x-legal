@@ -431,6 +431,56 @@ describe("executePreMortemJob (validator core)", () => {
     expect(mocks.cases.getCaseExtractionsSystem).not.toHaveBeenCalled();
   });
 
+  it("ai_letter: RESOLVES the deterministic tokens before validation — no raw {{OCC_ADDRESS}} reaches the validator", async () => {
+    // FIX (2026-07-21): the Pre-Mortem used to read output_text with the {{…}} tokens
+    // unresolved (only the PDF resolves them), tripping `placeholder_sin_resolver` as a
+    // false positive. It must judge the SAME resolved content the filed PDF carries.
+    mocks.repo.findRunById.mockResolvedValue({
+      ...BASE_RUN,
+      output_text:
+        "PROOF OF SERVICE\n\nserved upon the OCC at:\n{{OCC_ADDRESS}}\n\nMethod of service:\n{{SERVICE_METHOD_CHECKBOXES}}",
+      config_snapshot: {
+        resolved_inputs: {
+          documents: [{ slug: "decision-doc", case_document_id: "d1", extraction_id: "e1" }],
+          forms: [],
+        },
+        letter_fill: {
+          occ_address: { decision_document_slug: "decision-doc", court_json_path: "court_location" },
+          service_method: { form_slug: "proof-cuestionario", method_question: "metodo" },
+        },
+      },
+    });
+    mocks.repo.loadResolvedInputs.mockResolvedValue({
+      documents: [
+        {
+          slug: "decision-doc",
+          extractionPayload: { court_location: "Houston - S. Gessner Road Immigration Court" },
+          rawText: "",
+        },
+      ],
+      forms: [{ slug: "proof-cuestionario", answers: { metodo: "first_class_mail" }, declaredGaps: [] }],
+    });
+
+    await runJob();
+
+    const streamArg = JSON.stringify(mocks.anthropicClient.messages.stream.mock.calls[0][0]);
+    // The court→OCC lookup resolved Houston; the validator sees the real address…
+    expect(streamArg).toContain("126 Northpoint Drive");
+    // …the chosen service method is checked…
+    expect(streamArg).toContain("[X] First-class United States mail");
+    // …and NO raw token leaks into the prompt.
+    expect(streamArg).not.toContain("{{OCC_ADDRESS}}");
+    expect(streamArg).not.toContain("{{SERVICE_METHOD_CHECKBOXES}}");
+  });
+
+  it("ai_letter: the prompt tells the model the guide's example data is NOT the case data (guide caveat)", async () => {
+    await runJob();
+    const streamArg = JSON.stringify(mocks.anthropicClient.messages.stream.mock.calls[0][0]);
+    expect(streamArg).toContain("CÓMO USAR LA GUÍA");
+    expect(streamArg).toContain("EJEMPLO ILUSTRATIVO");
+    expect(streamArg).toContain("PRO SE");
+  });
+
   it("ai_letter: a REAL-SIZE giant memo (~500k, a 250-page credible-fear memo) reaches the validator WHOLE", async () => {
     // Henry 2026-07-17: QA must never judge a clipped document because of budget.
     // With small guide/source the dynamic budget must swallow a 500k memo entirely.

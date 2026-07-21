@@ -1,7 +1,7 @@
 # Guía detallada para crear el documento "Proof of Service"
 
 **Para:** Equipo legal — USALatino Prime
-**Caso de referencia:** Ticllacuri Capcha, A241-133-706 (apelación ante la BIA)
+**Ejemplo ilustrativo (datos ficticios):** los nombres, A-Numbers, cortes, direcciones y montos que aparecen en esta guía son de MUESTRA — no pertenecen a ningún caso real. Los datos del caso que se valida provienen exclusivamente del material fuente del expediente.
 **Fecha de la guía:** 20 de julio de 2026
 **Verificado contra:** BIA Practice Manual / EOIR Policy Manual (justice.gov/eoir), Parte III, cap. 2.2 y 2.3
 
@@ -48,14 +48,13 @@ La BIA exige que el Proof of Service diga, de forma clara, estos seis elementos.
 
 ## 4. ¿Quién es "el fiscal" y a qué dirección se le envía?
 
-La "parte contraria" en este caso es el abogado del gobierno que llevó el caso en la corte de inmigración. Como el proceso fue en Salt Lake City, la oficina que corresponde es:
+La "parte contraria" es el abogado del gobierno (Office of the Chief Counsel de ICE/OPLA) que corresponde a la **corte donde se llevó el caso**. El sistema resuelve esta dirección automáticamente a partir de la corte de la decisión; cada corte tiene su propia oficina. A modo de ejemplo ilustrativo, para una corte en Salt Lake City la oficina sería:
 
 ```
 U.S. Department of Homeland Security
 Immigration and Customs Enforcement (ICE / OPLA)
 Office of the Chief Counsel
-2975 Decker Lake Drive, Stop C
-West Valley City, UT 84119-6098
+[dirección de la OCC correspondiente a la corte del caso]
 ```
 
 Es la **misma oficina** a la que el cliente ya le sirvió su solicitud de asilo (I-589) en su momento. Aun así, conviene **confirmar la dirección** al momento de enviar, porque estas direcciones pueden cambiar.
@@ -91,7 +90,7 @@ BOARD OF IMMIGRATION APPEALS
 
 ### Bloque 2 — Identificación del caso
 - Nombre de la persona en mayúsculas + "Respondent-Appellant".
-- `File No.: A241-133-706`.
+- `File No.: A[A-NUMBER]` (el A-Number real del caso).
 - `In Removal Proceedings`.
 
 ### Bloque 3 — Título del documento (centrado, en negrita)
@@ -112,8 +111,6 @@ Casillas para marcar **cómo** se envió (dato 5): correo de primera clase, entr
 - Una frase corta declarando que lo anterior es verdadero.
 - Línea de firma + nombre escrito (dato 6).
 - La **fecha del envío** (dato 4).
-
-> **Nota para el validador (Pre-Mortem):** el documento generado lleva tokens técnicos que el sistema sustituye de forma **determinista** al renderizar: `{{APPELLANT_SIGNATURE}}` (firma estampada del apelante o una línea imprimible), `{{CURRENT_DATE}}` (fecha de hoy), `{{OCC_ADDRESS}}` (dirección de la Office of the Chief Counsel resuelta por la corte de la decisión; si la corte no está en el directorio queda un placeholder honesto "confirm…") y `{{SERVICE_METHOD_CHECKBOXES}}` (las tres líneas de método con la elegida marcada `[X]`). Son **placeholders intencionales**: **no los reportes como error ni como texto faltante**, y no marques como anomalía que una casilla de método aparezca marcada.
 
 ---
 
@@ -169,7 +166,7 @@ Casillas para marcar **cómo** se envió (dato 5): correo de primera clase, entr
 
 ## 11. Modelo completo (plantilla lista para adaptar)
 
-Reemplaza lo que va entre corchetes. Marca el método real de envío y escribe la fecha real.
+**Es un EJEMPLO ILUSTRATIVO con datos ficticios**: reemplaza cada `[PLACEHOLDER]` con los datos reales del caso. Marca el método real de envío y escribe la fecha real.
 
 ```
                     UNITED STATES DEPARTMENT OF JUSTICE
@@ -178,11 +175,11 @@ Reemplaza lo que va entre corchetes. Marca el método real de envío y escribe l
 
 In the Matter of:
 
-JAIME OCTAVIO TICLLACURI CAPCHA,
+[RESPONDENT FULL NAME],
             Respondent-Appellant.
 _______________________________________________________________
 
-File No.:  A241-133-706
+File No.:  A[A-NUMBER]
 In Removal Proceedings
 
 
@@ -190,12 +187,13 @@ In Removal Proceedings
                        (Certificate of Service)
 
 
-I, Jaime Octavio Ticllacuri Capcha, the Respondent in the above-captioned
+I, [Respondent Full Name], the Respondent in the above-captioned
 matter, hereby certify that on the date written below I served a true and
 complete copy of the following documents:
 
     the Notice of Appeal (Form EOIR-26), the attached Statement of Reasons
-    for Appeal, and a copy of the appeal fee receipt,
+    for Appeal, and [a copy of the appeal fee receipt OR the Fee Waiver
+    Request (Form EOIR-26A) — whichever the case actually files],
 
 upon the opposing party, the U.S. Department of Homeland Security,
 Immigration and Customs Enforcement, Office of the Chief Counsel, at the
@@ -204,8 +202,7 @@ following address:
         U.S. Department of Homeland Security
         Immigration and Customs Enforcement (ICE / OPLA)
         Office of the Chief Counsel
-        2975 Decker Lake Drive, Stop C
-        West Valley City, UT 84119-6098
+        [OCC ADDRESS for the case's Immigration Court]
 
 Method of service (check one):
 
@@ -217,7 +214,7 @@ I declare under penalty of perjury that the foregoing is true and correct.
 
 
 ______________________________________
-Jaime Octavio Ticllacuri Capcha
+[Respondent Full Name]
 Respondent, Pro Se
 
 Date of service: ________________________________
@@ -231,11 +228,11 @@ El Proof of Service es **la última pieza** del paquete de apelación y no se pr
 
 1. **Form EOIR-26** (firmado).
 2. **Statement of Reasons for Appeal** (firmado).
-3. **Copia del recibo de pago** ($1,030).
+3. **Comprobante de la tasa** — la **copia del recibo de pago** (tarifa vigente del EOIR-26, $1,030 en 2026) **o**, si se solicita exención, el **Fee Waiver Request (Form EOIR-26A)**. Uno de los dos, según el caso.
 4. **Proof of Service** (esta hoja, firmada).
 
 Y recuerda los **dos destinos**:
-- El **paquete completo** va a la BIA (o se sube por ECAS), y debe **llegar a más tardar el 7 de agosto de 2026**.
+- El **paquete completo** va a la BIA (o se sube por ECAS), y debe **llegar dentro del plazo de 30 días** contados desde la fecha de la decisión del juez (el plazo no es prorrogable).
 - Una **copia completa** va al DHS – Office of the Chief Counsel (justo lo que esta constancia certifica).
 
 ---
@@ -244,4 +241,4 @@ Y recuerda los **dos destinos**:
 
 - EOIR Policy Manual / BIA Practice Manual, cap. 2.2 — obligación de servicio y contenido del Proof of Service (nombre/título del servido, dirección completa, fecha, medio, documentos, y persona que sirve; firma obligatoria; la Junta rechaza toda presentación sin constancia).
 - EOIR Policy Manual / BIA Practice Manual, cap. 2.3 — formato de documentos (papel, letra, una cara, firma con nombre escrito).
-- ICE — Office of the Principal Legal Advisor / Office of the Chief Counsel, Salt Lake City (dirección de servicio).
+- ICE — Office of the Principal Legal Advisor / Office of the Chief Counsel (la dirección de servicio corresponde a la corte de inmigración del caso; el sistema la resuelve por la corte de la decisión).

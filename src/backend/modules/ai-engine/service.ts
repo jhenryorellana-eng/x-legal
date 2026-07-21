@@ -1185,6 +1185,54 @@ async function runSectionedGeneration(
 // Render helper
 // ---------------------------------------------------------------------------
 
+/**
+ * Resolves a court letter's deterministic NON-signature tokens — {{CURRENT_DATE}}
+ * (today in the org timezone) and the letter_fill tokens ({{OCC_ADDRESS}},
+ * {{APPELLANT_ADDRESS}}, {{APPELLANT_CITY_STATE_ZIP}}, {{APPELLANT_TELEPHONE}},
+ * {{SERVICE_METHOD_CHECKBOXES}}) — from the case's confirmed answers/extractions.
+ *
+ * Shared by renderAndStore (the filed PDF) and the Pre-Mortem validator so the
+ * validator judges the SAME resolved facts the document carries — never a raw
+ * {{OCC_ADDRESS}} token. `inputs` may be pre-loaded (the Pre-Mortem already resolved
+ * the source material) to avoid a second DB round-trip; otherwise it is loaded from
+ * the snapshot. The signature token is intentionally NOT handled here: the render
+ * stamps an approved image (or a printable line); validation uses a readable label.
+ */
+async function resolveDeterministicLetterTokens(
+  text: string,
+  run: { id: string; case_id: string; orgId: string },
+  snapshot: ConfigSnapshot,
+  inputs?: ResolvedInputs,
+): Promise<string> {
+  let out = text;
+  // Current-date token (day of generation, in the org timezone).
+  if (out.includes("{{CURRENT_DATE}}")) {
+    const { formatInTimeZone } = await import("date-fns-tz");
+    let tz = "America/New_York";
+    try {
+      const { createServiceClient } = await import("@/backend/platform/supabase");
+      const supabase = createServiceClient();
+      const { data: orgRow } = await supabase.from("orgs").select("settings").eq("id", run.orgId).maybeSingle();
+      const t = (orgRow?.settings as { default_timezone?: string } | null)?.default_timezone;
+      if (t) tz = t;
+    } catch { /* fall back to the default tz */ }
+    const today = formatInTimeZone(new Date(), tz, "MM/dd/yyyy");
+    out = out.replace(/\{\{\s*CURRENT_DATE\s*\}\}/g, today);
+  }
+  // Deterministic letter fills (config-as-data: ai_generation_configs.letter_fill).
+  if (snapshot.letter_fill) {
+    const { resolveLetterFillTokens } = await import("./letter-fill");
+    const li = inputs ?? (await loadResolvedInputs(snapshot));
+    out = resolveLetterFillTokens(out, snapshot.letter_fill, li, (field) =>
+      logger.warn(
+        { runId: run.id, caseId: run.case_id, field },
+        "letter-fill: no confirmed value — degraded to a printable line / placeholder",
+      ),
+    );
+  }
+  return out;
+}
+
 async function renderAndStore(
   outputText: string,
   run: GenerationRunRow & { orgId: string },
@@ -1214,34 +1262,12 @@ async function renderAndStore(
         : "______________________________<br>";
       text = text.replace(/\{\{\s*APPELLANT_SIGNATURE\s*\}\}/g, replacement);
     }
-    // Current-date token (day of generation, in the org timezone) — the letters' date
-    // line uses it so the filed document carries today's date, like the EOIR-26.
-    if (text.includes("{{CURRENT_DATE}}")) {
-      const { formatInTimeZone } = await import("date-fns-tz");
-      let tz = "America/New_York";
-      try {
-        const { data: orgRow } = await supabase.from("orgs").select("settings").eq("id", run.orgId).maybeSingle();
-        const t = (orgRow?.settings as { default_timezone?: string } | null)?.default_timezone;
-        if (t) tz = t;
-      } catch { /* fall back to the default tz */ }
-      const today = formatInTimeZone(new Date(), tz, "MM/dd/yyyy");
-      text = text.replace(/\{\{\s*CURRENT_DATE\s*\}\}/g, today);
-    }
-    // Deterministic letter fills (config-as-data: ai_generation_configs.letter_fill).
-    // Stamp the appellant's confirmed mailing address, the government's (OCC) service
-    // address and the chosen service method into their {{…}} tokens — facts resolved
-    // by code from the case's confirmed answers/extractions, never transcribed by the
-    // model. Only touches the DB when a letter actually declares a fill.
-    if (snapshot.letter_fill) {
-      const { resolveLetterFillTokens } = await import("./letter-fill");
-      const inputs = await loadResolvedInputs(snapshot);
-      text = resolveLetterFillTokens(text, snapshot.letter_fill, inputs, (field) =>
-        logger.warn(
-          { runId: run.id, caseId: run.case_id, field },
-          "letter-fill: no confirmed value — degraded to a printable line / placeholder",
-        ),
-      );
-    }
+    // Current-date + deterministic letter fills ({{CURRENT_DATE}}, {{OCC_ADDRESS}},
+    // {{APPELLANT_ADDRESS}}, service method) — facts resolved by code from the case's
+    // confirmed answers/extractions, never transcribed by the model. Shared verbatim
+    // with the Pre-Mortem validator (resolveDeterministicLetterTokens) so QA judges
+    // the same resolved document that gets filed.
+    text = await resolveDeterministicLetterTokens(text, run, snapshot);
     const bytes = await renderMarkdownToPdf(
       text,
       signatureImageBytes ? { signatureImageBytes } : {},
@@ -3715,7 +3741,9 @@ const QUESTIONNAIRE_DRAFT_SYSTEM_BASE =
   "El cliente revisará y editará cada borrador antes de enviarlo.\n\n" +
   "REGLAS ABSOLUTAS:\n" +
   '1. SOLO datos presentes en el expediente. Si la respuesta a una pregunta NO consta, devuelve cadena vacía "" — ' +
-  "NUNCA inventes hechos, fechas, nombres ni lugares.\n" +
+  "NUNCA inventes hechos, fechas, nombres ni lugares. Tampoco RE-CARACTERICES un hecho del expediente como una figura " +
+  "jurídica que el documento no nombra literalmente (p. ej. una entrada sin inspección / 'EWI' no es una 'deportación'; " +
+  "una clase de admisión I-94 no es 'parole humanitario' salvo que el documento lo diga). Usa los términos exactos del expediente.\n" +
   "2. Preguntas con opciones (select/checkbox): responde con el `value` EXACTO de una opción, y solo cuando el " +
   "expediente lo respalde (p. ej. si el expediente no menciona evidencia nueva, la respuesta a '¿tienes evidencia " +
   'nueva?' + "' es la opción negativa). Sin respaldo, cadena vacía.\n" +
@@ -5792,11 +5820,40 @@ async function resolvePreMortemContext(input: {
       logger.warn({ err, caseId: input.caseId, runId }, "ai-engine: pre-mortem source-material load failed (non-fatal)");
     }
 
+    // Resolve the deterministic tokens BEFORE masking so the validator judges the
+    // SAME content the filed PDF carries (the OCC address "126 Northpoint Drive…", the
+    // confirmed mailing address, the checked service method) — not raw {{OCC_ADDRESS}}
+    // tokens, which would trip the `placeholder_sin_resolver` category as a false
+    // positive. The stored output_text keeps the raw tokens (only the PDF resolves
+    // them in renderAndStore), so we resolve on-the-fly here — no duplicated column.
+    let memoForValidation = outputText;
+    try {
+      const snap = run.config_snapshot as ConfigSnapshot | null;
+      if (snap) {
+        memoForValidation = await resolveDeterministicLetterTokens(
+          outputText,
+          run,
+          snap,
+          aiLetterSourceInputs ?? undefined,
+        );
+      }
+      // Signature token → the standard printable signature line (what the render
+      // draws when there is no stamped image). Must NOT use brackets/«»/{{}} — those
+      // read as an unresolved placeholder to the validator (the render stamps the
+      // approved image at filing; the validator only needs a normal signature line).
+      memoForValidation = memoForValidation.replace(
+        /\{\{\s*APPELLANT_SIGNATURE\s*\}\}/g,
+        "______________________________",
+      );
+    } catch (err) {
+      logger.warn({ err, caseId: input.caseId, runId }, "ai-engine: pre-mortem token resolution failed (non-fatal)");
+    }
+
     // Mask BEFORE truncating: a cut landing mid-token (SSN/A-number/passport) would
     // break maskPii's contiguous match and leak raw PII to the provider. Truncating an
     // already-masked string can only garble a mask token (cosmetic), never leak.
     // The budget itself is applied LATER (dynamic — needs the rubric+source sizes).
-    pendingMaskedMemo = maskPii(outputText);
+    pendingMaskedMemo = maskPii(memoForValidation);
   } else {
     if (!responseId) throw new AiEngineError("PREMORTEM_NO_TARGET", { reason: "Frozen target has no responseId" });
     // resolveFormResponseFieldValuesSystem runs the SAME resolution generateFilledPdf
@@ -5880,6 +5937,7 @@ async function resolvePreMortemContext(input: {
     "y juzga si el documento tiene calidad suficiente para ser APROBADO. " +
     "Usa web_search para consultar ejemplos/instrucciones oficiales y calibrar la calidad. " +
     "Sé preciso y cita el campo o la sección exacta en cada hallazgo. " +
+    "La guía es una rúbrica de FORMATO/ESTRUCTURA que puede incluir un caso de ejemplo ILUSTRATIVO (ficticio): valida el formato contra la guía, pero los datos del caso (nombres, A-Number, corte, direcciones, montos, documentos servidos) se validan SOLO contra el MATERIAL FUENTE, nunca contra los datos de ejemplo de la guía. " +
     "Mantén los campos de enumeración (`severity`, `category`, `semaforo`, `verdict`) EXACTAMENTE con los códigos dados (no los traduzcas); `location` puede conservar el nombre oficial del campo/sección en inglés. " +
     "DEBES responder únicamente con JSON válido, sin texto antes ni después.";
 
@@ -5887,8 +5945,27 @@ async function resolvePreMortemContext(input: {
     ? "\n\n---\n## MATERIAL FUENTE (lo que el cliente declaró — el documento debe ser fiel y sin contradicciones)\n\n" + sourceBlock
     : "\n\n---\n## CASE CONTEXT (source data — PII masked; use to detect discrepancies)\n\n" + contextBlock;
 
+  const guideCaveat =
+    "\n\n---\n## CÓMO USAR LA GUÍA (léelo antes de comparar)\n\n" +
+    "La guía de arriba es la rúbrica de FORMATO, ESTRUCTURA y TÉCNICA. Puede incluir un CASO DE EJEMPLO ILUSTRATIVO " +
+    "con nombres, A-Numbers, direcciones, cortes, montos o listas de documentos que son solo de MUESTRA (ficticios) — " +
+    "esos datos NO pertenecen al caso que validas.\n" +
+    "- Valida el FORMATO y la ESTRUCTURA del documento contra la guía.\n" +
+    "- Valida los HECHOS y DATOS del caso (nombre, A-Number, corte, direcciones, oficina del Chief Counsel, montos, " +
+    "documentos servidos) EXCLUSIVAMENTE contra el MATERIAL FUENTE de más abajo. NUNCA reportes una discordancia " +
+    "porque el documento no coincida con los datos de ejemplo de la guía.\n" +
+    "- Los identificadores personales pueden aparecer ENMASCARADOS (p. ej. •••) por privacidad: es intencional, NO lo " +
+    "reportes como dato incompleto, corrupto o faltante.\n" +
+    "- La dirección de contacto vigente del apelante es la CONFIRMADA en el material fuente; una dirección anterior que " +
+    "aparezca en otro documento del expediente NO es una discordancia.\n" +
+    "- Este es un servicio de apelación PRO SE: el documento se firma pro se. Que el expediente registre una " +
+    "representación legal previa NO es una discordancia ni un error.\n" +
+    "- La línea de firma (una línea de guiones bajos) y la firma manuscrita se completan al presentar; una línea de " +
+    "firma en blanco es NORMAL en un documento a firmar y NO es un marcador sin resolver.";
+
   const userMessage =
     "## FILLING GUIDE (the rubric — validate strictly against it)\n\n" + guide.guide_markdown +
+    guideCaveat +
     "\n\n---\n" + documentBlock +
     contextSection +
     "\n\n---\n## FINDING CATEGORIES (use ONLY these category codes)\n\n" + categoriesBlock +
