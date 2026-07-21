@@ -5528,6 +5528,59 @@ export type SubmitFormResponseInput = z.infer<typeof SubmitFormResponseSchema>;
  *
  * @api-id API-CASE-17
  */
+/**
+ * Deterministic base-question defaults for a questionnaire response, resolved the
+ * SAME way the wizard prefills them (a `client_answer` question whose
+ * `source_ref.default_value` is set → resolved via {@link resolveBySource}).
+ *
+ * Why this exists: an instance-backed questionnaire (hybrid/automatic) stores its
+ * response with `automation_version_id = NULL`, so submit's Part-A resolution is
+ * skipped and these defaults never reach `answers`. Base questions also live in the
+ * PUBLISHED version, not the instance schema, so the instance autofill can't see
+ * them either. The client sees the default as a prefill, but if they don't edit it
+ * the value is lost — which then leaves deterministic `letter_fill` tokens blank
+ * (e.g. the Proof of Service service-method checkbox). Returns `{ questionId: value }`
+ * for every currently-empty base question that carries a default.
+ */
+async function resolveQuestionnaireBaseDefaults(
+  caseId: string,
+  formDefinitionId: string,
+  partyId: string | null,
+  answers: Record<string, unknown>,
+): Promise<Record<string, string>> {
+  const catalog = (await import("@/backend/modules/catalog" as string)) as {
+    getPublishedAutomationVersion: (id: string) => Promise<{ id: string } | null>;
+    listQuestionGroups: (versionId: string) => Promise<Array<{ id: string }>>;
+    listQuestions: (groupId: string) => Promise<Array<{ id: string; source: string; source_ref: unknown }>>;
+  };
+  const published = await catalog.getPublishedAutomationVersion(formDefinitionId);
+  if (!published) return {};
+  const groups = await catalog.listQuestionGroups(published.id);
+  const out: Record<string, string> = {};
+  const resolveCache: FormResolveCache = {};
+  const isEmpty = (v: unknown) => v === undefined || v === null || v === "";
+  for (const g of groups) {
+    const questions = await catalog.listQuestions(g.id);
+    for (const q of questions) {
+      if (q.source !== "client_answer" || !hasClientDefaultValue(q.source_ref)) continue;
+      if (!isEmpty(answers[q.id])) continue;
+      try {
+        const resolved = await resolveBySource(
+          { id: q.id, source: q.source, source_ref: q.source_ref },
+          answers,
+          caseId,
+          partyId,
+          resolveCache,
+        );
+        if (!isEmpty(resolved)) out[q.id] = String(resolved);
+      } catch {
+        // Non-fatal: a genuinely missing required value still surfaces via the gate.
+      }
+    }
+  }
+  return out;
+}
+
 export async function submitFormResponse(
   actor: Actor,
   input: SubmitFormResponseInput,
@@ -5559,19 +5612,33 @@ export async function submitFormResponse(
 
   // Autofill total (ola apelación): a per-case questionnaire response inherits
   // the instance's AI drafts PLUS the schema's deterministic default_values
-  // ("no aplica" on evidence the case doesn't have) for every question the
-  // client reviewed but did not edit — persisted WITH provenance
-  // (`ai_draft_question_ids`) so staff can always tell an AI-drafted answer
-  // from client testimony. The client's review is the stepped wizard +
-  // confirmation screen; a saved answer always wins.
+  // ("no aplica" on evidence the case doesn't have) PLUS the base (catalog)
+  // questions' default_values — for every question the client reviewed but did
+  // not edit. Persisted WITH provenance (`ai_draft_question_ids`) so staff can
+  // always tell a system-filled answer from client testimony. The client's
+  // review is the stepped wizard + confirmation screen; a saved answer always wins.
   if (response.questionnaire_instance_id) {
     try {
       const aiEngine = (await import("@/backend/modules/ai-engine" as string)) as {
         getQuestionnaireInstanceAutofillValues: (instanceId: string) => Promise<Record<string, string> | null>;
       };
-      const drafts = await aiEngine.getQuestionnaireInstanceAutofillValues(response.questionnaire_instance_id);
-      if (drafts) {
-        const before = (response.answers ?? {}) as Record<string, unknown>;
+      const before = (response.answers ?? {}) as Record<string, unknown>;
+      const instanceDrafts = await aiEngine.getQuestionnaireInstanceAutofillValues(
+        response.questionnaire_instance_id,
+      );
+      // Base questions live in the PUBLISHED version, not the instance schema, so
+      // their deterministic default_values (e.g. Proof of Service service-method =
+      // first-class mail) never reach the instance autofill and letter_fill then
+      // renders a blank checkbox. Resolve them the same way the wizard prefills
+      // them and merge in — instance drafts still win on any shared id.
+      const baseDefaults = await resolveQuestionnaireBaseDefaults(
+        parsed.caseId,
+        parsed.formDefinitionId,
+        partyId,
+        before,
+      );
+      const drafts: Record<string, string> = { ...baseDefaults, ...(instanceDrafts ?? {}) };
+      if (Object.keys(drafts).length > 0) {
         const isEmpty = (v: unknown) => v === undefined || v === null || v === "";
         const pending = Object.fromEntries(
           Object.entries(drafts).filter(([qid]) => isEmpty(before[qid])),
@@ -5780,10 +5847,22 @@ async function computeFormResponseCompleteness(
   };
   const isEmpty = (v: unknown) => v === undefined || v === null || v === "";
 
-  // Part A — catalog (published-version) questions, sources resolved.
-  if (response.automation_version_id) {
+  // Part A — catalog (published-version) questions, sources resolved. A
+  // questionnaire response carries automation_version_id=NULL, but its BASE
+  // (catalog) questions still live in the published version and MUST be gated —
+  // otherwise a review-only questionnaire (empty generated schema, Part B below a
+  // no-op) would have NO required question checked at all and approve
+  // unconditionally. Resolve the published version when the response pins none.
+  let partAVersionId = response.automation_version_id;
+  if (!partAVersionId && response.questionnaire_instance_id) {
+    const catalog = (await import("@/backend/modules/catalog" as string)) as {
+      getPublishedAutomationVersion: (id: string) => Promise<{ id: string } | null>;
+    };
+    partAVersionId = (await catalog.getPublishedAutomationVersion(response.form_definition_id))?.id ?? null;
+  }
+  if (partAVersionId) {
     type Q = QuestionValidationRule & { source?: string; source_ref?: unknown; question_i18n?: unknown };
-    const questions = (await getQuestionsForVersion(response.automation_version_id)) as Q[];
+    const questions = (await getQuestionsForVersion(partAVersionId)) as Q[];
     const effective: Record<string, unknown> = { ...answers };
     const resolveCache: FormResolveCache = {};
     for (const q of questions) {

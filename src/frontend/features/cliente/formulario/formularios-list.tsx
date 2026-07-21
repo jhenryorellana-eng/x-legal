@@ -55,11 +55,16 @@ export function FormulariosList({
       return;
     }
     // Mi Historia (ai_letter) keeps its dedicated route; PDF forms use the wizard.
-    const base =
-      e.kind === "ai_letter" && !e.partyId
-        ? `/caso/${caseId}/historia`
-        : `/caso/${caseId}/formulario/${e.formDefinitionId}`;
+    // A phase can hold MORE THAN ONE case-level ai_letter (Apelación: Statement of
+    // Reasons + Proof of Service). `/historia` resolves the FIRST ai_letter, so we
+    // MUST name which one via `form=<formDefinitionId>` or every letter card opens
+    // the same questionnaire (the Proof→Razones bug).
+    const isCaseLevelLetter = e.kind === "ai_letter" && !e.partyId;
+    const base = isCaseLevelLetter
+      ? `/caso/${caseId}/historia`
+      : `/caso/${caseId}/formulario/${e.formDefinitionId}`;
     const qs = new URLSearchParams();
+    if (isCaseLevelLetter) qs.set("form", e.formDefinitionId);
     if (e.partyId) qs.set("party", e.partyId);
     if (e.partyName) qs.set("name", e.label.includes("—") ? "" : e.partyName);
     const suffix = qs.toString() ? `?${qs.toString()}` : "";

@@ -27,10 +27,10 @@ export default async function HistoriaPage({
   searchParams,
 }: {
   params: Promise<{ caseId: string }>;
-  searchParams: Promise<{ party?: string; name?: string }>;
+  searchParams: Promise<{ party?: string; name?: string; form?: string }>;
 }) {
   const { caseId } = await params;
-  const { party, name } = await searchParams;
+  const { party, name, form: letterId } = await searchParams;
   const actor = await getActor();
   if (!actor || actor.kind !== "client") redirect("/welcome");
 
@@ -45,9 +45,18 @@ export default async function HistoriaPage({
   let partyName: string | null = name ?? null;
   try {
     const forms = await getClientFormsForCase(actor, caseId);
-    const story = party
-      ? forms.find((f) => f.kind === "ai_letter" && f.partyId === party)
-      : forms.find((f) => f.kind === "ai_letter");
+    // A phase may carry MORE THAN ONE ai_letter (e.g. Apelación: Statement of
+    // Reasons + Proof of Service). The `form` param names WHICH letter to open by
+    // its definition id; without it we keep the historical "first ai_letter"
+    // behavior (a phase with a single "Mi Historia", e.g. Asilo). `party` still
+    // scopes per-party letters.
+    const story = letterId
+      ? forms.find(
+          (f) => f.kind === "ai_letter" && f.formDefinitionId === letterId && (!party || f.partyId === party),
+        )
+      : party
+        ? forms.find((f) => f.kind === "ai_letter" && f.partyId === party)
+        : forms.find((f) => f.kind === "ai_letter");
     if (story) {
       // The client answers the companion questionnaire (the questions that feed
       // the AI); the ai_letter itself carries no fillable questions.

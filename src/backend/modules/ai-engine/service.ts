@@ -3724,7 +3724,10 @@ const QUESTIONNAIRE_DRAFT_SYSTEM_BASE =
   "símbolos al borrador: reformula la frase sin el número.\n" +
   "5. Escribe en ESPAÑOL, en primera persona (voz del cliente), tono claro y honesto, 1-4 frases por respuesta " +
   "narrativa (el cliente ampliará al revisar).\n" +
-  "6. Cero relleno: un borrador vacío es mejor que uno especulativo.";
+  "6. Cero relleno: un borrador vacío es mejor que uno especulativo.\n" +
+  "7. NUNCA incluyas marcadores ni instrucciones dirigidas al cliente dentro del borrador " +
+  '(p. ej. texto entre corchetes como "[añade aquí…]", "[completar]", "[por favor especifica…]"). ' +
+  "El borrador es una respuesta completa y autónoma con lo que el expediente respalde; lo que no conste, se omite.";
 
 interface DraftableQuestion {
   id: string;
@@ -3751,8 +3754,19 @@ function draftableQuestionLine(q: DraftableQuestion): string {
   return `- id: ${q.id} | tipo: ${q.fieldType}${opts}${q.isRequired ? " | requerida" : ""} | ${q.question}${help}`;
 }
 
-/** Fail-safe filter: unknown ids, empty values, PII mask tokens and select
- *  values outside the question's options are dropped (never shown to a client). */
+/** Bracketed instructions aimed at the client (draft rule 7). Code-level backstop
+ *  to the prompt rule — the model must never leave "[añade aquí…]" inside a draft.
+ *  Strips the segment; matches Spanish request verbs so ordinary bracketed text
+ *  (e.g. a statute "[sic]") is left untouched. */
+const CLIENT_PLACEHOLDER_RE =
+  /\[[^\]]*(?:añad|agreg|complet|especif|indic|rellen|proporcion|por favor|escrib|inserta|falta|pendiente|tu\s|aquí)[^\]]*\]/giu;
+function stripClientPlaceholders(value: string): string {
+  return value.replace(CLIENT_PLACEHOLDER_RE, "").replace(/[ \t]{2,}/g, " ").replace(/\s+([.,;:])/g, "$1").trim();
+}
+
+/** Fail-safe filter: unknown ids, empty values, PII mask tokens, client-facing
+ *  bracket placeholders and select values outside the question's options are
+ *  dropped/cleaned (never shown to a client). */
 export function filterDraftAnswers(
   raw: Array<{ id?: unknown; value?: unknown }> | null | undefined,
   questions: DraftableQuestion[],
@@ -3765,10 +3779,14 @@ export function filterDraftAnswers(
     const value = typeof a?.value === "string" ? a.value.trim() : "";
     if (!value) continue;
     if (value.includes("•") || value.includes("⟦") || value.includes("⟧")) continue;
+    // Draft rule 7 backstop: strip any bracketed instruction meant for the client;
+    // an empty result is dropped (better no draft than a "[completar]" meta-note).
+    const cleaned = stripClientPlaceholders(value);
+    if (!cleaned) continue;
     if (q.fieldType === "select" || q.fieldType === "checkbox") {
-      if (!q.options?.some((o) => o.value === value)) continue;
+      if (!q.options?.some((o) => o.value === cleaned)) continue;
     }
-    drafts[q.id] = value;
+    drafts[q.id] = cleaned;
   }
   return drafts;
 }
@@ -4182,8 +4200,23 @@ export async function executeQuestionnaireGenerationJob(payload: {
       getCasePosturePlaybook: (caseId: string) => Promise<string | null>;
     };
     const posturePlaybook = await casesMod.getCasePosturePlaybook(instance.case_id);
-    const result = await generateCaseQuestionnaire({ config, inputs, alreadyCovered, previousSchema, posturePlaybook });
-    if (result.schema.groups.length === 0) throw new Error("generator returned no questions");
+    // `target_question_count === 0` = "solo revisar": the deliverable's questionnaire
+    // is filled entirely from the uploaded documents + deterministic defaults, so we
+    // generate NO new questions (an empty schema) but STILL run the draft pass over
+    // the base questions below. This is how a letter questionnaire stops asking the
+    // client things only they could know (the "No recuerdo" answers) while keeping
+    // every base field pre-filled from the record. See Apelación (Statement / Proof).
+    const reviewOnly = config.target_question_count === 0;
+    const result = reviewOnly
+      ? {
+          schema: { groups: [] } as QuestionnaireSchema,
+          model: config.model || DEFAULT_GENERATION_MODEL,
+          inputTokens: 0,
+          outputTokens: 0,
+          costUsd: 0,
+        }
+      : await generateCaseQuestionnaire({ config, inputs, alreadyCovered, previousSchema, posturePlaybook });
+    if (!reviewOnly && result.schema.groups.length === 0) throw new Error("generator returned no questions");
 
     // Draft answers (autofill total) — over the FINAL question list: generated
     // uuids exist only after materialization, and the hybrid base questions come

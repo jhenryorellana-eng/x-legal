@@ -103,7 +103,7 @@ vi.mock("@/shared/constants/ai-models", () => ({
   GENERATION_MODELS: ["claude-sonnet-4-6", "claude-opus-4-7", "claude-fable-5", "claude-haiku-4-5"],
 }));
 
-import { executeQuestionnaireGenerationJob, getQuestionnaireInstanceAnsweredValues } from "../service";
+import { executeQuestionnaireGenerationJob, getQuestionnaireInstanceAnsweredValues, filterDraftAnswers } from "../service";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -277,11 +277,71 @@ describe("executeQuestionnaireGenerationJob — draft answers", () => {
     expect(outcome).toBe("ready");
     expect(mocks.anthropicClient.messages.stream).toHaveBeenCalledTimes(1);
   });
+
+  it("target_question_count=0 = review-only: NO schema-gen call, base questions still drafted", async () => {
+    mocks.repo.findQuestionnaireGenerationConfig.mockResolvedValue({ ...CONFIG, target_question_count: 0 });
+    // The ONLY Anthropic call is the drafts pass; there is no question generation.
+    mocks.setResponder((args) => {
+      const user = String(args.messages[0]?.content ?? "");
+      const ids = idsFromDraftPrompt(user);
+      return textMessage(JSON.stringify({
+        answers: ids.map((id) => ({ id, value: id === SELECT_QID ? "no" : `Borrador para ${id}` })),
+      }));
+    });
+
+    const outcome = await executeQuestionnaireGenerationJob({
+      caseId: INSTANCE.case_id,
+      formDefinitionId: INSTANCE.form_definition_id,
+      partyId: null,
+    });
+
+    expect(outcome).toBe("ready");
+    // Exactly ONE call (drafts). A review-only questionnaire never asks the model
+    // to invent questions the client could only answer from memory.
+    expect(mocks.anthropicClient.messages.stream).toHaveBeenCalledTimes(1);
+
+    const readyUpdate = mocks.repo.updateQuestionnaireInstance.mock.calls.find(
+      (c) => c[1]?.status === "ready",
+    )?.[1] as Record<string, unknown>;
+    expect(readyUpdate).toBeDefined();
+    // Empty generated schema…
+    expect((readyUpdate.schema as { groups: unknown[] }).groups).toEqual([]);
+    // …but the base questions ARE drafted from the record.
+    const drafts = readyUpdate.draft_answers as Record<string, string>;
+    expect(drafts[BASE_QID]).toContain("Borrador");
+    expect(drafts[SELECT_QID]).toBe("no");
+    expect(Object.keys(drafts).length).toBe(2);
+  });
 });
 
 // ---------------------------------------------------------------------------
 // Wave 1 — the completeness gate's contract: what actually COUNTS as answered
 // ---------------------------------------------------------------------------
+
+describe("filterDraftAnswers — strips client-facing bracket placeholders (draft rule 7)", () => {
+  const Q = (id: string, fieldType = "textarea", options: Array<{ value: string; label: string }> | null = null) => ({
+    id, question: "q", help: null, fieldType, options, isRequired: false,
+  });
+
+  it("removes a bracketed instruction but keeps the grounded prose", () => {
+    const out = filterDraftAnswers(
+      [{ id: "q1", value: "El juez concedió la moción de pretermisión. [Por favor, añade aquí el motivo específico.]" }],
+      [Q("q1")],
+    );
+    expect(out.q1).toBe("El juez concedió la moción de pretermisión.");
+    expect(out.q1).not.toContain("[");
+  });
+
+  it("drops a draft that is ONLY a placeholder", () => {
+    const out = filterDraftAnswers([{ id: "q1", value: "[completar con la información del cliente]" }], [Q("q1")]);
+    expect(out.q1).toBeUndefined();
+  });
+
+  it("leaves ordinary bracketed text (e.g. [sic]) untouched", () => {
+    const out = filterDraftAnswers([{ id: "q1", value: "La orden dice 'asilo' [sic] denegado." }], [Q("q1")]);
+    expect(out.q1).toBe("La orden dice 'asilo' [sic] denegado.");
+  });
+});
 
 describe("getQuestionnaireInstanceAnsweredValues — provenance decides", () => {
   const INSTANCE = "11111111-1111-4111-8111-111111111111";

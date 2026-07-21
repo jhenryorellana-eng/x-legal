@@ -452,7 +452,10 @@ export const QuestionnaireGenerationConfigSchema = z.object({
   input_form_slugs: z.array(z.string()).default([]),
   prerequisite_form_slugs: z.array(z.string()).default([]),
   prerequisite_document_slugs: z.array(z.string()).default([]),
-  target_question_count: z.number().int().min(1).max(60).nullable().optional(),
+  // 0 = "review only": generate NO new questions, just draft the base questions
+  // from the record (a letter questionnaire the client only reviews). 1–60 = the
+  // number of AI-generated questions to add.
+  target_question_count: z.number().int().min(0).max(60).nullable().optional(),
   model: z.enum(GENERATION_MODELS).nullable().optional(),
   hybrid_layout: z.enum(["append_group", "merge_by_topic"]).default("append_group"),
   auto_trigger: z.boolean().default(true),
@@ -460,7 +463,13 @@ export const QuestionnaireGenerationConfigSchema = z.object({
   on_new_evidence: z.enum(["never", "flag", "auto"]).default("flag"),
   draft_answers_enabled: z.boolean().default(false),
   draft_answers_prompt: z.string().max(8000).nullable().optional(),
-});
+}).refine(
+  // "Review only" (0 generated questions) only makes sense in hybrid, where the
+  // base catalog questions still exist to be drafted. In automatic/global it would
+  // leave a permanently empty questionnaire — a dead end for the client.
+  (c) => !(c.target_question_count === 0 && c.mode !== "hybrid"),
+  { message: "target_question_count=0 (solo revisar) requiere mode='hybrid'", path: ["target_question_count"] },
+);
 export type QuestionnaireGenerationConfigInput = z.infer<typeof QuestionnaireGenerationConfigSchema>;
 
 // ---------------------------------------------------------------------------

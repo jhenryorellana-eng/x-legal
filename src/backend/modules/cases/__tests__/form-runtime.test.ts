@@ -2971,6 +2971,49 @@ describe("submitFormResponse — materializes untouched AI drafts with provenanc
 
     expect(mockGetQuestionnaireInstanceDrafts).not.toHaveBeenCalled();
   });
+
+  it("materializes a BASE-question default_value the instance schema can't see (Proof of Service method)", async () => {
+    const METHOD_QID = "eeeeeeee-eeee-4eee-8eee-000000000009";
+    mockFindFormResponse.mockResolvedValue({
+      ...draftResponse,
+      automation_version_id: null,
+      questionnaire_instance_id: INSTANCE_ID,
+      answers: {},
+      ai_draft_question_ids: [],
+    });
+    // The instance carries NO autofill — the base default is the only source, and
+    // it lives in the PUBLISHED version, invisible to the instance schema.
+    mockGetQuestionnaireInstanceDrafts.mockResolvedValue(null);
+    mockGetPublishedAutomationVersion.mockResolvedValue({ id: "ver-proof" });
+    mockListQuestionGroups.mockResolvedValue([{ id: "grp-proof" }]);
+    mockListQuestions.mockResolvedValue([
+      {
+        id: METHOD_QID,
+        group_id: "grp-proof",
+        question_i18n: { es: "¿Cómo se enviará la copia al gobierno?", en: "" },
+        help_i18n: null,
+        field_type: "select",
+        options: [{ value: "first_class_mail", label_i18n: { es: "Correo de primera clase", en: "First-class mail" } }],
+        is_required: false,
+        position: 0,
+        source: "client_answer",
+        source_ref: { default_value: "first_class_mail" },
+        validation: null,
+        condition: null,
+        ai_improve: null,
+      },
+    ]);
+    mockMergeFormAnswersIfEmpty.mockResolvedValue({ [METHOD_QID]: "first_class_mail" });
+    mockFindFormResponseById.mockResolvedValue({ ...submittedResponse });
+
+    await submitFormResponse(clientActor, { caseId: CASE_ID, formDefinitionId: FORM_DEF_ID, partyId: null });
+
+    expect(mockMergeFormAnswersIfEmpty).toHaveBeenCalledWith(RESPONSE_ID, { [METHOD_QID]: "first_class_mail" });
+    expect(mockUpdateFormResponse).toHaveBeenCalledWith(
+      RESPONSE_ID,
+      expect.objectContaining({ ai_draft_question_ids: [METHOD_QID] }),
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

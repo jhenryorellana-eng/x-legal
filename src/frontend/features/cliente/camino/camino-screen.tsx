@@ -134,8 +134,12 @@ export function CaminoScreen(props: CaminoScreenProps) {
     onTutorialSeen?.().catch(() => {});
   }, [onTutorialSeen]);
 
+  // Docs done → send the client to the FORMS LIST, not straight to `/historia`.
+  // `/historia` only ever opens the first ai_letter, so a phase with several forms
+  // (Apelación: EOIR-26 + Statement + Proof; Asilo: I-589 + Mi Historia) needs the
+  // list to disambiguate. The list still auto-opens a lone form.
   const nextHref = docsComplete
-    ? `/caso/${caseId}/historia`
+    ? `/caso/${caseId}/formularios`
     : `/caso/${caseId}/documentos`;
 
   // Targets resolved by selector so the tour can spotlight the fixed "Tu equipo"
