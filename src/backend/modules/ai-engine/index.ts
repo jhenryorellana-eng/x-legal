@@ -56,6 +56,8 @@ export {
   materializeProposalToSchema,
   // on_new_evidence watcher (consumed by register-consumers on document.uploaded)
   flagQuestionnairesOnNewEvidence,
+  // proactive bootstrap of auto questionnaires (consumed by register-consumers on extraction.completed)
+  autoBootstrapCaseQuestionnaires,
   // Job entrypoints (consumed by jobs/ layer)
   executeGenerationJob,
   executeExtractionJob,

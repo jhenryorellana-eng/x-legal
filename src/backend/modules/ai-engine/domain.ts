@@ -84,6 +84,13 @@ export interface GenerationSectionSpec {
   type: "doctrinal" | "narrative" | "analysis";
   /** Optional per-section model override (e.g. Opus for the dense nexus section). */
   model?: string | null;
+  /**
+   * When true, the assembled output does NOT prepend `## {heading}` for this section
+   * — the heading is still given to the model as its writing instruction, but it is a
+   * structural label, not printed content. Used by court documents (Statement of
+   * Reasons, Proof of Service) whose format is a clean caption/body, not headed sections.
+   */
+  hide_heading?: boolean;
 }
 
 /**

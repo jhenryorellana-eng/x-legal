@@ -42,6 +42,10 @@ import {
   type VersionEmptyPolicy,
   type FieldEmptyPolicy,
 } from "@/shared/form-logic/empty-policy";
+// Static (not dynamic import): date-fns-tz is light, and a dynamic import inside the
+// synchronous-hot resolveBySource path can deadlock vitest's module runner under a
+// heavy multi-file run (the `current_date` unit test would time out).
+import { formatInTimeZone } from "date-fns-tz";
 
 import {
   canTransitionCase,
@@ -4050,7 +4054,6 @@ export async function resolveBySource(
   // in a western timezone yields the correct local calendar day.
   if (source === "current_date") {
     const tz = await loadOrgTimezone();
-    const { formatInTimeZone } = await import("date-fns-tz");
     return formatInTimeZone(new Date(), tz, "yyyy-MM-dd");
   }
 

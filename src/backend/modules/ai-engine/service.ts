@@ -199,6 +199,7 @@ import {
   findCurrentQuestionnaireInstance,
   findCaseDocumentMeta,
   listCurrentReadyQuestionnaireInstances,
+  listAutoQuestionnaireFormsForCase,
   nextQuestionnaireInstanceVersion,
   createQuestionnaireInstance,
   updateQuestionnaireInstance,
@@ -1146,7 +1147,10 @@ async function runSectionedGeneration(
         }
         throw err;
       }
-      parts.push(`## ${sec.heading}\n\n${stripLeadingHeading(finalText.trim(), sec.heading)}`);
+      const body = stripLeadingHeading(finalText.trim(), sec.heading);
+      // Court documents (hide_heading) print the section body WITHOUT its `## heading`
+      // scaffolding — the heading is only the model's writing instruction, not content.
+      parts.push(sec.hide_heading ? body : `## ${sec.heading}\n\n${body}`);
       prevTail = lastWords(finalText, 1200);
       sectionsDone = i + 1;
       await checkpoint();
@@ -4037,6 +4041,37 @@ async function startQuestionnaireGenerationCore(
     { retries: 2, timeout: "280s" },
   );
   return { status: "queued", instanceId: instance.id };
+}
+
+/**
+ * Event-driven bootstrap of a case's auto-trigger questionnaires (ola apelación).
+ * Fired on `extraction.completed`: once a prerequisite document is uploaded AND
+ * extracted, proactively generate + AI-draft-fill each CASE-LEVEL auto questionnaire
+ * so it is ready-and-prefilled BEFORE anyone opens it — previously the instance was
+ * only seeded lazily when the CLIENT opened the questionnaire, so staff (and clients
+ * who upload first) saw it empty.
+ *
+ * Idempotent and safe to call on every extraction: only a missing or `pending_prereqs`
+ * instance is advanced (startQuestionnaireGenerationCore itself short-circuits an
+ * in-flight one and only queues once prereqs are met); ready / generating / queued /
+ * failed instances are left to getFormForClient + the on_new_evidence watcher. Per-party
+ * questionnaires are skipped here — they self-heal lazily with the real partyId.
+ */
+export async function autoBootstrapCaseQuestionnaires(caseId: string): Promise<void> {
+  const forms = await listAutoQuestionnaireFormsForCase(caseId);
+  for (const f of forms) {
+    if (f.isPerParty) continue;
+    try {
+      const current = await findCurrentQuestionnaireInstance(caseId, f.formDefinitionId, null);
+      if (current && current.status !== "pending_prereqs") continue;
+      await startQuestionnaireGenerationCore(caseId, f.formDefinitionId, null);
+    } catch (err) {
+      logger.warn(
+        { err, caseId, formDefinitionId: f.formDefinitionId },
+        "ai-engine: autoBootstrapCaseQuestionnaires failed for one form",
+      );
+    }
+  }
 }
 
 export interface GenerateQuestionnairePayload {

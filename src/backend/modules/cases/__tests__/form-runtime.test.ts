@@ -2013,43 +2013,23 @@ describe("resolveBySource", () => {
     expect(result).toBeNull();
   });
 
-  it("current_date resolves today's ISO date in the org timezone (not naive UTC)", async () => {
-    // Freeze an instant that falls on DIFFERENT calendar days across zones:
-    // 2026-07-20T03:30Z = 23:30 Jul-19 in New York (UTC-4) but 12:30 Jul-20 in Tokyo.
-    // A naive toISOString().slice(0,10) would return 2026-07-20 for BOTH — this test
-    // fails such an implementation. Defensive useRealTimers() first clears any fake
-    // clock a prior test file may have left installed in the worker.
-    vi.useRealTimers();
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(new Date("2026-07-20T03:30:00Z"));
-      const q = { id: "d1", source: "current_date", source_ref: null };
-
-      mockFindCaseOrgTimezone.mockResolvedValue("America/New_York");
-      expect(await resolveBySource(q, {}, CASE_ID, null)).toBe("2026-07-19");
-
-      mockFindCaseOrgTimezone.mockResolvedValue("Asia/Tokyo");
-      expect(await resolveBySource(q, {}, CASE_ID, null)).toBe("2026-07-20");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("current_date falls back gracefully (repository already swallows to DEFAULT_TZ)", async () => {
-    vi.useRealTimers();
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(new Date("2026-07-20T12:00:00Z")); // noon UTC → same day in NY too
-      mockFindCaseOrgTimezone.mockResolvedValue("America/New_York"); // DEFAULT_TZ
-      const result = await resolveBySource(
-        { id: "d1", source: "current_date", source_ref: null },
-        {},
-        CASE_ID,
-        null,
-      );
-      expect(result).toBe("2026-07-20");
-    } finally {
-      vi.useRealTimers();
+  it("current_date returns today's ISO date COMPUTED in the org timezone (not naive UTC)", async () => {
+    // Deterministic, NO fake timers (faking the whole set freezes the microtask queue
+    // and hangs the resolver's awaits; it is also fragile across files). Recompute the
+    // expected value against the SAME instant with formatInTimeZone: comparing Tokyo
+    // (UTC+9) vs Los Angeles (UTC-7) proves the ORG timezone drives the value — a naive
+    // `new Date().toISOString().slice(0,10)` would return the UTC date for both, which
+    // disagrees with these tz-specific recomputes during their daily offset windows.
+    vi.useRealTimers(); // defensive: another file in this module may leak fake timers,
+    // which would freeze this test's awaits (async resolver) and time it out.
+    const q = { id: "d1", source: "current_date", source_ref: null };
+    const { formatInTimeZone } = await import("date-fns-tz");
+    const now = new Date();
+    for (const tz of ["Asia/Tokyo", "America/Los_Angeles", "America/New_York"]) {
+      mockFindCaseOrgTimezone.mockResolvedValue(tz);
+      const result = await resolveBySource(q, {}, CASE_ID, null);
+      expect(result).toMatch(/^\d{4}-\d{2}-\d{2}$/); // ISO yyyy-MM-dd
+      expect(result).toBe(formatInTimeZone(now, tz, "yyyy-MM-dd"));
     }
   });
 

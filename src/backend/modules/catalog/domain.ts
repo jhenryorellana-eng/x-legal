@@ -662,6 +662,10 @@ export const GenerationSectionSchema = z.object({
   type: z.enum(["doctrinal", "narrative", "analysis"]).default("analysis"),
   // Optional per-section model override (e.g. Opus for the dense nexus section).
   model: z.enum(GENERATION_MODELS).nullable().optional(),
+  // When true the assembled document omits this section's `## heading` (the heading is
+  // still the model's writing instruction). Court documents (Statement of Reasons,
+  // Proof of Service) use it so the output is a clean caption/body, not headed sections.
+  hide_heading: z.boolean().optional(),
 }).refine((s) => s.max_words === 0 || s.max_words >= s.min_words, {
   message: "max_words debe ser 0 (sin techo) o mayor o igual que min_words",
   path: ["max_words"],

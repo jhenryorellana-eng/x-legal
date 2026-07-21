@@ -23,7 +23,7 @@ import {
 } from "@/backend/modules/kanban";
 import { onContractSigned as onContractSignedBilling } from "@/backend/modules/billing";
 import { ensureCaseConversation, syncCaseParticipants, postSystemMessage } from "@/backend/modules/messaging";
-import { registerAiEngineConsumers, flagQuestionnairesOnNewEvidence, enqueueLexReindex } from "@/backend/modules/ai-engine";
+import { registerAiEngineConsumers, flagQuestionnairesOnNewEvidence, autoBootstrapCaseQuestionnaires, enqueueLexReindex } from "@/backend/modules/ai-engine";
 import { captureFromRun } from "@/backend/modules/exhibits";
 import { attachReadyExhibits } from "@/backend/modules/expediente";
 import { registerIntegrationsConsumers } from "@/backend/modules/integrations";
@@ -128,6 +128,10 @@ export function registerConsumers(): void {
     // Posture FIRST: it governs what the questionnaire may even ask, so it must be
     // resolved before any generation reads the case. Best-effort by design.
     await applyPostureToCase(p.caseId);
+    // Proactively bootstrap the case's auto questionnaires now that a document is
+    // extracted: generate + AI-draft-fill them so they are ready BEFORE anyone opens
+    // them (idempotent — only advances missing/pending_prereqs instances).
+    await autoBootstrapCaseQuestionnaires(p.caseId);
     await enqueueAiPrefillWarm(p.caseId, null);
     // Re-index Lex now that a document's text exists. document.uploaded already
     // enqueues a reindex, but that races the extraction; firing here too GUARANTEES

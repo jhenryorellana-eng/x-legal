@@ -9,7 +9,9 @@ const STATEMENT_SYSTEM_PROMPT = `You draft a "Statement of Reasons for Appeal" �
 
 PURPOSE: state, specifically and respectfully, the errors the Immigration Judge made, so the Board does NOT summarily dismiss the appeal (8 C.F.R. § 1003.1(d)(2)(i) allows dismissal when reasons are not specified). It is NOT the full brief — it is a short (1–3 page) list of concrete grounds.
 
-FORMAT (BIA Practice Manual): US Letter, English, Times New Roman 12, double-spaced, one-inch margins, printed one side. Produce clean prose/markdown that renders to that; do not add page furniture.
+FORMAT (BIA Practice Manual): US Letter, English, Times New Roman 12, double-spaced, one-inch margins, printed one side.
+
+OUTPUT MARKUP (read carefully — the output is rendered to PDF by a markdown engine with inline HTML enabled): produce a CLEAN court document with NO markdown headings (never '#', '##', '###') and NO internal section labels. CENTER the three-line agency header, every caption line, and the document title by wrapping each block in <p style="text-align:center">…</p>, using <br> for line breaks inside a centered block and <strong> for the bold title. Write the opening paragraph, the numbered reasons (a markdown numbered list) and the signature block as ordinary LEFT-aligned text (plain paragraphs). Do not emit raw HTML anywhere except the centered header/caption/title blocks. Do not add page furniture (page numbers, running heads).
 
 STRUCTURE (in this exact order):
 1. Court header, centered:
@@ -30,16 +32,16 @@ HARD RULES:
 - English only. The A-Number and name must be identical to the Immigration Judge's decision.`;
 
 const STATEMENT_SECTIONS = [
-  { key: "caption", heading: "Court header & caption", min_words: 0, max_tokens: 400,
-    guidance: "The centered BIA header, the caption (NAME uppercase + Respondent-Appellant, File No.: A-Number, In Removal Proceedings, Appeal from the {court} Immigration Court), and the bold title with '(Attachment to Form EOIR-26)'. Name/A-Number EXACTLY as in the IJ decision.", type: "static" },
-  { key: "opening", heading: "Opening paragraph", min_words: 40, max_tokens: 500,
-    guidance: "First person, pro se; the decision appealed (IJ name, court, date); relief denied (only what the decision denied) and that removal was ordered; end with 'The reasons for my appeal are as follows:'.", type: "prose" },
-  { key: "reasons", heading: "Numbered reasons", min_words: 80, max_tokens: 1600,
-    guidance: "One IJ error per number, each 'The Immigration Judge erred in [ruling], because [specific finding/conclusion]'. Cover every dispositive ground of the decision (unchallenged ground = waived). No merged topics, no deep analysis.", type: "list" },
-  { key: "reservation", heading: "Brief reservation", min_words: 20, max_tokens: 450,
-    guidance: "A brief will be filed after the transcript/briefing schedule; this list is not exhaustive.", type: "prose" },
-  { key: "closing", heading: "Prayer & signature", min_words: 15, max_tokens: 700,
-    guidance: "Request reverse, or vacate & remand; 'Respectfully submitted,'; signature line; name; 'Respondent, Pro Se'; Address/City-State-ZIP/Telephone/Date blanks.", type: "static" },
+  { key: "caption", heading: "Court header & caption", min_words: 0, max_tokens: 400, type: "analysis", hide_heading: true,
+    guidance: "Output ONLY: the centered three-line agency header, the centered caption (NAME uppercase + ', Respondent-Appellant.', 'File No.: A-Number', 'In Removal Proceedings', 'Appeal from the decision of the {court} Immigration Court'), and the centered bold title 'RESPONDENT'S STATEMENT OF REASONS FOR APPEAL' with '(Attachment to Form EOIR-26)'. Center each block with <p style=\"text-align:center\">…</p> (<br> for line breaks, <strong> for the title). Name/A-Number EXACTLY as in the IJ decision. No markdown headings, no labels." },
+  { key: "opening", heading: "Opening paragraph", min_words: 40, max_tokens: 500, type: "analysis", hide_heading: true,
+    guidance: "A single left-aligned paragraph, first person, pro se; the decision appealed (IJ name, court, date); relief denied (only what the decision denied) and that removal was ordered; end with 'The reasons for my appeal are as follows:'. Plain markdown, no headings." },
+  { key: "reasons", heading: "Numbered reasons", min_words: 80, max_tokens: 1600, type: "analysis", hide_heading: true,
+    guidance: "A markdown NUMBERED LIST. One IJ error per item, each 'The Immigration Judge erred in [ruling], because [specific finding/conclusion]'. Cover every dispositive ground of the decision (unchallenged ground = waived). No merged topics, no deep analysis. No headings." },
+  { key: "reservation", heading: "Brief reservation", min_words: 20, max_tokens: 450, type: "analysis", hide_heading: true,
+    guidance: "A short left-aligned paragraph: a brief will be filed after the transcript/briefing schedule; this list is not exhaustive. Plain markdown, no headings." },
+  { key: "closing", heading: "Prayer & signature", min_words: 15, max_tokens: 700, type: "analysis", hide_heading: true,
+    guidance: "Left-aligned: the prayer (request reverse, or vacate & remand); then 'Respectfully submitted,'; a signature line; the name; 'Respondent, Pro Se'; and Address / City-State-ZIP / Telephone / Date blanks. Plain text, no headings." },
 ];
 
 const STATEMENT_QN_GENERATION_PROMPT = `Servicio: APELACIÓN ANTE LA BIA — hoja "Statement of Reasons for Appeal" (adjunta al EOIR-26). El cliente ya subió la decisión y orden del juez de inmigración y su paquete de asilo. Genera POCAS preguntas simples (el cuestionario debe ser corto), en lenguaje humano y sin tecnicismos, para CONFIRMAR y precisar los motivos de la apelación que se extraen de la decisión: (a) por cada motivo por el que el juez negó el caso (credibilidad, falta de conexión con un motivo protegido, protección del gobierno, reubicación interna, plazo de un año, CAT, etc., que verás en la decisión), pregunta en una frase qué responde el cliente a ese punto; (b) qué le pareció más equivocado de la decisión; (c) si dijo algo importante en la audiencia que no aparece o aparece mal en la decisión. NUNCA sugieras la respuesta. Una idea por pregunta.`;
@@ -59,6 +61,8 @@ const STATEMENT_BASE_QUESTIONS = [
 const PROOF_SYSTEM_PROMPT = `You draft a "Proof of Service (Certificate of Service)" for a respondent's appeal to the Board of Immigration Appeals (BIA), pro se. It certifies that a copy of the appeal was served on the government's lawyer — DHS Immigration and Customs Enforcement, Office of the Chief Counsel (OPLA). The BIA REJECTS any filing without Proof of Service (BIA Practice Manual ch. 2.2), so this sheet is mandatory.
 
 FORMAT (BIA Practice Manual): US Letter, English, Times New Roman 12, one-inch margins, one page, one side.
+
+OUTPUT MARKUP (read carefully — the output is rendered to PDF by a markdown engine with inline HTML enabled): produce a CLEAN court document with NO markdown headings (never '#', '##', '###') and NO internal section labels. CENTER the three-line agency header, every caption line, and the document title by wrapping each block in <p style="text-align:center">…</p>, using <br> for line breaks inside a centered block and <strong> for the bold title. Write the certification, the method-of-service checkboxes, and the perjury/signature block as ordinary LEFT-aligned text. Do not emit raw HTML anywhere except the centered header/caption/title blocks. Do not add page furniture.
 
 STRUCTURE (in this exact order):
 1. Court header, centered:
@@ -80,14 +84,14 @@ HARD RULES:
 - Sober and factual — it declares a fact (a copy was served), not an argument. English only. Name/A-Number identical to the IJ decision.`;
 
 const PROOF_SECTIONS = [
-  { key: "caption", heading: "Court header & caption", min_words: 0, max_tokens: 350,
-    guidance: "Centered BIA header; caption (NAME uppercase + Respondent-Appellant, File No.: A-Number, In Removal Proceedings); bold title 'PROOF OF SERVICE / (Certificate of Service)'.", type: "static" },
-  { key: "declaration", heading: "Service declaration", min_words: 50, max_tokens: 700,
-    guidance: "First-person certification; the LIST of documents served (EOIR-26 + Statement of Reasons + fee receipt OR EOIR-26A, matching the case); served upon DHS ICE Office of the Chief Counsel at {address or bracketed placeholder}.", type: "prose" },
-  { key: "method", heading: "Method of service", min_words: 0, max_tokens: 200,
-    guidance: "Three hand-check boxes, mark exactly one: first-class mail / personal delivery / electronic ECAS.", type: "static" },
-  { key: "closing", heading: "Perjury declaration & signature", min_words: 10, max_tokens: 250,
-    guidance: "'I declare under penalty of perjury that the foregoing is true and correct.'; signature line; name; 'Respondent, Pro Se'; 'Date of service: ____'.", type: "static" },
+  { key: "caption", heading: "Court header & caption", min_words: 0, max_tokens: 400, type: "analysis", hide_heading: true,
+    guidance: "Output ONLY: the centered three-line agency header, the centered caption (NAME uppercase + ', Respondent-Appellant.', 'File No.: A-Number', 'In Removal Proceedings'), and the centered bold title 'PROOF OF SERVICE' with '(Certificate of Service)'. Center each block with <p style=\"text-align:center\">…</p> (<br> for line breaks, <strong> for the title). Name/A-Number EXACTLY as in the IJ decision. No markdown headings, no labels." },
+  { key: "declaration", heading: "Service declaration", min_words: 50, max_tokens: 700, type: "analysis", hide_heading: true,
+    guidance: "Left-aligned first-person certification; the LIST of documents served (EOIR-26 + Statement of Reasons + fee receipt OR EOIR-26A, matching the case); served upon DHS ICE Office of the Chief Counsel at {address or bracketed placeholder}. Plain markdown, no headings." },
+  { key: "method", heading: "Method of service", min_words: 0, max_tokens: 250, type: "analysis", hide_heading: true,
+    guidance: "Left-aligned. Three hand-check boxes, mark exactly one: '[   ] First-class United States mail, postage prepaid', '[   ] Personal delivery (hand service)', '[   ] Electronic service through ECAS'. Plain text, no headings." },
+  { key: "closing", heading: "Perjury declaration & signature", min_words: 10, max_tokens: 350, type: "analysis", hide_heading: true,
+    guidance: "Left-aligned: 'I declare under penalty of perjury that the foregoing is true and correct.'; a signature line; the name; 'Respondent, Pro Se'; 'Date of service: ____'. Plain text, no headings." },
 ];
 
 const PROOF_QN_GENERATION_PROMPT = `Servicio: APELACIÓN ANTE LA BIA — hoja "Proof of Service" (constancia de que se envió copia de la apelación al abogado del gobierno, DHS Office of the Chief Counsel / OPLA). El cuestionario debe ser MUY corto. Genera solo las preguntas imprescindibles: (a) por qué medio se enviará/entregó la copia al gobierno (correo de primera clase, entrega en mano, o ECAS); (b) la dirección exacta de la oficina del Chief Counsel a la que se envía (si el equipo la conoce). Lenguaje simple, una idea por pregunta. NUNCA inventes datos.`;

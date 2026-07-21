@@ -240,6 +240,52 @@ export async function listCurrentReadyQuestionnaireInstances(
   return (data ?? []) as QuestionnaireInstanceRow[];
 }
 
+/**
+ * The case's active questionnaire forms whose generation config is auto-trigger
+ * (mode ≠ global). Powers the event-driven bootstrap (autoBootstrapCaseQuestionnaires):
+ * once the prerequisite documents are extracted, these are generated + AI-draft-filled
+ * proactively. Resolved through the case's service → phases → questionnaire forms.
+ */
+export async function listAutoQuestionnaireFormsForCase(
+  caseId: string,
+): Promise<Array<{ formDefinitionId: string; isPerParty: boolean }>> {
+  const client = createServiceClient();
+  const { data: kase } = await client.from("cases").select("service_id").eq("id", caseId).maybeSingle();
+  const serviceId = (kase as { service_id?: string } | null)?.service_id;
+  if (!serviceId) return [];
+  const { data: phases } = await client.from("service_phases").select("id").eq("service_id", serviceId);
+  const phaseIds = (phases ?? []).map((p) => (p as { id: string }).id);
+  if (!phaseIds.length) return [];
+  const { data, error } = await client
+    .from("form_definitions")
+    .select("id, is_per_party, questionnaire_generation_configs(auto_trigger, mode)")
+    .in("service_phase_id", phaseIds)
+    .eq("kind", "questionnaire")
+    .eq("is_active", true);
+  if (error) {
+    logger.error({ err: error, caseId }, "ai-engine: listAutoQuestionnaireFormsForCase failed");
+    return [];
+  }
+  const out: Array<{ formDefinitionId: string; isPerParty: boolean }> = [];
+  for (const row of data ?? []) {
+    const r = row as {
+      id: string;
+      is_per_party: boolean | null;
+      questionnaire_generation_configs:
+        | { auto_trigger?: boolean | null; mode?: string | null }
+        | Array<{ auto_trigger?: boolean | null; mode?: string | null }>
+        | null;
+    };
+    const cfg = Array.isArray(r.questionnaire_generation_configs)
+      ? r.questionnaire_generation_configs[0]
+      : r.questionnaire_generation_configs;
+    if (cfg?.auto_trigger === true && cfg?.mode !== "global") {
+      out.push({ formDefinitionId: r.id, isPerParty: r.is_per_party === true });
+    }
+  }
+  return out;
+}
+
 export async function updateQuestionnaireInstance(
   id: string,
   patch: TablesUpdate<"case_questionnaire_instances">,

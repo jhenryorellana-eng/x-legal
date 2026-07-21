@@ -76,40 +76,76 @@ const MEMO_STYLE = `<style>
  *
  * @returns Uint8Array of PDF bytes (starts with %PDF)
  */
-export async function renderMarkdownToPdf(md: string): Promise<Uint8Array> {
+export interface RenderMarkdownOptions {
+  /** When set, a deterministic signature block (carrying the invisible
+   *  SIGNATURE_ANCHOR) is appended after the last page-group. Pair with
+   *  `signatureImageBytes` to stamp the image on it. */
+  signatureBlock?: SignatureBlockOptions;
+  /** Signature image (PNG/JPG) stamped at the block's anchor. Empty/absent → the
+   *  block still renders its printable "sign here" line (unsigned = prior behavior). */
+  signatureImageBytes?: Uint8Array | null;
+}
+
+export async function renderMarkdownToPdf(
+  md: string,
+  opts: RenderMarkdownOptions = {},
+): Promise<Uint8Array> {
   const MarkdownIt = (await import("markdown-it")).default;
-  const mdi = new MarkdownIt({ html: false, linkify: false });
-  const wrap = (bodyHtml: string) => `<!DOCTYPE html><html><head>${MEMO_STYLE}</head><body>${bodyHtml}</body></html>`;
+  // html:true — the generated court documents (Statement of Reasons, Proof of Service)
+  // use inline HTML (`<p style="text-align:center">`, `<br>`, `<strong>`) to reproduce the
+  // BIA's centered caption/header format. This renderer only ever renders our own
+  // AI-generated letter output (never third-party input) into a PDF via mupdf (no JS
+  // engine), so passing HTML through is safe and never executes anything.
+  const mdi = new MarkdownIt({ html: true, linkify: false });
+  const extraStyle = opts.signatureBlock ? SIGNATURE_BLOCK_STYLE : "";
+  const wrap = (bodyHtml: string) =>
+    `<!DOCTYPE html><html><head>${MEMO_STYLE}${extraStyle}</head><body>${bodyHtml}</body></html>`;
 
-  const segments = md.split(PDF_PAGE_BREAK).map((s) => s.trim()).filter(Boolean);
-  const htmls = (segments.length ? segments : [md]).map((seg) => wrap(mdi.render(seg)));
+  const parts = md.split(PDF_PAGE_BREAK).map((s) => s.trim()).filter(Boolean);
+  const segments = parts.length ? parts : [md];
+  // The deterministic signature block (if any) is appended to the LAST page-group so
+  // its invisible anchor lands after the closing text of the letter.
+  const sigHtml = opts.signatureBlock ? buildSignatureBlockHtml(opts.signatureBlock) : "";
+  const htmls = segments.map((seg, i) =>
+    wrap(mdi.render(seg) + (i === segments.length - 1 ? sigHtml : "")),
+  );
 
+  let pdfBytes: Uint8Array;
   // Single page-group → render directly.
-  if (htmls.length === 1) return htmlToPdf(htmls[0]);
+  if (htmls.length === 1) {
+    pdfBytes = await htmlToPdf(htmls[0]);
+  } else {
+    // Multi page-group → render each to PDF, then graft every page into one document
+    // so each group starts on a new page (the proven compileExpedientePdf pattern).
+    const mupdf = await import("mupdf");
 
-  // Multi page-group → render each to PDF, then graft every page into one document
-  // so each group starts on a new page (the proven compileExpedientePdf pattern).
-  const mupdf = await import("mupdf");
-
-  const M = mupdf as any;
-  const dst = new M.PDFDocument();
-  try {
-    for (const html of htmls) {
-      const bytes = await htmlToPdf(html);
-      const src = M.Document.openDocument(bytes, "application/pdf");
-      try {
-        const n = src.countPages();
-        for (let i = 0; i < n; i++) dst.graftPage(dst.countPages(), src, i);
-      } finally {
-        try { src.destroy?.(); } catch { /* freed */ }
+    const M = mupdf as any;
+    const dst = new M.PDFDocument();
+    try {
+      for (const html of htmls) {
+        const bytes = await htmlToPdf(html);
+        const src = M.Document.openDocument(bytes, "application/pdf");
+        try {
+          const n = src.countPages();
+          for (let i = 0; i < n; i++) dst.graftPage(dst.countPages(), src, i);
+        } finally {
+          try { src.destroy?.(); } catch { /* freed */ }
+        }
       }
+      // garbage=4 deduplicates the identical font/resource objects each grafted
+      // segment carries (otherwise the merged PDF bloats ~8x); compress streams.
+      pdfBytes = dst.saveToBuffer("garbage=4,compress=yes").asUint8Array() as Uint8Array;
+    } finally {
+      try { dst.destroy?.(); } catch { /* freed */ }
     }
-    // garbage=4 deduplicates the identical font/resource objects each grafted
-    // segment carries (otherwise the merged PDF bloats ~8x); compress streams.
-    return dst.saveToBuffer("garbage=4,compress=yes").asUint8Array() as Uint8Array;
-  } finally {
-    try { dst.destroy?.(); } catch { /* freed */ }
   }
+
+  // Stamp the signature image at the block's invisible anchor (no-op if absent /
+  // undecodable / anchor not found — the PDF is returned unchanged).
+  if (opts.signatureImageBytes && opts.signatureImageBytes.length > 0) {
+    pdfBytes = await stampSignatureOnPdf(pdfBytes, opts.signatureImageBytes);
+  }
+  return pdfBytes;
 }
 
 // ---------------------------------------------------------------------------
@@ -645,6 +681,58 @@ export function buildCertifiedTranslationHtml(
   );
 }
 
+/** CSS for the deterministic signature block appended by `renderMarkdownToPdf` to a
+ *  signed ai_letter. The anchor is invisible (white, 1pt) so `stampSignatureOnPdf` can
+ *  locate it without printing a token; the reserved space keeps the stamped image off
+ *  the printed name. Mirrors TRANSLATION_STYLE's signature classes. */
+const SIGNATURE_BLOCK_STYLE = `<style>
+  .xt-sig-block{margin:26pt 0 0}
+  .xt-sig-anchor{color:#fff;font-size:1pt}
+  .xt-sig-anchor-line{margin:0}
+  .xt-sig-space{height:44pt}
+  .xt-sig-rule{margin:0;letter-spacing:1pt}
+  .xt-sig-name{margin:3pt 0 0;font-weight:bold}
+  .xt-sig-role{margin:0;font-size:10.5pt}
+  .xt-sig-date{margin:10pt 0 0;font-size:10.5pt}
+</style>`;
+
+export interface SignatureBlockOptions {
+  /** Printed name under the signature line (e.g. the respondent's full name). */
+  name?: string | null;
+  /** Role caption under the name (e.g. "Respondent, Pro Se"). */
+  role?: string | null;
+  /** "Date:" line label, already localized (e.g. "Date:" / "Date of service:"). A
+   *  trailing blank invites the client to hand-write the date, matching the BIA form. */
+  dateLabel?: string | null;
+}
+
+/**
+ * Builds the deterministic signature block appended to a signed ai_letter (Statement
+ * of Reasons / Proof of Service). Pure + synchronous (unit-testable without WASM).
+ * It carries the invisible SIGNATURE_ANCHOR at the top so `stampSignatureOnPdf` draws
+ * the appellant's image on the signature line, then a printed rule, the name, the role
+ * caption, and a date line. When no image is stamped it still prints a clean "sign
+ * here" block (the prior manuscript-signature behavior). The section prompts are set
+ * so the model does NOT emit its own signature line — this block is the single source.
+ */
+export function buildSignatureBlockHtml(opts: SignatureBlockOptions = {}): string {
+  const esc = (s: string) =>
+    String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string));
+  const name = opts.name?.trim() || "";
+  const role = opts.role?.trim() || "";
+  const dateLabel = opts.dateLabel?.trim() || "Date:";
+  return (
+    `<div class="xt-sig-block">` +
+    `<p class="xt-sig-anchor-line"><span class="xt-sig-anchor">${SIGNATURE_ANCHOR}</span></p>` +
+    `<div class="xt-sig-space"></div>` +
+    `<p class="xt-sig-rule">${"_".repeat(36)}</p>` +
+    `<p class="xt-sig-name">${name ? esc(name) : "&nbsp;"}</p>` +
+    (role ? `<p class="xt-sig-role">${esc(role)}</p>` : "") +
+    `<p class="xt-sig-date">${esc(dateLabel)} ____________________</p>` +
+    `</div>`
+  );
+}
+
 /** [x0,y0,x1,y1] top-left-origin rect from a mupdf search quad (8-number array or
  *  `{ul,lr}` object across mupdf versions). Returns null if unrecognized. */
 function quadToRect(
@@ -742,6 +830,90 @@ export async function stampSignatureOnPdf(
     return buf.asUint8Array() as Uint8Array;
   } finally {
     try { src.destroy?.(); } catch { /* freed */ }
+  }
+}
+
+export interface SignatureRectPlacement {
+  /** 0-indexed page as read from the PDF's page tree (pdf-lib `getPages()` order). */
+  page: number;
+  /** [x0,y0,x1,y1] signature-widget rect in PDF-native, bottom-left origin coordinates
+   *  — the raw annotation `/Rect` (what pdfjs reads), NOT mupdf's `getBounds()` (whose
+   *  top-left rects + page indices are misaligned with the visible content; see
+   *  form-editor/pdf-viewer.tsx). Obtain these by reading the source PDF's `/Sig` widget
+   *  annotations with pdf-lib (see docs/_evidence/apelacion-firma/inspect-annots.cjs). */
+  rect: [number, number, number, number];
+}
+
+/**
+ * Stamps a signature image (PNG) onto a filled AcroForm PDF (e.g. the EOIR-26) at
+ * explicit signature-widget rects. Used for the EOIR-26 #9/#12 signature spots, which
+ * cannot be targeted by an invisible text anchor (they are AcroForm widgets, not our
+ * generated HTML).
+ *
+ * Uses pdf-lib (`embedPng` + `drawImage`) in PDF-native bottom-left coordinates — the
+ * same space pdfjs/the form editor use — so the stamp aligns with the visible form
+ * (mupdf's `getBounds()` rects are misaligned). Runs AFTER `fillAcroForm`'s `bake()`
+ * (the widgets are flattened; their location and the page geometry are unchanged). The
+ * image is scaled "contain" within the box, centered horizontally, and sat on the box's
+ * bottom edge (the signature line).
+ *
+ * Robust: a missing/undecodable image, an out-of-range page, or empty placements leaves
+ * the PDF unchanged (returns the original bytes), like `stampBates`.
+ */
+export async function stampSignatureAtRects(
+  pdfBytes: Uint8Array,
+  imageBytes: Uint8Array,
+  placements: SignatureRectPlacement[],
+  opts: { paddingPt?: number } = {},
+): Promise<Uint8Array> {
+  if (!imageBytes || imageBytes.length === 0 || !placements || placements.length === 0) {
+    return pdfBytes;
+  }
+  try {
+    const { PDFDocument } = await import("pdf-lib");
+    const doc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+    let png: Awaited<ReturnType<typeof doc.embedPng>>;
+    try {
+      png = await doc.embedPng(imageBytes);
+    } catch {
+      return pdfBytes; // undecodable / non-PNG image → leave the PDF as-is
+    }
+    const iw = png.width;
+    const ih = png.height;
+    if (!iw || !ih) return pdfBytes;
+
+    const pages = doc.getPages();
+    const pad = opts.paddingPt ?? 4;
+    let stamped = 0;
+    for (const pl of placements) {
+      if (!pl || !Array.isArray(pl.rect) || pl.rect.length < 4 || typeof pl.page !== "number") continue;
+      const page = pages[pl.page];
+      if (!page) continue;
+      const [x0, y0, x1, y1] = pl.rect; // PDF-native, bottom-left origin
+      const boxW = Math.max(1, x1 - x0 - pad * 2);
+      const boxH = Math.max(1, y1 - y0 - pad * 2);
+      // "contain": preserve aspect ratio within the box.
+      let drawW = boxW;
+      let drawH = (boxW * ih) / iw;
+      if (drawH > boxH) {
+        drawH = boxH;
+        drawW = (boxH * iw) / ih;
+      }
+      // Center horizontally; sit on the box's bottom edge (the printed signature line).
+      const x = x0 + (x1 - x0 - drawW) / 2;
+      const y = y0 + pad;
+      page.drawImage(png, { x, y, width: drawW, height: drawH });
+      stamped++;
+    }
+    if (stamped === 0) return pdfBytes;
+    return await doc.save();
+  } catch (err) {
+    const { logger } = await import("./logger");
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      "stampSignatureAtRects: degraded (returning unstamped)",
+    );
+    return pdfBytes;
   }
 }
 
