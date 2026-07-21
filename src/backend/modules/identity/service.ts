@@ -413,26 +413,29 @@ export async function loginClientByPhone(
     throw new IdentityError("wrong_kind", "no_access");
   }
 
-  // Step 4: Sign in by PHONE with the derived password (sets the SSR cookie).
-  // The phone is the client's identity in Auth (2026-07 refactor) — the email is
-  // decoupled, so it may repeat / be null without affecting login.
+  // Step 4: Sign in with the SYNTHETIC per-phone email + derived password (sets
+  // the SSR cookie). The client typed only their phone; we derive their Auth
+  // identity from it. We sign in by the synthetic email (NOT { phone }: this
+  // Supabase project has phone logins disabled) — the real email stays fully
+  // decoupled from Auth, so it may repeat or be null without affecting login.
+  const authEmail = syntheticAuthEmail(phoneE164);
   const password = derivePhonePassword(phoneE164, env.SUPABASE_SERVICE_ROLE_KEY);
   const supabase = await createServerClient();
-  let signIn = await supabase.auth.signInWithPassword({ phone: phoneE164, password });
+  let signIn = await supabase.auth.signInWithPassword({ email: authEmail, password });
 
   if (signIn.error || !signIn.data.user) {
-    // Self-heal: a legacy client provisioned before the phone-identity refactor
-    // (email-only Auth, no phone/password), or after a secret rotation. Backfill
-    // the phone + confirmation + derived password via the admin API and retry
-    // ONCE. Auto-migrates any client the batch backfill hasn't covered yet.
+    // Self-heal: a legacy client whose Auth still holds the real email (not yet
+    // migrated to the synthetic one), or a secret rotation. Backfill the
+    // synthetic email + confirmation + derived password via the admin API and
+    // retry ONCE. Auto-migrates any client the batch backfill hasn't covered.
     const admin = createServiceClient();
     const { error: setErr } = await admin.auth.admin.updateUserById(client.id, {
-      phone: phoneE164,
-      phone_confirm: true,
+      email: authEmail,
+      email_confirm: true,
       password,
     });
     if (!setErr) {
-      signIn = await supabase.auth.signInWithPassword({ phone: phoneE164, password });
+      signIn = await supabase.auth.signInWithPassword({ email: authEmail, password });
     }
   }
 

@@ -118,7 +118,7 @@ import {
   findClientByPhone,
   searchClientRows,
 } from "../repository";
-import { derivePhonePassword } from "../domain";
+import { derivePhonePassword, syntheticAuthEmail } from "../domain";
 import { createServerClient, createServiceClient } from "@/backend/platform/supabase";
 
 // ---------------------------------------------------------------------------
@@ -177,17 +177,18 @@ client as any);
 serviceClient as any);
   });
 
-  it("signs the client in by PHONE with the derived password (happy path)", async () => {
+  it("signs the client in by the SYNTHETIC email with the derived password (happy path)", async () => {
     const client = buildServerClient();
     vi.mocked(createServerClient).mockResolvedValue(
 client as any);
 
     const result = await loginClientByPhone(validPhone, ip);
     expect(result).toEqual({ ok: true });
-    // signInWithPassword called with the PHONE (not the email) + derived password.
-    // The email is decoupled from Auth — the phone is the identity.
+    // signInWithPassword uses the SYNTHETIC per-phone email (not the real email,
+    // not { phone } — this Supabase project has phone logins disabled). The real
+    // email is fully decoupled; the phone is the identity via its synthetic email.
     expect(client.auth.signInWithPassword).toHaveBeenCalledWith({
-      phone: normalized,
+      email: syntheticAuthEmail(normalized),
       password: derivePhonePassword(normalized, "test-service-key"),
     });
     // post-session re-gate ran with the user id
@@ -210,7 +211,7 @@ client as any);
     const result = await loginClientByPhone(validPhone, ip);
     expect(result).toEqual({ ok: true });
     expect(client.auth.signInWithPassword).toHaveBeenCalledWith({
-      phone: normalized,
+      email: syntheticAuthEmail(normalized),
       password: derivePhonePassword(normalized, "test-service-key"),
     });
   }, 2000);
@@ -239,10 +240,10 @@ client as any);
     expect(client.auth.signInWithPassword).not.toHaveBeenCalled();
   }, 2000);
 
-  it("self-heal: sets phone + password via admin then retries sign-in once", async () => {
-    // First sign-in by phone fails (a legacy user without phone/password set on
-    // Auth), then succeeds after the admin backfill. This auto-migrates any
-    // client not yet covered by the batch backfill.
+  it("self-heal: sets the synthetic email + password via admin then retries sign-in once", async () => {
+    // First sign-in fails (a legacy user whose Auth still holds the real email,
+    // not yet migrated to the synthetic one), then succeeds after the admin
+    // backfill. This auto-migrates any client the batch backfill hasn't covered.
     const signInMock = vi
       .fn()
       .mockResolvedValueOnce({ data: { user: null }, error: { message: "Invalid login credentials" } })
@@ -258,10 +259,10 @@ client as any);
 
     const result = await loginClientByPhone(validPhone, ip);
     expect(result).toEqual({ ok: true });
-    // Backfills the phone identity + confirmation + derived password on Auth.
+    // Backfills the synthetic email identity + confirmation + derived password.
     expect(updateByIdMock).toHaveBeenCalledWith(userId, {
-      phone: normalized,
-      phone_confirm: true,
+      email: syntheticAuthEmail(normalized),
+      email_confirm: true,
       password: derivePhonePassword(normalized, "test-service-key"),
     });
     expect(signInMock).toHaveBeenCalledTimes(2);
