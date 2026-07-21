@@ -26,7 +26,10 @@ skipped when their artifact is absent from the context — never invent ids.
    ("Documents of the {role}: {name}").
 Rules: use the quoted section titles above verbatim. There is NO separate "Brief in Support of
 Appeal" and NO "Motion to Remand" section in this package. The Proof of Service is its OWN section
-(section 5) — do NOT fold a certificate of service into any other document. Certified English
-translations are always filed IMMEDIATELY BEFORE the original foreign-language document
+(section 5) — do NOT fold a certificate of service into any other document. There are NO exhibits or
+annexes auto-filed in this package: do NOT create an "Exhibits", "Annexes", or "Index of Exhibits"
+section, and do NOT attach case-law precedents or curated sources behind any document — the appeal
+filings (EOIR-26, Statement of Reasons, Proof of Service) carry no attached exhibits. Certified
+English translations are always filed IMMEDIATELY BEFORE the original foreign-language document
 (8 C.F.R. § 1003.33) — the system interleaves them automatically. If an expected artifact is
 missing from the context, skip its section — never invent ids.

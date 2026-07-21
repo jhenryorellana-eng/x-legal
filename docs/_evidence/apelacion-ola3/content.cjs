@@ -120,7 +120,10 @@ module.exports = {
     draft_answers_prompt: STATEMENT_DRAFT_ANSWERS_PROMPT,
     base_questions: STATEMENT_BASE_QUESTIONS,
     guide_path: "docs/guides/statement-of-reasons-for-appeal-guia.md",
-    use_dataset: true,
+    // NO precedent dataset: the Statement is a short numbered list of the IJ's errors and
+    // must NOT cite case law (guide §5) — deep legal analysis + precedents go in the brief,
+    // which this package no longer includes. Also keeps the appeal package exhibit-free.
+    use_dataset: false,
     input_document_slugs: ["decision-y-orden-del-juez-de-inmigracion", "asilo-presentado-completo-con-anexos"],
   },
   PROOF: {
