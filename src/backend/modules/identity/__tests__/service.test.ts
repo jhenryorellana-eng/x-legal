@@ -62,6 +62,7 @@ vi.mock("../repository.js", () => ({
   checkClientEligibility: vi.fn(),
   checkClientEligibilityById: vi.fn(),
   findClientByPhone: vi.fn(),
+  searchClientRows: vi.fn().mockResolvedValue([]),
   insertStaffRows: vi.fn(),
   replaceStaffPermissions: vi.fn(),
   setStaffActive: vi.fn(),
@@ -101,6 +102,7 @@ vi.mock("@/backend/platform/supabase.js", () => ({
 
 import {
   loginClientByPhone,
+  lookupClientByPhone,
   requestStaffPasswordReset,
   updateStaffPassword,
 } from "../service";
@@ -110,7 +112,12 @@ import {
   limitOtpSendIp,
 } from "@/backend/platform/ratelimit";
 import { requireActor } from "@/backend/platform/authz";
-import { checkClientEligibility, checkClientEligibilityById, findClientByPhone } from "../repository";
+import {
+  checkClientEligibility,
+  checkClientEligibilityById,
+  findClientByPhone,
+  searchClientRows,
+} from "../repository";
 import { derivePhonePassword } from "../domain";
 import { createServerClient, createServiceClient } from "@/backend/platform/supabase";
 
@@ -170,16 +177,17 @@ client as any);
 serviceClient as any);
   });
 
-  it("signs the client in by email with the derived password (happy path)", async () => {
+  it("signs the client in by PHONE with the derived password (happy path)", async () => {
     const client = buildServerClient();
-    vi.mocked(createServerClient).mockResolvedValue( 
+    vi.mocked(createServerClient).mockResolvedValue(
 client as any);
 
     const result = await loginClientByPhone(validPhone, ip);
     expect(result).toEqual({ ok: true });
-    // signInWithPassword called with the email + the deterministic password
+    // signInWithPassword called with the PHONE (not the email) + derived password.
+    // The email is decoupled from Auth — the phone is the identity.
     expect(client.auth.signInWithPassword).toHaveBeenCalledWith({
-      email,
+      phone: normalized,
       password: derivePhonePassword(normalized, "test-service-key"),
     });
     // post-session re-gate ran with the user id
@@ -190,6 +198,21 @@ client as any);
     await loginClientByPhone(validPhone, ip);
     expect(findClientByPhone).toHaveBeenCalledWith(normalized);
     expect(checkClientEligibility).toHaveBeenCalledWith(normalized);
+  }, 2000);
+
+  it("signs in a client with NO email (phone is the identity; email is optional)", async () => {
+    // 2026-07: the email is optional/repeatable contact data — a client
+    // provisioned without one must still be able to log in with their phone.
+    vi.mocked(findClientByPhone).mockResolvedValue({ id: userId, email: null, existed: true });
+    const client = buildServerClient();
+    vi.mocked(createServerClient).mockResolvedValue(client as never);
+
+    const result = await loginClientByPhone(validPhone, ip);
+    expect(result).toEqual({ ok: true });
+    expect(client.auth.signInWithPassword).toHaveBeenCalledWith({
+      phone: normalized,
+      password: derivePhonePassword(normalized, "test-service-key"),
+    });
   }, 2000);
 
   it("throws wrong_kind (uniform) when no client has that phone — no sign-in attempt", async () => {
@@ -216,24 +239,29 @@ client as any);
     expect(client.auth.signInWithPassword).not.toHaveBeenCalled();
   }, 2000);
 
-  it("legacy: sets the password via admin then retries sign-in once", async () => {
-    // First sign-in fails (no password set on the legacy user), then succeeds.
+  it("self-heal: sets phone + password via admin then retries sign-in once", async () => {
+    // First sign-in by phone fails (a legacy user without phone/password set on
+    // Auth), then succeeds after the admin backfill. This auto-migrates any
+    // client not yet covered by the batch backfill.
     const signInMock = vi
       .fn()
       .mockResolvedValueOnce({ data: { user: null }, error: { message: "Invalid login credentials" } })
       .mockResolvedValueOnce({ data: { user: { id: userId } }, error: null });
     const client = buildServerClient({ signInWithPassword: signInMock });
-    vi.mocked(createServerClient).mockResolvedValue( 
+    vi.mocked(createServerClient).mockResolvedValue(
 client as any);
     const updateByIdMock = vi.fn().mockResolvedValue({ error: null });
     vi.mocked(createServiceClient).mockReturnValue({
       auth: { admin: { updateUserById: updateByIdMock } },
-       
+
     } as any);
 
     const result = await loginClientByPhone(validPhone, ip);
     expect(result).toEqual({ ok: true });
+    // Backfills the phone identity + confirmation + derived password on Auth.
     expect(updateByIdMock).toHaveBeenCalledWith(userId, {
+      phone: normalized,
+      phone_confirm: true,
       password: derivePhonePassword(normalized, "test-service-key"),
     });
     expect(signInMock).toHaveBeenCalledTimes(2);
@@ -271,6 +299,63 @@ client as any);
       expect.objectContaining({ code: "invalid_phone" }),
     );
   }, 2000);
+});
+
+// ---------------------------------------------------------------------------
+// lookupClientByPhone — the "Nuevo caso" step-1 duplicate-phone check. The
+// phone is the unique identity: warn the operator (and offer the existing
+// client) instead of silently merging cases into the wrong account.
+// ---------------------------------------------------------------------------
+
+describe("lookupClientByPhone", () => {
+  const ACTOR = {
+    userId: "staff-1",
+    orgId: "org-1",
+    kind: "staff" as const,
+    role: "admin" as const,
+    permissions: new Map(),
+  };
+
+  const row = {
+    userId: "client-9",
+    firstName: "Ivis",
+    lastName: "Palma",
+    email: "shared@example.com",
+    phoneE164: "+13466094183",
+    address: null,
+    caseCount: 1,
+  };
+
+  beforeEach(() => {
+    vi.mocked(requireActor).mockResolvedValue(ACTOR as never);
+  });
+
+  it("returns the existing client on an EXACT normalized-phone match", async () => {
+    vi.mocked(searchClientRows).mockResolvedValue([row]);
+
+    const result = await lookupClientByPhone(ACTOR as never, "(346) 609-4183");
+
+    expect(result).toMatchObject({ userId: "client-9", phoneE164: "+13466094183", caseCount: 1 });
+    // Searched within the actor's org using the normalized phone
+    expect(searchClientRows).toHaveBeenCalledWith("org-1", "+13466094183", expect.any(Number));
+  });
+
+  it("returns null when the RPC only surfaces a PARTIAL (different) phone match", async () => {
+    // The RPC does a LIKE on phone digits, so a substring can come back — we must
+    // keep only an exact match, never warn on a near-miss.
+    vi.mocked(searchClientRows).mockResolvedValue([{ ...row, phoneE164: "+13466094999" }]);
+
+    const result = await lookupClientByPhone(ACTOR as never, "+13466094183");
+    expect(result).toBeNull();
+  });
+
+  it("returns null (without querying) for an invalid / incomplete phone", async () => {
+    vi.mocked(searchClientRows).mockClear();
+
+    const result = await lookupClientByPhone(ACTOR as never, "346");
+    expect(result).toBeNull();
+    expect(searchClientRows).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------

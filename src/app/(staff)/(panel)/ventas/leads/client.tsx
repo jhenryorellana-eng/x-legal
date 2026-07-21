@@ -67,6 +67,7 @@ export interface LeadsClientProps {
   createCaseAction: NewCaseActions["createCase"];
   searchClientsAction: NewCaseActions["searchClients"];
   getClientCasesAction: NewCaseActions["getClientCases"];
+  checkClientPhoneAction: NonNullable<NewCaseActions["checkClientPhone"]>;
 }
 
 type LeadsViewMove = React.ComponentProps<typeof LeadsView>["actions"]["moveCard"];
@@ -112,6 +113,7 @@ export function LeadsClient({
   createCaseAction,
   searchClientsAction,
   getClientCasesAction,
+  checkClientPhoneAction,
 }: LeadsClientProps) {
   const router = useRouter();
   const [leadModal, setLeadModal] = React.useState<{ open: boolean; columnId?: string }>({ open: false });
@@ -229,6 +231,7 @@ export function LeadsClient({
           createCase: createCaseAction,
           searchClients: searchClientsAction,
           getClientCases: getClientCasesAction,
+          checkClientPhone: checkClientPhoneAction,
         }}
         caseLinkBase="/ventas/clientes"
       />

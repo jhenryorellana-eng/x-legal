@@ -85,9 +85,9 @@ export interface ExistingCaseSummary {
 
 export interface NewCaseInput {
   clientName: string;
-  /** Login credential (DOC-22 §1, email auth). */
+  /** Optional, repeatable contact email (2026-07 — not the identity; may be ""). */
   clientEmail: string;
-  /** Login credential (DOC-22 §1) — required: phone + email together. */
+  /** The client's UNIQUE identity + login credential (DOC-22 §1) — required. */
   clientPhone: string;
   /** Full US mailing address — required (prefills the I-589 via profile). */
   clientAddress: {
@@ -140,6 +140,16 @@ export interface NewCaseActions {
   getClientCases: (
     clientId: string,
   ) => Promise<{ ok: boolean; cases?: ExistingCaseSummary[]; error?: { code: string; message?: string } }>;
+  /**
+   * Duplicate-phone check for new-client mode (2026-07 phone-as-identity). As the
+   * operator types a phone, returns the existing client that already owns it (if
+   * any) so the modal can warn and offer switching to the existing-client flow —
+   * instead of creating a case under the wrong account. Optional: when absent the
+   * modal simply skips the check.
+   */
+  checkClientPhone?: (
+    rawPhone: string,
+  ) => Promise<{ ok: boolean; client?: ClientPick | null; error?: { code: string; message?: string } }>;
 }
 
 export function NewCaseModal({
@@ -178,6 +188,9 @@ export function NewCaseModal({
   const [searching, setSearching] = React.useState(false);
   const [selectedClient, setSelectedClient] = React.useState<ClientPick | null>(null);
   const [existingCases, setExistingCases] = React.useState<ExistingCaseSummary[]>([]);
+  // New-client mode: the existing client that already owns the typed phone (the
+  // phone is the unique identity), so the modal can warn + offer switching.
+  const [phoneDup, setPhoneDup] = React.useState<ClientPick | null>(null);
   const [name, setName] = React.useState("");
   const [clientEmail, setClientEmail] = React.useState("");
   const [phone, setPhone] = React.useState("");
@@ -243,6 +256,32 @@ export function NewCaseModal({
     };
   }, [open, clientMode, selectedClient, clientQuery]);
 
+  // New-client mode: as the operator types a phone, check whether it already
+  // belongs to a client (the phone is the unique identity). Debounced 400ms and
+  // gated on a plausibly-complete US number so we don't query on every keypress.
+  React.useEffect(() => {
+    if (!open || clientMode !== "new") {
+      setPhoneDup(null);
+      return;
+    }
+    const check = actionsRef.current.checkClientPhone;
+    const digits = phone.replace(/\D/g, "");
+    if (!check || digits.length < 10) {
+      setPhoneDup(null);
+      return;
+    }
+    let active = true;
+    const handle = setTimeout(async () => {
+      const res = await check(phone);
+      if (!active) return;
+      setPhoneDup(res.ok && res.client ? res.client : null);
+    }, 400);
+    return () => {
+      active = false;
+      clearTimeout(handle);
+    };
+  }, [open, clientMode, phone]);
+
   /** Picks an existing client: prefills every step-1 field (defensively — older
    *  profiles may lack an address) and loads their cases for the dup notice. */
   function selectClient(c: ClientPick) {
@@ -268,6 +307,17 @@ export function NewCaseModal({
     setExistingCases([]);
   }
 
+  /** Duplicate-phone banner CTA: jump to the existing client that owns the phone
+   *  and select them, so the case is created under the right account. */
+  function useExistingFromDup() {
+    const dup = phoneDup;
+    if (!dup) return;
+    setPhoneDup(null);
+    setClientMode("existing");
+    setClientResults([]);
+    selectClient(dup);
+  }
+
   /** Switching modes resets the selection and the step-1 fields, re-seeding the
    *  lead preset so the "new" form starts from the lead data again. */
   function switchClientMode(m: "existing" | "new") {
@@ -276,6 +326,7 @@ export function NewCaseModal({
     setSelectedClient(null);
     setExistingCases([]);
     setClientResults([]);
+    setPhoneDup(null);
     setName(presetName ?? "");
     setClientEmail("");
     setPhone(presetPhone ?? "");
@@ -334,6 +385,7 @@ export function NewCaseModal({
     setClientResults([]);
     setSelectedClient(null);
     setExistingCases([]);
+    setPhoneDup(null);
     setName("");
     setClientEmail("");
     setPhone("");
@@ -359,19 +411,24 @@ export function NewCaseModal({
     onOpenChange(o);
   }
 
-  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail.trim());
-  // Phone + full US address (apartment optional) are now mandatory — both phone
-  // and email are login credentials, and the address prefills the I-589.
+  // Email is OPTIONAL (2026-07 phone-as-identity): valid when empty OR well-formed.
+  const emailOkOrEmpty =
+    clientEmail.trim().length === 0 || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail.trim());
+  // Phone + full US address (apartment optional) are mandatory — the phone is the
+  // client's identity + login credential, and the address prefills the I-589.
   const phoneValid = phone.replace(/\D/g, "").length >= 10;
   const addressValid =
     line1.trim().length > 2 && city.trim().length > 1 && stateCode.trim().length >= 2 && zip.trim().length >= 5;
   // Existing mode: a picked client is mandatory (RF-VAN-018 — "Siguiente" only
   // enables with a selection). Identity fields (name/phone/email) come from
   // the profile read-only, so only the editable address is validated here.
+  // New mode: block advancing while the typed phone already belongs to a client
+  // (phoneDup) — the operator must use "Usar este cliente" (or change the phone),
+  // so a case is never created new-client with an identity that already exists.
   const step1Valid =
     clientMode === "existing"
       ? !!selectedClient && addressValid
-      : name.trim().length > 1 && emailValid && phoneValid && addressValid;
+      : name.trim().length > 1 && emailOkOrEmpty && phoneValid && addressValid && !phoneDup;
   // Every REQUIRED additional role must have at least one named party.
   const rolesValid = (service?.partyRoles ?? []).every(
     (r) => !r.required || (partyNames[r.roleKey] ?? []).some((n) => n.trim()),
@@ -646,7 +703,7 @@ export function NewCaseModal({
               />
               <div>
                 <LabeledInput
-                  label={strings.clientEmail}
+                  label={clientMode === "existing" ? strings.clientEmail : strings.clientEmailOptional}
                   value={clientEmail}
                   onChange={setClientEmail}
                   inputMode="email"
@@ -670,6 +727,31 @@ export function NewCaseModal({
                 <p style={{ margin: "6px 0 0", fontSize: 12.5, color: "var(--ink-3)" }}>
                   {clientMode === "existing" ? strings.clientPhoneLocked : strings.phoneHint}
                 </p>
+                {/* Duplicate-phone banner: the typed phone already belongs to a
+                    client. Offer that client instead of creating a wrong-account
+                    case (the exact bug this refactor fixes). */}
+                {clientMode === "new" && phoneDup && (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      marginTop: 8,
+                      padding: "10px 12px",
+                      borderRadius: 12,
+                      background: "color-mix(in srgb, #f59e0b 14%, transparent)",
+                      border: "1px solid color-mix(in srgb, #f59e0b 35%, transparent)",
+                    }}
+                  >
+                    <Icon name="info" size={15} color="#b45309" />
+                    <span style={{ flex: 1, fontSize: 13, color: "var(--ink-2)" }}>
+                      {interpStr(strings.phoneDupWarning, { name: phoneDup.name })}
+                    </span>
+                    <GhostBtn size="md" full={false} onClick={useExistingFromDup}>
+                      {strings.phoneDupUseExisting}
+                    </GhostBtn>
+                  </div>
+                )}
               </div>
 
               {/* Full US mailing address — required (prefills the I-589). */}

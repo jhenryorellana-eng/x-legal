@@ -46,6 +46,7 @@ import {
   normalizePhoneE164,
   normalizeEmailStrict,
   derivePhonePassword,
+  syntheticAuthEmail,
   passwordPolicy,
 } from "./domain";
 import {
@@ -59,7 +60,6 @@ import {
   insertStaffRows,
   replaceStaffPermissions,
   setStaffActive,
-  findClientByEmail,
   findClientByPhone,
   findClientById,
   searchClientRows,
@@ -398,32 +398,41 @@ export async function loginClientByPhone(
     throw new IdentityError("rate_limited");
   }
 
-  // Step 3: Resolve + gate. A missing client, a phone-less/email-less row, or an
-  // ineligible client all collapse to the SAME uniform failure (anti-enum).
+  // Step 3: Resolve + gate. A missing client or an ineligible one collapse to the
+  // SAME uniform failure (anti-enum). The email is NOT checked: it is optional
+  // contact data (2026-07 phone-as-identity), and login signs in by phone — a
+  // client provisioned without an email must still be able to log in.
   const client = await findClientByPhone(phoneE164);
   const { eligible } = client
     ? await checkClientEligibility(phoneE164)
     : { eligible: false };
 
-  if (!client || !client.email || !eligible) {
+  if (!client || !eligible) {
     await enforceFloor(start, LOGIN_LATENCY_FLOOR_MS);
     logger.info({}, "loginClientByPhone: gate check failed — no session (anti-enum)");
     throw new IdentityError("wrong_kind", "no_access");
   }
 
-  // Step 4: Sign in by email with the derived password (sets the SSR cookie).
+  // Step 4: Sign in by PHONE with the derived password (sets the SSR cookie).
+  // The phone is the client's identity in Auth (2026-07 refactor) — the email is
+  // decoupled, so it may repeat / be null without affecting login.
   const password = derivePhonePassword(phoneE164, env.SUPABASE_SERVICE_ROLE_KEY);
   const supabase = await createServerClient();
-  let signIn = await supabase.auth.signInWithPassword({ email: client.email, password });
+  let signIn = await supabase.auth.signInWithPassword({ phone: phoneE164, password });
 
   if (signIn.error || !signIn.data.user) {
-    // Legacy resilience: the client was provisioned before we set passwords (or
-    // the secret rotated). Set the current derived password via the admin API
-    // and retry ONCE. Self-heals without a separate backfill.
+    // Self-heal: a legacy client provisioned before the phone-identity refactor
+    // (email-only Auth, no phone/password), or after a secret rotation. Backfill
+    // the phone + confirmation + derived password via the admin API and retry
+    // ONCE. Auto-migrates any client the batch backfill hasn't covered yet.
     const admin = createServiceClient();
-    const { error: setErr } = await admin.auth.admin.updateUserById(client.id, { password });
+    const { error: setErr } = await admin.auth.admin.updateUserById(client.id, {
+      phone: phoneE164,
+      phone_confirm: true,
+      password,
+    });
     if (!setErr) {
-      signIn = await supabase.auth.signInWithPassword({ email: client.email, password });
+      signIn = await supabase.auth.signInWithPassword({ phone: phoneE164, password });
     }
   }
 
@@ -992,10 +1001,18 @@ function buildStaffInviteEmail(opts: {
 
 export interface ProvisionClientUserInput {
   fullName: string;
-  /** Login credential (DOC-22 §1, email auth). Captured at case intake. */
-  email: string;
-  /** Login credential (DOC-22 §1) — phone + email together. Captured at intake. */
+  /**
+   * The client's UNIQUE identity + login credential (DOC-22 §1). Captured at
+   * case intake. REQUIRED — the client logs in with the phone only, and it is
+   * the dedup key (public.users.phone_e164 is unique).
+   */
   phoneE164?: string | null;
+  /**
+   * OPTIONAL, REPEATABLE contact email (a family may share one inbox, or have
+   * none). NEVER the identity: it is stored only on the public rows, and the
+   * Supabase Auth identity uses a synthetic per-phone email instead.
+   */
+  email?: string | null;
   /** Full US mailing address — persisted to client_profiles.address (prefills I-589). */
   address?: ClientAddressInput | null;
   locale?: string;
@@ -1011,18 +1028,27 @@ export interface ProvisionClientUserResult {
 /**
  * Provisions a client user in Supabase Auth + public.users + client_profiles.
  *
- * Idempotent by EMAIL: if the user already exists, returns { userId, created:false }.
+ * Identity model (DOC-22 §1, 2026-07 refactor — PHONE is the identity):
+ *  - The phone is the client's UNIQUE identity and sole login credential.
+ *    Idempotent by PHONE: if a client with this phone already exists, returns
+ *    { userId, created:false } without touching Auth.
+ *  - The real email is OPTIONAL, REPEATABLE contact data — it is stored only on
+ *    public.users/client_profiles (no unique constraint), so several clients may
+ *    share one inbox or have none. It is NEVER the dedup key.
+ *  - Supabase Auth (which enforces a unique email) gets a SYNTHETIC, unique-per-
+ *    phone email (syntheticAuthEmail) + the phone + the derived phone password.
+ *    The client signs in by phone (loginClientByPhone) — never with this email.
  *
- * Steps per DOC-22 §1.2 (SoT 2026-06-13: email auth, phone optional contact):
+ * Steps:
  * 1. can(actor, 'clients', 'edit')
- * 2. Normalize + validate email
- * 3. Check existing: users.email (kind=client)
- * 4. auth.admin.createUser({ email, email_confirm:true }) — no password, no session
- * 5. INSERT users(kind=client, email, phone?) + client_profiles
+ * 2. Normalize + validate phone (mandatory); normalize the optional email
+ * 3. Idempotency: findClientByPhone
+ * 4. auth.admin.createUser({ email: synthetic, phone, *_confirm, password })
+ * 5. INSERT users(kind=client, email?, phone) + client_profiles
  * 6. audit
  *
- * Race condition: if the auth user exists but public.users is missing, look up
- * by email and upsert the rows (idempotent on id).
+ * Recovery: on a duplicate error, resolve a concurrent race (public.users
+ * already has the phone) or reuse a leftover auth shell that collides by phone.
  *
  * @api-id API-AUT-16 (client provisioning; DOC-22 §1.2)
  */
@@ -1034,48 +1060,47 @@ export async function provisionClientUser(
   can(actor, "clients", "edit");
 
   const { fullName, locale, timezone, address } = input;
-  const email = normalizeEmailStrict(input.email);
-  const phoneE164 = input.phoneE164 ? normalizePhoneE164(input.phoneE164) : null;
+
+  // Step 2: The phone is the identity — mandatory. normalizePhoneE164 throws
+  // (PhoneNormalizationError) on a missing / blank / invalid phone.
+  const phoneE164 = normalizePhoneE164(input.phoneE164 ?? "");
+  // The real email is OPTIONAL contact data — normalize when present, else null.
+  const email = input.email && input.email.trim() ? normalizeEmailStrict(input.email) : null;
 
   // Derive first/last name from fullName (split on first space; last = rest)
   const spaceIdx = fullName.trim().indexOf(" ");
   const firstName = spaceIdx >= 0 ? fullName.trim().slice(0, spaceIdx) : fullName.trim();
   const lastName = spaceIdx >= 0 ? fullName.trim().slice(spaceIdx + 1).trim() : "";
 
-  // Step 3: Idempotency check — email on users(kind=client)
-  const existing = await findClientByEmail(email);
+  // Step 3: Idempotency — by PHONE (the unique identity), never by email.
+  const existing = await findClientByPhone(phoneE164);
   if (existing) {
     logger.info(
       { userId: existing.id },
-      "provisionClientUser: email already registered — returning existing user (idempotent)",
+      "provisionClientUser: phone already registered — returning existing client (idempotent)",
     );
     return { userId: existing.id, created: false };
   }
 
-  // Step 4: Create auth user (email_confirm=true — no verification email). When a
-  // phone is present we also set the deterministic phone-login password so the
-  // client can sign in with just their phone (DOC-22 §1, June 2026). No SMS.
+  // Step 4: Create the auth user. Identity = phone + a synthetic, unique-per-phone
+  // email (the real email is NOT the Auth identity, so it may repeat / be null).
+  // email_confirm=true → no verification mail; the synthetic subdomain has no MX.
+  // The derived phone password lets the client sign in with just their phone.
+  const authEmail = syntheticAuthEmail(phoneE164);
+  const password = derivePhonePassword(phoneE164, env.SUPABASE_SERVICE_ROLE_KEY);
   const serviceClient = createServiceClient();
   const { data: authData, error: authError } = await serviceClient.auth.admin.createUser({
-    email,
+    email: authEmail,
     email_confirm: true,
-    ...(phoneE164
-      ? {
-          phone: phoneE164,
-          phone_confirm: true,
-          password: derivePhonePassword(phoneE164, env.SUPABASE_SERVICE_ROLE_KEY),
-        }
-      : {}),
+    phone: phoneE164,
+    phone_confirm: true,
+    password,
   });
 
   if (authError || !authData?.user) {
-    // An auth user may already exist for this email OR phone while our public
-    // rows don't — a prior partial provision, or a client whose public.users row
-    // was removed but the auth shell remained (e.g. after a data wipe). The old
-    // recovery only matched by email, so a leftover auth user with a colliding
-    // PHONE (email null) hard-failed the whole case creation. Recover by reusing
-    // that auth user: find it via the admin list, make it a valid client login,
-    // and insert the public rows.
+    // A duplicate error means an auth user already exists for this PHONE (or its
+    // synthetic email) while our public rows may be missing — a prior partial
+    // provision, a concurrent request, or a leftover shell after a data wipe.
     const dup = (authError?.message ?? "").toLowerCase();
     const isDuplicate =
       dup.includes("already registered") ||
@@ -1083,60 +1108,40 @@ export async function provisionClientUser(
       dup.includes("already exists") ||
       dup.includes("duplicate");
     if (isDuplicate) {
-      // First: the email race — public.users already has the row. Kept off
-      // listUsers (which silently misses users in orgs with >1000 accounts).
-      const { data: publicByEmail } = await serviceClient
+      // First: a concurrent request may have already inserted the public.users
+      // row for this phone — fully provisioned, so return it (idempotent, no
+      // re-insert). Kept off listUsers (silently misses users in >1000-account orgs).
+      const { data: publicByPhone } = await serviceClient
         .from("users")
         .select("id")
-        .eq("email", email)
+        .eq("phone_e164", phoneE164)
+        .eq("kind", "client")
         .maybeSingle();
-      if (publicByEmail?.id) {
-        await insertClientRows({
-          userId: publicByEmail.id,
-          orgId: actor.orgId,
-          email,
-          phoneE164,
-          firstName,
-          lastName,
-          address,
-          locale,
-          timezone,
-        });
-        const audit = await getAudit();
-        await audit.writeAudit(actor, "client.provisioned", "users", publicByEmail.id, {
-          email,
-          created_auth: false,
-          created_rows: true,
-        });
-        return { userId: publicByEmail.id, created: false };
+      if (publicByPhone?.id) {
+        return { userId: publicByPhone.id, created: false };
       }
 
-      // Fallback: a leftover auth shell with NO public.users row collides on
-      // email or PHONE (e.g. a wiped client whose auth user remained). Find it
-      // via the admin list and reuse it so case creation doesn't hard-fail.
-      const phoneDigits = phoneE164 ? phoneE164.replace(/^\+/, "") : null;
+      // Otherwise: a leftover auth shell with NO public.users row collides by
+      // phone (or synthetic email). Find it via the admin list and reuse it so
+      // case creation doesn't hard-fail.
+      const phoneDigits = phoneE164.replace(/^\+/, "");
       let existingAuthId: string | null = null;
       for (let page = 1; page <= 50 && !existingAuthId; page++) {
         const { data: list } = await serviceClient.auth.admin.listUsers({ page, perPage: 200 });
         const users = list?.users ?? [];
-        const found = users.find(
-          (u) => u.email === email || (phoneDigits != null && u.phone === phoneDigits),
-        );
+        const found = users.find((u) => u.phone === phoneDigits || u.email === authEmail);
         if (found) existingAuthId = found.id;
         if (users.length < 200) break; // reached the last page
       }
       if (existingAuthId) {
-        // Make the reused auth shell a valid client login (email + phone password).
+        // Make the reused auth shell a valid client login (phone identity +
+        // synthetic email + derived phone password).
         await serviceClient.auth.admin.updateUserById(existingAuthId, {
-          email,
+          email: authEmail,
           email_confirm: true,
-          ...(phoneE164
-            ? {
-                phone: phoneE164,
-                phone_confirm: true,
-                password: derivePhonePassword(phoneE164, env.SUPABASE_SERVICE_ROLE_KEY),
-              }
-            : {}),
+          phone: phoneE164,
+          phone_confirm: true,
+          password,
         });
         await insertClientRows({
           userId: existingAuthId,
@@ -1151,7 +1156,7 @@ export async function provisionClientUser(
         });
         const audit = await getAudit();
         await audit.writeAudit(actor, "client.provisioned", "users", existingAuthId, {
-          email,
+          phone: phoneE164,
           created_auth: false,
           created_rows: true,
         });
@@ -1179,7 +1184,7 @@ export async function provisionClientUser(
   // Step 6: Audit (no welcome event here — downpayment.confirmed triggers it, DOC-41 §3.4 H-2)
   const audit = await getAudit();
   await audit.writeAudit(actor, "client.provisioned", "users", userId, {
-    email,
+    phone: phoneE164,
     created_auth: true,
     created_rows: true,
   });
@@ -1233,6 +1238,32 @@ export async function searchClients(
     address: r.address,
     caseCount: r.caseCount,
   }));
+}
+
+/**
+ * Duplicate-phone check for the "Nuevo caso" step 1 (2026-07). The phone is the
+ * client's UNIQUE identity, so when the operator types a phone that already
+ * belongs to a client we surface that client — the UI warns and offers the
+ * existing-client flow instead of silently creating a case under the wrong
+ * account. Returns null for an invalid/incomplete phone (nothing to warn about
+ * yet) or when there is no exact match. Reuses searchClients (org-scoped, gated
+ * by clients:view) and keeps only an EXACT phone match — the underlying RPC
+ * matches a substring of the phone digits, so a near-miss must not warn.
+ *
+ * @api-id API-AUT-20 (staff search — clients slice)
+ */
+export async function lookupClientByPhone(
+  actor: Actor,
+  rawPhone: string,
+): Promise<ClientSearchResultDto | null> {
+  let phoneE164: string;
+  try {
+    phoneE164 = normalizePhoneE164(rawPhone);
+  } catch {
+    return null;
+  }
+  const rows = await searchClients(actor, { query: phoneE164, limit: 10 });
+  return rows.find((r) => r.phoneE164 === phoneE164) ?? null;
 }
 
 // ---------------------------------------------------------------------------

@@ -31,6 +31,7 @@ export function ClientesClient({
   createCaseAction,
   searchClientsAction,
   getClientCasesAction,
+  checkClientPhoneAction,
 }: {
   cases: CaseRowVM[];
   strings: ClientesStrings;
@@ -41,6 +42,7 @@ export function ClientesClient({
   createCaseAction: NewCaseActions["createCase"];
   searchClientsAction: NewCaseActions["searchClients"];
   getClientCasesAction: NewCaseActions["getClientCases"];
+  checkClientPhoneAction: NonNullable<NewCaseActions["checkClientPhone"]>;
 }) {
   const [caseModal, setCaseModal] = React.useState(false);
 
@@ -64,6 +66,7 @@ export function ClientesClient({
           createCase: createCaseAction,
           searchClients: searchClientsAction,
           getClientCases: getClientCasesAction,
+          checkClientPhone: checkClientPhoneAction,
         }}
         caseLinkBase="/ventas/clientes"
       />

@@ -72,6 +72,11 @@ export { provisionClientUser, upsertPersonRecord } from "./service";
 // (name/phone/email) are immutable there — only the address is written.
 export { searchClients, updateClientAddress } from "./service";
 
+// Duplicate-phone check for "Nuevo caso" step 1 — the phone is the client's
+// unique identity, so the modal warns (and offers the existing client) when the
+// typed phone already belongs to someone (2026-07 phone-as-identity refactor).
+export { lookupClientByPhone } from "./service";
+
 // Party row helper — used by cases module only (DOC-41 §3.1 boundary)
 export { insertCasePartyRow } from "./repository";
 

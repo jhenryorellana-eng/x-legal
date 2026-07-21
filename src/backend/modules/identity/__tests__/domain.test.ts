@@ -11,6 +11,8 @@ import {
   normalizePhoneE164,
   PhoneNormalizationError,
   derivePhonePassword,
+  syntheticAuthEmail,
+  SYNTHETIC_CLIENT_EMAIL_DOMAIN,
   normalizeEmail,
   normalizeEmailStrict,
   isValidEmail,
@@ -180,6 +182,42 @@ describe("derivePhonePassword", () => {
     const pw = derivePhonePassword("+13055550100", secret);
     expect(pw.length).toBeGreaterThanOrEqual(40);
     expect(pw).toMatch(/^[A-Za-z0-9+/]+=*$/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// syntheticAuthEmail — phone-as-identity (DOC-22 §1, 2026-07: phone is the
+// unique client identity; the real email is optional/repeatable contact data,
+// so the Supabase Auth email must be a synthetic, unique-per-phone address).
+// ---------------------------------------------------------------------------
+
+describe("syntheticAuthEmail", () => {
+  it("is deterministic: same phone → same synthetic email", () => {
+    expect(syntheticAuthEmail("+13055550100")).toBe(syntheticAuthEmail("+13055550100"));
+  });
+
+  it("is unique: different phones → different synthetic emails", () => {
+    expect(syntheticAuthEmail("+13055550100")).not.toBe(syntheticAuthEmail("+13055550199"));
+  });
+
+  it("embeds the phone digits (no + sign) in the local part", () => {
+    expect(syntheticAuthEmail("+13055550100")).toBe(`13055550100@${SYNTHETIC_CLIENT_EMAIL_DOMAIN}`);
+  });
+
+  it("produces a well-formed email (passes isValidEmail)", () => {
+    expect(isValidEmail(syntheticAuthEmail("+13055550100"))).toBe(true);
+  });
+
+  it("normalizes the phone first, so formatted input yields the canonical address", () => {
+    expect(syntheticAuthEmail("(305) 555-0100")).toBe(syntheticAuthEmail("+13055550100"));
+  });
+
+  it("throws PhoneNormalizationError for an invalid phone", () => {
+    expect(() => syntheticAuthEmail("not-a-phone")).toThrow(PhoneNormalizationError);
+  });
+
+  it("SYNTHETIC_CLIENT_EMAIL_DOMAIN is a real subdomain we control (no mail delivery)", () => {
+    expect(SYNTHETIC_CLIENT_EMAIL_DOMAIN).toBe("clients.usalatinoprime.com");
   });
 });
 

@@ -21,6 +21,7 @@ import {
   requireActor,
   provisionClientUser,
   searchClients,
+  lookupClientByPhone,
   updateClientAddress,
   normalizePhoneE164,
   isValidEmail,
@@ -174,9 +175,12 @@ export async function cancelPreMortemAction(input: { assessmentId: string }) {
 
 export interface CreateCaseUiInput {
   clientName: string;
-  /** Login credential (DOC-22 §1, email auth) — captured at intake. */
+  /**
+   * OPTIONAL, repeatable contact email (2026-07 phone-as-identity refactor).
+   * Not the identity and never dedups accounts; may be an empty string.
+   */
   clientEmail: string;
-  /** Login credential (DOC-22 §1) — required: phone + email together. */
+  /** The client's UNIQUE identity + login credential (DOC-22 §1) — required. */
   clientPhone: string;
   /** Full US mailing address — required (prefills the I-589 via profile). */
   clientAddress: {
@@ -288,9 +292,9 @@ export async function createCaseAction(
       }
       userId = updated.userId;
     } else {
-      if (!isValidEmail(input.clientEmail)) {
-        return { ok: false, error: { code: "INVALID_EMAIL" } };
-      }
+      // Phone is the client's UNIQUE identity + login credential — required.
+      // Email is OPTIONAL, repeatable contact data (2026-07 phone-as-identity
+      // refactor): validated only when present, and it never dedups accounts.
       if (!input.clientPhone || !input.clientPhone.trim()) {
         return { ok: false, error: { code: "INVALID_PHONE" } };
       }
@@ -300,9 +304,13 @@ export async function createCaseAction(
       } catch {
         return { ok: false, error: { code: "INVALID_PHONE" } };
       }
+      const emailTrimmed = input.clientEmail?.trim() ?? "";
+      if (emailTrimmed && !isValidEmail(emailTrimmed)) {
+        return { ok: false, error: { code: "INVALID_EMAIL" } };
+      }
       ({ userId } = await provisionClientUser(actor, {
         fullName: input.clientName,
-        email: input.clientEmail,
+        email: emailTrimmed || null,
         phoneE164,
         address,
       }));
@@ -415,6 +423,47 @@ export async function searchClientsForCaseAction(
           : null,
         caseCount: r.caseCount,
       })),
+    };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+/**
+ * Duplicate-phone check for "Nuevo caso" step 1 (new-client mode). The phone is
+ * the client's UNIQUE identity, so the modal calls this as the operator types a
+ * phone: when it already belongs to a client, the modal warns and offers the
+ * existing-client flow (RF-VAN-018) instead of creating a case under the wrong
+ * account. Returns { client: null } for a partial/invalid phone or no match.
+ *
+ * @api-id API-AUT-20 (staff search — clients slice)
+ */
+export async function checkClientPhoneAction(
+  rawPhone: string,
+): Promise<Ok<{ client: ClientPickDto | null }> | Err> {
+  try {
+    const actor = await requireActor();
+    const match = await lookupClientByPhone(actor, rawPhone);
+    return {
+      ok: true,
+      client: match
+        ? {
+            userId: match.userId,
+            name: match.fullName,
+            email: match.email,
+            phone: match.phoneE164,
+            address: match.address
+              ? {
+                  line1: match.address.line1,
+                  city: match.address.city,
+                  state: match.address.state,
+                  zip: match.address.zip,
+                  ...(match.address.apartment ? { apartment: match.address.apartment } : {}),
+                }
+              : null,
+            caseCount: match.caseCount,
+          }
+        : null,
     };
   } catch (err) {
     return mapErr(err);

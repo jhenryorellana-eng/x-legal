@@ -414,10 +414,11 @@ export async function setStaffActive(
 // ---------------------------------------------------------------------------
 
 /**
- * Looks up a client user by phone_e164. Returns { id, email, existed:true } when
- * found, null when not found. Service-client (bypass RLS). The email is the
- * Supabase Auth identity used to sign the client in during phone-only login
- * (DOC-22 §1, June 2026) — the client never types it.
+ * Looks up a client user by phone_e164 — the UNIQUE client identity and the
+ * dedup key for provisioning + login (DOC-22 §1). Returns { id, email,
+ * existed:true } when found, null otherwise. Service-client (bypass RLS). The
+ * returned `email` is optional contact data only (may be null); Auth is keyed
+ * by a synthetic per-phone email, and login signs in by phone.
  */
 export async function findClientByPhone(
   phoneE164: string,
@@ -433,24 +434,10 @@ export async function findClientByPhone(
   return { id: data.id, email: data.email, existed: true };
 }
 
-/**
- * Looks up a client user by email (the login identity). Returns { id } when
- * found, null otherwise. Service-client (bypass RLS). Used by provisionClientUser
- * for idempotency by email (DOC-22 §1, client auth by email).
- */
-export async function findClientByEmail(
-  email: string,
-): Promise<{ id: string; existed: true } | null> {
-  const supabase = createServiceClient();
-  const { data } = await supabase
-    .from("users")
-    .select("id")
-    .eq("email", email)
-    .eq("kind", "client")
-    .maybeSingle();
-  if (!data) return null;
-  return { id: data.id, existed: true };
-}
+// findClientByEmail was removed in the 2026-07 phone-as-identity refactor: the
+// email is optional/repeatable contact data and must NEVER dedup a client. The
+// unique identity is the phone (findClientByPhone). Do not reintroduce an
+// email-based lookup for provisioning — it is the exact bug this refactor fixed.
 
 /**
  * Inserts a users + client_profiles row for a newly provisioned client.
@@ -460,9 +447,9 @@ export async function findClientByEmail(
 export async function insertClientRows(input: {
   userId: string;
   orgId: string;
-  /** Login identity (DOC-22 §1, client auth by email). */
-  email: string;
-  /** Contact phone (also a login credential alongside email — DOC-22 §1). */
+  /** Optional, repeatable contact email (DOC-22 §1, 2026-07 — not the identity). */
+  email: string | null;
+  /** The client's unique identity + login credential (DOC-22 §1). */
   phoneE164?: string | null;
   firstName: string;
   lastName: string;

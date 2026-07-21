@@ -83,6 +83,37 @@ export function derivePhonePassword(phoneE164: string, secret: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Synthetic Auth email — phone-as-identity (DOC-22 §1, 2026-07 refactor)
+//
+// The client's UNIQUE identity is their phone (public.users.phone_e164 is the
+// unique key; the client logs in with the phone only). The real email is
+// OPTIONAL, REPEATABLE contact data (a family may share one inbox, or have
+// none), so it can NOT be the Supabase Auth identity — Auth enforces a unique
+// email. We therefore give Auth a synthetic email derived deterministically
+// from the phone: unique per phone, stable, and never used to send mail
+// (created with email_confirm:true; the subdomain has no MX). The real email
+// lives only in public.users/client_profiles, where it may repeat or be null.
+// ---------------------------------------------------------------------------
+
+/**
+ * A real subdomain we own that has no mail delivery configured. Synthetic Auth
+ * emails live here so they (a) satisfy Supabase's email-format check, (b) are
+ * guaranteed not to collide with any real inbox, and (c) never deliver mail.
+ */
+export const SYNTHETIC_CLIENT_EMAIL_DOMAIN = "clients.usalatinoprime.com";
+
+/**
+ * Builds the deterministic, unique-per-phone synthetic Supabase Auth email for
+ * a client. The phone is normalized first, so any accepted input format maps to
+ * the same canonical address. Pure + deterministic: same phone → same email.
+ * Throws PhoneNormalizationError on an invalid phone (identity is mandatory).
+ */
+export function syntheticAuthEmail(rawPhone: string): string {
+  const digits = normalizePhoneE164(rawPhone).replace(/^\+/, "");
+  return `${digits}@${SYNTHETIC_CLIENT_EMAIL_DOMAIN}`;
+}
+
+// ---------------------------------------------------------------------------
 // Email normalization + validation — DOC-22 §1 (client auth by email)
 //
 // SoT decision (2026-06-13): clients authenticate with the EMAIL captured at

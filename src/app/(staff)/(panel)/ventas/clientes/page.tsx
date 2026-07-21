@@ -20,6 +20,7 @@ import {
   createCaseAction,
   searchClientsForCaseAction,
   getClientCasesForNewCaseAction,
+  checkClientPhoneAction,
 } from "../../admin/casos/actions";
 
 export const dynamic = "force-dynamic";
@@ -96,6 +97,7 @@ export default async function VentasClientesPage() {
       createCaseAction={createCaseAction}
       searchClientsAction={searchClientsForCaseAction}
       getClientCasesAction={getClientCasesForNewCaseAction}
+      checkClientPhoneAction={checkClientPhoneAction}
     />
   );
 }

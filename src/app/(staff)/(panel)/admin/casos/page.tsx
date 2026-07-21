@@ -27,6 +27,7 @@ import {
   createCaseAction,
   searchClientsForCaseAction,
   getClientCasesForNewCaseAction,
+  checkClientPhoneAction,
 } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -142,6 +143,7 @@ export default async function AdminCasosPage({
         createCase: createCaseAction,
         searchClients: searchClientsForCaseAction,
         getClientCases: getClientCasesForNewCaseAction,
+        checkClientPhone: checkClientPhoneAction,
       }}
     />
   );
