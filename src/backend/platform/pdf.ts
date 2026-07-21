@@ -48,6 +48,19 @@ export interface AcroFillValues {
  */
 const PDF_PAGE_BREAK = "<<<PAGEBREAK>>>";
 
+/** Marker (placed in the markdown by the caller) at the START of a block that must
+ *  NOT be split across a page boundary — everything from the marker to EOF is a unit
+ *  (a letter's closing: salutation + signature + name + address + date). mupdf's HTML
+ *  engine ignores CSS `break-inside:avoid`, so we MEASURE (render a probe, find the
+ *  marker's page) and, only when the block straddles two pages, convert the marker to
+ *  a hard PDF_PAGE_BREAK so the WHOLE block moves onto a fresh page (never orphaning
+ *  the tail). When the block already fits, the marker is simply removed. */
+export const KEEP_TOGETHER_MARKER = "<<<KEEPTOGETHER>>>";
+/** Invisible (white, 1pt) sentinel that replaces the marker in the probe render so we
+ *  can locate the block's start page via structured-text search (same trick as
+ *  SIGNATURE_ANCHOR). Opaque ASCII so it never collides with real letter text. */
+const KEEP_TOGETHER_ANCHOR = "XULPKEEPTOGETHERANCHORX";
+
 /** Court-document stylesheet: justified serif body, spaced headings, and bordered
  *  two-column tables (cover data, exhibit cover-sheets, the chronology). */
 const MEMO_STYLE = `<style>
@@ -87,6 +100,24 @@ export async function renderMarkdownToPdf(
   md: string,
   opts: RenderMarkdownOptions = {},
 ): Promise<Uint8Array> {
+  // Resolve a keep-together block (letter closing) to a hard page break iff it would
+  // straddle a page boundary — mupdf ignores CSS break-inside, so we measure first.
+  const resolvedMd = await resolveKeepTogetherMarker(md);
+
+  let pdfBytes = await renderMarkdownSegmentsToPdf(resolvedMd);
+
+  // Stamp the signature image at the invisible anchor already in `md` (no-op if absent /
+  // undecodable / anchor not found — the PDF is returned unchanged).
+  if (opts.signatureImageBytes && opts.signatureImageBytes.length > 0) {
+    pdfBytes = await stampSignatureOnPdf(pdfBytes, opts.signatureImageBytes);
+  }
+  return pdfBytes;
+}
+
+/** Renders markdown to PDF bytes: markdown-it (html:true) → mupdf, splitting on
+ *  PDF_PAGE_BREAK so each segment starts on a fresh page (graft). No signature
+ *  stamping — the caller (or the keep-together probe) does that. */
+async function renderMarkdownSegmentsToPdf(md: string): Promise<Uint8Array> {
   const MarkdownIt = (await import("markdown-it")).default;
   // html:true — the generated court documents (Statement of Reasons, Proof of Service)
   // use inline HTML (`<p style="text-align:center">`, `<br>`, `<strong>`) to reproduce the
@@ -99,42 +130,81 @@ export async function renderMarkdownToPdf(
   const segments = md.split(PDF_PAGE_BREAK).map((s) => s.trim()).filter(Boolean);
   const htmls = (segments.length ? segments : [md]).map((seg) => wrap(mdi.render(seg)));
 
-  let pdfBytes: Uint8Array;
   // Single page-group → render directly.
-  if (htmls.length === 1) {
-    pdfBytes = await htmlToPdf(htmls[0]);
-  } else {
-    // Multi page-group → render each to PDF, then graft every page into one document
-    // so each group starts on a new page (the proven compileExpedientePdf pattern).
-    const mupdf = await import("mupdf");
+  if (htmls.length === 1) return htmlToPdf(htmls[0]);
 
-    const M = mupdf as any;
-    const dst = new M.PDFDocument();
-    try {
-      for (const html of htmls) {
-        const bytes = await htmlToPdf(html);
-        const src = M.Document.openDocument(bytes, "application/pdf");
-        try {
-          const n = src.countPages();
-          for (let i = 0; i < n; i++) dst.graftPage(dst.countPages(), src, i);
-        } finally {
-          try { src.destroy?.(); } catch { /* freed */ }
-        }
+  // Multi page-group → render each to PDF, then graft every page into one document
+  // so each group starts on a new page (the proven compileExpedientePdf pattern).
+  const mupdf = await import("mupdf");
+
+  const M = mupdf as any;
+  const dst = new M.PDFDocument();
+  try {
+    for (const html of htmls) {
+      const bytes = await htmlToPdf(html);
+      const src = M.Document.openDocument(bytes, "application/pdf");
+      try {
+        const n = src.countPages();
+        for (let i = 0; i < n; i++) dst.graftPage(dst.countPages(), src, i);
+      } finally {
+        try { src.destroy?.(); } catch { /* freed */ }
       }
-      // garbage=4 deduplicates the identical font/resource objects each grafted
-      // segment carries (otherwise the merged PDF bloats ~8x); compress streams.
-      pdfBytes = dst.saveToBuffer("garbage=4,compress=yes").asUint8Array() as Uint8Array;
-    } finally {
-      try { dst.destroy?.(); } catch { /* freed */ }
     }
+    // garbage=4 deduplicates the identical font/resource objects each grafted
+    // segment carries (otherwise the merged PDF bloats ~8x); compress streams.
+    return dst.saveToBuffer("garbage=4,compress=yes").asUint8Array() as Uint8Array;
+  } finally {
+    try { dst.destroy?.(); } catch { /* freed */ }
   }
+}
 
-  // Stamp the signature image at the invisible anchor already in `md` (no-op if absent /
-  // undecodable / anchor not found — the PDF is returned unchanged).
-  if (opts.signatureImageBytes && opts.signatureImageBytes.length > 0) {
-    pdfBytes = await stampSignatureOnPdf(pdfBytes, opts.signatureImageBytes);
+/** Finds the 0-indexed page carrying `token` (structured-text search) + the total
+ *  page count. `page` is -1 when the token is not found. */
+async function findTokenPage(
+  pdfBytes: Uint8Array,
+  token: string,
+): Promise<{ page: number; pageCount: number }> {
+  const mupdf = await import("mupdf");
+
+  const M = mupdf as any;
+  const doc = M.Document.openDocument(pdfBytes, "application/pdf");
+  try {
+    const pageCount: number = doc.countPages();
+    for (let i = 0; i < pageCount; i++) {
+      const st = doc.loadPage(i).toStructuredText("preserve-whitespace");
+      let hits: unknown;
+      try { hits = st.search(token); } catch { hits = null; }
+      if (Array.isArray(hits) && hits.length > 0) return { page: i, pageCount };
+    }
+    return { page: -1, pageCount };
+  } finally {
+    try { doc.destroy?.(); } catch { /* freed */ }
   }
-  return pdfBytes;
+}
+
+/**
+ * Resolves a KEEP_TOGETHER_MARKER: renders a probe (marker → invisible anchor) and,
+ * if the block from the marker to EOF spans more than one page (its start is not on
+ * the last page), converts the marker to a hard PDF_PAGE_BREAK so the whole block
+ * starts on a fresh page; otherwise removes the marker. Returns `md` unchanged when
+ * no marker is present. A measurement failure degrades to "no break" (never blocks a
+ * render). Assumes the block is ≤ one page (a letter closing) — if it is genuinely
+ * longer, it simply starts fresh and flows, which is the best available outcome.
+ */
+async function resolveKeepTogetherMarker(md: string): Promise<string> {
+  if (!md.includes(KEEP_TOGETHER_MARKER)) return md;
+  const probeMd = md
+    .split(KEEP_TOGETHER_MARKER)
+    .join(`<span style="color:#ffffff;font-size:1pt">${KEEP_TOGETHER_ANCHOR}</span>`);
+  let straddles = false;
+  try {
+    const probe = await renderMarkdownSegmentsToPdf(probeMd);
+    const { page, pageCount } = await findTokenPage(probe, KEEP_TOGETHER_ANCHOR);
+    straddles = page >= 0 && page !== pageCount - 1;
+  } catch {
+    straddles = false; // measurement failed → leave unbroken (prior behavior)
+  }
+  return md.split(KEEP_TOGETHER_MARKER).join(straddles ? PDF_PAGE_BREAK : "");
 }
 
 // ---------------------------------------------------------------------------

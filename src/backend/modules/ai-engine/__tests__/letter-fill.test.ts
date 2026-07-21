@@ -193,6 +193,30 @@ describe("resolveLetterFillTokens — OCC address (Proof of Service)", () => {
     expect(out).not.toContain("{{SERVICE_METHOD_CHECKBOXES}}");
   });
 
+  it("starts each check-box on its own line — the first box breaks away from the label", () => {
+    // OCC_TEXT already puts a <br> before the token; the resolver must collapse it and
+    // its own leading break into exactly ONE <br>, so the first box is on a new line
+    // (never glued to "Method of service (check one):") and there is no double break.
+    const inputs = mk({
+      forms: [
+        { slug: "proof-of-service-cuestionario", answers: { "¿Cómo se enviará la copia al gobierno?": "ecas" } },
+      ],
+    });
+    const out = resolveLetterFillTokens(OCC_TEXT, PROOF_CFG, inputs);
+    expect(out).toContain(
+      "Method of service (check one):<br>[ ] First-class United States mail, postage prepaid<br>[ ] Personal delivery (hand service)<br>[X] Electronic service through ECAS",
+    );
+    expect(out).not.toContain("<br><br>[");
+  });
+
+  it("forces the boxes onto a new line even when the model glued the token to the label", () => {
+    // A single newline (what the model actually emits) collapses to a space in markdown;
+    // the resolver must still break the first box onto its own line.
+    const glued = "Method of service (check one):\n{{SERVICE_METHOD_CHECKBOXES}}";
+    const out = resolveLetterFillTokens(glued, PROOF_CFG, mk({}));
+    expect(out).toContain("Method of service (check one):<br>[ ] First-class United States mail");
+  });
+
   it("leaves all method boxes blank when the client has not chosen yet", () => {
     const out = resolveLetterFillTokens(OCC_TEXT, PROOF_CFG, mk({}));
     expect(out).toContain("[ ] First-class United States mail, postage prepaid");

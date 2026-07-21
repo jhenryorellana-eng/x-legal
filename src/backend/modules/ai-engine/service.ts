@@ -1253,13 +1253,22 @@ async function renderAndStore(
     let text = outputText;
     let signatureImageBytes: Uint8Array | null = null;
     if (snapshot.signature_role) {
+      // Keep the closing block (salutation + signature + name + address + date) on one
+      // page — mark it BEFORE the signature token is replaced (the anchor for the block).
+      const { markClosingBlockKeepTogether } = await import("./letter-fill");
+      text = markClosingBlockKeepTogether(text);
       const { getCaseSignatureBytes } = await import("@/backend/modules/cases");
       const sig = await getCaseSignatureBytes(run.case_id, snapshot.signature_role);
       signatureImageBytes = sig?.bytes ?? null;
       const { SIGNATURE_ANCHOR } = await import("@/backend/platform/pdf");
+      // Blank vertical space ABOVE the signature line so it does not sit flush under
+      // "Respectfully submitted," / the perjury declaration — a proper signing gap in
+      // the filed BIA letters. (The trailing breaks after the anchor stay reserved so
+      // the stamped image clears the printed name below.)
+      const SIGNATURE_LEAD_SPACE = "<br><br>";
       const replacement = signatureImageBytes
-        ? `<span style="color:#ffffff;font-size:1pt">${SIGNATURE_ANCHOR}</span><br><br><br><br>`
-        : "______________________________<br>";
+        ? `${SIGNATURE_LEAD_SPACE}<span style="color:#ffffff;font-size:1pt">${SIGNATURE_ANCHOR}</span><br><br><br><br>`
+        : `${SIGNATURE_LEAD_SPACE}______________________________<br>`;
       text = text.replace(/\{\{\s*APPELLANT_SIGNATURE\s*\}\}/g, replacement);
     }
     // Current-date + deterministic letter fills ({{CURRENT_DATE}}, {{OCC_ADDRESS}},

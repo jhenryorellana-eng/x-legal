@@ -13,6 +13,7 @@
  * so the resolution logic is unit-testable without a database.
  */
 import { resolveOccAddress } from "@/shared/constants/occ-offices";
+import { KEEP_TOGETHER_MARKER } from "@/backend/platform/pdf";
 import type { LetterFillConfig } from "./domain";
 
 /** The subset of `loadResolvedInputs`'s result that the resolver reads. */
@@ -145,7 +146,43 @@ function fillServiceMethod(
   const block = SERVICE_METHOD_LINES.map(
     (l) => `[${l.key === chosen ? "X" : " "}] ${l.label}`,
   ).join("<br>");
-  return replaceToken(text, "SERVICE_METHOD_CHECKBOXES", block);
+  // The three check-boxes must each begin on their OWN line, below the
+  // "Method of service (check one):" label. The model emits the token right after
+  // that label separated by a single newline, which markdown collapses to a space
+  // (leaving the first box glued to the label). So absorb any break/whitespace the
+  // model placed immediately before the token and emit exactly ONE explicit <br>
+  // before the first box — robust across a single `\n`, a `<br>`, or a blank line.
+  return text.replace(
+    /[ \t]*(?:<br\s*\/?>|\r?\n)*[ \t]*\{\{\s*SERVICE_METHOD_CHECKBOXES\s*\}\}/gi,
+    () => `<br>${block}`,
+  );
+}
+
+/**
+ * Inserts the renderer's `KEEP_TOGETHER_MARKER` at the START of the letter's closing
+ * block so the PDF never orphans the tail (signature / name / address / date) across a
+ * page break — when the block would straddle a page, the renderer pushes the WHOLE
+ * block onto a fresh page instead. The block is anchored on the `{{APPELLANT_SIGNATURE}}`
+ * token and extended UP to include a SHORT lead-in line ("Respectfully submitted," /
+ * the perjury declaration) but never a long body paragraph. No-ops when the letter has
+ * no signature token. Pure; must run BEFORE the signature token is replaced.
+ */
+export function markClosingBlockKeepTogether(text: string): string {
+  const m = /\{\{\s*APPELLANT_SIGNATURE\s*\}\}/.exec(text);
+  if (!m) return text;
+  const before = text.slice(0, m.index);
+  const pBreak = before.lastIndexOf("\n\n");
+  let start = pBreak < 0 ? 0 : pBreak + 2;
+  // Pull in one short preceding lead-in line so it stays with the signature.
+  if (start >= 2) {
+    const prevBreak = text.slice(0, start - 2).lastIndexOf("\n\n");
+    const prevStart = prevBreak < 0 ? 0 : prevBreak + 2;
+    const prevPara = text.slice(prevStart, start).trim();
+    if (prevPara.length > 0 && prevPara.length <= 120 && !prevPara.includes("\n")) {
+      start = prevStart;
+    }
+  }
+  return text.slice(0, start) + KEEP_TOGETHER_MARKER + text.slice(start);
 }
 
 /**
