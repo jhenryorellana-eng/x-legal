@@ -168,6 +168,7 @@ export type Database = {
           form_definition_id: string
           input_document_slugs: string[]
           input_form_slugs: string[]
+          letter_fill: Json | null
           max_output_tokens: number
           model: string
           output_format: string
@@ -195,6 +196,7 @@ export type Database = {
           form_definition_id: string
           input_document_slugs?: string[]
           input_form_slugs?: string[]
+          letter_fill?: Json | null
           max_output_tokens?: number
           model?: string
           output_format?: string
@@ -222,6 +224,7 @@ export type Database = {
           form_definition_id?: string
           input_document_slugs?: string[]
           input_form_slugs?: string[]
+          letter_fill?: Json | null
           max_output_tokens?: number
           model?: string
           output_format?: string

@@ -138,6 +138,55 @@ export interface AssemblyConfig {
   cover_page?: { title?: string; rows?: CoverRowSpec[] };
 }
 
+/**
+ * Deterministic post-render fill for court letters (config-as-data, exactly like
+ * `signature_role`). Declares how `renderAndStore` resolves the model's
+ * placeholder tokens — `{{APPELLANT_ADDRESS}}`, `{{APPELLANT_CITY_STATE_ZIP}}`,
+ * `{{APPELLANT_TELEPHONE}}`, `{{OCC_ADDRESS}}`, `{{SERVICE_METHOD_CHECKBOXES}}` —
+ * from the case's CONFIRMED form answers / document extractions, so critical data
+ * (a mailing address, the government's service address) is stamped by code, never
+ * transcribed by the model. Every block is optional; an empty resolution degrades
+ * safely (a printable line, or the "confirm from the directory" placeholder).
+ */
+export interface LetterFillConfig {
+  /** Appellant's own mailing address block (e.g. the Statement of Reasons closing). */
+  appellant_contact?: {
+    /** Form slug whose CONFIRMED answers are the primary source (e.g. the EOIR-26). */
+    form_slug: string;
+    /** Question wordings (as stored) that hold each field's confirmed answer. */
+    address_question: string;
+    apartment_question?: string;
+    city_state_zip_question: string;
+    telephone_question: string;
+    /** Document slug whose extraction is the fallback when an answer is empty (e.g. the I-589). */
+    fallback_document_slug?: string;
+    /** Extraction field names for that fallback. */
+    fallback_fields?: {
+      street?: string;
+      apartment?: string;
+      city_state_zip?: string;
+      telephone?: string;
+    };
+  };
+  /**
+   * Government service address. Resolution order: a confirmed staff/client
+   * override answer (for a court not in the directory) → a court→OCC lookup keyed
+   * on the decision's court → an honest "confirm from the directory" placeholder.
+   */
+  occ_address?: {
+    decision_document_slug: string;
+    court_json_path: string;
+    /** Optional confirmed-answer override (e.g. the Proof questionnaire's address question). */
+    override_form_slug?: string;
+    override_question?: string;
+  };
+  /** Marks the client's chosen service method in the Proof of Service checkbox block. */
+  service_method?: {
+    form_slug: string;
+    method_question: string;
+  };
+}
+
 export interface ConfigSnapshot {
   system_prompt: string;
   input_document_slugs: string[];
@@ -151,6 +200,8 @@ export interface ConfigSnapshot {
    *  and stamped on the rendered PDF (config-as-data from ai_generation_configs). Null/
    *  absent = unsigned letter (prior behavior). */
   signature_role?: string | null;
+  /** Deterministic token fills for court letters (config-as-data). Null = none. */
+  letter_fill?: LetterFillConfig | null;
   // --- v1-grade engine (generic, configurable) ---
   web_search_enabled?: boolean;
   web_search_max_uses?: number;

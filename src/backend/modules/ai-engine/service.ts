@@ -431,6 +431,7 @@ export async function startGeneration(
     output_format: (cfg?.output_format as ConfigSnapshot["output_format"]) ?? "pdf",
     output_language: (cfg?.output_language as ConfigSnapshot["output_language"]) ?? "es",
     signature_role: cfg?.signature_role ?? null,
+    letter_fill: (cfg?.letter_fill as ConfigSnapshot["letter_fill"]) ?? null,
     web_search_enabled: cfg?.web_search_enabled ?? false,
     web_search_max_uses: cfg?.web_search_max_uses ?? 5,
     research_instructions: cfg?.research_instructions ?? null,
@@ -1225,6 +1226,21 @@ async function renderAndStore(
       } catch { /* fall back to the default tz */ }
       const today = formatInTimeZone(new Date(), tz, "MM/dd/yyyy");
       text = text.replace(/\{\{\s*CURRENT_DATE\s*\}\}/g, today);
+    }
+    // Deterministic letter fills (config-as-data: ai_generation_configs.letter_fill).
+    // Stamp the appellant's confirmed mailing address, the government's (OCC) service
+    // address and the chosen service method into their {{…}} tokens — facts resolved
+    // by code from the case's confirmed answers/extractions, never transcribed by the
+    // model. Only touches the DB when a letter actually declares a fill.
+    if (snapshot.letter_fill) {
+      const { resolveLetterFillTokens } = await import("./letter-fill");
+      const inputs = await loadResolvedInputs(snapshot);
+      text = resolveLetterFillTokens(text, snapshot.letter_fill, inputs, (field) =>
+        logger.warn(
+          { runId: run.id, caseId: run.case_id, field },
+          "letter-fill: no confirmed value — degraded to a printable line / placeholder",
+        ),
+      );
     }
     const bytes = await renderMarkdownToPdf(
       text,

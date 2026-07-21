@@ -113,7 +113,7 @@ Casillas para marcar **cómo** se envió (dato 5): correo de primera clase, entr
 - Línea de firma + nombre escrito (dato 6).
 - La **fecha del envío** (dato 4).
 
-> **Nota para el validador (Pre-Mortem):** el documento generado lleva dos tokens técnicos: `{{APPELLANT_SIGNATURE}}` en la línea de firma y `{{CURRENT_DATE}}` en la línea de fecha de servicio. Son **placeholders intencionales**: el sistema sustituye el primero por la firma estampada del apelante (o una línea imprimible) y el segundo por la fecha de hoy. **No los reportes como error ni como texto faltante.**
+> **Nota para el validador (Pre-Mortem):** el documento generado lleva tokens técnicos que el sistema sustituye de forma **determinista** al renderizar: `{{APPELLANT_SIGNATURE}}` (firma estampada del apelante o una línea imprimible), `{{CURRENT_DATE}}` (fecha de hoy), `{{OCC_ADDRESS}}` (dirección de la Office of the Chief Counsel resuelta por la corte de la decisión; si la corte no está en el directorio queda un placeholder honesto "confirm…") y `{{SERVICE_METHOD_CHECKBOXES}}` (las tres líneas de método con la elegida marcada `[X]`). Son **placeholders intencionales**: **no los reportes como error ni como texto faltante**, y no marques como anomalía que una casilla de método aparezca marcada.
 
 ---
 
