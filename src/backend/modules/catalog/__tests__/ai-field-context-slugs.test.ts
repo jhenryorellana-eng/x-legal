@@ -94,6 +94,18 @@ describe("SourceRefSchema — value_map / default_value (ola apelación)", () =>
   });
 });
 
+describe("SourceRefSchema — current_date (ola apelación: Statement / Proof of Service)", () => {
+  it("accepts current_date with a null source_ref", () => {
+    expect(SourceRefSchema.safeParse({ source: "current_date", source_ref: null }).success).toBe(true);
+  });
+
+  it("rejects current_date carrying any config (source_ref must be null)", () => {
+    expect(
+      SourceRefSchema.safeParse({ source: "current_date", source_ref: { anything: 1 } }).success,
+    ).toBe(false);
+  });
+});
+
 describe("GenerationSectionSchema — max_words cross-field check (ola apelación)", () => {
   const base = { key: "a1", heading: "A.1", min_words: 1000, max_tokens: 4000, guidance: "", type: "analysis" };
 

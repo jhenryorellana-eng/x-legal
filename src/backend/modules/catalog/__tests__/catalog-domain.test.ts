@@ -13,6 +13,7 @@ import {
   validateSourceRef,
   expandPerPartyRequirements,
   applyRequirementOverrides,
+  isRequirementHiddenFor,
   validateExtractionSchema,
   nextVersionNumber,
   isServiceContractable,
@@ -816,6 +817,36 @@ describe("applyRequirementOverrides", () => {
       { id: "ov-1", required_document_type_id: "doc-1", party_id: null, is_hidden: true },
     ];
     expect(applyRequirementOverrides(expanded, overrides)).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isRequirementHiddenFor — boolean predicate used by expediente assembly
+// ---------------------------------------------------------------------------
+describe("isRequirementHiddenFor", () => {
+  it("case-wide hide (party_id=null) hides for any party", () => {
+    const ov = [{ required_document_type_id: "doc-1", party_id: null, is_hidden: true }];
+    expect(isRequirementHiddenFor(ov, "doc-1", null)).toBe(true);
+    expect(isRequirementHiddenFor(ov, "doc-1", "p1")).toBe(true);
+  });
+
+  it("per-party hide only matches the same party", () => {
+    const ov = [{ required_document_type_id: "doc-1", party_id: "p1", is_hidden: true }];
+    expect(isRequirementHiddenFor(ov, "doc-1", "p1")).toBe(true);
+    expect(isRequirementHiddenFor(ov, "doc-1", "p2")).toBe(false);
+  });
+
+  it("does not match a different requirement", () => {
+    const ov = [{ required_document_type_id: "doc-1", party_id: null, is_hidden: true }];
+    expect(isRequirementHiddenFor(ov, "doc-2", null)).toBe(false);
+  });
+
+  it("ignores non-hidden overrides (is_hidden false/null) and custom overrides", () => {
+    const ov = [
+      { required_document_type_id: "doc-1", party_id: null, is_hidden: false },
+      { required_document_type_id: null, party_id: null, is_hidden: true }, // custom
+    ];
+    expect(isRequirementHiddenFor(ov, "doc-1", null)).toBe(false);
   });
 });
 

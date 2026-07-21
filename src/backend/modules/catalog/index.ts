@@ -98,3 +98,7 @@ export type {
 
 // Stage SLA — etapas con plazo (value export para el wizard admin)
 export { STAGE_SLA_KEYS } from "./domain";
+
+// Requirement visibility predicate (consumed by expediente assembly to drop
+// hidden-requirement documents — same match rule as applyRequirementOverrides).
+export { isRequirementHiddenFor } from "./domain";

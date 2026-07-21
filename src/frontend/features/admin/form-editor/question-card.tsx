@@ -35,6 +35,7 @@ const ORIGINS: { id: QuestionSource; key: string; icon: Parameters<typeof Icon>[
   { id: "generation_output", key: "originGen", icon: "sparkle" },
   { id: "profile", key: "originProfile", icon: "shield" },
   { id: "computed", key: "originComputed", icon: "plus" },
+  { id: "current_date", key: "originCurrentDate", icon: "calendar" },
 ];
 
 export interface QuestionCardProps {
@@ -322,8 +323,11 @@ export function QuestionCard({
                 </div>
               </>
             )}
-            {q.source !== "client_answer" && q.source !== "computed" && (
+            {q.source !== "client_answer" && q.source !== "computed" && q.source !== "current_date" && (
               <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--ink-2)", lineHeight: 1.4 }}>{strings.originNotShown}</p>
+            )}
+            {q.source === "current_date" && (
+              <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--ink-2)", lineHeight: 1.4 }}>{strings.originCurrentDateNote}</p>
             )}
 
             {q.source === "document_extraction" && (
@@ -402,6 +406,8 @@ function defaultRef(source: QuestionSource): Record<string, unknown> | null {
       return { connected: { kind: "document", slug: "" }, instruction: "" };
     case "computed":
       return { op: "sum", inputs: [] };
+    case "current_date":
+      return null; // today's date — no config to carry
     default:
       return null;
   }

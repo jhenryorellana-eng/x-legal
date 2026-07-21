@@ -42,6 +42,7 @@ const {
   mockFindUserContactFields,
   mockListDocumentExtractionsForCase,
   mockFindCasePrimaryClient,
+  mockFindCaseOrgTimezone,
   mockFindFormDefinitionById,
   mockFindCaseServiceId,
   // catalog mocks
@@ -86,6 +87,7 @@ const {
   mockFindUserContactFields: vi.fn(),
   mockListDocumentExtractionsForCase: vi.fn(),
   mockFindCasePrimaryClient: vi.fn(),
+  mockFindCaseOrgTimezone: vi.fn().mockResolvedValue("America/New_York"),
   mockFindFormDefinitionById: vi.fn(),
   mockFindCaseServiceId: vi.fn(),
   mockGetPublishedAutomationVersion: vi.fn(),
@@ -199,6 +201,7 @@ vi.mock("../repository", () => ({
   findUserContactFields: mockFindUserContactFields,
   listDocumentExtractionsForCase: mockListDocumentExtractionsForCase,
   findCasePrimaryClient: mockFindCasePrimaryClient,
+  findCaseOrgTimezone: mockFindCaseOrgTimezone,
   findFormDefinitionById: mockFindFormDefinitionById,
   findCaseServiceId: mockFindCaseServiceId,
 }));
@@ -2008,6 +2011,46 @@ describe("resolveBySource", () => {
       null,
     );
     expect(result).toBeNull();
+  });
+
+  it("current_date resolves today's ISO date in the org timezone (not naive UTC)", async () => {
+    // Freeze an instant that falls on DIFFERENT calendar days across zones:
+    // 2026-07-20T03:30Z = 23:30 Jul-19 in New York (UTC-4) but 12:30 Jul-20 in Tokyo.
+    // A naive toISOString().slice(0,10) would return 2026-07-20 for BOTH — this test
+    // fails such an implementation. Defensive useRealTimers() first clears any fake
+    // clock a prior test file may have left installed in the worker.
+    vi.useRealTimers();
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-07-20T03:30:00Z"));
+      const q = { id: "d1", source: "current_date", source_ref: null };
+
+      mockFindCaseOrgTimezone.mockResolvedValue("America/New_York");
+      expect(await resolveBySource(q, {}, CASE_ID, null)).toBe("2026-07-19");
+
+      mockFindCaseOrgTimezone.mockResolvedValue("Asia/Tokyo");
+      expect(await resolveBySource(q, {}, CASE_ID, null)).toBe("2026-07-20");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("current_date falls back gracefully (repository already swallows to DEFAULT_TZ)", async () => {
+    vi.useRealTimers();
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-07-20T12:00:00Z")); // noon UTC → same day in NY too
+      mockFindCaseOrgTimezone.mockResolvedValue("America/New_York"); // DEFAULT_TZ
+      const result = await resolveBySource(
+        { id: "d1", source: "current_date", source_ref: null },
+        {},
+        CASE_ID,
+        null,
+      );
+      expect(result).toBe("2026-07-20");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("resolves document_extraction via approved doc and extraction payload", async () => {

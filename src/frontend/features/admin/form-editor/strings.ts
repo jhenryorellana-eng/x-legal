@@ -125,8 +125,11 @@ export const FORM_EDITOR_STRINGS_ES: FormEditorStrings = {
   originGen: "Otra generación",
   originProfile: "Perfil",
   originComputed: "Total calculado",
+  originCurrentDate: "Fecha de hoy",
   originClientNote: "El cliente la responde en su wizard.",
   originNotShown: "Esta pregunta NO se muestra al cliente: se pre-llena al ejecutar y el equipo puede corregirla.",
+  originCurrentDateNote:
+    "Se llena con la fecha del día en que se genera el PDF (huso horario de la organización). No se le muestra al cliente ni requiere configuración. Márcala como tipo Fecha para que salga en formato MM/DD/YYYY.",
   // computed (total derivado)
   computedNote: "Total derivado: se calcula automáticamente al llenar el PDF a partir de otras preguntas. No se le muestra al cliente ni se envía a la IA.",
   computedOp: "Operación",

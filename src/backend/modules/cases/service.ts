@@ -134,6 +134,7 @@ import {
   findUserContactFields,
   listDocumentExtractionsForCase,
   findCasePrimaryClient,
+  findCaseOrgTimezone,
   getCaseSummariesByClient,
   findFormDefinitionById,
   findCaseServiceId,
@@ -3801,6 +3802,8 @@ export interface FormResolveCache {
    *  and extraction row N times (2N queries per open). */
   docBySlug?: Map<string, Promise<Awaited<ReturnType<typeof findLatestActiveDocumentBySlug>>>>;
   extractionByDocId?: Map<string, Promise<Awaited<ReturnType<typeof findDocumentExtractionByCaseDocId>>>>;
+  /** Org IANA timezone for `current_date` questions (one lookup per form load). */
+  orgTimezone?: Promise<string>;
 }
 
 /** True when a client_answer question carries a catalog default_value (string
@@ -3848,6 +3851,11 @@ export async function resolveBySource(
       cache.userContact = undefined;
       throw e;
     }));
+  };
+  // findCaseOrgTimezone never rejects (it swallows to DEFAULT_TZ), so no evict-on-reject.
+  const loadOrgTimezone = (): Promise<string> => {
+    if (!cache) return findCaseOrgTimezone(caseId);
+    return (cache.orgTimezone ??= findCaseOrgTimezone(caseId));
   };
   const source = question.source;
   const sourceRef = (question.source_ref ?? {}) as Record<string, unknown>;
@@ -4033,6 +4041,17 @@ export async function resolveBySource(
     }
 
     return formatProfileValue(raw, format);
+  }
+
+  // `current_date` = today's date in the org timezone, resolved at generation time.
+  // Returns ISO yyyy-MM-dd; a `field_type:"date"` question then flows through the same
+  // formatPdfDate() the extracted dates use (→ MM/DD/YYYY), so there is no bespoke date
+  // formatting here. Uses formatInTimeZone (NOT toISOString) so a fill just after midnight
+  // in a western timezone yields the correct local calendar day.
+  if (source === "current_date") {
+    const tz = await loadOrgTimezone();
+    const { formatInTimeZone } = await import("date-fns-tz");
+    return formatInTimeZone(new Date(), tz, "yyyy-MM-dd");
   }
 
   // `computed` is NOT resolved here: a total needs the answers of its sibling

@@ -816,32 +816,63 @@ export async function listPrintHistory(
   }));
 }
 
-/** Loads approved case_documents for a case. */
+/**
+ * Loads approved case_documents for a case, EXCLUDING any whose requirement was
+ * hidden for this case (case_requirement_overrides.is_hidden=true, per-party aware).
+ * A hidden requirement's document must never reach the expediente — no cover, no item
+ * — so this single source of "material" filters it for every consumer (auto-assembly
+ * and Diana's manual picker). Free-uploaded docs (no requirement FK) are never hidden.
+ */
 export async function listApprovedDocumentsForMaterial(
   caseId: string,
 ): Promise<MaterialDocuments[]> {
+  // Dynamic import of catalog module-pub (matches service.ts:getServiceAssemblyGuidance)
+  // — keeps the heavy catalog barrel out of expediente's static import graph.
+  const { isRequirementHiddenFor } = await import("@/backend/modules/catalog");
   const supabase = createServiceClient();
-  const { data } = await supabase
-    .from("case_documents")
-    .select("id, storage_path, original_filename, display_name, party_id, created_at, required_document_types(label_i18n)")
-    .eq("case_id", caseId)
-    .eq("status", "approved")
-    .order("created_at", { ascending: false });
-  return (data ?? []).map((r) => {
-    const rdt = r.required_document_types as { label_i18n: unknown } | null;
-    const requirementLabel =
-      rdt && typeof rdt.label_i18n === "object" && rdt.label_i18n !== null
-        ? (rdt.label_i18n as { es: string; en: string })
-        : null;
-    return {
-    refId: r.id,
-    title: r.display_name ?? r.original_filename ?? "Document",
-    createdAt: r.created_at,
-    storagePath: r.storage_path,
-    displayName: r.display_name ?? null,
-    originalFilename: r.original_filename,
-    partyId: r.party_id ?? null,
-    requirementLabel,
-    };
-  });
+  const [{ data }, { data: hiddenRows, error: hiddenError }] = await Promise.all([
+    supabase
+      .from("case_documents")
+      .select("id, required_document_type_id, storage_path, original_filename, display_name, party_id, created_at, required_document_types(label_i18n)")
+      .eq("case_id", caseId)
+      .eq("status", "approved")
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("case_requirement_overrides")
+      .select("required_document_type_id, party_id")
+      .eq("case_id", caseId)
+      .eq("is_hidden", true),
+  ]);
+  // Fail CLOSED: if the hidden-requirement read errors we cannot guarantee a hidden
+  // document won't leak into the expediente, so abort rather than silently assume
+  // "nothing hidden" (unlike the case_documents read, whose empty fallback is safe).
+  if (hiddenError) {
+    throw new Error(
+      `listApprovedDocumentsForMaterial: could not read case_requirement_overrides for case ${caseId}: ${hiddenError.message}`,
+    );
+  }
+  const hidden = (hiddenRows ?? []).map((o) => ({ ...o, is_hidden: true as const }));
+  return (data ?? [])
+    .filter(
+      (r) =>
+        r.required_document_type_id == null ||
+        !isRequirementHiddenFor(hidden, r.required_document_type_id, r.party_id ?? null),
+    )
+    .map((r) => {
+      const rdt = r.required_document_types as { label_i18n: unknown } | null;
+      const requirementLabel =
+        rdt && typeof rdt.label_i18n === "object" && rdt.label_i18n !== null
+          ? (rdt.label_i18n as { es: string; en: string })
+          : null;
+      return {
+        refId: r.id,
+        title: r.display_name ?? r.original_filename ?? "Document",
+        createdAt: r.created_at,
+        storagePath: r.storage_path,
+        displayName: r.display_name ?? null,
+        originalFilename: r.original_filename,
+        partyId: r.party_id ?? null,
+        requirementLabel,
+      };
+    });
 }

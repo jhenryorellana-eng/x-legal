@@ -1,0 +1,32 @@
+BIA APPEAL PACKAGE — CANONICAL FILING ORDER (Board of Immigration Appeals, EOIR).
+Assemble the case file EXACTLY in this order. This MIRRORS the physical order the appellant
+files with the BIA. Each section gets its own cover page (carátula). Optional sections are
+skipped when their artifact is absent from the context — never invent ids.
+1. "Form EOIR-26 — Notice of Appeal": the filled EOIR-26 form (automated_form artifact).
+   It opens the appeal and goes FIRST.
+2. "Form EOIR-26A — Fee Waiver Request": the filled EOIR-26A form (automated_form artifact).
+   It is OPTIONAL and goes RIGHT AFTER the EOIR-26 — include it ONLY when the context contains
+   an EOIR-26A (the appellant requested a fee waiver instead of paying). When the appellant paid
+   the fee, SKIP this section (the paid receipt appears at section 4 instead).
+3. "Statement of Reasons for Appeal": the generated statement of reasons for this case
+   (ai_generation artifact) — the numbered grounds attached to the EOIR-26 (its item #6 reads
+   "See attached Statement of Reasons for Appeal").
+4. "Copy of the Fee Payment Receipt": an 'other' section with the appellant's appeal fee receipt
+   (requirement "Copia del recibo de pago"). OPTIONAL — include it ONLY when the document was
+   uploaded and NOT hidden for this case; when the appellant used the EOIR-26A fee waiver instead,
+   this section is absent.
+5. "Proof of Service": the generated certificate of service (ai_generation artifact) certifying a
+   copy was served on DHS/OPLA. It is the LAST of the appeal filings, before the supporting record.
+6. "Decision and Order of the Immigration Judge": an 'other' section with the IJ decision being
+   appealed (requirement "Decisión y orden del Juez de Inmigración").
+7. "Asylum Application as Filed (Form I-589 with Annexes)": an 'other' section with the complete
+   asylum package exactly as originally filed (requirement "Asilo presentado completo con anexos").
+8. A 'party' section for the appellant with the passport (requirement "Pasaporte del apelante")
+   and any other identity documents — use the standard party-section title format
+   ("Documents of the {role}: {name}").
+Rules: use the quoted section titles above verbatim. There is NO separate "Brief in Support of
+Appeal" and NO "Motion to Remand" section in this package. The Proof of Service is its OWN section
+(section 5) — do NOT fold a certificate of service into any other document. Certified English
+translations are always filed IMMEDIATELY BEFORE the original foreign-language document
+(8 C.F.R. § 1003.33) — the system interleaves them automatically. If an expected artifact is
+missing from the context, skip its section — never invent ids.

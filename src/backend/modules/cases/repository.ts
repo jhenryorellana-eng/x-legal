@@ -13,6 +13,7 @@ import {
   createServiceClient,
 } from "@/backend/platform/supabase";
 import { logger } from "@/backend/platform/logger";
+import { DEFAULT_TZ } from "@/shared/period";
 import type { Tables, TablesInsert, TablesUpdate } from "@/shared/database.types";
 
 // ---------------------------------------------------------------------------
@@ -1158,6 +1159,33 @@ export async function findCasePrimaryClient(caseId: string): Promise<string | nu
     .eq("id", caseId)
     .maybeSingle();
   return data?.primary_client_id ?? null;
+}
+
+/**
+ * The case's org IANA timezone (orgs.settings.default_timezone), read via the
+ * cases→orgs FK in a single embedded query. Powers the `current_date` form source.
+ * Never throws on a config gap — falls back to DEFAULT_TZ — so a broken date field
+ * can never block PDF generation (consistent with the rest of resolveBySource, which
+ * degrades to null/default rather than throwing).
+ */
+export async function findCaseOrgTimezone(caseId: string): Promise<string> {
+  try {
+    const supabase = createServiceClient();
+    const { data } = await supabase
+      .from("cases")
+      .select("orgs(settings)")
+      .eq("id", caseId)
+      .maybeSingle();
+    const orgs = data?.orgs as { settings?: { default_timezone?: string } | null } | null;
+    const tz = orgs?.settings?.default_timezone ?? DEFAULT_TZ;
+    // Guard a malformed-but-present IANA value (org settings validates only min-length):
+    // a bad string would otherwise throw a RangeError downstream inside formatInTimeZone
+    // and crash PDF generation. Intl.DateTimeFormat throws here instead, so we degrade.
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return tz;
+  } catch {
+    return DEFAULT_TZ;
+  }
 }
 
 export interface ClientCaseSummaryRow {

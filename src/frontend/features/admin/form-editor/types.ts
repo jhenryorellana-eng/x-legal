@@ -17,7 +17,8 @@ export type QuestionSource =
   | "generation_output"
   | "profile"
   | "ai_field"
-  | "computed";
+  | "computed"
+  | "current_date";
 
 export type FieldType = "text" | "number" | "date" | "checkbox" | "select" | "textarea" | "multiselect";
 

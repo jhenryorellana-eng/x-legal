@@ -496,26 +496,34 @@ export async function htmlToPdf(html: string): Promise<Uint8Array> {
 }
 
 /**
- * Renders a deterministic ULP cover/divider page (navy + gold, Helvetica) to a
- * one-page US Letter PDF. Same inputs → same bytes. DOC-45 §3.1.1.
+ * Builds the deterministic ULP cover/divider page HTML (pure — no mupdf, so it is
+ * unit-testable without spinning up WASM). Court-ready: a large centered title
+ * (+ optional subtitle) sitting in the UPPER QUARTER of the page (~25% down),
+ * matching the reference cover model. No brand/firm name, no case/client/service
+ * metadata, no bordered box, no rule — the client files pro se, so the page carries
+ * only the section title. Titles arrive already in English from the assembly planner.
  */
-export async function renderCoverPdf(data: CoverData): Promise<Uint8Array> {
+export function buildCoverHtml(data: CoverData): string {
   const esc = (s: string) =>
     String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string));
   const isDivider = data.style === "ulp-divider";
-  // Minimal, court-ready cover: large centered title (+ optional subtitle) and a
-  // thin gold rule. No brand/firm name, no case/client/service metadata, no
-  // bordered box — the client files pro se, so the page carries only the section
-  // title. Titles arrive already in English from the assembly planner.
-  const titleSize = isDivider ? "36pt" : "46pt";
-  const html = `<!DOCTYPE html><html><body style="font-family:Helvetica,Arial,sans-serif;margin:0;padding:0;color:${NAVY}">
-    <div style="text-align:center;margin-top:300pt;padding:0 54pt">
+  // Portada (full cover) → large 56pt title; divider (section separator) stays 36pt.
+  const titleSize = isDivider ? "36pt" : "56pt";
+  // 198pt of a 792pt US Letter page = 25% down (upper quarter, not pinned to the top).
+  return `<!DOCTYPE html><html><body style="font-family:Helvetica,Arial,sans-serif;margin:0;padding:0;color:${NAVY}">
+    <div style="text-align:center;margin-top:198pt;padding:0 54pt">
       <div style="font-size:${titleSize};font-weight:bold;letter-spacing:0.5pt;line-height:1.15">${esc(data.title)}</div>
       ${data.subtitle ? `<div style="font-size:24pt;margin-top:20pt;line-height:1.2">${esc(data.subtitle)}</div>` : ""}
-      <div style="margin-top:30pt"><span style="display:inline-block;width:150pt;border-top:2pt solid ${GOLD}">&nbsp;</span></div>
     </div>
   </body></html>`;
-  return htmlToPdf(html);
+}
+
+/**
+ * Renders a deterministic ULP cover/divider page (navy, Helvetica) to a one-page
+ * US Letter PDF. Same inputs → same bytes. DOC-45 §3.1.1.
+ */
+export async function renderCoverPdf(data: CoverData): Promise<Uint8Array> {
+  return htmlToPdf(buildCoverHtml(data));
 }
 
 // ---------------------------------------------------------------------------

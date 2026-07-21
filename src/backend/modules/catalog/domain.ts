@@ -69,6 +69,9 @@ export const FieldTypeSchema = z.enum([
 // other questions' answers, resolved deterministically at fill time — never shown
 // to the client, never sent to AI. See shared/form-logic/computed.ts (EOIR-26A
 // 1.A / 2.B / Part-3 TOTAL). Ola apelación EOIR-26A.
+// 'current_date' = today's date in the org timezone, resolved at PDF-generation
+// time (never asked, never sent to AI). For date fields it flows through the same
+// formatPdfDate() the extracted dates use → MM/DD/YYYY. EOIR-26 items #9 / #12(B).
 export const QuestionSourceSchema = z.enum([
   "client_answer",
   "document_extraction",
@@ -76,6 +79,7 @@ export const QuestionSourceSchema = z.enum([
   "profile",
   "ai_field",
   "computed",
+  "current_date",
 ]);
 /** What an ai_field connects to: a client-uploaded document or an ai_letter output. */
 export const AiFieldConnectedKindSchema = z.enum(["document", "ai_letter"]);
@@ -572,6 +576,12 @@ export const SourceRefSchema = z.discriminatedUnion("source", [
     // same version). See shared/form-logic/computed.ts. The operand ids are checked
     // to exist (and not self-reference) at publication in validateSourceRef.
     source_ref: ComputedSourceRefSchema,
+  }),
+  z.object({
+    // Today's date (org timezone) at generation time — no config to carry, so
+    // source_ref is always null. Determinism = same day → same value.
+    source: z.literal("current_date"),
+    source_ref: z.null(),
   }),
 ]);
 
@@ -1328,6 +1338,9 @@ export function validateSourceRef(q: Question, ctx: VersionCtx): PublicationIssu
       }
       return [];
     }
+    case "current_date":
+      // No config to validate — today's date carries no slug/path/operands.
+      return [];
     default:
       return [];
   }
@@ -1440,6 +1453,33 @@ export function applyRequirementOverrides(
   }
 
   return out.sort((a, b) => a.position - b.position);
+}
+
+/**
+ * True when an override HIDES the given (required_document_type_id, party_id) combo.
+ * Uses the SAME match rule as {@link applyRequirementOverrides} (an override with
+ * `party_id === null` hides the requirement for EVERY party). Extracted so callers
+ * that only need the boolean — e.g. the expediente assembler filtering an
+ * already-fetched approved-documents list — don't have to re-expand the whole catalog
+ * via getCaseRequirements. A custom override (`required_document_type_id === null`)
+ * never hides a real uploaded document.
+ */
+export function isRequirementHiddenFor(
+  overrides: Array<{
+    required_document_type_id: string | null;
+    party_id: string | null;
+    is_hidden?: boolean | null;
+  }>,
+  requiredDocumentTypeId: string,
+  partyId: string | null,
+): boolean {
+  return overrides.some(
+    (ov) =>
+      ov.is_hidden === true &&
+      ov.required_document_type_id !== null &&
+      ov.required_document_type_id === requiredDocumentTypeId &&
+      (ov.party_id === null || ov.party_id === partyId),
+  );
 }
 
 // ---------------------------------------------------------------------------
