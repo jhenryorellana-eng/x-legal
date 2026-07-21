@@ -430,6 +430,7 @@ export async function startGeneration(
     max_output_tokens: cfg?.max_output_tokens ?? 32000,
     output_format: (cfg?.output_format as ConfigSnapshot["output_format"]) ?? "pdf",
     output_language: (cfg?.output_language as ConfigSnapshot["output_language"]) ?? "es",
+    signature_role: cfg?.signature_role ?? null,
     web_search_enabled: cfg?.web_search_enabled ?? false,
     web_search_max_uses: cfg?.web_search_max_uses ?? 5,
     research_instructions: cfg?.research_instructions ?? null,
@@ -1195,7 +1196,40 @@ async function renderAndStore(
   const supabase = createServiceClient();
 
   if (fmt === "pdf") {
-    const bytes = await renderMarkdownToPdf(outputText);
+    // Signed ai_letter (config-as-data: ai_generation_configs.signature_role). Resolve
+    // the case's APPROVED signature for that role and replace the model's
+    // `{{APPELLANT_SIGNATURE}}` placeholder — with the invisible stamp anchor (+ blank
+    // space so the stamped image clears the printed name) when we have an image, or a
+    // printable "sign here" line when the client has not gotten one approved yet.
+    let text = outputText;
+    let signatureImageBytes: Uint8Array | null = null;
+    if (snapshot.signature_role) {
+      const { getCaseSignatureBytes } = await import("@/backend/modules/cases");
+      const sig = await getCaseSignatureBytes(run.case_id, snapshot.signature_role);
+      signatureImageBytes = sig?.bytes ?? null;
+      const { SIGNATURE_ANCHOR } = await import("@/backend/platform/pdf");
+      const replacement = signatureImageBytes
+        ? `<span style="color:#ffffff;font-size:1pt">${SIGNATURE_ANCHOR}</span><br><br><br><br>`
+        : "______________________________<br>";
+      text = text.replace(/\{\{\s*APPELLANT_SIGNATURE\s*\}\}/g, replacement);
+    }
+    // Current-date token (day of generation, in the org timezone) — the letters' date
+    // line uses it so the filed document carries today's date, like the EOIR-26.
+    if (text.includes("{{CURRENT_DATE}}")) {
+      const { formatInTimeZone } = await import("date-fns-tz");
+      let tz = "America/New_York";
+      try {
+        const { data: orgRow } = await supabase.from("orgs").select("settings").eq("id", run.orgId).maybeSingle();
+        const t = (orgRow?.settings as { default_timezone?: string } | null)?.default_timezone;
+        if (t) tz = t;
+      } catch { /* fall back to the default tz */ }
+      const today = formatInTimeZone(new Date(), tz, "MM/dd/yyyy");
+      text = text.replace(/\{\{\s*CURRENT_DATE\s*\}\}/g, today);
+    }
+    const bytes = await renderMarkdownToPdf(
+      text,
+      signatureImageBytes ? { signatureImageBytes } : {},
+    );
     // Length telemetry (ola apelación): the target-length control is word-based
     // and open-loop — this log closes the loop for HUMANS (calibrate max_words
     // per section against the real page count; ~450 words/page US Letter).

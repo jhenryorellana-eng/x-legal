@@ -77,12 +77,9 @@ const MEMO_STYLE = `<style>
  * @returns Uint8Array of PDF bytes (starts with %PDF)
  */
 export interface RenderMarkdownOptions {
-  /** When set, a deterministic signature block (carrying the invisible
-   *  SIGNATURE_ANCHOR) is appended after the last page-group. Pair with
-   *  `signatureImageBytes` to stamp the image on it. */
-  signatureBlock?: SignatureBlockOptions;
-  /** Signature image (PNG/JPG) stamped at the block's anchor. Empty/absent → the
-   *  block still renders its printable "sign here" line (unsigned = prior behavior). */
+  /** Signature image (PNG/JPG) stamped at the invisible SIGNATURE_ANCHOR the caller has
+   *  already placed in `md` (a signed ai_letter injects it at the closing signature
+   *  line). Empty/absent → no stamp (the anchor stays invisible; prior behavior). */
   signatureImageBytes?: Uint8Array | null;
 }
 
@@ -97,18 +94,10 @@ export async function renderMarkdownToPdf(
   // AI-generated letter output (never third-party input) into a PDF via mupdf (no JS
   // engine), so passing HTML through is safe and never executes anything.
   const mdi = new MarkdownIt({ html: true, linkify: false });
-  const extraStyle = opts.signatureBlock ? SIGNATURE_BLOCK_STYLE : "";
-  const wrap = (bodyHtml: string) =>
-    `<!DOCTYPE html><html><head>${MEMO_STYLE}${extraStyle}</head><body>${bodyHtml}</body></html>`;
+  const wrap = (bodyHtml: string) => `<!DOCTYPE html><html><head>${MEMO_STYLE}</head><body>${bodyHtml}</body></html>`;
 
-  const parts = md.split(PDF_PAGE_BREAK).map((s) => s.trim()).filter(Boolean);
-  const segments = parts.length ? parts : [md];
-  // The deterministic signature block (if any) is appended to the LAST page-group so
-  // its invisible anchor lands after the closing text of the letter.
-  const sigHtml = opts.signatureBlock ? buildSignatureBlockHtml(opts.signatureBlock) : "";
-  const htmls = segments.map((seg, i) =>
-    wrap(mdi.render(seg) + (i === segments.length - 1 ? sigHtml : "")),
-  );
+  const segments = md.split(PDF_PAGE_BREAK).map((s) => s.trim()).filter(Boolean);
+  const htmls = (segments.length ? segments : [md]).map((seg) => wrap(mdi.render(seg)));
 
   let pdfBytes: Uint8Array;
   // Single page-group → render directly.
@@ -140,7 +129,7 @@ export async function renderMarkdownToPdf(
     }
   }
 
-  // Stamp the signature image at the block's invisible anchor (no-op if absent /
+  // Stamp the signature image at the invisible anchor already in `md` (no-op if absent /
   // undecodable / anchor not found — the PDF is returned unchanged).
   if (opts.signatureImageBytes && opts.signatureImageBytes.length > 0) {
     pdfBytes = await stampSignatureOnPdf(pdfBytes, opts.signatureImageBytes);
@@ -678,58 +667,6 @@ export function buildCertifiedTranslationHtml(
     `<div class="xt-sig-space"></div>` +
     `<p class="xt-sig-date">${esc(t.date)} ${esc(date)}</p>` +
     `</body></html>`
-  );
-}
-
-/** CSS for the deterministic signature block appended by `renderMarkdownToPdf` to a
- *  signed ai_letter. The anchor is invisible (white, 1pt) so `stampSignatureOnPdf` can
- *  locate it without printing a token; the reserved space keeps the stamped image off
- *  the printed name. Mirrors TRANSLATION_STYLE's signature classes. */
-const SIGNATURE_BLOCK_STYLE = `<style>
-  .xt-sig-block{margin:26pt 0 0}
-  .xt-sig-anchor{color:#fff;font-size:1pt}
-  .xt-sig-anchor-line{margin:0}
-  .xt-sig-space{height:44pt}
-  .xt-sig-rule{margin:0;letter-spacing:1pt}
-  .xt-sig-name{margin:3pt 0 0;font-weight:bold}
-  .xt-sig-role{margin:0;font-size:10.5pt}
-  .xt-sig-date{margin:10pt 0 0;font-size:10.5pt}
-</style>`;
-
-export interface SignatureBlockOptions {
-  /** Printed name under the signature line (e.g. the respondent's full name). */
-  name?: string | null;
-  /** Role caption under the name (e.g. "Respondent, Pro Se"). */
-  role?: string | null;
-  /** "Date:" line label, already localized (e.g. "Date:" / "Date of service:"). A
-   *  trailing blank invites the client to hand-write the date, matching the BIA form. */
-  dateLabel?: string | null;
-}
-
-/**
- * Builds the deterministic signature block appended to a signed ai_letter (Statement
- * of Reasons / Proof of Service). Pure + synchronous (unit-testable without WASM).
- * It carries the invisible SIGNATURE_ANCHOR at the top so `stampSignatureOnPdf` draws
- * the appellant's image on the signature line, then a printed rule, the name, the role
- * caption, and a date line. When no image is stamped it still prints a clean "sign
- * here" block (the prior manuscript-signature behavior). The section prompts are set
- * so the model does NOT emit its own signature line — this block is the single source.
- */
-export function buildSignatureBlockHtml(opts: SignatureBlockOptions = {}): string {
-  const esc = (s: string) =>
-    String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string));
-  const name = opts.name?.trim() || "";
-  const role = opts.role?.trim() || "";
-  const dateLabel = opts.dateLabel?.trim() || "Date:";
-  return (
-    `<div class="xt-sig-block">` +
-    `<p class="xt-sig-anchor-line"><span class="xt-sig-anchor">${SIGNATURE_ANCHOR}</span></p>` +
-    `<div class="xt-sig-space"></div>` +
-    `<p class="xt-sig-rule">${"_".repeat(36)}</p>` +
-    `<p class="xt-sig-name">${name ? esc(name) : "&nbsp;"}</p>` +
-    (role ? `<p class="xt-sig-role">${esc(role)}</p>` : "") +
-    `<p class="xt-sig-date">${esc(dateLabel)} ____________________</p>` +
-    `</div>`
   );
 }
 

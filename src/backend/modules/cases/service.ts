@@ -1500,13 +1500,14 @@ export async function confirmDocumentUpload(
         ai_extract: boolean;
         allow_multiple: boolean;
         label_i18n: unknown;
+        signature_role: string | null;
       }
     | null = null;
   if (parsed.requirementId) {
     const sb = createServiceClient();
     const { data: rdt } = await sb
       .from("required_document_types")
-      .select("accepted_format, ai_extract, allow_multiple, label_i18n")
+      .select("accepted_format, ai_extract, allow_multiple, label_i18n, signature_role")
       .eq("id", parsed.requirementId)
       .maybeSingle();
     requirement = {
@@ -1514,6 +1515,7 @@ export async function confirmDocumentUpload(
       ai_extract: rdt?.ai_extract ?? false,
       allow_multiple: rdt?.allow_multiple ?? false,
       label_i18n: rdt?.label_i18n ?? null,
+      signature_role: rdt?.signature_role ?? null,
     };
     // Per-document accepted format (admin-configured, pdf | png). Free staff
     // uploads (no requirement) are unconstrained.
@@ -1531,7 +1533,10 @@ export async function confirmDocumentUpload(
   // case_documents row / event is created. Conservative + fail-open (ai-engine).
   // Applies to every upload to case-documents (client + staff). The human
   // reviewer (reviewDocument) remains the final word for borderline cases.
-  if (validated.bytes) {
+  // EXCEPTION: a signature-source document (signature_role) is a transparent PNG
+  // mark, not a scan — the legibility AI would false-reject it. The human reviewer
+  // (now incl. sales) verifies it is a clean, transparent signature instead.
+  if (validated.bytes && !requirement?.signature_role) {
     const aiEngine = await import("@/backend/modules/ai-engine");
     const verdict = await aiEngine.assessDocumentLegibility({
       bytes: validated.bytes,
@@ -1807,11 +1812,11 @@ export async function reviewDocument(
   input: ReviewDocumentInput,
 ): Promise<void> {
   can(actor, "cases", "edit");
-  // Aprobar/rechazar documentos es función legal: restringido a admin + paralegal
-  // aunque otros roles tengan cases:edit (finanzas lo tiene desde 2026-07-20 para
-  // crear casos, pero NO debe revisar documentos). Espeja el guard secundario de
-  // setRequirementVisibility/advanceCaseMilestone/updateCaseParty.
-  if (actor.role !== "admin" && actor.role !== "paralegal") {
+  // Aprobar/rechazar documentos: equipo legal (admin + paralegal) y ventas (sales).
+  // Henry 2026-07-20 amplió la política para incluir a ventas (Vanessa revisa, aprueba
+  // y puede ocultar); FINANZAS sigue EXCLUIDO (tiene cases:edit para crear casos, pero
+  // NO debe revisar documentos). Requiere además cases:edit (can() de arriba).
+  if (actor.role !== "admin" && actor.role !== "paralegal" && actor.role !== "sales") {
     throw new AuthzError("forbidden_module");
   }
   const parsed = ReviewDocumentSchema.parse(input);
@@ -6324,7 +6329,7 @@ export interface ResolvedFormResponse {
 interface FieldsCoreResult {
   response: NonNullable<Awaited<ReturnType<typeof findFormResponseById>>>;
   formDef: NonNullable<Awaited<ReturnType<typeof findFormDefinitionById>>>;
-  published: { id: string; source_pdf_path: string; detected_fields: unknown; source_language?: string; default_empty_policy?: string | null };
+  published: { id: string; source_pdf_path: string; detected_fields: unknown; source_language?: string; default_empty_policy?: string | null; signature_placements?: unknown };
   fields: ResolvedFormField[];
   fieldValues: Record<string, string | boolean>;
   naTargets: Map<string, string>;
@@ -6376,7 +6381,7 @@ async function resolveFormResponseFieldsCore(
 
   // Gate: FORM_VERSION_MISMATCH — only resolve against the currently published version
   const catalog = await import("@/backend/modules/catalog" as string) as {
-    getPublishedAutomationVersion: (id: string) => Promise<{ id: string; source_pdf_path: string; detected_fields: unknown; source_language?: string; default_empty_policy?: string | null } | null>;
+    getPublishedAutomationVersion: (id: string) => Promise<{ id: string; source_pdf_path: string; detected_fields: unknown; source_language?: string; default_empty_policy?: string | null; signature_placements?: unknown } | null>;
     listQuestionGroups: (versionId: string) => Promise<Array<{ id: string; do_not_fill?: boolean | null }>>;
     listQuestions: (groupId: string) => Promise<Array<{
       id: string;
@@ -6776,15 +6781,58 @@ export async function getFormResponseMeta(
 }
 
 /**
+ * Resolves a case's signer signature image for `role` (config-as-data: the
+ * required_document_type whose `signature_role` = role). Returns the latest matching
+ * case document's bytes in an allowed status (default: **approved only** — the reviewer
+ * must confirm the PNG is a clean transparent signature before it is stamped), or null
+ * when the client has not provided/gotten-approved a signature yet (→ artifacts generate
+ * unsigned, the prior hand-sign behavior). Service-role read + download; callers run
+ * inside an already-authorized generation. Best-effort: any read/download failure → null.
+ *
+ * @api-id API-CASE-SIG-01
+ */
+export async function getCaseSignatureBytes(
+  caseId: string,
+  role: string,
+  opts: { allowedStatuses?: readonly string[] } = {},
+): Promise<{ bytes: Uint8Array; caseDocumentId: string } | null> {
+  if (!caseId || !role) return null;
+  const statuses = opts.allowedStatuses ?? ["approved"];
+  try {
+    const sb = createServiceClient();
+    const { data, error } = await sb
+      .from("case_documents")
+      .select("id, storage_path, required_document_types!inner(signature_role)")
+      .eq("case_id", caseId)
+      .eq("required_document_types.signature_role", role)
+      .in("status", statuses as string[])
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data?.storage_path) return null;
+    const { downloadBytesFromStorage } = await import("@/backend/platform/storage");
+    const bytes = await downloadBytesFromStorage("case-documents", data.storage_path);
+    if (!bytes || bytes.length === 0) return null;
+    return { bytes, caseDocumentId: data.id };
+  } catch (err) {
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err), caseId, role },
+      "getCaseSignatureBytes: degraded (returning null)",
+    );
+    return null;
+  }
+}
+
+/**
  * Generates a filled PDF for an approved (or submitted-by-staff) form response.
  *
  * Gates:
  * - FORM_PDF_BLOCKED: response not in submitted/approved; or filled_by='client' and not approved.
  * - FORM_VERSION_MISMATCH: response was saved against a different version than the current published.
  *
- * Resolves all question values via resolveBySource, fills AcroForm via mupdf,
- * stores in bucket 'generated', updates filled_pdf_path.
- * Returns signed download URL.
+ * Resolves all question values via resolveBySource, fills AcroForm via mupdf, stamps any
+ * configured signer signatures (signature_placements), stores in bucket 'generated',
+ * updates filled_pdf_path. Returns signed download URL.
  *
  * @api-id API-CASE-19
  */
@@ -6829,7 +6877,31 @@ export async function generateFilledPdf(
     page: number;
   }>;
   backfillNaTextFields(detectedForNa, fieldValues, naTargets);
-  const filledBytes = await fillAcroForm(pdfBytes, {}, fieldValues);
+  let filledBytes = await fillAcroForm(pdfBytes, {}, fieldValues);
+
+  // Stamp each signer's signature onto the form's signature widgets. Config-as-data:
+  // published.signature_placements maps a signer role → PDF-native widget rects (the
+  // EOIR-26 #9/#12 spots). Best-effort per role: a case with no APPROVED signature for
+  // a role skips that placement → the widget stays blank (the prior hand-sign behavior).
+  const placements = (published.signature_placements ?? []) as Array<{
+    role: string;
+    page: number;
+    rect: [number, number, number, number];
+  }>;
+  if (Array.isArray(placements) && placements.length > 0) {
+    const { stampSignatureAtRects } = await import("@/backend/platform/pdf");
+    const byRole = new Map<string, Array<{ page: number; rect: [number, number, number, number] }>>();
+    for (const pl of placements) {
+      if (!pl?.role || typeof pl.page !== "number" || !Array.isArray(pl.rect)) continue;
+      const arr = byRole.get(pl.role) ?? [];
+      arr.push({ page: pl.page, rect: pl.rect });
+      byRole.set(pl.role, arr);
+    }
+    for (const [role, rects] of byRole) {
+      const sig = await getCaseSignatureBytes(caseId, role);
+      if (sig) filledBytes = await stampSignatureAtRects(filledBytes, sig.bytes, rects);
+    }
+  }
 
   // Store in generated bucket
   const storagePath = `case/${caseId}/forms/${formDef.slug}-${response.id}.pdf`;

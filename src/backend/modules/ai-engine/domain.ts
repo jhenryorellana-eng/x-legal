@@ -147,6 +147,10 @@ export interface ConfigSnapshot {
   max_output_tokens: number;
   output_format: "pdf" | "docx" | "md";
   output_language: "es" | "en" | "both";
+  /** Signer role (e.g. 'appellant') whose deterministic signature block is appended to
+   *  and stamped on the rendered PDF (config-as-data from ai_generation_configs). Null/
+   *  absent = unsigned letter (prior behavior). */
+  signature_role?: string | null;
   // --- v1-grade engine (generic, configurable) ---
   web_search_enabled?: boolean;
   web_search_max_uses?: number;

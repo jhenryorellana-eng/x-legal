@@ -29,7 +29,9 @@ HARD RULES:
 - Never invent facts, names, dates, statutes, or case citations. If key information is missing or illegible in the record, write "[TO BE COMPLETED BY PREPARER]" — never a guess.
 - Never use vague statements like "the judge was wrong". Every reason names WHAT and WHY.
 - Sober, respectful, first person. No emotion, no attacks on the judge.
-- English only. The A-Number and name must be identical to the Immigration Judge's decision.`;
+- English only. The A-Number and name must be identical to the Immigration Judge's decision.
+- SIGNATURE PLACEHOLDER: on the signature line (right after "Respectfully submitted,"), output the exact token {{APPELLANT_SIGNATURE}} on its own line — the system replaces it with the appellant's signature image (or a printable line). Reproduce it verbatim; never translate, wrap, bold, or alter it. Keep the printed name and "Respondent, Pro Se" on the lines below it.
+- DATE TOKEN: on the final date line, output exactly "Date: {{CURRENT_DATE}}" — the system replaces {{CURRENT_DATE}} with today's date. Reproduce the token verbatim; never write an actual date yourself.`;
 
 const STATEMENT_SECTIONS = [
   { key: "caption", heading: "Court header & caption", min_words: 0, max_tokens: 400, type: "analysis", hide_heading: true,
@@ -41,7 +43,7 @@ const STATEMENT_SECTIONS = [
   { key: "reservation", heading: "Brief reservation", min_words: 20, max_tokens: 450, type: "analysis", hide_heading: true,
     guidance: "A short left-aligned paragraph: a brief will be filed after the transcript/briefing schedule; this list is not exhaustive. Plain markdown, no headings." },
   { key: "closing", heading: "Prayer & signature", min_words: 15, max_tokens: 700, type: "analysis", hide_heading: true,
-    guidance: "Left-aligned: the prayer (request reverse, or vacate & remand); then 'Respectfully submitted,'; a signature line; the name; 'Respondent, Pro Se'; and Address / City-State-ZIP / Telephone / Date blanks. Plain text, no headings." },
+    guidance: "Left-aligned: the prayer (request reverse, or vacate & remand); then 'Respectfully submitted,'; then on its OWN line output exactly the token {{APPELLANT_SIGNATURE}} (a technical placeholder for the appellant's signature — reproduce it verbatim on its own line, never translate, wrap, bold, or alter it); then the respondent's name; 'Respondent, Pro Se'; blank lines for Address / City-State-ZIP / Telephone; and finally a line exactly 'Date: {{CURRENT_DATE}}' (reproduce the token {{CURRENT_DATE}} verbatim — the system replaces it with today's date). Plain text, no headings." },
 ];
 
 const STATEMENT_QN_GENERATION_PROMPT = `Servicio: APELACIÓN ANTE LA BIA — hoja "Statement of Reasons for Appeal" (adjunta al EOIR-26). El cliente ya subió la decisión y orden del juez de inmigración y su paquete de asilo. Genera POCAS preguntas simples (el cuestionario debe ser corto), en lenguaje humano y sin tecnicismos, para CONFIRMAR y precisar los motivos de la apelación que se extraen de la decisión: (a) por cada motivo por el que el juez negó el caso (credibilidad, falta de conexión con un motivo protegido, protección del gobierno, reubicación interna, plazo de un año, CAT, etc., que verás en la decisión), pregunta en una frase qué responde el cliente a ese punto; (b) qué le pareció más equivocado de la decisión; (c) si dijo algo importante en la audiencia que no aparece o aparece mal en la decisión. NUNCA sugieras la respuesta. Una idea por pregunta.`;
@@ -81,7 +83,9 @@ STRUCTURE (in this exact order):
 HARD RULES:
 - The list of served documents must match what the case actually files. If the case uses the EOIR-26A Fee Waiver instead of a paid fee receipt, name the Fee Waiver; if it uses a paid fee receipt, name the receipt.
 - Never invent the Office of the Chief Counsel address — if it is not in the record, insert the bracketed placeholder for the preparer to confirm from the EOIR office directory.
-- Sober and factual — it declares a fact (a copy was served), not an argument. English only. Name/A-Number identical to the IJ decision.`;
+- Sober and factual — it declares a fact (a copy was served), not an argument. English only. Name/A-Number identical to the IJ decision.
+- SIGNATURE PLACEHOLDER: on the signature line (right after the perjury declaration), output the exact token {{APPELLANT_SIGNATURE}} on its own line — the system replaces it with the appellant's signature image (or a printable line). Reproduce it verbatim; never translate, wrap, bold, or alter it. Keep the printed name and "Respondent, Pro Se" on the lines below it.
+- DATE TOKEN: on the final date line, output exactly "Date of service: {{CURRENT_DATE}}" — the system replaces {{CURRENT_DATE}} with today's date. Reproduce the token verbatim; never write an actual date yourself.`;
 
 const PROOF_SECTIONS = [
   { key: "caption", heading: "Court header & caption", min_words: 0, max_tokens: 400, type: "analysis", hide_heading: true,
@@ -91,7 +95,7 @@ const PROOF_SECTIONS = [
   { key: "method", heading: "Method of service", min_words: 0, max_tokens: 250, type: "analysis", hide_heading: true,
     guidance: "Left-aligned. Three hand-check boxes, mark exactly one: '[   ] First-class United States mail, postage prepaid', '[   ] Personal delivery (hand service)', '[   ] Electronic service through ECAS'. Plain text, no headings." },
   { key: "closing", heading: "Perjury declaration & signature", min_words: 10, max_tokens: 350, type: "analysis", hide_heading: true,
-    guidance: "Left-aligned: 'I declare under penalty of perjury that the foregoing is true and correct.'; a signature line; the name; 'Respondent, Pro Se'; 'Date of service: ____'. Plain text, no headings." },
+    guidance: "Left-aligned: 'I declare under penalty of perjury that the foregoing is true and correct.'; then on its OWN line output exactly the token {{APPELLANT_SIGNATURE}} (a technical placeholder for the appellant's signature — reproduce it verbatim on its own line, never translate, wrap, bold, or alter it); then the respondent's name; 'Respondent, Pro Se'; and a line exactly 'Date of service: {{CURRENT_DATE}}' (reproduce the token {{CURRENT_DATE}} verbatim — the system replaces it with today's date). Plain text, no headings." },
 ];
 
 const PROOF_QN_GENERATION_PROMPT = `Servicio: APELACIÓN ANTE LA BIA — hoja "Proof of Service" (constancia de que se envió copia de la apelación al abogado del gobierno, DHS Office of the Chief Counsel / OPLA). El cuestionario debe ser MUY corto. Genera solo las preguntas imprescindibles: (a) por qué medio se enviará/entregó la copia al gobierno (correo de primera clase, entrega en mano, o ECAS); (b) la dirección exacta de la oficina del Chief Counsel a la que se envía (si el equipo la conoce). Lenguaje simple, una idea por pregunta. NUNCA inventes datos.`;
@@ -129,6 +133,7 @@ module.exports = {
     // which this package no longer includes. Also keeps the appeal package exhibit-free.
     use_dataset: false,
     input_document_slugs: ["decision-y-orden-del-juez-de-inmigracion", "asilo-presentado-completo-con-anexos"],
+    signature_role: "appellant",
   },
   PROOF: {
     slug: "proof-of-service",
@@ -150,5 +155,6 @@ module.exports = {
     guide_path: "docs/guides/proof-of-service-guia.md",
     use_dataset: false,
     input_document_slugs: ["decision-y-orden-del-juez-de-inmigracion"],
+    signature_role: "appellant",
   },
 };

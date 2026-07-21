@@ -178,6 +178,7 @@ export type Database = {
           rules_enabled: boolean
           rules_text: string | null
           sections: Json
+          signature_role: string | null
           system_prompt: string
           updated_at: string
           updated_by: string | null
@@ -204,6 +205,7 @@ export type Database = {
           rules_enabled?: boolean
           rules_text?: string | null
           sections?: Json
+          signature_role?: string | null
           system_prompt: string
           updated_at?: string
           updated_by?: string | null
@@ -230,6 +232,7 @@ export type Database = {
           rules_enabled?: boolean
           rules_text?: string | null
           sections?: Json
+          signature_role?: string | null
           system_prompt?: string
           updated_at?: string
           updated_by?: string | null
@@ -1170,6 +1173,68 @@ export type Database = {
           },
         ]
       }
+      case_form_overrides: {
+        Row: {
+          case_id: string
+          created_at: string
+          created_by: string | null
+          form_definition_id: string
+          id: string
+          is_hidden: boolean
+          party_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          case_id: string
+          created_at?: string
+          created_by?: string | null
+          form_definition_id: string
+          id?: string
+          is_hidden?: boolean
+          party_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          case_id?: string
+          created_at?: string
+          created_by?: string | null
+          form_definition_id?: string
+          id?: string
+          is_hidden?: boolean
+          party_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_form_overrides_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_form_overrides_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "case_form_overrides_form_definition_id_fkey"
+            columns: ["form_definition_id"]
+            isOneToOne: false
+            referencedRelation: "form_definitions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_form_overrides_party_id_fkey"
+            columns: ["party_id"]
+            isOneToOne: false
+            referencedRelation: "case_parties"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       case_form_responses: {
         Row: {
           ai_draft_question_ids: Json | null
@@ -1882,68 +1947,6 @@ export type Database = {
           },
           {
             foreignKeyName: "case_questionnaire_instances_party_id_fkey"
-            columns: ["party_id"]
-            isOneToOne: false
-            referencedRelation: "case_parties"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      case_form_overrides: {
-        Row: {
-          case_id: string
-          created_at: string
-          created_by: string | null
-          form_definition_id: string
-          id: string
-          is_hidden: boolean
-          party_id: string | null
-          updated_at: string
-        }
-        Insert: {
-          case_id: string
-          created_at?: string
-          created_by?: string | null
-          form_definition_id: string
-          id?: string
-          is_hidden?: boolean
-          party_id?: string | null
-          updated_at?: string
-        }
-        Update: {
-          case_id?: string
-          created_at?: string
-          created_by?: string | null
-          form_definition_id?: string
-          id?: string
-          is_hidden?: boolean
-          party_id?: string | null
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "case_form_overrides_case_id_fkey"
-            columns: ["case_id"]
-            isOneToOne: false
-            referencedRelation: "cases"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "case_form_overrides_created_by_fkey"
-            columns: ["created_by"]
-            isOneToOne: false
-            referencedRelation: "staff_profiles"
-            referencedColumns: ["user_id"]
-          },
-          {
-            foreignKeyName: "case_form_overrides_form_definition_id_fkey"
-            columns: ["form_definition_id"]
-            isOneToOne: false
-            referencedRelation: "form_definitions"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "case_form_overrides_party_id_fkey"
             columns: ["party_id"]
             isOneToOne: false
             referencedRelation: "case_parties"
@@ -3267,6 +3270,7 @@ export type Database = {
           form_definition_id: string
           id: string
           published_at: string | null
+          signature_placements: Json
           source_language: string
           source_pdf_path: string | null
           status: string
@@ -3281,6 +3285,7 @@ export type Database = {
           form_definition_id: string
           id?: string
           published_at?: string | null
+          signature_placements?: Json
           source_language?: string
           source_pdf_path?: string | null
           status?: string
@@ -3295,6 +3300,7 @@ export type Database = {
           form_definition_id?: string
           id?: string
           published_at?: string | null
+          signature_placements?: Json
           source_language?: string
           source_pdf_path?: string | null
           status?: string
@@ -4969,6 +4975,7 @@ export type Database = {
           requires_certified_copy: boolean
           requires_translation: boolean
           service_phase_id: string
+          signature_role: string | null
           slug: string
           updated_at: string
         }
@@ -4990,6 +4997,7 @@ export type Database = {
           requires_certified_copy?: boolean
           requires_translation?: boolean
           service_phase_id: string
+          signature_role?: string | null
           slug: string
           updated_at?: string
         }
@@ -5011,6 +5019,7 @@ export type Database = {
           requires_certified_copy?: boolean
           requires_translation?: boolean
           service_phase_id?: string
+          signature_role?: string | null
           slug?: string
           updated_at?: string
         }

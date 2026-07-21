@@ -13,7 +13,7 @@
  * and hidden requirements appear for staff but never for the client.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const {
   mockCan,
@@ -90,6 +90,7 @@ vi.mock("@/backend/platform/storage", () => ({
   createSignedUploadUrl: vi.fn(),
   createSignedDownloadUrl: vi.fn(),
   validateUploadedObject: vi.fn(),
+  downloadBytesFromStorage: vi.fn(),
 }));
 
 vi.mock("@/backend/modules/audit", () => ({
@@ -128,7 +129,9 @@ vi.mock("../repository", async (importOriginal) => {
   };
 });
 
-import { setRequirementVisibility, getDocumentsMatrix, getDocumentsGateStatus, getFormForClient, saveFormDraft, reviewDocument, CaseError } from "../service";
+import { setRequirementVisibility, getDocumentsMatrix, getDocumentsGateStatus, getFormForClient, saveFormDraft, reviewDocument, getCaseSignatureBytes, CaseError } from "../service";
+import { createServiceClient } from "@/backend/platform/supabase";
+import { downloadBytesFromStorage } from "@/backend/platform/storage";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -317,14 +320,15 @@ describe("setRequirementVisibility", () => {
 });
 
 // ---------------------------------------------------------------------------
-// reviewDocument — approve/reject is a LEGAL function (admin + paralegal only).
-// Regression guard for 2026-07-20: granting finance cases:edit (so it can create
-// cases) must NOT let finance approve/reject case documents. The secondary role
-// check throws before any repository work (can() is mocked no-op here on purpose,
+// reviewDocument — approve/reject is allowed for admin + paralegal + SALES.
+// Henry 2026-07-20 amplió la política para incluir a ventas (Vanessa revisa y aprueba,
+// p.ej. la "Firma del apelante"). FINANCE sigue EXCLUIDO: granting finance cases:edit
+// (so it can create cases) must NOT let finance approve/reject documents. The secondary
+// role check throws before any repository work (can() is mocked no-op here on purpose,
 // so this isolates MY guard, independent of the module-permission check).
 // ---------------------------------------------------------------------------
 
-describe("reviewDocument authz (legal-only: admin + paralegal)", () => {
+describe("reviewDocument authz (admin + paralegal + sales; finance excluded)", () => {
   it("finance is denied even with cases:edit (forbidden_module, no DB write)", async () => {
     await expect(
       reviewDocument(actor("finance"), { documentId: DOC_ID, verdict: "approve" }),
@@ -333,10 +337,12 @@ describe("reviewDocument authz (legal-only: admin + paralegal)", () => {
     expect(mockUpdateDocument).not.toHaveBeenCalled();
   });
 
-  it("sales is denied (forbidden_module)", async () => {
+  it("sales passes the role guard (reaches the doc lookup → DOC_NOT_FOUND, not forbidden_module)", async () => {
+    mockFindDocumentById.mockResolvedValueOnce(null);
     await expect(
       reviewDocument(actor("sales"), { documentId: DOC_ID, verdict: "reject", reason: { es: "x", en: "x" } }),
-    ).rejects.toMatchObject({ reason: "forbidden_module" });
+    ).rejects.toMatchObject({ code: "DOC_NOT_FOUND" });
+    expect(mockFindDocumentById).toHaveBeenCalledWith(DOC_ID);
     expect(mockUpdateDocument).not.toHaveBeenCalled();
   });
 
@@ -544,5 +550,51 @@ describe("documents gate enforcement (getFormForClient / saveFormDraft)", () => 
     await expect(
       saveFormDraft(CLIENT_ACTOR, { caseId: CASE_ID, formDefinitionId: FORM_ID, partyId: null, patch: { q1: "x" } }),
     ).rejects.toThrow("FORMS_LOCKED_DOCS_INCOMPLETE");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getCaseSignatureBytes — resolves a signer's APPROVED signature image for stamping.
+// Default status filter is 'approved' only (the reviewer gates transparency); missing/
+// error → null so artifacts generate UNSIGNED (never throws in the generation path).
+// ---------------------------------------------------------------------------
+
+describe("getCaseSignatureBytes", () => {
+  function mockQuery(result: { data: unknown; error?: unknown }) {
+    const chain: Record<string, unknown> = {};
+    for (const m of ["select", "eq", "in", "order", "limit"]) chain[m] = () => chain;
+    chain.maybeSingle = () => Promise.resolve(result);
+    vi.mocked(createServiceClient).mockReturnValue({ from: () => chain } as never);
+  }
+
+  afterEach(() => {
+    vi.mocked(createServiceClient).mockReset();
+    vi.mocked(downloadBytesFromStorage).mockReset();
+  });
+
+  it("returns bytes + id for the latest approved signature", async () => {
+    mockQuery({ data: { id: "cd-sig", storage_path: "case/x/sig.png" }, error: null });
+    vi.mocked(downloadBytesFromStorage).mockResolvedValue(new Uint8Array([1, 2, 3]));
+    const res = await getCaseSignatureBytes(CASE_ID, "appellant");
+    expect(res).toEqual({ bytes: new Uint8Array([1, 2, 3]), caseDocumentId: "cd-sig" });
+    expect(downloadBytesFromStorage).toHaveBeenCalledWith("case-documents", "case/x/sig.png");
+  });
+
+  it("returns null when there is no approved signature (→ artifact generates unsigned)", async () => {
+    mockQuery({ data: null, error: null });
+    const res = await getCaseSignatureBytes(CASE_ID, "appellant");
+    expect(res).toBeNull();
+    expect(downloadBytesFromStorage).not.toHaveBeenCalled();
+  });
+
+  it("returns null (degrades) when the query errors — never throws in generation", async () => {
+    mockQuery({ data: null, error: { message: "boom" } });
+    const res = await getCaseSignatureBytes(CASE_ID, "appellant");
+    expect(res).toBeNull();
+  });
+
+  it("returns null for a blank role without touching the DB", async () => {
+    const res = await getCaseSignatureBytes(CASE_ID, "");
+    expect(res).toBeNull();
   });
 });

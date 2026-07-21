@@ -109,6 +109,20 @@ describe("listApprovedDocumentsForMaterial — hidden requirement filter", () =>
     expect(rows.map((r) => r.refId)).toEqual(["cd-1", "cd-2"]);
   });
 
+  it("excludes a signature-source document (signature_role set) — it is a stamp input, not a filing", async () => {
+    state.docs = [
+      doc({ id: "cd-1", required_document_type_id: "doc-1" }),
+      doc({
+        id: "cd-sig",
+        required_document_type_id: "doc-sig",
+        required_document_types: { label_i18n: { es: "Firma", en: "Signature" }, signature_role: "appellant" },
+      }),
+    ];
+    state.hidden = [];
+    const rows = await listApprovedDocumentsForMaterial("case-1");
+    expect(rows.map((r) => r.refId)).toEqual(["cd-1"]); // the appellant-signature doc is filtered out
+  });
+
   it("fails CLOSED (throws) if the overrides read errors — never leaks under uncertainty", async () => {
     state.docs = [doc({ id: "cd-1", required_document_type_id: "doc-1" })];
     state.hiddenError = { message: "connection reset" };

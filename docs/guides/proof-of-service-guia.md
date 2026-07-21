@@ -113,6 +113,8 @@ Casillas para marcar **cómo** se envió (dato 5): correo de primera clase, entr
 - Línea de firma + nombre escrito (dato 6).
 - La **fecha del envío** (dato 4).
 
+> **Nota para el validador (Pre-Mortem):** el documento generado lleva dos tokens técnicos: `{{APPELLANT_SIGNATURE}}` en la línea de firma y `{{CURRENT_DATE}}` en la línea de fecha de servicio. Son **placeholders intencionales**: el sistema sustituye el primero por la firma estampada del apelante (o una línea imprimible) y el segundo por la fecha de hoy. **No los reportes como error ni como texto faltante.**
+
 ---
 
 ## 7. Cómo llenar cada parte (paso a paso)

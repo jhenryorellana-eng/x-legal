@@ -97,6 +97,8 @@ Cierra este bloque con dos frases importantes:
 - `Respectfully submitted,` (respetuosamente presentado).
 - La línea de firma, el nombre, "Respondent, Pro Se", y espacios para domicilio y fecha.
 
+> **Nota para el validador (Pre-Mortem):** el documento generado lleva dos tokens técnicos: `{{APPELLANT_SIGNATURE}}` en la línea de firma y `{{CURRENT_DATE}}` en la línea de fecha. Son **placeholders intencionales**: el sistema sustituye el primero por la firma estampada del apelante (o una línea imprimible) y el segundo por la fecha de hoy. **No los reportes como error ni como texto faltante.**
+
 ---
 
 ## 5. Cómo escribir cada razón (la técnica, en simple)

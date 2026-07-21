@@ -53,6 +53,7 @@ export {
   applyPostureToCase,
   getCasePosturePlaybook,
   generateFilledPdf,
+  getCaseSignatureBytes,
   resolveFormResponseFieldValues,
   resolveFormResponseFieldValuesSystem,
   getFormResponseMeta,

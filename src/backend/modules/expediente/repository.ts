@@ -833,7 +833,7 @@ export async function listApprovedDocumentsForMaterial(
   const [{ data }, { data: hiddenRows, error: hiddenError }] = await Promise.all([
     supabase
       .from("case_documents")
-      .select("id, required_document_type_id, storage_path, original_filename, display_name, party_id, created_at, required_document_types(label_i18n)")
+      .select("id, required_document_type_id, storage_path, original_filename, display_name, party_id, created_at, required_document_types(label_i18n, signature_role)")
       .eq("case_id", caseId)
       .eq("status", "approved")
       .order("created_at", { ascending: false }),
@@ -853,11 +853,16 @@ export async function listApprovedDocumentsForMaterial(
   }
   const hidden = (hiddenRows ?? []).map((o) => ({ ...o, is_hidden: true as const }));
   return (data ?? [])
-    .filter(
-      (r) =>
+    .filter((r) => {
+      // A signature-source document (signature_role set) is an INPUT for stamping the
+      // generated artifacts, never a filed piece — exclude it from the expediente.
+      const rdt = r.required_document_types as { signature_role?: string | null } | null;
+      if (rdt?.signature_role) return false;
+      return (
         r.required_document_type_id == null ||
-        !isRequirementHiddenFor(hidden, r.required_document_type_id, r.party_id ?? null),
-    )
+        !isRequirementHiddenFor(hidden, r.required_document_type_id, r.party_id ?? null)
+      );
+    })
     .map((r) => {
       const rdt = r.required_document_types as { label_i18n: unknown } | null;
       const requirementLabel =
