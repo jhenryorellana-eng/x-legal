@@ -2944,6 +2944,35 @@ export interface CaseWorkspaceParty {
   lastName: string | null;
 }
 
+/**
+ * Primary client's mailing address, parsed from the `client_profiles.address`
+ * JSONB. Every field is nullable — old profiles may miss pieces (defensive
+ * parse). `cityStateZip` is the composed "City, ST ZIP" one-liner.
+ */
+export interface CaseWorkspaceClientAddress {
+  line1: string | null;
+  apartment: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  cityStateZip: string | null;
+}
+
+/**
+ * Contact card of the case's primary client (captured at intake): identity
+ * name + contact + full mailing address. Surfaced in the case Resumen so staff
+ * can see the registration data. Name/phone/email are immutable identity; only
+ * the address is editable (updateClientAddress). Null when there is no client.
+ */
+export interface CaseWorkspaceClient {
+  fullName: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  email: string | null;
+  phone: string | null;
+  address: CaseWorkspaceClientAddress | null;
+}
+
 export interface CaseWorkspaceDto {
   caseId: string;
   caseNumber: string;
@@ -2965,6 +2994,11 @@ export interface CaseWorkspaceDto {
   parties: CaseWorkspaceParty[];
   /** Primary client's account phone (users.phone_e164) — for the header subtitle. */
   clientPhone: string | null;
+  /**
+   * Primary client's contact card (identity name + email + phone + mailing
+   * address) captured at case intake. Null when the case has no primary client.
+   */
+  client: CaseWorkspaceClient | null;
   /** Required documents still pending the client's action. */
   pendingDocuments: number;
   totalDocuments: number;
@@ -3013,6 +3047,59 @@ async function resolvePartyNameParts(party: {
     if (cp) return { firstName: cp.first_name, lastName: cp.last_name };
   }
   return { firstName: null, lastName: null };
+}
+
+/**
+ * Defensively parses the `client_profiles.address` JSONB into a typed address.
+ * Old profiles may be null, a non-object, or miss sub-fields — every piece is
+ * coerced to a trimmed string or null so the UI never renders "undefined".
+ * Exported for unit testing.
+ */
+export function parseClientAddress(raw: unknown): CaseWorkspaceClientAddress | null {
+  if (!raw || typeof raw !== "object") return null;
+  const a = raw as Record<string, unknown>;
+  const str = (v: unknown): string | null => {
+    if (typeof v !== "string") return null;
+    const t = v.trim();
+    return t === "" ? null : t;
+  };
+  const address: CaseWorkspaceClientAddress = {
+    line1: str(a.line1),
+    apartment: str(a.apartment),
+    city: str(a.city),
+    state: str(a.state),
+    zip: str(a.zip),
+    cityStateZip: composeCityStateZip(a),
+  };
+  // Nothing worth showing → treat as no address.
+  const hasAny = Object.values(address).some((v) => v !== null);
+  return hasAny ? address : null;
+}
+
+/**
+ * Builds the primary client's contact card (identity name + email + phone +
+ * mailing address) for the case Resumen. One `users` read + one
+ * `client_profiles` read. Returns null when the case has no primary client.
+ */
+async function resolveClientContact(
+  primaryClientId: string | null,
+): Promise<CaseWorkspaceClient | null> {
+  if (!primaryClientId) return null;
+  const [contact, profile] = await Promise.all([
+    findUserContactFields(primaryClientId),
+    findClientProfileForForm(primaryClientId),
+  ]);
+  const firstName = profile?.first_name?.trim() || null;
+  const lastName = profile?.last_name?.trim() || null;
+  const fullName = [firstName, lastName].filter(Boolean).join(" ") || null;
+  return {
+    fullName,
+    firstName,
+    lastName,
+    email: contact?.email?.trim() || null,
+    phone: contact?.phone_e164?.trim() || null,
+    address: parseClientAddress(profile?.address),
+  };
 }
 
 interface DocsCount {
@@ -3354,10 +3441,11 @@ export async function getCaseWorkspace(
     });
   }
 
-  // Primary client's account phone for the header subtitle (staff surfaces).
-  const clientPhone = caseRow.primary_client_id
-    ? ((await findUserContactFields(caseRow.primary_client_id))?.phone_e164 ?? null)
-    : null;
+  // Primary client's contact card (identity name + email + phone + mailing
+  // address) — captured at intake, surfaced in the case Resumen. One users read
+  // + one client_profiles read; the phone also feeds the header subtitle.
+  const client = await resolveClientContact(caseRow.primary_client_id);
+  const clientPhone = client?.phone ?? null;
 
   const { counts } = await buildDocumentsMatrix(caseRow);
   // Phase progress: documents-only weighting in F2 (forms/appointments arrive
@@ -3398,6 +3486,7 @@ export async function getCaseWorkspace(
     phaseProgress,
     parties,
     clientPhone,
+    client,
     pendingDocuments: counts.pending,
     totalDocuments: counts.total,
     doneDocuments: counts.done,

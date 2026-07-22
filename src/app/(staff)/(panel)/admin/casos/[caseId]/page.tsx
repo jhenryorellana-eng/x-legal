@@ -54,7 +54,7 @@ import {
 } from "@/backend/modules/messaging/actions";
 import type { CaseWorkspaceVM, CaseTabId } from "@/frontend/features/shared-case";
 import { buildCasosStrings } from "@/frontend/features/shared-case";
-import { mapStatusToPill, buildRutaVM, buildPreMortemTargets, mapPreMortemReports, mapPreMortemInFlight, mapStatementInstallments } from "../view-helpers";
+import { mapStatusToPill, buildRutaVM, buildPreMortemTargets, mapPreMortemReports, mapPreMortemInFlight, mapStatementInstallments, mapClientContact } from "../view-helpers";
 import {
   reviewDocumentAction,
   setRequirementVisibilityAction,
@@ -78,6 +78,7 @@ import {
   confirmDocumentUploadAction,
   renameDocumentAction,
   updateCasePartyAction,
+  updateClientAddressForCaseAction,
   addCaseAppointmentAction,
   transferCaseAction,
   handoffCaseFromLegalAction,
@@ -175,6 +176,9 @@ export default async function AdminCasoDetailPage({
   const canAdvancePhase = actor.role === "admin";
   // Adding a cita to the route needs calendar:edit (the service enforces it too).
   const canManageCalendar = actor.role === "admin" || actor.role === "sales";
+  // Editing the client's mailing address is an admin + sales affordance
+  // (clients:edit); the service enforces it too. Others see it read-only.
+  const canEditClientAddress = actor.role === "admin" || actor.role === "sales";
 
   const pill = mapStatusToPill(workspace.status);
   const installments = mapStatementInstallments(statement);
@@ -305,6 +309,7 @@ export default async function AdminCasoDetailPage({
     docsApproved: workspace.doneDocuments,
     docsTotal: workspace.totalDocuments,
     parties,
+    client: mapClientContact(workspace),
     installments,
     planFrequency: statement?.plan?.frequency ?? null,
     planAutopayEnabled: statement?.plan?.autopayEnabled ?? false,
@@ -373,6 +378,7 @@ export default async function AdminCasoDetailPage({
         confirmUpload: confirmDocumentUploadAction,
         renameDocument: renameDocumentAction,
         updateCaseParty: actor.role === "admin" ? updateCasePartyAction : undefined,
+        updateClientAddress: canEditClientAddress ? updateClientAddressForCaseAction : undefined,
         addCaseAppointment: canManageCalendar ? addCaseAppointmentAction : undefined,
         transferCase: transferCaseAction,
         handoffCaseFromLegal: handoffCaseFromLegalAction,

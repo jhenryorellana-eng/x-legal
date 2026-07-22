@@ -7,8 +7,10 @@ import type { StatusKind } from "@/frontend/components/brand/status-pill";
 import { resolveI18n, type Locale } from "@/shared/i18n";
 import type { CaseRutaResult } from "@/backend/modules/scheduling";
 import type { AccountStatementDto } from "@/backend/modules/billing";
+import type { CaseWorkspaceDto } from "@/backend/modules/cases";
 import type {
   CaseRutaVM,
+  CaseClientVM,
   InstallmentVM,
   PreMortemReportVM,
   PreMortemTargetVM,
@@ -48,6 +50,31 @@ export function mapStatementInstallments(
       createdAt: p.createdAt,
     })),
   }));
+}
+
+/**
+ * Maps the workspace DTO's primary-client contact card into the shared-case VM
+ * (Resumen "Datos del cliente"). Single mapper shared by the admin / ventas /
+ * legal / finanzas case pages. Null when the case has no primary client.
+ */
+export function mapClientContact(workspace: CaseWorkspaceDto): CaseClientVM | null {
+  const c = workspace.client;
+  if (!c) return null;
+  return {
+    fullName: c.fullName,
+    email: c.email,
+    phone: c.phone,
+    address: c.address
+      ? {
+          line1: c.address.line1,
+          apartment: c.address.apartment,
+          city: c.address.city,
+          state: c.address.state,
+          zip: c.address.zip,
+          cityStateZip: c.address.cityStateZip,
+        }
+      : null,
+  };
 }
 
 /** Maps a cases.status to its StatusPill kind (DOC-53 §2.2). "amber" → Chip. */

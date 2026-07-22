@@ -18,6 +18,8 @@ export type {
   CaseDetailActions,
   DocumentVM,
   PartyVM,
+  CaseClientVM,
+  CaseClientAddressVM,
   InstallmentVM,
   TimelineEventVM,
   DocMatrixVM,

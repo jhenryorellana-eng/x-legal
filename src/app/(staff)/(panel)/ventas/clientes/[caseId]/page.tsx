@@ -47,7 +47,7 @@ import {
   getAttachmentDownloadUrlAction,
 } from "@/backend/modules/messaging/actions";
 import type { CaseWorkspaceVM, CaseTabId } from "@/frontend/features/shared-case";
-import { mapStatusToPill, buildRutaVM, mapStatementInstallments } from "../../../admin/casos/view-helpers";
+import { mapStatusToPill, buildRutaVM, mapStatementInstallments, mapClientContact } from "../../../admin/casos/view-helpers";
 import {
   reviewDocumentAction,
   setRequirementVisibilityAction,
@@ -66,6 +66,7 @@ import {
   startDocumentUploadAction,
   confirmDocumentUploadAction,
   renameDocumentAction,
+  updateClientAddressForCaseAction,
   addCaseAppointmentAction,
   transferCaseAction,
   handoffCaseFromLegalAction,
@@ -148,6 +149,9 @@ export default async function VentasCasoDetailPage({
   const canManageDocs = actor.role === "admin" || actor.role === "sales";
   // Adding a cita to the route needs calendar:edit (the service enforces it too).
   const canManageCalendar = actor.role === "admin" || actor.role === "sales";
+  // Editing the client's mailing address is an admin + sales affordance
+  // (clients:edit); the service enforces it too. Others see it read-only.
+  const canEditClientAddress = actor.role === "admin" || actor.role === "sales";
 
   const pill = mapStatusToPill(workspace.status);
   const installments = mapStatementInstallments(statement);
@@ -245,6 +249,7 @@ export default async function VentasCasoDetailPage({
     docsApproved: workspace.doneDocuments,
     docsTotal: workspace.totalDocuments,
     parties,
+    client: mapClientContact(workspace),
     installments,
     planFrequency: statement?.plan?.frequency ?? null,
     planAutopayEnabled: statement?.plan?.autopayEnabled ?? false,
@@ -299,6 +304,7 @@ export default async function VentasCasoDetailPage({
         startUpload: startDocumentUploadAction,
         confirmUpload: confirmDocumentUploadAction,
         renameDocument: renameDocumentAction,
+        updateClientAddress: canEditClientAddress ? updateClientAddressForCaseAction : undefined,
         addCaseAppointment: canManageCalendar ? addCaseAppointmentAction : undefined,
         transferCase: transferCaseAction,
         handoffCaseFromLegal: handoffCaseFromLegalAction,

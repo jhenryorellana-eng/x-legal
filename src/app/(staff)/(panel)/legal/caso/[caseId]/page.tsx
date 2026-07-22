@@ -57,7 +57,7 @@ import {
   confirmAttachmentAction,
   getAttachmentDownloadUrlAction,
 } from "@/backend/modules/messaging/actions";
-import { mapStatusToPill, buildRutaVM, buildPreMortemTargets, mapPreMortemReports, mapPreMortemInFlight, mapStatementInstallments } from "../../../admin/casos/view-helpers";
+import { mapStatusToPill, buildRutaVM, buildPreMortemTargets, mapPreMortemReports, mapPreMortemInFlight, mapStatementInstallments, mapClientContact } from "../../../admin/casos/view-helpers";
 import {
   reviewDocumentAction,
   registerPaymentAction,
@@ -283,6 +283,7 @@ export default async function LegalCasoDetailPage({
     docsApproved: workspace.doneDocuments,
     docsTotal: workspace.totalDocuments,
     parties,
+    client: mapClientContact(workspace),
     installments,
     planFrequency: statement?.plan?.frequency ?? null,
     planAutopayEnabled: statement?.plan?.autopayEnabled ?? false,

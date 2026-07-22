@@ -91,6 +91,28 @@ export interface PartyVM {
   lastName?: string | null;
 }
 
+/** Primary client's mailing address (every field nullable — defensive parse). */
+export interface CaseClientAddressVM {
+  line1: string | null;
+  apartment: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  /** "City, ST ZIP" one-liner. */
+  cityStateZip: string | null;
+}
+
+/**
+ * Contact card of the case's primary client (captured at intake) shown in the
+ * Resumen. Name/phone/email are immutable identity; only the address is editable.
+ */
+export interface CaseClientVM {
+  fullName: string | null;
+  email: string | null;
+  phone: string | null;
+  address: CaseClientAddressVM | null;
+}
+
 /** A payment attempt/confirmation against an installment (Pagos tab). */
 export interface InstallmentPaymentVM {
   id: string;
@@ -387,6 +409,8 @@ export interface CaseWorkspaceVM {
   docsApproved: number;
   docsTotal: number;
   parties: PartyVM[];
+  /** Primary client's contact card (identity + address). Null = no client. */
+  client?: CaseClientVM | null;
   installments: InstallmentVM[];
   /** Installment cadence of the payment plan; null = no plan yet. */
   planFrequency: "weekly" | "monthly" | null;
@@ -678,6 +702,20 @@ export interface CaseDetailActions {
     firstName: string;
     lastName: string;
   }) => Promise<{ ok: boolean; resynced?: boolean; error?: { code: string } }>;
+  /**
+   * Edit the primary client's mailing address (admin + sales). Name/phone/email
+   * are immutable identity — only the address may drift (client moved) and it
+   * feeds the I-589 prefill. Optional — only surfaces that authorize it inject
+   * it; absence renders the address read-only.
+   */
+  updateClientAddress?: (input: {
+    caseId: string;
+    line1: string;
+    apartment: string | null;
+    city: string;
+    state: string;
+    zip: string;
+  }) => Promise<{ ok: boolean; error?: { code: string } }>;
   /**
    * Advance the case to the next service phase (admin + finance / Andrium — the
    * operations phase boundary that follows printing). Restarts the cycle at the

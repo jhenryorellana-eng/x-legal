@@ -135,6 +135,8 @@ export type {
 export type {
   CaseWorkspaceDto,
   CaseWorkspaceParty,
+  CaseWorkspaceClient,
+  CaseWorkspaceClientAddress,
   CaseTimelineDto,
   CaseTimelineCita,
   DocumentsMatrixDto,

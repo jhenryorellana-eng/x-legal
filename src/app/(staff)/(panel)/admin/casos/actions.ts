@@ -64,6 +64,7 @@ import {
   handoffCaseFromLegal,
   assignCaseOwner,
   getCaseStageInfo,
+  getCaseOverview,
   setDocumentTranslationNotRequired,
   CaseError,
   type CaseStageInfoDto,
@@ -685,6 +686,56 @@ export async function updateCasePartyAction(input: {
     const actor = await requireActor();
     const { resynced } = await updateCaseParty(actor, input);
     return { ok: true, resynced };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+/**
+ * Edit the primary client's mailing address from the case Resumen (admin +
+ * sales). Resolves the case's primary client server-side (getCaseOverview
+ * enforces case access) and delegates to identity.updateClientAddress — which
+ * gates on clients:edit, writes ONLY the address (name/phone/email are immutable
+ * identity) and audits. Required address fields are validated (apartment
+ * optional), mirroring createCaseAction.
+ */
+export async function updateClientAddressForCaseAction(input: {
+  caseId: string;
+  line1: string;
+  apartment: string | null;
+  city: string;
+  state: string;
+  zip: string;
+}): Promise<{ ok: boolean; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+
+    if (
+      !input.line1?.trim() ||
+      !input.city?.trim() ||
+      !input.state?.trim() ||
+      !input.zip?.trim()
+    ) {
+      return { ok: false, error: { code: "INVALID_ADDRESS" } };
+    }
+
+    const caseRow = await getCaseOverview(actor, input.caseId);
+    if (!caseRow.primary_client_id) {
+      return { ok: false, error: { code: "CLIENT_NOT_FOUND" } };
+    }
+
+    const res = await updateClientAddress(actor, {
+      userId: caseRow.primary_client_id,
+      address: {
+        line1: input.line1.trim(),
+        city: input.city.trim(),
+        state: input.state.trim(),
+        zip: input.zip.trim(),
+        apartment: input.apartment?.trim() || null,
+      },
+    });
+    if (!res.ok) return { ok: false, error: { code: res.code } };
+    return { ok: true };
   } catch (err) {
     return mapErr(err);
   }

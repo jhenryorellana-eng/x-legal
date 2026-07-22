@@ -12,14 +12,14 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Card } from "@/frontend/components/brand/card";
 import { Chip } from "@/frontend/components/brand/chip";
-import { Icon } from "@/frontend/components/brand/icon";
+import { Icon, type IconName } from "@/frontend/components/brand/icon";
 import { GradientBtn } from "@/frontend/components/brand/gradient-btn";
 import { GhostBtn } from "@/frontend/components/brand/ghost-btn";
 import { ProgressRing } from "@/frontend/components/brand/progress-ring";
 import { toast } from "@/frontend/components/desktop/toast";
 import { getBridge } from "@/frontend/platform-bridge";
 import { ZelleRegisterModal } from "@/frontend/features/billing-shared";
-import type { CaseWorkspaceVM, CaseDetailActions } from "../types";
+import type { CaseWorkspaceVM, CaseDetailActions, CaseClientVM } from "../types";
 import type { CasosStrings } from "../strings";
 import { interp } from "../strings";
 import { formatCents, SectionLabel } from "../ui";
@@ -27,6 +27,7 @@ import { buildZelleRegisterStrings } from "../zelle-strings";
 import { PhaseStepper } from "../components/phase-stepper";
 import { CaseHistory } from "../components/case-history";
 import { AdvancePhaseAction } from "../components/advance-phase-action";
+import { DEFAULT_PARTY_ROLE_LABELS, isPartyRoleKey } from "@/shared/constants/party-roles";
 
 export function ResumenTab({
   vm,
@@ -190,7 +191,17 @@ export function ResumenTab({
         )}
 
         <Card>
-          <SectionLabel icon="user">{t.keyData}</SectionLabel>
+          <SectionLabel icon="user">{t.clientCardTitle}</SectionLabel>
+          <ClientCard
+            client={vm.client ?? null}
+            caseId={vm.header.caseId}
+            t={t}
+            onEditAddress={actions.updateClientAddress}
+          />
+        </Card>
+
+        <Card>
+          <SectionLabel icon="family">{t.partiesTitle}</SectionLabel>
           {vm.parties.length === 0 ? (
             <p style={{ margin: "12px 0 0", color: "var(--ink-2)", fontSize: 14 }}>{t.partiesEmpty}</p>
           ) : (
@@ -201,6 +212,7 @@ export function ResumenTab({
                   party={p}
                   caseId={vm.header.caseId}
                   t={t}
+                  locale={locale}
                   onEdit={editPartyAction}
                 />
               ))}
@@ -331,11 +343,13 @@ function PartyRow({
   party,
   caseId,
   t,
+  locale,
   onEdit,
 }: {
   party: import("../types").PartyVM;
   caseId: string;
   t: CasosStrings["detail"];
+  locale: "es" | "en";
   onEdit?: (input: {
     caseId: string;
     partyId: string;
@@ -443,7 +457,12 @@ function PartyRow({
       </span>
       <span style={{ fontSize: 14, color: "var(--ink)", flex: 1 }}>
         <strong style={{ fontWeight: 700 }}>{party.name}</strong>
-        {party.role && <span style={{ color: "var(--ink-3)" }}> · {party.role}</span>}
+        {party.role && (
+          <span style={{ color: "var(--ink-3)" }}>
+            {" · "}
+            {isPartyRoleKey(party.role) ? DEFAULT_PARTY_ROLE_LABELS[party.role][locale] : party.role}
+          </span>
+        )}
       </span>
       {onEdit && (
         <button
@@ -451,6 +470,298 @@ function PartyRow({
           aria-label={t.editParty}
           title={t.editParty}
           onClick={() => setEditing(true)}
+          style={miniBtn}
+        >
+          <Icon name="edit" size={15} color="var(--ink-3)" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+type EditAddressFn = (input: {
+  caseId: string;
+  line1: string;
+  apartment: string | null;
+  city: string;
+  state: string;
+  zip: string;
+}) => Promise<{ ok: boolean; error?: { code: string } }>;
+
+const ROW_STYLE: React.CSSProperties = {
+  display: "flex",
+  gap: 10,
+  alignItems: "flex-start",
+  padding: "9px 0",
+  borderTop: "1px solid var(--line-2, var(--line))",
+};
+
+/**
+ * "Datos del cliente" — the primary client's contact card (identity name +
+ * email + phone + mailing address) captured at intake. Name/phone/email are
+ * read-only identity; the address is editable inline when an edit action is
+ * provided (admin + sales surfaces).
+ */
+function ClientCard({
+  client,
+  caseId,
+  t,
+  onEditAddress,
+}: {
+  client: CaseClientVM | null;
+  caseId: string;
+  t: CasosStrings["detail"];
+  onEditAddress?: EditAddressFn;
+}) {
+  if (!client) {
+    return (
+      <p style={{ margin: "12px 0 0", color: "var(--ink-2)", fontSize: 14 }}>{t.notProvided}</p>
+    );
+  }
+  const initial = (client.fullName ?? "?").charAt(0).toUpperCase();
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+        <span aria-hidden="true" className="member-av">
+          {initial}
+        </span>
+        <strong style={{ fontSize: 15, color: "var(--ink)", fontWeight: 800, wordBreak: "break-word" }}>
+          {client.fullName ?? t.notProvided}
+        </strong>
+      </div>
+      <ContactRow icon="mail" label={t.fieldEmail} value={client.email} t={t} />
+      <ContactRow icon="phone" label={t.fieldPhone} value={client.phone} t={t} />
+      <AddressBlock client={client} caseId={caseId} t={t} onEditAddress={onEditAddress} />
+    </div>
+  );
+}
+
+/** One read-only labeled contact row (icon + label above value). */
+function ContactRow({
+  icon,
+  label,
+  value,
+  t,
+}: {
+  icon: IconName;
+  label: string;
+  value: string | null;
+  t: CasosStrings["detail"];
+}) {
+  return (
+    <div style={ROW_STYLE}>
+      <Icon name={icon} size={17} color="var(--ink-3)" />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12, color: "var(--ink-3)", fontWeight: 600 }}>{label}</div>
+        <div
+          style={{
+            fontSize: 14,
+            color: value ? "var(--ink)" : "var(--ink-3)",
+            fontWeight: 700,
+            wordBreak: "break-word",
+          }}
+        >
+          {value ?? t.notProvided}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The mailing-address row of the client card. Read-only unless an edit action
+ * is provided; editing swaps the value for inline inputs (line1/apartment/
+ * city/state/zip). Mirrors PartyRow's inline-edit pattern (state + toast +
+ * router.refresh). Name/phone/email are never editable here (identity).
+ */
+function AddressBlock({
+  client,
+  caseId,
+  t,
+  onEditAddress,
+}: {
+  client: CaseClientVM;
+  caseId: string;
+  t: CasosStrings["detail"];
+  onEditAddress?: EditAddressFn;
+}) {
+  const router = useRouter();
+  const addr = client.address;
+  const [editing, setEditing] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
+  const [line1, setLine1] = React.useState(addr?.line1 ?? "");
+  const [apartment, setApartment] = React.useState(addr?.apartment ?? "");
+  const [city, setCity] = React.useState(addr?.city ?? "");
+  const [stateV, setStateV] = React.useState(addr?.state ?? "");
+  const [zip, setZip] = React.useState(addr?.zip ?? "");
+
+  function reset() {
+    setLine1(addr?.line1 ?? "");
+    setApartment(addr?.apartment ?? "");
+    setCity(addr?.city ?? "");
+    setStateV(addr?.state ?? "");
+    setZip(addr?.zip ?? "");
+  }
+
+  const canSave = !!line1.trim() && !!city.trim() && !!stateV.trim() && !!zip.trim();
+
+  async function save() {
+    if (!onEditAddress || !canSave) return;
+    setSaving(true);
+    const res = await onEditAddress({
+      caseId,
+      line1: line1.trim(),
+      apartment: apartment.trim() || null,
+      city: city.trim(),
+      state: stateV.trim(),
+      zip: zip.trim(),
+    });
+    setSaving(false);
+    if (res.ok) {
+      toast.success(t.editAddressSaved);
+      setEditing(false);
+      router.refresh();
+    } else {
+      toast.error(t.editAddressError);
+    }
+  }
+
+  const inputStyle: React.CSSProperties = {
+    minWidth: 0,
+    height: 36,
+    borderRadius: 9,
+    border: "1px solid var(--line)",
+    padding: "0 10px",
+    fontSize: 14,
+    color: "var(--ink)",
+    background: "var(--card)",
+  };
+  const miniBtn: React.CSSProperties = {
+    height: 36,
+    width: 36,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 9,
+    border: "1px solid var(--line)",
+    background: "var(--card)",
+    cursor: "pointer",
+  };
+
+  if (editing) {
+    return (
+      <div style={ROW_STYLE}>
+        <Icon name="map" size={17} color="var(--ink-3)" />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 12, color: "var(--ink-3)", fontWeight: 600, marginBottom: 6 }}>
+            {t.fieldAddress}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <input
+              value={line1}
+              onChange={(e) => setLine1(e.target.value)}
+              placeholder={t.addrLine1}
+              aria-label={t.addrLine1}
+              maxLength={120}
+              style={{ ...inputStyle, width: "100%" }}
+            />
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <input
+                value={apartment}
+                onChange={(e) => setApartment(e.target.value)}
+                placeholder={t.addrApartment}
+                aria-label={t.addrApartment}
+                maxLength={40}
+                style={{ ...inputStyle, flex: "1 1 90px" }}
+              />
+              <input
+                value={city}
+                onChange={(e) => setCity(e.target.value)}
+                placeholder={t.addrCity}
+                aria-label={t.addrCity}
+                maxLength={80}
+                style={{ ...inputStyle, flex: "2 1 130px" }}
+              />
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <input
+                value={stateV}
+                onChange={(e) => setStateV(e.target.value)}
+                placeholder={t.addrState}
+                aria-label={t.addrState}
+                maxLength={40}
+                style={{ ...inputStyle, flex: "1 1 70px" }}
+              />
+              <input
+                value={zip}
+                onChange={(e) => setZip(e.target.value)}
+                placeholder={t.addrZip}
+                aria-label={t.addrZip}
+                maxLength={12}
+                style={{ ...inputStyle, flex: "1 1 90px" }}
+              />
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                type="button"
+                aria-label={t.editAddressSave}
+                title={t.editAddressSave}
+                disabled={saving || !canSave}
+                onClick={save}
+                style={{ ...miniBtn, opacity: saving || !canSave ? 0.45 : 1 }}
+              >
+                <Icon name="check" size={16} color="var(--accent)" />
+              </button>
+              <button
+                type="button"
+                aria-label={t.editAddressCancel}
+                title={t.editAddressCancel}
+                disabled={saving}
+                onClick={() => {
+                  reset();
+                  setEditing(false);
+                }}
+                style={miniBtn}
+              >
+                <Icon name="x" size={16} color="var(--ink-3)" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const line1Text = addr?.line1 ?? "";
+  const aptText = addr?.apartment ? `${line1Text ? " · " : ""}${t.apartmentPrefix} ${addr.apartment}` : "";
+  const hasAddr = !!(addr && (addr.line1 || addr.cityStateZip || addr.city || addr.state || addr.zip));
+
+  return (
+    <div style={ROW_STYLE}>
+      <Icon name="map" size={17} color="var(--ink-3)" />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12, color: "var(--ink-3)", fontWeight: 600 }}>{t.fieldAddress}</div>
+        {hasAddr ? (
+          <div style={{ fontSize: 14, color: "var(--ink)", fontWeight: 700, lineHeight: 1.4, wordBreak: "break-word" }}>
+            <div>
+              {line1Text}
+              {aptText}
+            </div>
+            {addr?.cityStateZip && <div>{addr.cityStateZip}</div>}
+          </div>
+        ) : (
+          <div style={{ fontSize: 14, color: "var(--ink-3)", fontWeight: 700 }}>{t.notProvided}</div>
+        )}
+      </div>
+      {onEditAddress && (
+        <button
+          type="button"
+          aria-label={t.editAddress}
+          title={t.editAddress}
+          onClick={() => {
+            reset();
+            setEditing(true);
+          }}
           style={miniBtn}
         >
           <Icon name="edit" size={15} color="var(--ink-3)" />

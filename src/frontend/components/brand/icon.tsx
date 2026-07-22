@@ -32,6 +32,7 @@ export const ICON_NAMES = [
   "globe",
   "whatsapp",
   "phone",
+  "mail",
   "edit",
   "trophy",
   "star",
@@ -232,6 +233,12 @@ export function Icon({
         d="M6 4h3l1.5 4-2 1.5a11 11 0 0 0 4.5 4.5L15 16l4 1.5V20a1.5 1.5 0 0 1-1.6 1.5C10.5 21 3 13.5 3 6.6 3 5.7 3.7 4 5 4Z"
         {...p}
       />
+    ),
+    mail: (
+      <>
+        <rect x="3.5" y="5.5" width="17" height="13" rx="2.5" {...p} />
+        <path d="m4.5 7.5 7.5 5.5 7.5-5.5" {...p} />
+      </>
     ),
     edit: (
       <>

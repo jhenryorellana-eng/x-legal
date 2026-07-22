@@ -48,7 +48,7 @@ import {
   getAttachmentDownloadUrlAction,
 } from "@/backend/modules/messaging/actions";
 import type { CaseWorkspaceVM, CaseTabId } from "@/frontend/features/shared-case";
-import { mapStatusToPill, buildRutaVM, mapStatementInstallments } from "../../../admin/casos/view-helpers";
+import { mapStatusToPill, buildRutaVM, mapStatementInstallments, mapClientContact } from "../../../admin/casos/view-helpers";
 import {
   reviewDocumentAction,
   setRequirementVisibilityAction,
@@ -249,6 +249,7 @@ export default async function FinanzasCasoDetailPage({
     docsApproved: workspace.doneDocuments,
     docsTotal: workspace.totalDocuments,
     parties,
+    client: mapClientContact(workspace),
     installments,
     planFrequency: statement?.plan?.frequency ?? null,
     planAutopayEnabled: statement?.plan?.autopayEnabled ?? false,
