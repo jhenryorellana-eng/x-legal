@@ -3819,6 +3819,10 @@ export interface FormResolveCache {
    *  Backs the `field_copy` source so a form that copies several fields from the same
    *  target loads it once. Same evict-on-rejection rule as docBySlug. */
   responseBySlug?: Map<string, Promise<Awaited<ReturnType<typeof loadResponseAnswersBySlug>>>>;
+  /** Memoized question set per automation version. Backs the `field_copy` effective-value
+   *  chase so N copies from the SAME frozen target version (e.g. the mailing cover's
+   *  name + OPLA, both from the EOIR-26) resolve the version's questions once. */
+  questionsByVersion?: Map<string, Promise<QuestionValidationRule[]>>;
 }
 
 /** True when a client_answer question carries a catalog default_value (string
@@ -3904,6 +3908,21 @@ export async function resolveBySource(
         throw e;
       });
       cache.responseBySlug.set(key, p);
+    }
+    return p;
+  };
+  // Memoized question set of a target automation version (field_copy effective chase).
+  // Same evict-on-rejection rule as the loaders above.
+  const loadQuestionsForVersion = (versionId: string): Promise<QuestionValidationRule[]> => {
+    if (!cache) return getQuestionsForVersion(versionId);
+    cache.questionsByVersion ??= new Map();
+    let p = cache.questionsByVersion.get(versionId);
+    if (!p) {
+      p = getQuestionsForVersion(versionId).catch((e) => {
+        cache.questionsByVersion?.delete(versionId);
+        throw e;
+      });
+      cache.questionsByVersion.set(versionId, p);
     }
     return p;
   };
@@ -4119,12 +4138,45 @@ export async function resolveBySource(
     if (!formSlug || !targetQid) return null;
     const target = await loadResponseAnswers(formSlug);
     if (!target) return null;
+    const isBlank = (x: unknown) => x === undefined || x === null || x === "";
+    let effectiveTargetId = targetQid;
     let v = target.answers[targetQid];
     // Stable fallback: the target form was re-published and its ids changed, but the
     // pdf_field_name did not → resolve the id inside the target response's pinned version.
-    if ((v === undefined || v === null || v === "") && targetPdfName && target.automationVersionId) {
+    if (isBlank(v) && targetPdfName && target.automationVersionId) {
       const fallbackId = await findQuestionIdByPdfName(target.automationVersionId, targetPdfName);
-      if (fallbackId) v = target.answers[fallbackId];
+      if (fallbackId) {
+        effectiveTargetId = fallbackId;
+        v = target.answers[fallbackId];
+      }
+    }
+    // Robustness: the target field's value may live in its OWN source (profile /
+    // document_extraction / generation_output), or be a catalog default_value on a
+    // client_answer field — never persisted into the target form's `answers` (a frozen
+    // automation-version form resolves those at render time, not on submit). Resolve the
+    // target question's source so field_copy carries the same value the target's PDF
+    // stamps (e.g. the appellant name the EOIR-26 #10 draws from the judge's decision).
+    // Bounded to ONE level: excludes `field_copy` (no cycles) and `computed`/`ai_field`
+    // (a total needs siblings; an ai_field would fire a surprise model call during a copy).
+    if (isBlank(v) && target.automationVersionId) {
+      const targetQuestions = await loadQuestionsForVersion(target.automationVersionId);
+      const tq = targetQuestions.find((q) => q.id === effectiveTargetId) as
+        | { id: string; source?: string | null; source_ref?: unknown }
+        | undefined;
+      const tSrc = tq?.source ?? null;
+      if (tq && tSrc && tSrc !== "field_copy" && tSrc !== "computed" && tSrc !== "ai_field") {
+        try {
+          v = await resolveBySource(
+            { id: tq.id, source: tSrc, source_ref: tq.source_ref },
+            target.answers,
+            caseId,
+            partyId,
+            cache,
+          );
+        } catch {
+          /* leave blank — degrades to null below (an honest empty, never a throw) */
+        }
+      }
     }
     return v === undefined || v === "" ? null : v;
   }
@@ -4137,6 +4189,91 @@ export async function resolveBySource(
   if (source === "computed") return null;
 
   return null;
+}
+
+/**
+ * Resolves the EFFECTIVE answers for a set of questions: the persisted answer wins,
+ * otherwise the value is resolved from the question's `source` exactly as the PDF fill
+ * and submit-validation do. This is the single source of truth for "what value does
+ * this field actually carry", regardless of whether a source-backed value happened to
+ * be persisted into `answers` — a frozen automation-version form never persists source
+ * values (profile / document_extraction / field_copy / web_research); it resolves them
+ * at render/validation time.
+ *
+ * - `computed` is skipped (derived at fill time from siblings).
+ * - `client_answer` resolves nothing unless it carries a catalog default_value.
+ * - `ai_field` is resolved ONLY when `resolveAiField` is true: it triggers a live AI
+ *   call, wanted for the submit gate (a required interpreted field must not read as
+ *   missing) but NOT for the deterministic generation fills (they reference concrete
+ *   data fields; an unresolved ai_field there would be a costly, pointless model call).
+ *
+ * Memoizes source lookups via a request-scoped FormResolveCache. Never throws — a
+ * failed lookup leaves the field empty (the completeness gate still surfaces a
+ * genuinely missing required value).
+ */
+export async function resolveEffectiveAnswers(
+  caseId: string,
+  partyId: string | null,
+  questions: Array<{ id: string; source?: string | null; source_ref?: unknown }>,
+  answers: Record<string, unknown>,
+  opts?: { resolveAiField?: boolean },
+): Promise<Record<string, unknown>> {
+  const resolveAiField = opts?.resolveAiField ?? false;
+  const effective: Record<string, unknown> = { ...answers };
+  const cache: FormResolveCache = {};
+  const isEmpty = (v: unknown) => v === undefined || v === null || v === "";
+  for (const q of questions) {
+    const src = q.source ?? "client_answer";
+    if (src === "computed") continue;
+    if (src === "ai_field" && !resolveAiField) continue;
+    // client_answer resolves nothing EXCEPT when the catalog gave it a default_value
+    // (the wizard shows it as a prefill and the PDF stamps it).
+    const hasClientDefault = src === "client_answer" && hasClientDefaultValue(q.source_ref);
+    if (src === "client_answer" && !hasClientDefault) continue;
+    if (!isEmpty(effective[q.id])) continue;
+    try {
+      const resolved = await resolveBySource(
+        { id: q.id, source: src, source_ref: q.source_ref },
+        answers,
+        caseId,
+        partyId,
+        cache,
+      );
+      if (!isEmpty(resolved)) effective[q.id] = resolved;
+    } catch {
+      // leave empty — a genuinely missing required value still surfaces via the gate
+    }
+  }
+  return effective;
+}
+
+/**
+ * Effective answers ({questionId → value}) for a saved form response. A frozen
+ * automation-version form (EOIR-26, mailing-cover questionnaire, any pdf form) resolves
+ * its source-backed fields (profile / document_extraction / field_copy) that were never
+ * persisted into `answers`. An instance-backed questionnaire already materializes its
+ * base + AI answers at submit, so its persisted answers ARE the effective answers.
+ *
+ * Consumed by the deterministic generation fills (ai-engine letter_fill / mailing_cover)
+ * so a generated court letter / mailing cover reads exactly what the form's PDF stamps —
+ * never a blank because the value lived in the source rather than in `answers`. Excludes
+ * `ai_field` (never referenced by a fill; would fire a needless model call).
+ */
+export async function resolveEffectiveAnswersByResponse(
+  responseId: string,
+): Promise<Record<string, unknown>> {
+  const response = await findFormResponseById(responseId);
+  if (!response) return {};
+  const answers = (response.answers ?? {}) as Record<string, unknown>;
+  // Only frozen automation-version forms leave source values unpersisted. Instance
+  // questionnaires materialize them at submit → persisted answers already complete.
+  if (!response.automation_version_id) return answers;
+  const questions = (await getQuestionsForVersion(response.automation_version_id)) as Array<{
+    id: string;
+    source?: string | null;
+    source_ref?: unknown;
+  }>;
+  return resolveEffectiveAnswers(response.case_id, response.party_id, questions, answers);
 }
 
 /**
@@ -5859,33 +5996,17 @@ export async function submitFormResponse(
     // filled at render/PDF time via resolveBySource — their value lives in the
     // source, not in `answers`. Resolve them so a REQUIRED prefilled field (e.g.
     // the client's name from profile) isn't falsely reported as "missing" on submit.
-    const effective: Record<string, unknown> = { ...answers };
-    for (const q of questions as Array<QuestionValidationRule & { source?: string; source_ref?: unknown }>) {
-      const src = q.source ?? "client_answer";
-      // `computed` totals are derived at fill time and validated there; they are
-      // never client-answered and their formatted value ("1,400.00") isn't a bare
-      // number — validating them here would only produce false errors. (Also
-      // excluded from validateAnswerTypes below.)
-      if (src === "computed") continue;
-      // client_answer questions resolve nothing — EXCEPT when the catalog gave
-      // them a default_value (ola apelación): the wizard showed it as a prefill
-      // and the PDF will stamp it, so validation must see it too.
-      const hasClientDefault = src === "client_answer" && hasClientDefaultValue(q.source_ref);
-      if (src === "client_answer" && !hasClientDefault) continue;
-      const cur = effective[q.id];
-      if (cur !== undefined && cur !== null && cur !== "") continue;
-      try {
-        const resolved = await resolveBySource(
-          { id: q.id, source: src, source_ref: q.source_ref },
-          answers,
-          parsed.caseId,
-          partyId,
-        );
-        if (resolved !== undefined && resolved !== null && resolved !== "") effective[q.id] = resolved;
-      } catch {
-        // leave empty — a genuinely missing required value still surfaces below
-      }
-    }
+    // Effective answers: source-backed fields (profile / document_extraction /
+    // field_copy) live in the source, not in `answers`. Resolve them — incl. ai_field,
+    // so a REQUIRED interpreted field isn't falsely reported "missing" on submit — so
+    // validation sees exactly what the PDF stamps. Shared resolver (memoized).
+    const effective = await resolveEffectiveAnswers(
+      parsed.caseId,
+      partyId,
+      questions as Array<{ id: string; source?: string | null; source_ref?: unknown }>,
+      answers,
+      { resolveAiField: true },
+    );
     const errors = validateAnswerTypes(
       effective,
       questions.filter((q) => ((q as { source?: string }).source ?? "client_answer") !== "computed"),

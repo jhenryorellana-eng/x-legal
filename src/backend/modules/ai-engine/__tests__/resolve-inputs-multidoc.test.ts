@@ -49,6 +49,14 @@ vi.mock("@/backend/platform/embeddings", () => ({
   toVectorLiteral: vi.fn(() => "[]"),
 }));
 
+// cases (module-pub) — loadResolvedInputs({ effectiveForms:true }) dynamically imports
+// resolveEffectiveAnswersByResponse. Harmless to the other tests: without the option the
+// import never runs.
+const casesMock = vi.hoisted(() => ({ resolveEffectiveAnswersByResponse: vi.fn() }));
+vi.mock("@/backend/modules/cases", () => ({
+  resolveEffectiveAnswersByResponse: casesMock.resolveEffectiveAnswersByResponse,
+}));
+
 import { resolveGenerationInputs, loadResolvedInputs } from "../repository";
 import { logger } from "@/backend/platform/logger";
 import type { ConfigSnapshot } from "../domain";
@@ -259,5 +267,53 @@ describe("loadResolvedInputs — form answers filtered by provenance", () => {
 
     expect(loaded.forms[0].answers).toEqual({ a: "x" });
     expect(loaded.forms[0].declaredGaps).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Deterministic-fill regression — effectiveForms resolves source-backed answers
+// (the appellant address & OPLA that a frozen form never persisted into `answers`).
+// ---------------------------------------------------------------------------
+
+describe("loadResolvedInputs — effectiveForms (source-resolved for deterministic fills)", () => {
+  function formSnapshot(): ConfigSnapshot {
+    return {
+      resolved_inputs: { documents: [], forms: [{ slug: "eoir-26", response_id: "resp-1" }] },
+    } as unknown as ConfigSnapshot;
+  }
+
+  it("uses the EFFECTIVE (source-resolved) answers, not the sparse persisted ones", async () => {
+    // The persisted row carries ONLY the web_research OPLA answer; the profile-sourced
+    // address was never stored. The effective resolver fills it in.
+    mocks.queues.set("case_form_responses", [
+      { data: { answers: { "q-opla": "970 Broad Street" }, answer_provenance: null } },
+      { data: null }, // loadQuestionLabelsForResponse → empty labels → keyed by id
+    ]);
+    mocks.queues.set("form_automation_versions", [{ data: null }]);
+    casesMock.resolveEffectiveAnswersByResponse.mockResolvedValue({
+      "q-street": "1206 BOWER ST",
+      "q-opla": "970 Broad Street",
+    });
+
+    const loaded = await loadResolvedInputs(formSnapshot(), { effectiveForms: true });
+
+    expect(casesMock.resolveEffectiveAnswersByResponse).toHaveBeenCalledWith("resp-1");
+    expect(loaded.forms[0].answers).toEqual({
+      "q-street": "1206 BOWER ST",
+      "q-opla": "970 Broad Street",
+    });
+  });
+
+  it("does NOT resolve sources on the default (prompt) path — persisted answers only", async () => {
+    mocks.queues.set("case_form_responses", [
+      { data: { answers: { "q-opla": "970 Broad Street" }, answer_provenance: null } },
+      { data: null },
+    ]);
+    mocks.queues.set("form_automation_versions", [{ data: null }]);
+
+    const loaded = await loadResolvedInputs(formSnapshot()); // no effectiveForms
+
+    expect(casesMock.resolveEffectiveAnswersByResponse).not.toHaveBeenCalled();
+    expect(loaded.forms[0].answers).toEqual({ "q-opla": "970 Broad Street" });
   });
 });

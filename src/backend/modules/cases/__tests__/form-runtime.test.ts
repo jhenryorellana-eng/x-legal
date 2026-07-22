@@ -538,7 +538,7 @@ describe("validateAnswerTypes", () => {
 // Service: saveFormDraft
 // ---------------------------------------------------------------------------
 
-import { saveFormDraft, staffUpdateFormAnswers, submitFormResponse, approveFormResponse, generateFilledPdf, resolveFormResponseFieldValues, resolveBySource, resolveAiFields, getCaseExtractions, getFormForClient, reopenQuestionnaireForClientInput } from "../service";
+import { saveFormDraft, staffUpdateFormAnswers, submitFormResponse, approveFormResponse, generateFilledPdf, resolveFormResponseFieldValues, resolveBySource, resolveEffectiveAnswers, resolveEffectiveAnswersByResponse, resolveAiFields, getCaseExtractions, getFormForClient, reopenQuestionnaireForClientInput } from "../service";
 
 describe("saveFormDraft", () => {
   beforeEach(() => {
@@ -2642,6 +2642,59 @@ describe("resolveBySource", () => {
     expect(mockLoadResponseAnswersBySlug).toHaveBeenCalledTimes(1);
   });
 
+  // Part B robustness: the copied field's value may live in the TARGET's own source
+  // (never persisted into a frozen form's answers) — field_copy must resolve it.
+  it("field_copy resolves the target field's OWN source when its persisted answer is blank", async () => {
+    mockLoadResponseAnswersBySlug.mockResolvedValue({
+      answers: {}, // the EOIR-26 street address (source: profile) is not persisted
+      automationVersionId: "eoir-ver",
+    });
+    mockListQuestionGroups.mockResolvedValue([{ id: "g1" }]);
+    mockListQuestions.mockResolvedValue([
+      { id: "eoir-street", source: "profile", source_ref: { profile_field: "address.line1" } },
+    ]);
+    mockFindCasePrimaryClient.mockResolvedValue(CLIENT_ID);
+    mockFindClientProfileForForm.mockResolvedValue({ address: { line1: "1206 BOWER ST" } });
+
+    const result = await resolveBySource(
+      { id: "q-cover-name", source: "field_copy", source_ref: { form_slug: "eoir-26", target_question_id: "eoir-street" } },
+      {},
+      CASE_ID,
+      null,
+    );
+    expect(result).toBe("1206 BOWER ST");
+  });
+
+  it("field_copy does NOT chase a target whose own source is itself field_copy (recursion guard)", async () => {
+    mockLoadResponseAnswersBySlug.mockResolvedValue({ answers: {}, automationVersionId: "eoir-ver" });
+    mockListQuestionGroups.mockResolvedValue([{ id: "g1" }]);
+    mockListQuestions.mockResolvedValue([
+      { id: "eoir-copyy", source: "field_copy", source_ref: { form_slug: "other", target_question_id: "x" } },
+    ]);
+    const result = await resolveBySource(
+      { id: "q-cover", source: "field_copy", source_ref: { form_slug: "eoir-26", target_question_id: "eoir-copyy" } },
+      {},
+      CASE_ID,
+      null,
+    );
+    expect(result).toBeNull();
+  });
+
+  it("field_copy resolves a target client_answer catalog default when its answer is blank", async () => {
+    mockLoadResponseAnswersBySlug.mockResolvedValue({ answers: {}, automationVersionId: "eoir-ver" });
+    mockListQuestionGroups.mockResolvedValue([{ id: "g1" }]);
+    mockListQuestions.mockResolvedValue([
+      { id: "eoir-method", source: "client_answer", source_ref: { default_value: "first_class_mail" } },
+    ]);
+    const result = await resolveBySource(
+      { id: "q-cover", source: "field_copy", source_ref: { form_slug: "eoir-26", target_question_id: "eoir-method" } },
+      {},
+      CASE_ID,
+      null,
+    );
+    expect(result).toBe("first_class_mail");
+  });
+
   it("resolves profile.email from users table", async () => {
     mockFindCasePrimaryClient.mockResolvedValue(CLIENT_ID);
     mockFindUserContactFields.mockResolvedValue({ phone_e164: "+13055550100", email: "maria@example.com" });
@@ -2689,6 +2742,94 @@ describe("resolveBySource", () => {
       null,
     );
     expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Service: resolveEffectiveAnswers / resolveEffectiveAnswersByResponse
+// (source-resolved answers for the deterministic generation fills)
+// ---------------------------------------------------------------------------
+
+describe("resolveEffectiveAnswers", () => {
+  it("resolves a source-backed field that was never persisted (profile → address)", async () => {
+    mockFindCasePrimaryClient.mockResolvedValue(CLIENT_ID);
+    mockFindClientProfileForForm.mockResolvedValue({ address: { line1: "1206 BOWER ST" } });
+    const out = await resolveEffectiveAnswers(
+      CASE_ID,
+      null,
+      [{ id: "q-street", source: "profile", source_ref: { profile_field: "address.line1" } }],
+      {},
+    );
+    expect(out["q-street"]).toBe("1206 BOWER ST");
+  });
+
+  it("the persisted answer WINS over the source (no re-resolution)", async () => {
+    mockFindCasePrimaryClient.mockResolvedValue(CLIENT_ID);
+    mockFindClientProfileForForm.mockResolvedValue({ address: { line1: "FROM PROFILE" } });
+    const out = await resolveEffectiveAnswers(
+      CASE_ID,
+      null,
+      [{ id: "q-street", source: "profile", source_ref: { profile_field: "address.line1" } }],
+      { "q-street": "TYPED BY CLIENT" },
+    );
+    expect(out["q-street"]).toBe("TYPED BY CLIENT");
+  });
+
+  it("skips computed and (by default) ai_field questions", async () => {
+    const out = await resolveEffectiveAnswers(
+      CASE_ID,
+      null,
+      [
+        { id: "q-total", source: "computed", source_ref: {} },
+        { id: "q-ai", source: "ai_field", source_ref: { connected: { kind: "document", slug: "x" }, instruction: "y" } },
+      ],
+      {},
+    );
+    expect(out["q-total"]).toBeUndefined();
+    expect(out["q-ai"]).toBeUndefined();
+  });
+});
+
+describe("resolveEffectiveAnswersByResponse", () => {
+  it("resolves source fields for a frozen automation-version form", async () => {
+    mockFindFormResponseById.mockResolvedValue({
+      id: "resp-1",
+      case_id: CASE_ID,
+      party_id: null,
+      automation_version_id: "eoir-ver",
+      answers: { "q-opla": "970 Broad Street" }, // web_research persisted
+    });
+    mockListQuestionGroups.mockResolvedValue([{ id: "g1" }]);
+    mockListQuestions.mockResolvedValue([
+      { id: "q-street", source: "profile", source_ref: { profile_field: "address.line1" } },
+      { id: "q-opla", source: "web_research", source_ref: {} },
+    ]);
+    mockFindCasePrimaryClient.mockResolvedValue(CLIENT_ID);
+    mockFindClientProfileForForm.mockResolvedValue({ address: { line1: "1206 BOWER ST" } });
+
+    const out = await resolveEffectiveAnswersByResponse("resp-1");
+    expect(out["q-street"]).toBe("1206 BOWER ST"); // resolved from source
+    expect(out["q-opla"]).toBe("970 Broad Street"); // persisted kept
+  });
+
+  it("returns the persisted answers as-is for an instance-backed questionnaire", async () => {
+    mockFindFormResponseById.mockResolvedValue({
+      id: "resp-2",
+      case_id: CASE_ID,
+      party_id: null,
+      automation_version_id: null, // instance-backed → answers already materialized
+      answers: { q1: "kept" },
+    });
+    mockListQuestions.mockClear();
+    const out = await resolveEffectiveAnswersByResponse("resp-2");
+    expect(out).toEqual({ q1: "kept" });
+    expect(mockListQuestions).not.toHaveBeenCalled();
+  });
+
+  it("returns empty when the response does not exist", async () => {
+    mockFindFormResponseById.mockResolvedValue(null);
+    const out = await resolveEffectiveAnswersByResponse("missing");
+    expect(out).toEqual({});
   });
 });
 

@@ -1456,8 +1456,21 @@ export async function loadDatasetItems(
 
 /**
  * Loads resolved inputs (extraction payloads, form answers) from config_snapshot.
+ *
+ * `opts.effectiveForms` swaps each form's persisted `answers` for its EFFECTIVE answers
+ * (persisted value, else resolved from the question's source — profile / extraction /
+ * field_copy — exactly as the form's PDF fill does). This is what the DETERMINISTIC
+ * generation fills (letter_fill / mailing_cover) consume: a court letter's appellant
+ * address or a mailing cover's OPLA address must never be blank just because the value
+ * lived in the source rather than in `answers` (a frozen automation-version form —
+ * EOIR-26, the mailing-cover questionnaire — never persists source values). The MODEL
+ * prompt path leaves this off, so it sees exactly what it saw before (no output drift,
+ * no new PII surface).
  */
-export async function loadResolvedInputs(snapshot: ConfigSnapshot): Promise<{
+export async function loadResolvedInputs(
+  snapshot: ConfigSnapshot,
+  opts?: { effectiveForms?: boolean },
+): Promise<{
   documents: Array<{
     slug: string;
     extractionPayload: Record<string, unknown>;
@@ -1474,6 +1487,16 @@ export async function loadResolvedInputs(snapshot: ConfigSnapshot): Promise<{
   const client = createServiceClient();
   const documents = [];
   const forms = [];
+
+  // Lazily bound only when resolving effective answers — keeps the (hot) prompt path
+  // free of the cases dependency. ai-engine (module-int) → cases (module-pub): allowed.
+  const resolveEffective = opts?.effectiveForms
+    ? (
+        (await import("@/backend/modules/cases")) as {
+          resolveEffectiveAnswersByResponse: (responseId: string) => Promise<Record<string, unknown>>;
+        }
+      ).resolveEffectiveAnswersByResponse
+    : null;
 
   for (const docRef of snapshot.resolved_inputs.documents) {
     const { data } = await client
@@ -1538,13 +1561,30 @@ export async function loadResolvedInputs(snapshot: ConfigSnapshot): Promise<{
 
     if (data) {
       const rawAnswers = (data.answers as Record<string, unknown>) ?? {};
+      // effectiveForms: resolve source-backed fields (profile / extraction / field_copy)
+      // that a frozen form never persisted, so the deterministic fills see them. The
+      // resolved values carry NO provenance → they pass the ai_gap_filled filter below
+      // unaffected; a persisted fabricated answer is still dropped by question id. A
+      // resolution failure degrades to the persisted answers (fills fall back to a blank
+      // line) rather than aborting the whole generation job.
+      let sourceAnswers = rawAnswers;
+      if (resolveEffective) {
+        try {
+          sourceAnswers = await resolveEffective(formRef.response_id);
+        } catch (err) {
+          logger.warn(
+            { err, responseId: formRef.response_id },
+            "loadResolvedInputs: effective-answer resolution failed — degrading to persisted answers",
+          );
+        }
+      }
       // Re-key by human-readable question text so the prompt reads
       // "¿Pregunta?: respuesta" instead of "uuid: respuesta" (the AI needs wording).
       const labels = await loadQuestionLabelsForResponse(formRef.response_id);
       const provenance = parseProvenanceMap(data.answer_provenance);
       const answers: Record<string, unknown> = {};
       const declaredGaps: string[] = [];
-      for (const [questionId, value] of Object.entries(rawAnswers)) {
+      for (const [questionId, value] of Object.entries(sourceAnswers)) {
         const label = labels.get(questionId) ?? questionId;
         // Excludes ONLY what we know was fabricated — deliberately stricter than
         // the completeness gate, which also blocks on `unknown`.

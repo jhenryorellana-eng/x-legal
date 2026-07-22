@@ -59,6 +59,8 @@ export {
   getFormResponseMeta,
   getFormResponsePdfUrl,
   resolveBySource,
+  // Effective (source-resolved) answers for the deterministic generation fills
+  resolveEffectiveAnswersByResponse,
   // Ola perf — ai_field prefill warm-up (LLM never on the read path)
   enqueueAiPrefillWarm,
   warmAiFieldCacheForCase,

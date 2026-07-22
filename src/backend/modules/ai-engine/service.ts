@@ -603,16 +603,17 @@ export async function executeGenerationJob(
 
   const snapshot = run.config_snapshot as unknown as ConfigSnapshot;
 
-  // Load inputs
-  const inputs = await loadResolvedInputs(snapshot);
-
   // Deterministic mailing cover ("Carátula de Envío"): NO model call — the whole
   // document is fixed text plus two confirmed answers (client name + OPLA address).
   // Its presence on the config is the single discriminator (see 0105). Branch here,
-  // before the dataset/prompt work, so no tokens or extra queries are ever spent.
+  // before the dataset/prompt work (and before loading prompt inputs), so no tokens or
+  // extra queries are ever spent — it resolves its own effective inputs internally.
   if (snapshot.mailing_cover) {
-    return runMailingCoverGeneration(run, snapshot, inputs);
+    return runMailingCoverGeneration(run, snapshot);
   }
+
+  // Load inputs (model prompt path — persisted answers, unchanged).
+  const inputs = await loadResolvedInputs(snapshot);
 
   const datasetItems = await loadDatasetItems(snapshot.dataset_id);
   const runContext: RunContext = {};
@@ -894,16 +895,20 @@ function mailingCoverToText(data: {
 async function runMailingCoverGeneration(
   run: GenerationRunRow & { orgId: string },
   snapshot: ConfigSnapshot,
-  inputs: ResolvedInputs,
 ): Promise<JobOutcome> {
   if (await isCancelled(run.id)) return "cancelled";
 
   const { resolveMailingCoverValues } = await import("./mailing-cover");
+  // Effective answers: the OPLA address is a field_copy from the EOIR-26 (source), not
+  // persisted into the mailing-cover questionnaire's `answers` — resolve it so the
+  // envelope isn't blank (mirrors the renderAndStore branch below, shared by reRenderRun).
+  const inputs = await loadResolvedInputs(snapshot, { effectiveForms: true });
   const outputText = mailingCoverToText(resolveMailingCoverValues(snapshot.mailing_cover!, inputs));
 
   let outputPath: string | null = null;
   try {
-    outputPath = await renderAndStore(outputText, run, snapshot);
+    // Reuse the inputs already resolved above — no second effective-answer pass.
+    outputPath = await renderAndStore(outputText, run, snapshot, inputs);
   } catch (renderErr) {
     logger.warn({ err: renderErr, runId: run.id }, "run-generation(mailing-cover): render failed");
   }
@@ -1317,16 +1322,17 @@ async function runSectionedGeneration(
  *
  * Shared by renderAndStore (the filed PDF) and the Pre-Mortem validator so the
  * validator judges the SAME resolved facts the document carries — never a raw
- * {{OCC_ADDRESS}} token. `inputs` may be pre-loaded (the Pre-Mortem already resolved
- * the source material) to avoid a second DB round-trip; otherwise it is loaded from
- * the snapshot. The signature token is intentionally NOT handled here: the render
- * stamps an approved image (or a printable line); validation uses a readable label.
+ * {{OCC_ADDRESS}} token. The letter_fill values come from the case's EFFECTIVE form
+ * answers (persisted value, else resolved from the field's source) so the appellant's
+ * address/phone — captured on the EOIR-26 as `source: profile`, never persisted into
+ * `answers` — fill deterministically instead of degrading to a blank line. The
+ * signature token is intentionally NOT handled here: the render stamps an approved
+ * image (or a printable line); validation uses a readable label.
  */
 async function resolveDeterministicLetterTokens(
   text: string,
   run: { id: string; case_id: string; orgId: string },
   snapshot: ConfigSnapshot,
-  inputs?: ResolvedInputs,
 ): Promise<string> {
   let out = text;
   // Current-date token (day of generation, in the org timezone).
@@ -1346,7 +1352,9 @@ async function resolveDeterministicLetterTokens(
   // Deterministic letter fills (config-as-data: ai_generation_configs.letter_fill).
   if (snapshot.letter_fill) {
     const { resolveLetterFillTokens } = await import("./letter-fill");
-    const li = inputs ?? (await loadResolvedInputs(snapshot));
+    // Effective form answers (persisted, else source-resolved) — so the appellant
+    // contact block fills from the EOIR-26's profile-sourced address, not a blank line.
+    const li = await loadResolvedInputs(snapshot, { effectiveForms: true });
     out = resolveLetterFillTokens(out, snapshot.letter_fill, li, (field) =>
       logger.warn(
         { runId: run.id, caseId: run.case_id, field },
@@ -1361,6 +1369,10 @@ async function renderAndStore(
   outputText: string,
   run: GenerationRunRow & { orgId: string },
   snapshot: ConfigSnapshot,
+  // Optional pre-resolved effective inputs for the mailing_cover branch — lets the
+  // initial generation pass the set it already loaded (avoids a second effective-answer
+  // resolution). reRenderRun omits it and the branch loads its own.
+  mailingInputs?: ResolvedInputs,
 ): Promise<string | null> {
   const fmt = snapshot.output_format ?? "pdf";
   const path = `generated/runs/${run.id}/output.${fmt}`;
@@ -1376,7 +1388,9 @@ async function renderAndStore(
     const { loadResolvedInputs } = await import("./repository");
     const { resolveMailingCoverValues } = await import("./mailing-cover");
     const { renderMailingCoverPdf } = await import("@/backend/platform/pdf");
-    const li = await loadResolvedInputs(snapshot);
+    // Effective answers so the OPLA envelope (field_copy from the EOIR-26) resolves from
+    // source instead of a blank — same reason a corrected OPLA re-renders with no model.
+    const li = mailingInputs ?? (await loadResolvedInputs(snapshot, { effectiveForms: true }));
     const bytes = await renderMailingCoverPdf(resolveMailingCoverValues(snapshot.mailing_cover, li));
     const { error } = await supabase.storage
       .from("generated")
@@ -6139,12 +6153,7 @@ async function resolvePreMortemContext(input: {
     try {
       const snap = run.config_snapshot as ConfigSnapshot | null;
       if (snap) {
-        memoForValidation = await resolveDeterministicLetterTokens(
-          outputText,
-          run,
-          snap,
-          aiLetterSourceInputs ?? undefined,
-        );
+        memoForValidation = await resolveDeterministicLetterTokens(outputText, run, snap);
       }
       // Signature token → the standard printable signature line (what the render
       // draws when there is no stamped image). Must NOT use brackets/«»/{{}} — those
