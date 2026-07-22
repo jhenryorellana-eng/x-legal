@@ -24,6 +24,7 @@ import {
 import {
   renderCoverPdf,
   compileExpedientePdf,
+  flattenAcroAppearances,
 } from "@/backend/platform/pdf";
 import type { ExpedienteItemInput } from "@/backend/platform/pdf";
 import { writeAudit } from "@/backend/modules/audit";
@@ -1448,7 +1449,20 @@ async function resolveItemBytes(
   }
 
   const arrayBuffer = await data.arrayBuffer();
-  return { bytes: new Uint8Array(arrayBuffer), mimeType };
+  let bytes: Uint8Array = new Uint8Array(arrayBuffer);
+
+  // Person-uploaded PDFs (client documents, external files) may be Acrobat-filled forms
+  // that lost their appearance streams in a merge tool (e.g. iLovePDF): the field VALUES
+  // survive but NeedAppearances is unset, so pdfium/printers/mupdf render them BLANK
+  // (only Acrobat regenerates them, which is why the client sees them filled). Normalize
+  // appearances so the values print. No-op for scans and our own generated PDFs. The
+  // items WE generate (ai_generation, automated_form, translation, cover) are already
+  // rendered/baked correctly, so they skip this pass. See docs/_evidence/asilo-blanco-xfa/.
+  if (item.item_type === "client_document" || item.item_type === "external_file") {
+    bytes = await flattenAcroAppearances(bytes);
+  }
+
+  return { bytes, mimeType };
 }
 
 // ---------------------------------------------------------------------------

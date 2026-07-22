@@ -495,6 +495,92 @@ export async function fillAcroForm(
 }
 
 // ---------------------------------------------------------------------------
+// D1b. flattenAcroAppearances — make an uploaded form's VALUES render (read-side)
+// ---------------------------------------------------------------------------
+
+/**
+ * Normalizes a person-uploaded form PDF so its field VALUES become VISIBLE, WITHOUT
+ * changing any value. It regenerates every widget's appearance stream from its current
+ * value (`update()`), sets `NeedAppearances`, and `bake()`s the widgets into page
+ * content. This is the READ-side twin of `fillAcroForm`'s XFA-safe recipe (that one
+ * WRITES values; this one only makes existing values paint).
+ *
+ * WHY: a PDF someone fills in Acrobat and then runs through a merge tool (e.g. iLovePDF)
+ * commonly keeps the field values (`/V`) but drops the appearance streams AND leaves
+ * `NeedAppearances` unset. Acrobat regenerates appearances from the value on the fly, so
+ * the person sees a filled form — but pdfium / Chrome / most printers / mupdf do NOT, so
+ * the fields print BLANK. Baking turns the values into page content, so EVERY renderer
+ * shows them and the later verbatim `graftPage` into the expediente stays intact.
+ * Evidence: docs/_evidence/asilo-blanco-xfa/ (I-589 filed as an annex, printed blank).
+ *
+ * Best-effort + idempotent: a PDF with no AcroForm/widgets (a scan, or our own html→pdf
+ * output, or an already-baked `fillAcroForm` result) is returned UNCHANGED — no re-save.
+ * Any failure degrades to the original bytes so a normalization glitch never blocks a
+ * compile.
+ */
+export async function flattenAcroAppearances(bytes: Uint8Array): Promise<Uint8Array> {
+  try {
+    const mupdf = await import("mupdf");
+
+    const M = mupdf as any;
+    const doc = M.Document.openDocument(bytes, "application/pdf");
+    try {
+      // Fast exit: no AcroForm dict → nothing to normalize (scans, generated PDFs).
+      const acro = doc.getTrailer?.()?.get?.("Root")?.get?.("AcroForm");
+      if (!acro) return bytes;
+
+      // Regenerate each widget's appearance from its (unchanged) value. Skip docs with
+      // zero widgets on every page (e.g. an already-baked form) to avoid a pointless
+      // re-save that would only bloat/alter bytes.
+      let anyWidget = false;
+      const n: number = doc.countPages();
+      for (let i = 0; i < n; i++) {
+        const page = doc.loadPage(i);
+        const widgets: unknown[] = (page as { getWidgets?: () => unknown[] }).getWidgets?.() ?? [];
+        if (widgets.length === 0) continue;
+        anyWidget = true;
+        for (const w of widgets) {
+          try {
+            (w as { update?: () => void }).update?.();
+          } catch {
+            // per-widget best-effort — one bad field never aborts the pass
+          }
+        }
+      }
+      if (!anyWidget) return bytes;
+
+      // NeedAppearances helps any viewer that still reads live widgets; bake() then
+      // flattens them into content so even non-form-aware renderers/printers show them.
+      try {
+        acro.put("NeedAppearances", doc.newBoolean?.(true) ?? true);
+      } catch {
+        // non-fatal: bake() below is the primary fix
+      }
+      try {
+        doc.bake?.();
+      } catch {
+        // bake unavailable on some mupdf builds → NeedAppearances still improves matters
+      }
+
+      return doc.saveToBuffer("garbage=4,compress=yes").asUint8Array() as Uint8Array;
+    } finally {
+      try {
+        doc.destroy?.();
+      } catch {
+        /* freed */
+      }
+    }
+  } catch (err) {
+    const { logger } = await import("./logger");
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      "flattenAcroAppearances: degraded (returning original bytes)",
+    );
+    return bytes;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // D2. backfillNaTextFields — USCIS "no blank box" acceptance rule
 // ---------------------------------------------------------------------------
 
