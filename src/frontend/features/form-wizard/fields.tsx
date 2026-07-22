@@ -45,6 +45,16 @@ export interface FieldProps {
    * injected the action — absent = no button (admin preview, disabled fields).
    */
   onImprove?: (text: string) => Promise<{ ok: boolean; improvedText?: string; error?: { code: string } }>;
+  /**
+   * web_research "Buscar": runs an internet search for this field (buscador + IA).
+   * Present only for a web_research question when the surface injected the action.
+   */
+  onResearch?: (query: string) => Promise<{
+    ok: boolean;
+    address?: string;
+    sources?: Array<{ uri: string; title: string | null }>;
+    error?: { code: string };
+  }>;
 }
 
 function originLabel(source: string, labels: WizardLabels): string {
@@ -775,6 +785,168 @@ function LockNote({ message }: { message: string }) {
   );
 }
 
+// --- web_research (buscador + IA) -------------------------------------------
+
+type ResearchState = "idle" | "loading" | "error";
+
+/**
+ * web_research widget: a search box on top (staff types a query → "Buscar") and a
+ * READ-ONLY result box below that only the AI search fills — with a "corregir a mano"
+ * escape hatch for the legal-safety case where the search is wrong. The result box is
+ * the field's answer (flows through onChange like any other field).
+ */
+function WebResearchField(
+  props: FieldProps & { disabled?: boolean },
+) {
+  const { question, value, onChange, onBlur, onResearch, locale, labels, disabled } = props;
+  const current = typeof value === "string" ? value : value == null ? "" : String(value);
+  const [query, setQuery] = React.useState("");
+  const [state, setState] = React.useState<ResearchState>("idle");
+  const [sources, setSources] = React.useState<Array<{ uri: string; title: string | null }>>([]);
+  const [manual, setManual] = React.useState(false);
+  // Snapshot of the last AI-produced address, so "Volver al resultado de la IA" restores
+  // the SEARCH result and never re-presents hand-typed text as the AI-verified value.
+  const [lastAiAddress, setLastAiAddress] = React.useState<string | null>(null);
+
+  const searchLabel = pickI18n(question.webResearch?.searchLabelI18n ?? null, locale) || labels.researchSearchLabel || "Buscar dirección";
+  const resultLabel = pickI18n(question.webResearch?.resultLabelI18n ?? null, locale) || labels.researchResultLabel || "Resultado de la búsqueda";
+  const busy = state === "loading";
+
+  const run = React.useCallback(() => {
+    const q = query.trim();
+    if (!q || !onResearch || disabled) return;
+    setState("loading");
+    onResearch(q)
+      .then((r) => {
+        if (r.ok && typeof r.address === "string" && r.address.trim()) {
+          setLastAiAddress(r.address);
+          setManual(false); // a fresh search re-locks the box to the AI result
+          onChange(r.address);
+          setSources(r.sources ?? []);
+          setState("idle");
+          onBlur();
+        } else {
+          setState("error");
+        }
+      })
+      .catch(() => setState("error"));
+  }, [query, onResearch, disabled, onChange, onBlur]);
+
+  // The escape-hatch toggle. Going back to the AI result RESTORES the snapshot (never
+  // keeps the manual text as if it were the search result); if no search has run yet,
+  // it simply re-locks whatever is there.
+  const toggleManual = React.useCallback(() => {
+    if (manual) {
+      if (lastAiAddress != null && lastAiAddress !== current) {
+        onChange(lastAiAddress);
+        onBlur();
+      }
+      setManual(false);
+    } else {
+      setManual(true);
+    }
+  }, [manual, lastAiAddress, current, onChange, onBlur]);
+
+  const boxStyle: React.CSSProperties = {
+    width: "100%",
+    minHeight: 84,
+    borderRadius: 12,
+    border: "1.5px solid var(--line)",
+    padding: "12px 14px",
+    fontSize: 15,
+    lineHeight: 1.4,
+    color: "var(--ink)",
+    boxSizing: "border-box",
+    resize: "vertical",
+  };
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      {/* Search box */}
+      <div>
+        <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: "var(--ink-2)", marginBottom: 6 }}>
+          {searchLabel}
+        </label>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <input
+            type="text"
+            value={query}
+            disabled={disabled || busy}
+            placeholder={labels.researchPlaceholder || "Pega aquí la dirección del tribunal…"}
+            aria-label={searchLabel}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                run();
+              }
+            }}
+            style={{ flex: "1 1 240px", height: 46, borderRadius: 12, border: "1.5px solid var(--line)", padding: "0 14px", fontSize: 15, color: "var(--ink)", boxSizing: "border-box" }}
+          />
+          <button
+            type="button"
+            onClick={run}
+            disabled={disabled || busy || !query.trim()}
+            aria-busy={busy || undefined}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 7, height: 46, padding: "0 18px", borderRadius: 12,
+              border: "none", cursor: disabled || busy || !query.trim() ? "default" : "pointer",
+              background: "var(--accent)", color: "#fff", fontFamily: "var(--font-title)", fontWeight: 800, fontSize: 14,
+              opacity: disabled || busy || !query.trim() ? 0.5 : 1, whiteSpace: "nowrap",
+            }}
+          >
+            <Icon name="search" size={16} color="#fff" />
+            {busy ? labels.researchLoading || "Buscando…" : labels.researchButton || "Buscar"}
+          </button>
+        </div>
+        {state === "error" && (
+          <p role="alert" style={{ margin: "8px 0 0", fontSize: 13, color: "var(--gold-deep)", fontWeight: 600 }}>
+            {labels.researchError || "No se pudo completar la búsqueda. Inténtalo de nuevo."}
+          </p>
+        )}
+      </div>
+
+      {/* Read-only result box (only the AI search fills it — unless corrected by hand) */}
+      <div>
+        <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: "var(--ink-2)", marginBottom: 6 }}>
+          {resultLabel}
+        </label>
+        <textarea
+          value={current}
+          readOnly={!manual}
+          disabled={disabled}
+          aria-label={resultLabel}
+          placeholder={labels.researchEmptyResult || "El resultado de la búsqueda aparecerá aquí."}
+          onChange={manual ? (e) => onChange(e.target.value) : undefined}
+          onBlur={manual ? onBlur : undefined}
+          style={{ ...boxStyle, background: manual ? "var(--card)" : "var(--chip)", cursor: manual ? "text" : "default" }}
+        />
+        {sources.length > 0 && (
+          <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-3)" }}>{labels.researchSources || "Fuentes"}:</span>
+            {sources.map((s, i) => (
+              <a key={i} href={s.uri} target="_blank" rel="noopener noreferrer"
+                style={{ fontSize: 12.5, color: "var(--accent)", fontWeight: 600, textDecoration: "underline", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {s.title || s.uri}
+              </a>
+            ))}
+          </div>
+        )}
+        {!disabled && (
+          <button
+            type="button"
+            onClick={toggleManual}
+            style={{ marginTop: 8, border: "none", background: "none", color: "var(--ink-3)", fontSize: 12.5, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}
+          >
+            <Icon name={manual ? "check" : "edit"} size={13} color="var(--ink-3)" />
+            {manual ? labels.researchLockResult || "Volver al resultado de la IA" : labels.researchManualEdit || "Corregir a mano"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // --- dispatcher -------------------------------------------------------------
 
 /** Renders a single question: prefill chip + the right control + inline error.
@@ -786,6 +958,24 @@ export function WizardField(
 ) {
   const { question } = props;
   const edited = question.isPrefilled && !props.showPrefill;
+
+  // web_research renders its own buscador + read-only result widget (no prefill chip,
+  // no plain control). The result box IS the answer.
+  if (question.source === "web_research") {
+    return (
+      <div>
+        <fieldset
+          disabled={props.disabled}
+          aria-disabled={props.disabled || undefined}
+          style={{ border: 0, padding: 0, margin: 0, minInlineSize: 0, opacity: props.disabled ? 0.55 : 1 }}
+        >
+          <WebResearchField {...props} />
+        </fieldset>
+        {props.disabled && props.lockMessage ? <LockNote message={props.lockMessage} /> : null}
+        <FieldError error={props.error} labels={props.labels} />
+      </div>
+    );
+  }
 
   let control: React.ReactNode;
   switch (question.fieldType) {

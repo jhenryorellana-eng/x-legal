@@ -483,6 +483,7 @@ describe("validateSourceRef", () => {
     aiLetterSlugs: ["carta-motivos"],
     profileFields: ["first_name"],
     allDocumentSlugs: ["acta-nacimiento", "declaracion-jurada"],
+    formSlugs: ["carta-motivos", "eoir-26"],
   };
 
   it("passes client_answer (no source_ref needed)", () => {
@@ -632,6 +633,86 @@ describe("validateSourceRef", () => {
           connected: { kind: "document", slug: "declaracion-jurada" },
           instruction: "   ",
         },
+      }),
+      ctx,
+    );
+    expect(issues.some((i) => i.code === "CATALOG_SOURCE_REF_INVALID")).toBe(true);
+  });
+
+  // --- web_research (buscador + IA) ---
+  it("passes web_research with a template that carries {{INPUT}}", () => {
+    const issues = validateSourceRef(
+      makeQuestion({
+        source: "web_research",
+        source_ref: {
+          system_prompt_template:
+            "Esta es la direccion del corte del juez {{INPUT}}, buscame la del fiscal principal.",
+          reference_url: "https://www.ice.gov/contact/field-offices?office=12",
+          max_uses: 5,
+        },
+      }),
+      ctx,
+    );
+    expect(issues).toHaveLength(0);
+  });
+
+  it("blocks web_research with an empty template", () => {
+    const issues = validateSourceRef(
+      makeQuestion({ source: "web_research", source_ref: { system_prompt_template: "   " } }),
+      ctx,
+    );
+    expect(issues.some((i) => i.code === "CATALOG_SOURCE_REF_INVALID")).toBe(true);
+  });
+
+  it("blocks web_research whose template lacks the {{INPUT}} token", () => {
+    const issues = validateSourceRef(
+      makeQuestion({
+        source: "web_research",
+        source_ref: { system_prompt_template: "Busca una dirección de fiscalía." },
+      }),
+      ctx,
+    );
+    expect(issues.some((i) => i.code === "CATALOG_SOURCE_REF_INVALID")).toBe(true);
+  });
+
+  // --- field_copy (copiar de otro campo) ---
+  it("passes field_copy pointing at a form of the service", () => {
+    const issues = validateSourceRef(
+      makeQuestion({
+        id: "q-constancia",
+        source: "field_copy",
+        source_ref: { form_slug: "eoir-26", target_question_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" },
+      }),
+      ctx,
+    );
+    expect(issues).toHaveLength(0);
+  });
+
+  it("blocks field_copy missing form_slug or target_question_id", () => {
+    const issues = validateSourceRef(
+      makeQuestion({ source: "field_copy", source_ref: { form_slug: "eoir-26" } }),
+      ctx,
+    );
+    expect(issues.some((i) => i.code === "CATALOG_SOURCE_REF_INVALID")).toBe(true);
+  });
+
+  it("blocks field_copy referencing a form outside the service", () => {
+    const issues = validateSourceRef(
+      makeQuestion({
+        source: "field_copy",
+        source_ref: { form_slug: "otro-servicio", target_question_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" },
+      }),
+      ctx,
+    );
+    expect(issues.some((i) => i.code === "CATALOG_SOURCE_REF_INVALID")).toBe(true);
+  });
+
+  it("blocks field_copy that points at itself", () => {
+    const issues = validateSourceRef(
+      makeQuestion({
+        id: "q-self",
+        source: "field_copy",
+        source_ref: { form_slug: "eoir-26", target_question_id: "q-self" },
       }),
       ctx,
     );

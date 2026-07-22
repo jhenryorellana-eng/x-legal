@@ -29,6 +29,12 @@ import { formatPendingPrereqForms } from "@/frontend/features/cliente/shared/pen
 import { saveDraftAction, submitFormAction, getAiPrefillAction } from "./actions";
 import { translateAnswersAction } from "./translate-actions";
 import { improveAnswerAction } from "./improve-actions";
+import { researchFieldAction } from "./research-actions";
+
+// web_research "Buscar" runs a synchronous Anthropic web_search Server Action (up to
+// WEB_RESEARCH_TIMEOUT_MS). Raise the route ceiling above Vercel's 15s Server-Action
+// default so a real multi-round search completes instead of being killed mid-request.
+export const maxDuration = 120;
 
 export default async function FormularioPage({
   params,
@@ -120,6 +126,7 @@ export default async function FormularioPage({
       getAiPrefill={getAiPrefillAction}
       translateAnswers={translateAnswersAction}
       improveAnswer={improveAnswerAction}
+      researchField={researchFieldAction}
       exitHref={`/caso/${caseId}/camino`}
     />
   );

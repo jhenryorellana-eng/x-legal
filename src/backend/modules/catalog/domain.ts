@@ -72,6 +72,16 @@ export const FieldTypeSchema = z.enum([
 // 'current_date' = today's date in the org timezone, resolved at PDF-generation
 // time (never asked, never sent to AI). For date fields it flows through the same
 // formatPdfDate() the extracted dates use → MM/DD/YYYY. EOIR-26 items #9 / #12(B).
+// 'web_research' = a value produced by an INTERACTIVE web search: the staff types a
+// query into a search box, and a server action calls Anthropic with the web_search
+// tool + a config-as-data system prompt (source_ref.system_prompt_template, with a
+// {{INPUT}} token). The result lands as a normal answer (read-only box, with a
+// manual escape hatch). resolveBySource returns null — it never auto-resolves. First
+// use: EOIR-26 item #12 (find the OCC/OPLA service address from the court address).
+// 'field_copy' = copy the PERSISTED answer of another question, possibly of ANOTHER
+// form of the same case (source_ref.{form_slug,target_question_id}). Materialized on
+// the questionnaire submit so downstream (the letter) sees it. First use: Proof of
+// Service questionnaire (Chief Counsel address ← EOIR-26 item #12). See resolveBySource.
 export const QuestionSourceSchema = z.enum([
   "client_answer",
   "document_extraction",
@@ -80,6 +90,8 @@ export const QuestionSourceSchema = z.enum([
   "ai_field",
   "computed",
   "current_date",
+  "web_research",
+  "field_copy",
 ]);
 /** What an ai_field connects to: a client-uploaded document or an ai_letter output. */
 export const AiFieldConnectedKindSchema = z.enum(["document", "ai_letter"]);
@@ -592,6 +604,40 @@ export const SourceRefSchema = z.discriminatedUnion("source", [
     source: z.literal("current_date"),
     source_ref: z.null(),
   }),
+  z.object({
+    source: z.literal("web_research"),
+    source_ref: z.object({
+      // Server-only prompt with a {{INPUT}} token (what the staff types). NEVER sent
+      // to the client DTO — same principle as ai_improve.instruction. The runWebResearch
+      // action fills it and calls Anthropic web_search.
+      system_prompt_template: z.string().min(1).max(4000),
+      // Optional official source to steer web_search toward (e.g. the ICE OPLA directory).
+      reference_url: z.string().url().max(500).optional(),
+      // Anthropic web_search server tool `max_uses`, clamped.
+      max_uses: z.number().int().min(1).max(8).default(5),
+      // UI labels for the search box + read-only result box (these DO reach the client).
+      search_label_i18n: I18nTextDraftSchema.nullable().optional(),
+      result_label_i18n: I18nTextDraftSchema.nullable().optional(),
+      // Optional dynamic help tokens: token → a document-extraction path. Their resolved
+      // values are interpolated into help_i18n server-side (e.g. {{a_number}} from the
+      // judge's decision, {{nationality}} from the I-589). Resolved like document_extraction.
+      help_tokens: z
+        .record(z.string(), z.object({ document_slug: z.string(), json_path: z.string() }))
+        .optional(),
+    }),
+  }),
+  z.object({
+    source: z.literal("field_copy"),
+    // Copy the PERSISTED answer of another question — of THIS form or another form of
+    // the same case. Reads the stored answer (never re-resolves the target's own
+    // source), so there is no resolution recursion. `target_pdf_field_name` is a stable
+    // fallback when the target form was re-published and the id changed across versions.
+    source_ref: z.object({
+      form_slug: z.string().min(1),
+      target_question_id: z.string().uuid(),
+      target_pdf_field_name: z.string().nullable().optional(),
+    }),
+  }),
 ]);
 
 // Per-question "Mejorar con IA" config (migration 0086). null = the client
@@ -871,6 +917,12 @@ export interface VersionCtx {
    * does NOT require a predefined extraction_schema — only that the document exists.
    */
   allDocumentSlugs: string[];
+  /**
+   * ALL form definition slugs of the service (any kind). Used to validate a
+   * `field_copy` source_ref (the form it copies from must exist in the service).
+   * Absent → the field_copy form-existence check is skipped (isolated unit tests).
+   */
+  formSlugs?: string[];
   /**
    * ALL question ids in the version being validated. Populated by
    * validateVersionPublication so a `computed` source can be checked to reference
@@ -1354,6 +1406,49 @@ export function validateSourceRef(q: Question, ctx: VersionCtx): PublicationIssu
     case "current_date":
       // No config to validate — today's date carries no slug/path/operands.
       return [];
+    case "web_research": {
+      const ref = q.source_ref as { system_prompt_template?: string } | null;
+      const tpl = (ref?.system_prompt_template ?? "").trim();
+      if (!tpl) {
+        return [blocking("CATALOG_SOURCE_REF_INVALID", "web_research requiere system_prompt_template.")];
+      }
+      // The template must carry the {{INPUT}} token — otherwise the staff's query is
+      // dropped and the model researches nothing in particular.
+      if (!tpl.includes("{{INPUT}}")) {
+        return [
+          blocking(
+            "CATALOG_SOURCE_REF_INVALID",
+            "web_research.system_prompt_template debe incluir el token {{INPUT}}.",
+          ),
+        ];
+      }
+      return [];
+    }
+    case "field_copy": {
+      const ref = q.source_ref as { form_slug?: string; target_question_id?: string } | null;
+      if (!ref?.form_slug || !ref?.target_question_id) {
+        return [
+          blocking("CATALOG_SOURCE_REF_INVALID", "field_copy requiere form_slug y target_question_id."),
+        ];
+      }
+      // A question cannot copy itself.
+      if (ref.target_question_id === q.id) {
+        return [blocking("CATALOG_SOURCE_REF_INVALID", "field_copy no puede copiarse a sí misma.")];
+      }
+      // The target form must belong to the service (checked only when the full slug
+      // index is available — i.e. at publication). The target QUESTION id is version-
+      // specific and cannot be checked cross-form here → a runtime pdf_field_name
+      // fallback covers a re-published target (see resolveBySource).
+      if (ctx.formSlugs && !ctx.formSlugs.includes(ref.form_slug)) {
+        return [
+          blocking(
+            "CATALOG_SOURCE_REF_INVALID",
+            `field_copy.form_slug "${ref.form_slug}" no es un formulario del servicio.`,
+          ),
+        ];
+      }
+      return [];
+    }
     default:
       return [];
   }

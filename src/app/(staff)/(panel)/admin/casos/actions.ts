@@ -71,6 +71,7 @@ import {
 import {
   translateAnswerText,
   improveFormAnswerText,
+  runFieldWebResearch,
   translateDocument,
   getDocumentTranslation,
   startPreMortemValidation,
@@ -1021,6 +1022,39 @@ export async function improveFormAnswerAction(input: {
   } catch (e) {
     if (e instanceof AiEngineError) return { ok: false, error: { code: e.code } };
     return { ok: false, error: { code: "IMPROVE_FAILED" } };
+  }
+}
+
+/**
+ * web_research "Buscar" for staff fill-on-behalf (EOIR-26 item #12): runs the
+ * question's config-as-data system prompt with Anthropic web_search over the staff's
+ * query and returns the produced address + citations. Config is loaded server-side
+ * (never from the client). Best-effort — a failure leaves the read-only box empty.
+ */
+export async function researchFieldAction(input: {
+  caseId: string;
+  formDefinitionId: string;
+  partyId: string | null;
+  questionId: string;
+  query: string;
+}): Promise<{
+  ok: boolean;
+  address?: string;
+  sources?: Array<{ uri: string; title: string | null }>;
+  error?: { code: string };
+}> {
+  try {
+    const actor = await requireActor();
+    const r = await runFieldWebResearch(actor, {
+      caseId: input.caseId,
+      formDefinitionId: input.formDefinitionId,
+      questionId: input.questionId,
+      query: input.query,
+    });
+    return { ok: true, address: r.address, sources: r.sources };
+  } catch (e) {
+    if (e instanceof AiEngineError) return { ok: false, error: { code: e.code } };
+    return { ok: false, error: { code: "RESEARCH_FAILED" } };
   }
 }
 

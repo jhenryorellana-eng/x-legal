@@ -1579,6 +1579,7 @@ export async function upsertQuestion(
       aiLetterSlugs: slugIndex.aiLetterSlugs,
       profileFields: Array.from(PROFILE_SOURCE_FIELDS),
       allDocumentSlugs: slugIndex.documents,
+      formSlugs: slugIndex.forms,
     };
     const sourceIssues = validateSourceRef(dto as unknown as import("./domain").Question, ctx);
     assertNoIssues(sourceIssues);
@@ -1813,6 +1814,7 @@ export async function publishVersion(
     aiLetterSlugs: slugIndex.aiLetterSlugs,
     profileFields: Array.from(PROFILE_SOURCE_FIELDS),
     allDocumentSlugs: slugIndex.documents,
+    formSlugs: slugIndex.forms,
   };
 
   const check = validateVersionPublication({

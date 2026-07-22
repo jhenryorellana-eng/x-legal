@@ -28,6 +28,8 @@ export {
   translateAnswersBatch,
   // T5 "Mejorar con IA" (consumed by client/staff form server actions)
   improveFormAnswerText,
+  // web_research "Buscar" (consumed by client/staff form server actions)
+  runFieldWebResearch,
   // ai_field resolution (consumed by cases module — Etapa B)
   interpretDocumentFields,
   synthesizeLetterFields,
@@ -141,6 +143,8 @@ export type {
   DocumentLegibilityVerdict,
   // T5 "Mejorar con IA"
   ImproveFormAnswerResult,
+  // web_research "Buscar"
+  WebResearchResult,
   // Expediente assembly planner (consumed by expediente module)
   ExpedienteAssemblyInput,
   ExpedienteAssemblyPlan,

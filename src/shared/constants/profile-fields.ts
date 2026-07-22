@@ -15,6 +15,9 @@ export const PROFILE_SOURCE_FIELDS = [
   "address.city",
   "address.state",
   "address.zip",
+  // Synthetic combined field — "City, ST ZIP" composed from city/state/zip for forms
+  // that print them in one box (EOIR-26 item #10). Resolved in resolveBySource.
+  "address.city_state_zip",
   "phone_e164",
   "email",
   "pii.ssn",

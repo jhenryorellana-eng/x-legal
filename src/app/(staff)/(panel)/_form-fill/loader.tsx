@@ -21,6 +21,7 @@ import {
   submitFormResponseAction,
   translateFormAnswersAction,
   improveFormAnswerAction,
+  researchFieldAction,
 } from "@/app/(staff)/(panel)/admin/casos/actions";
 
 export async function StaffFormFillLoader({
@@ -71,6 +72,7 @@ export async function StaffFormFillLoader({
       submitForm={submitFormResponseAction}
       translateAnswers={translateFormAnswersAction}
       improveAnswer={improveFormAnswerAction}
+      researchField={researchFieldAction}
       backHref={backHref}
     />
   );

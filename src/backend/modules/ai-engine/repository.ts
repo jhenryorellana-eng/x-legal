@@ -485,6 +485,53 @@ export async function findQuestionForImprove(questionId: string): Promise<Questi
   };
 }
 
+/** A question + its version + web_research config, loaded for the interactive
+ *  "Buscar" flow. Read-only consumption of catalog config (same precedent as
+ *  findQuestionForImprove). `source_ref` holds the server-only system prompt. */
+export interface QuestionForWebResearch {
+  id: string;
+  source: string;
+  source_ref: Record<string, unknown> | null;
+  version: { id: string; status: string; form_definition_id: string };
+}
+
+export async function findQuestionForWebResearch(
+  questionId: string,
+): Promise<QuestionForWebResearch | null> {
+  const client = createServiceClient();
+  const { data, error } = await client
+    .from("form_questions")
+    .select(
+      "id, source, source_ref, form_question_groups!inner(form_automation_versions!inner(id, status, form_definition_id))",
+    )
+    .eq("id", questionId)
+    .maybeSingle();
+
+  if (error) {
+    logger.error({ err: error, questionId }, "ai-engine: findQuestionForWebResearch failed");
+    return null;
+  }
+  if (!data) return null;
+
+  const row = data as unknown as {
+    id: string;
+    source: string;
+    source_ref: Record<string, unknown> | null;
+    form_question_groups:
+      | { form_automation_versions: QuestionForWebResearch["version"] | QuestionForWebResearch["version"][] }
+      | Array<{ form_automation_versions: QuestionForWebResearch["version"] | QuestionForWebResearch["version"][] }>;
+  };
+  const group = Array.isArray(row.form_question_groups)
+    ? row.form_question_groups[0]
+    : row.form_question_groups;
+  const version = Array.isArray(group?.form_automation_versions)
+    ? group.form_automation_versions[0]
+    : group?.form_automation_versions;
+  if (!version) return null;
+
+  return { id: row.id, source: row.source, source_ref: row.source_ref, version };
+}
+
 // ---------------------------------------------------------------------------
 // Generation runs
 // ---------------------------------------------------------------------------

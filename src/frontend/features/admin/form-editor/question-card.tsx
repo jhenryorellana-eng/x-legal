@@ -34,6 +34,8 @@ const ORIGINS: { id: QuestionSource; key: string; icon: Parameters<typeof Icon>[
   { id: "document_extraction", key: "originDoc", icon: "doc" },
   { id: "generation_output", key: "originGen", icon: "sparkle" },
   { id: "profile", key: "originProfile", icon: "shield" },
+  { id: "web_research", key: "originWebResearch", icon: "search" },
+  { id: "field_copy", key: "originFieldCopy", icon: "copy" },
   { id: "computed", key: "originComputed", icon: "plus" },
   { id: "current_date", key: "originCurrentDate", icon: "calendar" },
 ];
@@ -46,7 +48,7 @@ export interface QuestionCardProps {
   detectedFields: DetectedFieldVM[];
   /** Questionnaire mode: hide the AcroForm PDF-field mapping. */
   noPdf?: boolean;
-  sources: { documents: SourceDocumentVM[]; forms: string[]; profileFields: string[] };
+  sources: { documents: SourceDocumentVM[]; forms: string[]; allFormSlugs?: string[]; profileFields: string[] };
   groups: { id: string; label: string }[];
   /** Other questions in the form (id + label) that a condition may depend on. */
   siblingQuestions: { id: string; label: string }[];
@@ -323,7 +325,7 @@ export function QuestionCard({
                 </div>
               </>
             )}
-            {q.source !== "client_answer" && q.source !== "computed" && q.source !== "current_date" && (
+            {q.source !== "client_answer" && q.source !== "computed" && q.source !== "current_date" && q.source !== "web_research" && (
               <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--ink-2)", lineHeight: 1.4 }}>{strings.originNotShown}</p>
             )}
             {q.source === "current_date" && (
@@ -344,6 +346,12 @@ export function QuestionCard({
             )}
             {q.source === "computed" && (
               <ComputedPicker q={q} siblings={siblingQuestions} strings={strings} readOnly={readOnly} onChange={onChange} />
+            )}
+            {q.source === "web_research" && (
+              <WebResearchPicker q={q} sources={sources} strings={strings} readOnly={readOnly} onChange={onChange} />
+            )}
+            {q.source === "field_copy" && (
+              <FieldCopyPicker q={q} sources={sources} strings={strings} readOnly={readOnly} onChange={onChange} />
             )}
           </div>
 
@@ -408,6 +416,10 @@ function defaultRef(source: QuestionSource): Record<string, unknown> | null {
       return { op: "sum", inputs: [] };
     case "current_date":
       return null; // today's date — no config to carry
+    case "web_research":
+      return { system_prompt_template: "", reference_url: "", max_uses: 5 };
+    case "field_copy":
+      return { form_slug: "", target_question_id: "" };
     default:
       return null;
   }
@@ -755,9 +767,140 @@ function AiFieldPicker({ q, sources, strings, readOnly, onChange }: PickerProps)
   );
 }
 
+/**
+ * WebResearchPicker — configure a field the staff fills via an interactive web search
+ * ("Buscar"): a config-as-data system prompt (with the {{INPUT}} token), an optional
+ * official reference URL to steer the search, web_search max_uses, the search/result
+ * box UI labels, and optional dynamic help tokens (token → a document-extraction path,
+ * e.g. {{a_number}} / {{nationality}}). The prompt is server-only at runtime.
+ */
+function WebResearchPicker({ q, sources, strings, readOnly, onChange }: PickerProps) {
+  const ref = (q.source_ref ?? {}) as {
+    system_prompt_template?: string;
+    reference_url?: string;
+    max_uses?: number;
+    search_label_i18n?: { es?: string; en?: string };
+    result_label_i18n?: { es?: string; en?: string };
+    help_tokens?: Record<string, { document_slug?: string; json_path?: string }>;
+  };
+  const patch = (p: Partial<typeof ref>) => onChange({ source_ref: { ...ref, ...p } });
+  const tokenEntries = Object.entries(ref.help_tokens ?? {});
+  const setTokens = (entries: Array<[string, { document_slug?: string; json_path?: string }]>) => {
+    const ht = Object.fromEntries(entries.filter(([k]) => k.trim() !== ""));
+    patch({ help_tokens: Object.keys(ht).length ? ht : undefined });
+  };
+  const tpl = ref.system_prompt_template ?? "";
+  return (
+    <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+      <p style={{ margin: 0, fontSize: 12, color: "var(--ink-2)", lineHeight: 1.4 }}>{strings.webResearchNote}</p>
+      <div>
+        <FieldLabel>{strings.webResearchPrompt}</FieldLabel>
+        <textarea
+          value={tpl}
+          disabled={readOnly}
+          aria-label={strings.webResearchPrompt}
+          placeholder={strings.webResearchPromptHint}
+          onChange={(e) => patch({ system_prompt_template: e.target.value })}
+          style={{ width: "100%", minHeight: 72, borderRadius: 10, border: "1.5px solid var(--line)", background: "var(--panel-2, var(--card-alt))", padding: 10, fontSize: 12.5, color: "var(--ink)", resize: "vertical", boxSizing: "border-box" }}
+        />
+        {tpl.trim() !== "" && !tpl.includes("{{INPUT}}") && (
+          <p style={{ margin: "6px 0 0", fontSize: 11.5, color: "var(--gold-deep)" }}>{strings.webResearchNeedsInput}</p>
+        )}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 8 }}>
+        <div>
+          <FieldLabel>{strings.webResearchUrl}</FieldLabel>
+          <TextInput value={ref.reference_url ?? ""} disabled={readOnly} placeholder="https://www.ice.gov/contact/field-offices?office=12" aria-label={strings.webResearchUrl} onChange={(e) => patch({ reference_url: e.target.value || undefined })} />
+        </div>
+        <div>
+          <FieldLabel>{strings.webResearchMaxUses}</FieldLabel>
+          <input
+            type="number" min={1} max={8} step={1} value={ref.max_uses ?? 5} disabled={readOnly} aria-label={strings.webResearchMaxUses}
+            onChange={(e) => { const n = Number(e.target.value); patch({ max_uses: Number.isFinite(n) ? Math.max(1, Math.min(8, Math.round(n))) : 5 }); }}
+            style={{ width: "100%", height: 34, borderRadius: 10, border: "1.5px solid var(--line)", background: "var(--panel-2, var(--card-alt))", padding: "0 10px", fontSize: 12.5, color: "var(--ink)", boxSizing: "border-box" }}
+          />
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+        <I18nField label={strings.webResearchSearchLabel} value={{ es: ref.search_label_i18n?.es ?? "", en: ref.search_label_i18n?.en ?? "" }} onChange={(v) => patch({ search_label_i18n: v })} flagMissingEn={false} />
+        <I18nField label={strings.webResearchResultLabel} value={{ es: ref.result_label_i18n?.es ?? "", en: ref.result_label_i18n?.en ?? "" }} onChange={(v) => patch({ result_label_i18n: v })} flagMissingEn={false} />
+      </div>
+      <div>
+        <FieldLabel>{strings.webResearchHelpTokens}</FieldLabel>
+        <p style={{ margin: "0 0 6px", fontSize: 11.5, color: "var(--ink-2)" }}>{strings.webResearchHelpTokensHint}</p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {tokenEntries.map(([tk, tv], i) => {
+            const doc = sources.documents.find((d) => d.slug === tv.document_slug);
+            return (
+              <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 6, alignItems: "center" }}>
+                <TextInput value={tk} placeholder="a_number" disabled={readOnly} aria-label={`token ${i + 1}`}
+                  onChange={(e) => { const n = [...tokenEntries]; n[i] = [e.target.value, tv]; setTokens(n); }} style={{ height: 36 }} />
+                <SelectInput value={tv.document_slug ?? ""} disabled={readOnly} aria-label={`token doc ${i + 1}`}
+                  onChange={(e) => { const n = [...tokenEntries]; n[i] = [tk, { document_slug: e.target.value, json_path: "" }]; setTokens(n); }}>
+                  <option value="">—</option>
+                  {sources.documents.map((d) => <option key={d.slug} value={d.slug}>{d.slug}</option>)}
+                </SelectInput>
+                <SelectInput value={tv.json_path ?? ""} disabled={readOnly || !doc} aria-label={`token path ${i + 1}`}
+                  onChange={(e) => { const n = [...tokenEntries]; n[i] = [tk, { ...tv, json_path: e.target.value }]; setTokens(n); }}>
+                  <option value="">—</option>
+                  {(doc?.paths ?? []).map((p) => <option key={p} value={p}>{p}</option>)}
+                </SelectInput>
+                <button type="button" disabled={readOnly} onClick={() => setTokens(tokenEntries.filter((_, j) => j !== i))}
+                  style={{ border: "none", background: "none", color: "var(--ink-3)", cursor: "pointer", display: "inline-flex" }} aria-label="remove token"><Icon name="x" size={15} /></button>
+              </div>
+            );
+          })}
+        </div>
+        {!readOnly && (
+          <button type="button" onClick={() => setTokens([...tokenEntries, ["", { document_slug: "", json_path: "" }]])}
+            style={{ marginTop: 6, border: "none", background: "none", color: "var(--accent)", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+            {strings.webResearchAddToken}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * FieldCopyPicker — copy the persisted answer of a question from ANOTHER form of the
+ * case. Pick the source form (any form of the service) + the target question id, with
+ * an optional pdf_field_name as a stable fallback across re-publishes.
+ */
+function FieldCopyPicker({ q, sources, strings, readOnly, onChange }: PickerProps) {
+  const ref = (q.source_ref ?? {}) as {
+    form_slug?: string;
+    target_question_id?: string;
+    target_pdf_field_name?: string;
+  };
+  const patch = (p: Partial<typeof ref>) => onChange({ source_ref: { ...ref, ...p } });
+  const formOptions = (sources.allFormSlugs ?? sources.forms).filter(Boolean);
+  return (
+    <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+      <p style={{ margin: 0, fontSize: 12, color: "var(--ink-2)", lineHeight: 1.4 }}>{strings.fieldCopyNote}</p>
+      <div>
+        <FieldLabel>{strings.fieldCopyForm}</FieldLabel>
+        <SelectInput value={ref.form_slug ?? ""} disabled={readOnly} aria-label={strings.fieldCopyForm} onChange={(e) => patch({ form_slug: e.target.value })}>
+          <option value="">—</option>
+          {formOptions.map((f) => <option key={f} value={f}>{f}</option>)}
+        </SelectInput>
+      </div>
+      <div>
+        <FieldLabel>{strings.fieldCopyQuestion}</FieldLabel>
+        <TextInput value={ref.target_question_id ?? ""} disabled={readOnly} placeholder="id de la pregunta destino" aria-label={strings.fieldCopyQuestion} onChange={(e) => patch({ target_question_id: e.target.value })} />
+      </div>
+      <div>
+        <FieldLabel>{strings.fieldCopyPdfName}</FieldLabel>
+        <TextInput value={ref.target_pdf_field_name ?? ""} disabled={readOnly} placeholder="12. Address (opcional)" aria-label={strings.fieldCopyPdfName} onChange={(e) => patch({ target_pdf_field_name: e.target.value || undefined })} />
+        <p style={{ margin: "6px 0 0", fontSize: 11.5, color: "var(--ink-2)" }}>{strings.fieldCopyPdfNameHint}</p>
+      </div>
+    </div>
+  );
+}
+
 interface PickerProps {
   q: QuestionVM;
-  sources: { documents: SourceDocumentVM[]; forms: string[]; profileFields: string[] };
+  sources: { documents: SourceDocumentVM[]; forms: string[]; allFormSlugs?: string[]; profileFields: string[] };
   strings: FormEditorStrings;
   readOnly: boolean;
   onChange: (patch: Partial<QuestionVM>) => void;

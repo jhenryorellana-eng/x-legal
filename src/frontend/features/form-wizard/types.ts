@@ -59,6 +59,12 @@ export interface WizardQuestion {
    * client. Optional so older DTOs / mocks / the admin preview stay valid.
    */
   aiImproveEnabled?: boolean;
+  /**
+   * web_research field (buscador + IA): the UI labels for the search box + read-only
+   * result box. The system prompt / reference_url live server-side (config-as-data).
+   * Present only when `source === "web_research"`.
+   */
+  webResearch?: { searchLabelI18n: I18nValue | null; resultLabelI18n: I18nValue | null };
 }
 
 export interface WizardGroup {
@@ -160,6 +166,23 @@ export type ImproveAnswerFn = (input: {
   text: string;
 }) => Promise<{ ok: boolean; improvedText?: string; error?: { code: string } }>;
 
+/** web_research "Buscar": server action that runs an internet search for ONE field
+ *  (buscador + IA) using the question's server-side system prompt, returning the
+ *  produced address + web citations. Best-effort — on { ok:false } the read-only
+ *  result box stays as it was. */
+export type ResearchAnswerFn = (input: {
+  caseId: string;
+  formDefinitionId: string;
+  partyId: string | null;
+  questionId: string;
+  query: string;
+}) => Promise<{
+  ok: boolean;
+  address?: string;
+  sources?: Array<{ uri: string; title: string | null }>;
+  error?: { code: string };
+}>;
+
 // ---------------------------------------------------------------------------
 // Wizard runtime state (UI-only — never the source of truth)
 // ---------------------------------------------------------------------------
@@ -233,6 +256,17 @@ export interface WizardLabels {
   improveLoading: string; // "Mejorando…"
   improveUndo: string; // "Deshacer"
   improveError: string; // "No se pudo mejorar. Tu texto sigue igual."
+  // web_research (buscador + IA)
+  researchSearchLabel: string; // fallback label above the search box
+  researchResultLabel: string; // fallback label above the read-only result box
+  researchPlaceholder: string; // "Pega aquí la dirección del tribunal…"
+  researchButton: string; // "Buscar"
+  researchLoading: string; // "Buscando…"
+  researchError: string; // "No se pudo completar la búsqueda. Inténtalo de nuevo."
+  researchEmptyResult: string; // "El resultado de la búsqueda aparecerá aquí."
+  researchSources: string; // "Fuentes"
+  researchManualEdit: string; // "Corregir a mano"
+  researchLockResult: string; // "Volver al resultado de la IA"
   // Submitted (read-only)
   submittedPill: string; // "Enviado"
   submittedTitle: string; // "Esto ya está enviado"

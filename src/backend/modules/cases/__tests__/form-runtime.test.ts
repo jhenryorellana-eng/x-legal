@@ -35,6 +35,8 @@ const {
   mockUpdateFormResponse,
   mockFindLatestActiveDocumentBySlug,
   mockFindDocumentExtractionByCaseDocId,
+  mockLoadResponseAnswersBySlug,
+  mockFindQuestionIdByPdfName,
   mockFindCompletedGenerationByFormSlug,
   mockDownloadDocumentBytesBySlug,
   mockDownloadAllDocumentBytesBySlug,
@@ -80,6 +82,8 @@ const {
   mockUpdateFormResponse: vi.fn().mockResolvedValue(undefined),
   mockFindLatestActiveDocumentBySlug: vi.fn(),
   mockFindDocumentExtractionByCaseDocId: vi.fn(),
+  mockLoadResponseAnswersBySlug: vi.fn().mockResolvedValue(null),
+  mockFindQuestionIdByPdfName: vi.fn().mockResolvedValue(null),
   mockFindCompletedGenerationByFormSlug: vi.fn(),
   mockDownloadDocumentBytesBySlug: vi.fn(),
   mockDownloadAllDocumentBytesBySlug: vi.fn().mockResolvedValue([]),
@@ -186,6 +190,8 @@ vi.mock("../repository", () => ({
   listFormResponsesForCase: vi.fn().mockResolvedValue([]),
   findLatestActiveDocumentBySlug: mockFindLatestActiveDocumentBySlug,
   findDocumentExtractionByCaseDocId: mockFindDocumentExtractionByCaseDocId,
+  loadResponseAnswersBySlug: mockLoadResponseAnswersBySlug,
+  findQuestionIdByPdfName: mockFindQuestionIdByPdfName,
   findCompletedGenerationByFormSlug: mockFindCompletedGenerationByFormSlug,
   downloadDocumentBytesBySlug: mockDownloadDocumentBytesBySlug,
   downloadAllDocumentBytesBySlug: mockDownloadAllDocumentBytesBySlug,
@@ -268,7 +274,8 @@ vi.mock("@/backend/platform/crypto", () => ({
 vi.mock("@/shared/constants/profile-fields", () => ({
   PROFILE_SOURCE_FIELDS: [
     "first_name", "last_name", "preferred_name", "country_of_origin",
-    "address.line1", "address.city", "address.state", "address.zip",
+    "address.line1", "address.apartment", "address.city", "address.state", "address.zip",
+    "address.city_state_zip",
     "phone_e164", "email", "pii.ssn", "pii.a_number", "pii.passport",
   ],
 }));
@@ -2508,6 +2515,131 @@ describe("resolveBySource", () => {
       null,
     );
     expect(result).toBe("Miami");
+  });
+
+  it("composes the synthetic profile.address.city_state_zip = 'City, ST ZIP'", async () => {
+    mockFindCasePrimaryClient.mockResolvedValue(CLIENT_ID);
+    mockFindClientProfileForForm.mockResolvedValue({
+      first_name: "Ivis", last_name: "Palma", preferred_name: null, country_of_origin: null,
+      address: { city: "Houston", state: "TX", zip: "77096", line1: "6310 Dumfries Dr" },
+      pii_encrypted: {},
+    });
+    const result = await resolveBySource(
+      { id: "q1", source: "profile", source_ref: { profile_field: "address.city_state_zip" } },
+      {}, CASE_ID, null,
+    );
+    expect(result).toBe("Houston, TX 77096");
+  });
+
+  it("city_state_zip tolerates a missing zip (no stray separators)", async () => {
+    mockFindCasePrimaryClient.mockResolvedValue(CLIENT_ID);
+    mockFindClientProfileForForm.mockResolvedValue({
+      first_name: "A", last_name: "B", preferred_name: null, country_of_origin: null,
+      address: { city: "Houston", state: "TX", zip: null },
+      pii_encrypted: {},
+    });
+    const result = await resolveBySource(
+      { id: "q1", source: "profile", source_ref: { profile_field: "address.city_state_zip" } },
+      {}, CASE_ID, null,
+    );
+    expect(result).toBe("Houston, TX");
+  });
+
+  // --- web_research (buscador + IA) ---
+  it("web_research never auto-resolves (returns null; value comes from the action)", async () => {
+    const result = await resolveBySource(
+      {
+        id: "q1",
+        source: "web_research",
+        source_ref: { system_prompt_template: "... {{INPUT}} ...", max_uses: 5 },
+      },
+      {},
+      CASE_ID,
+      null,
+    );
+    expect(result).toBeNull();
+    // No web-search / provider work is triggered from resolveBySource.
+    expect(mockLoadResponseAnswersBySlug).not.toHaveBeenCalled();
+  });
+
+  // --- field_copy (copiar de otro campo) ---
+  it("field_copy reads the persisted answer of another form of the case", async () => {
+    mockLoadResponseAnswersBySlug.mockResolvedValue({
+      answers: { "eoir-q12": "126 Northpoint Drive, Room 2020, Houston, TX 77060" },
+      automationVersionId: "ver-1",
+    });
+    const result = await resolveBySource(
+      {
+        id: "q-constancia",
+        source: "field_copy",
+        source_ref: { form_slug: "eoir-26", target_question_id: "eoir-q12" },
+      },
+      {},
+      CASE_ID,
+      null,
+    );
+    expect(result).toBe("126 Northpoint Drive, Room 2020, Houston, TX 77060");
+    expect(mockLoadResponseAnswersBySlug).toHaveBeenCalledWith(CASE_ID, "eoir-26", null);
+  });
+
+  it("field_copy returns null when the target form has no response yet", async () => {
+    mockLoadResponseAnswersBySlug.mockResolvedValue(null);
+    const result = await resolveBySource(
+      {
+        id: "q-constancia",
+        source: "field_copy",
+        source_ref: { form_slug: "eoir-26", target_question_id: "eoir-q12" },
+      },
+      {},
+      CASE_ID,
+      null,
+    );
+    expect(result).toBeNull();
+  });
+
+  it("field_copy falls back to pdf_field_name when the target id changed (re-publish)", async () => {
+    mockLoadResponseAnswersBySlug.mockResolvedValue({
+      answers: { "old-q12-id": "OCC address" },
+      automationVersionId: "ver-old",
+    });
+    mockFindQuestionIdByPdfName.mockResolvedValue("old-q12-id");
+    const result = await resolveBySource(
+      {
+        id: "q-constancia",
+        source: "field_copy",
+        source_ref: {
+          form_slug: "eoir-26",
+          target_question_id: "new-q12-id-not-in-response",
+          target_pdf_field_name: "12. Address",
+        },
+      },
+      {},
+      CASE_ID,
+      null,
+    );
+    expect(result).toBe("OCC address");
+    expect(mockFindQuestionIdByPdfName).toHaveBeenCalledWith("ver-old", "12. Address");
+  });
+
+  it("field_copy memoizes the target form load across a shared cache", async () => {
+    mockLoadResponseAnswersBySlug.mockResolvedValue({
+      answers: { "eoir-q12": "addr", "eoir-q10": "street" },
+      automationVersionId: "ver-1",
+    });
+    const cache = {};
+    const [a, b] = await Promise.all([
+      resolveBySource(
+        { id: "c1", source: "field_copy", source_ref: { form_slug: "eoir-26", target_question_id: "eoir-q12" } },
+        {}, CASE_ID, null, cache,
+      ),
+      resolveBySource(
+        { id: "c2", source: "field_copy", source_ref: { form_slug: "eoir-26", target_question_id: "eoir-q10" } },
+        {}, CASE_ID, null, cache,
+      ),
+    ]);
+    expect(a).toBe("addr");
+    expect(b).toBe("street");
+    expect(mockLoadResponseAnswersBySlug).toHaveBeenCalledTimes(1);
   });
 
   it("resolves profile.email from users table", async () => {

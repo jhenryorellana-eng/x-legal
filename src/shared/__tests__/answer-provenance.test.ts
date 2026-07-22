@@ -16,6 +16,7 @@ describe("answer-provenance — state machine", () => {
       "client_edited",
       "client_confirmed",
       "ai_grounded",
+      "web_researched",
       "source_resolved",
       "schema_default",
       "ai_gap_filled",

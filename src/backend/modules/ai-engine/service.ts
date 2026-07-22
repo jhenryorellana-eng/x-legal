@@ -33,7 +33,7 @@ import type { Actor } from "@/backend/platform/authz";
 import { appEvents } from "@/backend/platform/events";
 import { enqueueJob } from "@/backend/platform/qstash";
 import { getAnthropicClient, DEFAULT_UI_MODEL } from "@/backend/platform/anthropic";
-import { limitAiImprove } from "@/backend/platform/ratelimit";
+import { limitAiImprove, limitAiWebResearch } from "@/backend/platform/ratelimit";
 import { getGeminiModels, DEFAULT_GEMINI_MODEL } from "@/backend/platform/gemini";
 import { isAiStubEnabled } from "@/backend/platform/ai-stub";
 import {
@@ -209,6 +209,7 @@ import {
   listPublishedQuestionTexts,
   listPublishedClientQuestionsForDrafts,
   findQuestionForImprove,
+  findQuestionForWebResearch,
   type QuestionnaireInstanceRow,
   type QuestionnaireGenConfigRow,
   type GenerationRunRow,
@@ -243,6 +244,11 @@ export class AiEngineError extends Error {
       | "AI_IMPROVE_RATE_LIMITED"
       | "AI_IMPROVE_TEXT_TOO_LONG"
       | "AI_IMPROVE_OUTPUT_INVALID"
+      | "WEB_RESEARCH_NOT_ENABLED"
+      | "WEB_RESEARCH_RATE_LIMITED"
+      | "WEB_RESEARCH_EMPTY_QUERY"
+      | "WEB_RESEARCH_TEXT_TOO_LONG"
+      | "WEB_RESEARCH_OUTPUT_INVALID"
       | "PREMORTEM_NO_ELIGIBLE_RUN"
       | "PREMORTEM_NO_TARGET"
       | "PREMORTEM_NO_GUIDE"
@@ -3120,6 +3126,155 @@ export async function improveFormAnswerText(
   const improvedText = normalizeANumbersInText(restorePii(validated.text, tokens));
 
   return { improvedText };
+}
+
+// ---------------------------------------------------------------------------
+// web_research — interactive "Buscar" (buscador + IA). A staff query runs a
+// config-as-data system prompt with the Anthropic web_search server tool, and the
+// produced address is written back as the field's answer. Server-only config; same
+// boundary as improveFormAnswerText (auth + rate-limit + stub + typed errors).
+// ---------------------------------------------------------------------------
+
+export interface WebResearchResult {
+  /** The address/text the search produced — written into the answer verbatim. */
+  address: string;
+  /** Web citations backing the result (deduped by URL). */
+  sources: Array<{ uri: string; title: string | null }>;
+}
+
+/** Extracts web citations from Anthropic content blocks (web_search_tool_result →
+ *  web_search_result), deduped by URL. Kept local so the web_research flow does not
+ *  depend on lex-service internals. */
+function extractWebResearchSources(blocks: unknown[]): Array<{ uri: string; title: string | null }> {
+  const byUri = new Map<string, { uri: string; title: string | null }>();
+  for (const b of blocks) {
+    const block = b as { type?: string; content?: unknown };
+    if (block?.type !== "web_search_tool_result" || !Array.isArray(block.content)) continue;
+    for (const item of block.content) {
+      const it = item as { type?: string; url?: unknown; title?: unknown };
+      if (it?.type === "web_search_result" && typeof it.url === "string" && it.url && !byUri.has(it.url)) {
+        byUri.set(it.url, { uri: it.url, title: typeof it.title === "string" ? it.title : null });
+      }
+    }
+  }
+  return [...byUri.values()];
+}
+
+// Bounded well under the invoking routes' maxDuration (120s) so the SDK aborts a stuck
+// web_search before the platform kills the Server Action.
+const WEB_RESEARCH_TIMEOUT_MS = 90_000;
+const WEB_RESEARCH_MAX_QUERY_CHARS = 2000;
+
+/**
+ * Interactive web_research ("Buscar" button): runs the question's config-as-data system
+ * prompt (with a {{INPUT}} token) through the Anthropic web_search server tool over the
+ * staff's query, returning the produced address + its web citations. The system prompt /
+ * reference_url / max_uses come from the question's `source_ref` — loaded SERVER-SIDE
+ * only, NEVER accepted from the client (same rule as ai_improve.instruction). The value
+ * is written to the answer by the caller (autosave).
+ *
+ * Best-effort: every failure throws a typed AiEngineError; the widget keeps the box empty.
+ */
+export async function runFieldWebResearch(
+  actor: Actor,
+  input: { caseId: string; formDefinitionId: string; questionId: string; query: string },
+): Promise<WebResearchResult> {
+  await requireCaseAccess(actor, input.caseId);
+
+  const rl = await limitAiWebResearch(actor.userId);
+  if (!rl.allowed) throw new AiEngineError("WEB_RESEARCH_RATE_LIMITED");
+
+  const rawQuery = input.query.trim();
+  if (!rawQuery) throw new AiEngineError("WEB_RESEARCH_EMPTY_QUERY");
+  if (rawQuery.length > WEB_RESEARCH_MAX_QUERY_CHARS) throw new AiEngineError("WEB_RESEARCH_TEXT_TOO_LONG");
+
+  // The question must be a web_research field of the form being filled, on a non-draft
+  // version. draft is rejected on purpose (config still in flight); archived is accepted
+  // (a client's in-progress response stays pinned to its version after a re-publish).
+  const question = await findQuestionForWebResearch(input.questionId);
+  if (
+    !question ||
+    question.source !== "web_research" ||
+    question.version.form_definition_id !== input.formDefinitionId ||
+    question.version.status === "draft"
+  ) {
+    throw new AiEngineError("WEB_RESEARCH_NOT_ENABLED");
+  }
+  const ref = (question.source_ref ?? {}) as {
+    system_prompt_template?: string;
+    reference_url?: string;
+    max_uses?: number;
+  };
+  const template = ref.system_prompt_template?.trim();
+  if (!template || !template.includes("{{INPUT}}")) throw new AiEngineError("WEB_RESEARCH_NOT_ENABLED");
+
+  // E2E / CI: deterministic short-circuit BEFORE any provider work.
+  if (isAiStubEnabled()) {
+    return {
+      address: `126 Northpoint Drive, Room 2020, Houston, TX 77060 [research-stub: ${rawQuery}]`,
+      sources: [],
+    };
+  }
+
+  // PII defense-in-depth (DOC-74 §7.1): the query goes to Anthropic's LIVE web_search
+  // server tool, so mask any A-Number/SSN/passport a staffer might have pasted before it
+  // leaves the boundary. A court address (street/city/state/ZIP) carries none of those
+  // patterns, so the intended search terms are unchanged; no restore is needed (the
+  // response is fresh web content, not the echoed query).
+  const query = maskPiiReversible(rawQuery).masked;
+
+  const system =
+    template.replace(/\{\{\s*INPUT\s*\}\}/g, query) +
+    (ref.reference_url ? `\n\nPrioriza esta fuente oficial: ${ref.reference_url}` : "");
+  const model = process.env.AI_WEB_RESEARCH_MODEL ?? "claude-sonnet-4-6";
+  const maxUses = Math.max(1, Math.min(8, ref.max_uses ?? 5));
+
+  let resp: Awaited<ReturnType<AnthropicClient["messages"]["create"]>>;
+  try {
+    resp = await getAnthropicClient().messages.create(
+      {
+        model,
+        max_tokens: 1024,
+        system,
+        tools: [buildWebSearchTool(maxUses, model)],
+        messages: [{ role: "user", content: query }],
+      },
+      { timeout: WEB_RESEARCH_TIMEOUT_MS, maxRetries: 1 },
+    );
+  } catch (err) {
+    throw new AiEngineError("AI_PROVIDER_UNAVAILABLE", err);
+  }
+
+  const address = resp.content
+    .filter((b) => b.type === "text")
+    .map((b) => (b as { type: "text"; text: string }).text)
+    .join("")
+    .trim();
+  if (!address) throw new AiEngineError("WEB_RESEARCH_OUTPUT_INVALID");
+  const sources = extractWebResearchSources(resp.content);
+
+  const costUsd = computeAnthropicCost(
+    {
+      inputTokens: resp.usage?.input_tokens ?? 0,
+      outputTokens: resp.usage?.output_tokens ?? 0,
+      cacheCreationInputTokens: 0,
+      cacheReadInputTokens: 0,
+    },
+    resp.model ?? model,
+  );
+  logger.info(
+    {
+      caseId: input.caseId,
+      questionId: input.questionId,
+      model: resp.model ?? model,
+      usage: resp.usage,
+      costUsd,
+      sources: sources.length,
+    },
+    "ai-engine: runFieldWebResearch",
+  );
+
+  return { address, sources };
 }
 
 // ---------------------------------------------------------------------------

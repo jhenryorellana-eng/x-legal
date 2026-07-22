@@ -22,6 +22,7 @@ import type {
   SubmitFormFn,
   TranslateAnswersFn,
   ImproveAnswerFn,
+  ResearchAnswerFn,
   GetAiPrefillFn,
   FieldErrorCode,
   SaveState,
@@ -87,6 +88,9 @@ export interface FormWizardProps {
   /** "Mejorar con IA" server action. Only questions with `aiImproveEnabled` show
    *  the button; absent = feature off for the whole surface (admin preview). */
   improveAnswer?: ImproveAnswerFn;
+  /** web_research "Buscar" server action. Only `web_research` questions use it;
+   *  absent = the search button is inert (admin preview / mock). */
+  researchField?: ResearchAnswerFn;
   /** Called after a successful submit (cliente navigates to /exito). */
   onSubmitted?: () => void;
   /** Back affordance from step 0 (cliente → Camino / list). */
@@ -132,6 +136,7 @@ export function FormWizard({
   getAiPrefill,
   translateAnswers,
   improveAnswer,
+  researchField,
   onSubmitted,
   onExit,
 }: FormWizardProps) {
@@ -272,6 +277,20 @@ export function FormWizard({
             partyId,
             questionId: q.id,
             text,
+          })
+      : undefined;
+
+  // web_research "Buscar": per-question closure over the injected server action.
+  // undefined (no action / not a web_research field) = the search button is inert.
+  const makeResearch = (q: { id: string; source: string }) =>
+    researchField && q.source === "web_research"
+      ? (query: string) =>
+          researchField({
+            caseId,
+            formDefinitionId: form.formDefinitionId,
+            partyId,
+            questionId: q.id,
+            query,
           })
       : undefined;
 
@@ -561,6 +580,7 @@ export function FormWizard({
                           onChange={editable ? (v) => setAnswer(q.id, v) : () => {}}
                           onBlur={editable ? () => autosave.flush() : () => {}}
                           onImprove={editable ? makeImprove(q) : undefined}
+                          onResearch={editable ? makeResearch(q) : undefined}
                           showDictation={false}
                           disabled={!editable}
                           hidePrefillChip
@@ -978,6 +998,7 @@ export function FormWizard({
                 onChange={(v) => setAnswer(q.id, v)}
                 onBlur={() => autosave.flush()}
                 onImprove={cond.disabled ? undefined : makeImprove(q)}
+                onResearch={cond.disabled ? undefined : makeResearch(q)}
                 showDictation={isTextarea}
                 disabled={cond.disabled}
                 lockMessage={lockMessage}

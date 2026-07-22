@@ -498,6 +498,63 @@ export async function findFormResponse(
   return data ?? null;
 }
 
+/**
+ * Loads the persisted `answers` (and the pinned automation version) of ANOTHER form
+ * of the same case, by the form's slug. Prefers the party-specific response, falling
+ * back to a case-level (null-party) one, then to any response for that form — the
+ * same precedence resolveGenerationInputs uses. Returns null when the case has no
+ * response for that form yet. Used by resolveBySource for the `field_copy` source.
+ * Service client (bypasses RLS — the caller has already verified case access).
+ */
+export async function loadResponseAnswersBySlug(
+  caseId: string,
+  formSlug: string,
+  partyId: string | null,
+): Promise<{ answers: Record<string, unknown>; automationVersionId: string | null } | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("case_form_responses")
+    .select("answers, party_id, automation_version_id, form_definitions!inner(slug)")
+    .eq("case_id", caseId)
+    .eq("form_definitions.slug", formSlug);
+  const rows = (data ?? []) as Array<{
+    answers: unknown;
+    party_id: string | null;
+    automation_version_id: string | null;
+  }>;
+  if (rows.length === 0) return null;
+  const chosen =
+    (partyId != null
+      ? (rows.find((r) => r.party_id === partyId) ?? rows.find((r) => r.party_id === null))
+      : rows.find((r) => r.party_id === null)) ?? rows[0];
+  const ans = chosen?.answers;
+  return {
+    answers: ans && typeof ans === "object" && !Array.isArray(ans) ? (ans as Record<string, unknown>) : {},
+    automationVersionId: chosen?.automation_version_id ?? null,
+  };
+}
+
+/**
+ * Finds the question id that maps to a given `pdf_field_name` inside a specific
+ * automation version. Stable fallback for `field_copy` when the target form was
+ * re-published and its question ids changed but the pdf_field_name did not. Returns
+ * null when no question in that version carries the name.
+ */
+export async function findQuestionIdByPdfName(
+  automationVersionId: string,
+  pdfFieldName: string,
+): Promise<string | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("form_questions")
+    .select("id, form_question_groups!inner(automation_version_id)")
+    .eq("form_question_groups.automation_version_id", automationVersionId)
+    .eq("pdf_field_name", pdfFieldName)
+    .limit(1)
+    .maybeSingle();
+  return (data as { id: string } | null)?.id ?? null;
+}
+
 /** Finds a form response by its primary key. */
 export async function findFormResponseById(
   responseId: string,

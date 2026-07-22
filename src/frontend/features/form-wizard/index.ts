@@ -31,6 +31,7 @@ export type {
   SubmitFormFn,
   TranslateAnswersFn,
   ImproveAnswerFn,
+  ResearchAnswerFn,
   GetAiPrefillFn,
   SaveDraftResult,
   SubmitFormResult,

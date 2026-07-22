@@ -124,12 +124,37 @@ export const FORM_EDITOR_STRINGS_ES: FormEditorStrings = {
   originDoc: "Extracción de doc.",
   originGen: "Otra generación",
   originProfile: "Perfil",
+  originWebResearch: "Buscar en internet",
+  originFieldCopy: "Copiar de otro campo",
   originComputed: "Total calculado",
   originCurrentDate: "Fecha de hoy",
   originClientNote: "El cliente la responde en su wizard.",
   originNotShown: "Esta pregunta NO se muestra al cliente: se pre-llena al ejecutar y el equipo puede corregirla.",
   originCurrentDateNote:
     "Se llena con la fecha del día en que se genera el PDF (huso horario de la organización). No se le muestra al cliente ni requiere configuración. Márcala como tipo Fecha para que salga en formato MM/DD/YYYY.",
+  // web_research (buscador + IA)
+  webResearchNote:
+    "El equipo escribe una consulta y presiona \"Buscar\": la IA busca en internet con este system prompt y devuelve el resultado en una caja de solo lectura. La caja no se teclea a mano (salvo el botón \"corregir a mano\").",
+  webResearchPrompt: "System prompt (usa el token {{INPUT}} donde va la consulta)",
+  webResearchPromptHint:
+    "Ej. Esta es la direccion del corte del juez {{INPUT}}, y con esa direccion buscame la direccion del fiscal principal para enviarle la copia de Proof of Service.",
+  webResearchNeedsInput: "El system prompt debe incluir el token {{INPUT}}.",
+  webResearchUrl: "URL de referencia (opcional — para orientar la búsqueda)",
+  webResearchMaxUses: "Máx. búsquedas",
+  webResearchSearchLabel: "Rótulo del buscador (encima de la caja)",
+  webResearchResultLabel: "Rótulo del resultado (caja de solo lectura)",
+  webResearchHelpTokens: "Tokens dinámicos del texto de ayuda",
+  webResearchHelpTokensHint:
+    "Cada token ({{a_number}}, {{nationality}}…) se reemplaza en la ayuda con un dato extraído de un documento del caso.",
+  webResearchAddToken: "+ Añadir token",
+  // field_copy (copiar de otro campo)
+  fieldCopyNote:
+    "Copia la respuesta ya guardada de una pregunta de OTRO formulario del mismo caso (se materializa al enviar el cuestionario).",
+  fieldCopyForm: "Formulario de origen",
+  fieldCopyQuestion: "Pregunta de origen (id)",
+  fieldCopyPdfName: "pdf_field_name de respaldo (opcional)",
+  fieldCopyPdfNameHint:
+    "Si el formulario de origen se re-publica y cambia el id, se usa este nombre de campo del PDF (estable) para reencontrar la respuesta.",
   // computed (total derivado)
   computedNote: "Total derivado: se calcula automáticamente al llenar el PDF a partir de otras preguntas. No se le muestra al cliente ni se envía a la IA.",
   computedOp: "Operación",

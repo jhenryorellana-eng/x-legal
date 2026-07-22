@@ -7,6 +7,9 @@
 import { StaffFormFillLoader } from "@/app/(staff)/(panel)/_form-fill/loader";
 
 export const dynamic = "force-dynamic";
+// web_research "Buscar" runs a synchronous Anthropic web_search Server Action — raise the
+// route ceiling above Vercel's 15s Server-Action default so the search can complete.
+export const maxDuration = 120;
 
 export default async function LegalCaseFormPage({
   params,

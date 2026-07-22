@@ -25,6 +25,13 @@ export const ANSWER_PROVENANCES = [
   "client_confirmed",
   /** AI drafted it from evidence actually present in the case file. */
   "ai_grounded",
+  /** AI produced it via an interactive web_search (web_research source). Grounded in
+   *  live web results the staff triggered — stronger than a plain source resolve, but
+   *  a human touch (the manual escape hatch → client_edited) still wins. Forward-looking:
+   *  today web_research lives on a pdf_automation form (EOIR-26), which has no per-field
+   *  provenance map, so nothing writes this yet — it lands when web_research is used on a
+   *  questionnaire (whose answers ARE provenance-tracked). */
+  "web_researched",
   /** Resolved deterministically from a document/profile/generation source (no LLM). */
   "source_resolved",
   /** The question schema carried a default_value. */
@@ -42,10 +49,11 @@ const PRECEDENCE: Record<AnswerProvenance, number> = {
   client_edited: 0,
   client_confirmed: 1,
   ai_grounded: 2,
-  source_resolved: 3,
-  schema_default: 4,
-  ai_gap_filled: 5,
-  unknown: 6,
+  web_researched: 3,
+  source_resolved: 4,
+  schema_default: 5,
+  ai_gap_filled: 6,
+  unknown: 7,
 };
 
 /**
@@ -59,6 +67,7 @@ const ANSWERED: ReadonlySet<AnswerProvenance> = new Set<AnswerProvenance>([
   "client_edited",
   "client_confirmed",
   "ai_grounded",
+  "web_researched",
   "source_resolved",
   "schema_default",
 ]);

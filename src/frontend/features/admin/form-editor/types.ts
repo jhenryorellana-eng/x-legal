@@ -18,7 +18,9 @@ export type QuestionSource =
   | "profile"
   | "ai_field"
   | "computed"
-  | "current_date";
+  | "current_date"
+  | "web_research"
+  | "field_copy";
 
 export type FieldType = "text" | "number" | "date" | "checkbox" | "select" | "textarea" | "multiselect";
 

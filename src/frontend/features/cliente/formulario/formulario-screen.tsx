@@ -11,6 +11,7 @@ import type {
   SubmitFormFn,
   TranslateAnswersFn,
   ImproveAnswerFn,
+  ResearchAnswerFn,
   GetAiPrefillFn,
 } from "@/frontend/features/form-wizard";
 
@@ -36,6 +37,8 @@ export interface FormularioScreenProps {
   translateAnswers?: TranslateAnswersFn;
   /** "Mejorar con IA" server action (per-question gating via aiImproveEnabled). */
   improveAnswer?: ImproveAnswerFn;
+  /** web_research "Buscar" server action (per-question gating via source). */
+  researchField?: ResearchAnswerFn;
   /** Where "back" from step 0 lands (Camino or the forms list). */
   exitHref: string;
 }
@@ -52,6 +55,7 @@ export function FormularioScreen({
   getAiPrefill,
   translateAnswers,
   improveAnswer,
+  researchField,
   exitHref,
 }: FormularioScreenProps) {
   const router = useRouter();
@@ -68,6 +72,7 @@ export function FormularioScreen({
       getAiPrefill={getAiPrefill}
       translateAnswers={translateAnswers}
       improveAnswer={improveAnswer}
+      researchField={researchField}
       onSubmitted={() => router.replace(`/caso/${caseId}/exito?from=formulario`)}
       onExit={() => router.push(exitHref)}
     />

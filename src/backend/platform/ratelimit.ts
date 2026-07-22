@@ -420,6 +420,29 @@ export async function limitAiImprove(userId: string): Promise<RateLimitResult> {
   }
 }
 
+// ai:web-research — 10/10min per userId. Stricter than ai:improve because each call
+// runs Anthropic web_search (server tool) which is materially more expensive than the
+// haiku rewrite. First use: the EOIR-26 item #12 "Buscar" button.
+let _aiWebResearch: Ratelimit | undefined;
+function aiWebResearch(): Ratelimit {
+  return (_aiWebResearch ??= makeLimiter(redis(), 10, "10 m", "rl:ai:web-research"));
+}
+
+/**
+ * Checks the web_research "Buscar" tier (10/10min per userId). Applied inside
+ * ai-engine.runFieldWebResearch, after requireCaseAccess. Fail mode: open (authenticated
+ * endpoint) — availability wins; the per-call cost is bounded by web_search max_uses.
+ */
+export async function limitAiWebResearch(userId: string): Promise<RateLimitResult> {
+  try {
+    const r = await aiWebResearch().limit(userId);
+    return { allowed: r.success, reset: r.reset };
+  } catch (err) {
+    logger.warn({ err }, "Rate limiter error (ai:web-research) — allowing (open fail mode)");
+    return { allowed: true, reset: 0 };
+  }
+}
+
 /**
  * Checks billing upload-url tier (10/min per userId, DOC-71 §7 HIGH-3).
  *

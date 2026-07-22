@@ -126,6 +126,8 @@ import {
   updateFormResponse,
   findLatestActiveDocumentBySlug,
   findDocumentExtractionByCaseDocId,
+  loadResponseAnswersBySlug,
+  findQuestionIdByPdfName,
   findCompletedGenerationByFormSlug,
   downloadDocumentBytesBySlug,
   downloadAllDocumentBytesBySlug,
@@ -3813,6 +3815,10 @@ export interface FormResolveCache {
   extractionByDocId?: Map<string, Promise<Awaited<ReturnType<typeof findDocumentExtractionByCaseDocId>>>>;
   /** Org IANA timezone for `current_date` questions (one lookup per form load). */
   orgTimezone?: Promise<string>;
+  /** Memoized `answers`+version of another form of the case, keyed by `${slug}|${partyId}`.
+   *  Backs the `field_copy` source so a form that copies several fields from the same
+   *  target loads it once. Same evict-on-rejection rule as docBySlug. */
+  responseBySlug?: Map<string, Promise<Awaited<ReturnType<typeof loadResponseAnswersBySlug>>>>;
 }
 
 /** True when a client_answer question carries a catalog default_value (string
@@ -3821,6 +3827,23 @@ export interface FormResolveCache {
 export function hasClientDefaultValue(sourceRef: unknown): boolean {
   const dv = (sourceRef as Record<string, unknown> | null)?.["default_value"];
   return typeof dv === "boolean" || (typeof dv === "string" && dv.trim() !== "");
+}
+
+/**
+ * Composes the synthetic profile field `address.city_state_zip` — "City, ST ZIP" in
+ * ONE line — from the separate address sub-fields, for forms that print city/state/zip
+ * in a single AcroForm box (EOIR-26 item #10). Tolerates a missing piece so it never
+ * emits stray separators ("Houston, TX" when the zip is absent, "TX 77002" when the city
+ * is). Returns null when there is nothing to compose.
+ */
+export function composeCityStateZip(address: Record<string, unknown>): string | null {
+  const clean = (v: unknown): string => (typeof v === "string" ? v.trim() : v == null ? "" : String(v).trim());
+  const city = clean(address["city"]);
+  const state = clean(address["state"]);
+  const zip = clean(address["zip"]);
+  if (!city && !state && !zip) return null;
+  const stateZip = [state, zip].filter(Boolean).join(" ");
+  return [city, stateZip].filter(Boolean).join(", ");
 }
 
 export async function resolveBySource(
@@ -3865,6 +3888,24 @@ export async function resolveBySource(
   const loadOrgTimezone = (): Promise<string> => {
     if (!cache) return findCaseOrgTimezone(caseId);
     return (cache.orgTimezone ??= findCaseOrgTimezone(caseId));
+  };
+  // Memoized answers of ANOTHER form of the case (field_copy). Same eviction-on-reject
+  // rule as the doc/extraction loaders above.
+  const loadResponseAnswers = (
+    formSlug: string,
+  ): Promise<Awaited<ReturnType<typeof loadResponseAnswersBySlug>>> => {
+    if (!cache) return loadResponseAnswersBySlug(caseId, formSlug, partyId);
+    cache.responseBySlug ??= new Map();
+    const key = `${formSlug}|${partyId ?? ""}`;
+    let p = cache.responseBySlug.get(key);
+    if (!p) {
+      p = loadResponseAnswersBySlug(caseId, formSlug, partyId).catch((e) => {
+        cache.responseBySlug?.delete(key);
+        throw e;
+      });
+      cache.responseBySlug.set(key, p);
+    }
+    return p;
   };
   const source = question.source;
   const sourceRef = (question.source_ref ?? {}) as Record<string, unknown>;
@@ -4037,7 +4078,8 @@ export async function resolveBySource(
       const addrKey = profileField.slice(8);
       const profile = await loadProfile(primaryClientId);
       const address = (profile?.address ?? {}) as Record<string, unknown>;
-      raw = address[addrKey] ?? null;
+      // Synthetic combined field: "City, ST ZIP" in one box (EOIR-26 item #10).
+      raw = addrKey === "city_state_zip" ? composeCityStateZip(address) : (address[addrKey] ?? null);
     } else if (profileField === "phone_e164" || profileField === "email") {
       // Contact fields on users table
       const user = await loadUserContact(primaryClientId);
@@ -4060,6 +4102,31 @@ export async function resolveBySource(
   if (source === "current_date") {
     const tz = await loadOrgTimezone();
     return formatInTimeZone(new Date(), tz, "yyyy-MM-dd");
+  }
+
+  if (source === "web_research") {
+    // Interactive-only: filled by the runWebResearch server action ("Buscar") and
+    // stored as a normal answer. Never auto-resolved here — that would fire an
+    // unbilled web_search on every form open / PDF fill. Every caller reads the
+    // stored answer via its `own` branch before reaching this dispatch.
+    return null;
+  }
+
+  if (source === "field_copy") {
+    const formSlug = sourceRef["form_slug"] as string | undefined;
+    const targetQid = sourceRef["target_question_id"] as string | undefined;
+    const targetPdfName = (sourceRef["target_pdf_field_name"] as string | undefined) ?? null;
+    if (!formSlug || !targetQid) return null;
+    const target = await loadResponseAnswers(formSlug);
+    if (!target) return null;
+    let v = target.answers[targetQid];
+    // Stable fallback: the target form was re-published and its ids changed, but the
+    // pdf_field_name did not → resolve the id inside the target response's pinned version.
+    if ((v === undefined || v === null || v === "") && targetPdfName && target.automationVersionId) {
+      const fallbackId = await findQuestionIdByPdfName(target.automationVersionId, targetPdfName);
+      if (fallbackId) v = target.answers[fallbackId];
+    }
+    return v === undefined || v === "" ? null : v;
   }
 
   // `computed` is NOT resolved here: a total needs the answers of its sibling
@@ -4520,6 +4587,13 @@ export interface FormQuestionDto {
    * it by questionId (ai-engine.improveFormAnswerText).
    */
   aiImproveEnabled: boolean;
+  /**
+   * web_research source (buscador + IA): present ONLY for a web_research question.
+   * Carries the search-box + result-box UI labels. The system prompt / reference_url /
+   * help_tokens are server-only (like ai_improve.instruction) — the runWebResearch
+   * action loads them by questionId. Absent = not a web_research field.
+   */
+  webResearch?: { searchLabelI18n: I18nValue | null; resultLabelI18n: I18nValue | null };
 }
 
 export interface FormGroupDto {
@@ -4639,6 +4713,51 @@ function schemaToWizardGroups(
 }
 
 /**
+ * Resolves a web_research question's `help_tokens` ({ token → {document_slug, json_path} })
+ * to concrete values from the case's document extractions, reusing the shared resolve
+ * cache. Powers DYNAMIC help text (e.g. the client's A-Number / nationality) resolved
+ * server-side — the client never sees the paths, only the interpolated help string.
+ */
+async function resolveHelpTokenValues(
+  helpTokens: Record<string, { document_slug?: string; json_path?: string }> | undefined,
+  caseId: string,
+  partyId: string | null,
+  cache: FormResolveCache,
+): Promise<Record<string, string>> {
+  if (!helpTokens || typeof helpTokens !== "object") return {};
+  const out: Record<string, string> = {};
+  for (const [token, ref] of Object.entries(helpTokens)) {
+    if (!ref?.document_slug || !ref?.json_path) continue;
+    try {
+      const v = await resolveBySource(
+        {
+          id: `help:${token}`,
+          source: "document_extraction",
+          source_ref: { document_slug: ref.document_slug, json_path: ref.json_path },
+        },
+        {},
+        caseId,
+        partyId,
+        cache,
+      );
+      if (v !== undefined && v !== null && String(v).trim() !== "") out[token] = String(v).trim();
+    } catch {
+      // best-effort — a not-yet-extracted document leaves the token unresolved.
+    }
+  }
+  return out;
+}
+
+/** Interpolates {{token}} occurrences in a bilingual help string. An unresolved token
+ *  becomes an empty string, so a raw "{{a_number}}" never reaches the UI. */
+function interpolateHelpI18n(help: I18nValue | null, values: Record<string, string>): I18nValue | null {
+  if (!help) return help;
+  const apply = (s: string): string =>
+    s.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_m, t: string) => values[t] ?? "");
+  return { en: apply(help.en), es: apply(help.es) };
+}
+
+/**
  * Resolves the published form version + questions + pre-filled values for the wizard.
  *
  * @api-id (read — consumed by wizard UI)
@@ -4736,9 +4855,26 @@ export async function getFormForClient(
         // client_answer questions with a catalog default_value get the same
         // prefill treatment (chip + editable value) as sourced questions.
         const hasClientDefault = q.source === "client_answer" && hasClientDefaultValue(q.source_ref);
-        const isPrefilled = q.source !== "client_answer" || hasClientDefault;
+        // web_research is interactive (buscador + IA): it renders its own widget and is
+        // NEVER treated as a prefilled/read-only sourced field. Its stored answer flows
+        // through `currentAnswer`.
+        const isWebResearch = q.source === "web_research";
+        const isPrefilled = !isWebResearch && (q.source !== "client_answer" || hasClientDefault);
         let prefillValue: unknown = null;
         let prefillPending = false;
+
+        // web_research: resolve dynamic help tokens (e.g. {{a_number}}, {{nationality}})
+        // + expose the UI labels. The system prompt / reference_url stay server-only.
+        const webRef = isWebResearch
+          ? (q.source_ref as {
+              search_label_i18n?: unknown;
+              result_label_i18n?: unknown;
+              help_tokens?: Record<string, { document_slug?: string; json_path?: string }>;
+            } | null)
+          : null;
+        const helpTokenValues = webRef?.help_tokens
+          ? await resolveHelpTokenValues(webRef.help_tokens, input.caseId, partyId, resolveCache)
+          : {};
 
         if (q.source === "ai_field") {
           const cached = aiCacheByQ.get(q.id);
@@ -4774,7 +4910,12 @@ export async function getFormForClient(
           id: q.id,
           groupId: g.id,
           questionI18n: asI18n(q.question_i18n) ?? { en: "", es: "" },
-          helpI18n: asI18n(q.help_i18n),
+          // Only interpolate when there ARE resolved tokens (web_research fields) — never
+          // touch ordinary help text, so a stray literal "{{…}}" elsewhere is left intact.
+          helpI18n:
+            Object.keys(helpTokenValues).length > 0
+              ? interpolateHelpI18n(asI18n(q.help_i18n), helpTokenValues)
+              : asI18n(q.help_i18n),
           fieldType: q.field_type,
           options: opts
             ? opts.map((o) => ({ value: o.value, labelI18n: asI18n(o.label_i18n) ?? { en: o.value, es: o.value } }))
@@ -4789,6 +4930,14 @@ export async function getFormForClient(
           currentAnswer: answers[q.id] ?? null,
           condition: parseConditionOrNull(q.condition),
           aiImproveEnabled: isAiImproveEnabled(q.ai_improve),
+          ...(isWebResearch
+            ? {
+                webResearch: {
+                  searchLabelI18n: asI18n(webRef?.search_label_i18n),
+                  resultLabelI18n: asI18n(webRef?.result_label_i18n),
+                },
+              }
+            : {}),
         };
       }));
 
@@ -5562,7 +5711,15 @@ async function resolveQuestionnaireBaseDefaults(
   for (const g of groups) {
     const questions = await catalog.listQuestions(g.id);
     for (const q of questions) {
-      if (q.source !== "client_answer" || !hasClientDefaultValue(q.source_ref)) continue;
+      // Base questions materialized on submit so the LETTER (which reads persisted
+      // answers, not sources) sees them: a client_answer default_value, OR a field_copy
+      // (copies another form's answer — e.g. the Proof of Service questionnaire's Chief
+      // Counsel address ← EOIR-26 item #12). web_research is deliberately absent: it is
+      // interactive and already persists its own answer.
+      const materializable =
+        (q.source === "client_answer" && hasClientDefaultValue(q.source_ref)) ||
+        q.source === "field_copy";
+      if (!materializable) continue;
       if (!isEmpty(answers[q.id])) continue;
       try {
         const resolved = await resolveBySource(
