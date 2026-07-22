@@ -4,6 +4,7 @@ import * as React from "react";
 import { GradientBtn, Icon, Chip } from "@/frontend/components/brand";
 import { Switch, toast } from "@/frontend/components/desktop";
 import { PreMortemGuideCard } from "./pre-mortem-guide-card";
+import { MailingCoverEditor } from "./mailing-cover-editor";
 import { FieldLabel, SelectInput, TextInput } from "../shared/chrome";
 import { GENERATION_MODELS, DEFAULT_GENERATION_MODEL } from "@/shared/constants/ai-models";
 import type { FormEditorVM, FormEditorActions, GenerationConfigVM, GenerationSectionVM, AssemblyBlockType } from "./types";
@@ -49,6 +50,7 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
     attach_sources_enabled: false,
     attach_sources_kinds: ["country_condition", "jurisprudence"],
     curated_sources: [],
+    mailing_cover: null,
   };
   const [cfg, setCfg] = React.useState<GenerationConfigVM>(initial);
   const asm = cfg.assembly ?? { cover: false, toc: false, chronology: false, closing: null };
@@ -143,7 +145,7 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
 
   async function save() {
     setSaving(true);
-    const r = await actions.saveGenerationConfig({
+    const payload: Record<string, unknown> = {
       form_definition_id: vm.form.id,
       system_prompt: cfg.system_prompt,
       input_document_slugs: cfg.input_document_slugs,
@@ -165,7 +167,16 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
       attach_sources_enabled: cfg.attach_sources_enabled,
       attach_sources_kinds: cfg.attach_sources_kinds,
       curated_sources: cfg.curated_sources,
-    });
+    };
+    // Only send `mailing_cover` when this config IS (or WAS) a mailing cover. For an
+    // ordinary ai_letter both are null → the key is OMITTED (not sent as null), so the
+    // upsert never lists the (possibly not-yet-migrated) column and other configs'
+    // saves keep working. When it was set and is now cleared, we still send null so the
+    // change persists.
+    if (cfg.mailing_cover !== null || initial.mailing_cover !== null) {
+      payload.mailing_cover = cfg.mailing_cover;
+    }
+    const r = await actions.saveGenerationConfig(payload);
     setSaving(false);
     if (!r.success) return toast.error(r.error?.code ?? "Error");
     toast.success(strings.configSaved);
@@ -323,6 +334,8 @@ export function AiLetterMode({ vm, strings, actions, datasetsHref }: AiLetterMod
             })}
           </div>
         </div>
+
+        <MailingCoverEditor value={cfg.mailing_cover} onChange={(mailing_cover) => setCfg({ ...cfg, mailing_cover })} />
 
         {/* --- v1-grade engine: research + rules + sections (generic) --- */}
         <div style={{ borderTop: "1px solid var(--line)", paddingTop: 16, display: "flex", flexDirection: "column", gap: 16 }}>

@@ -187,6 +187,43 @@ export interface LetterFillConfig {
   };
 }
 
+/** Reference to a confirmed companion-questionnaire answer (form slug + question
+ *  wording), resolved against loadResolvedInputs — same convention as letter_fill. */
+export interface MailingCoverAnswerRef {
+  form_slug: string;
+  question: string;
+}
+
+/**
+ * Deterministic USPS mailing cover sheet ("Carátula de Envío"), config-as-data via
+ * `ai_generation_configs.mailing_cover`. Its PRESENCE on a config is the single
+ * discriminator that (1) routes the generation to the no-LLM render path and
+ * (2) marks the document as a mailing cover — prepended as the unnumbered first
+ * sheet of the compiled expediente (before the index) and excluded from the body.
+ *
+ * Mirror of catalog `MailingCoverConfigSchema` (hand-kept in sync, like LetterFillConfig).
+ */
+export interface MailingCoverConfig {
+  /** Firm's return address lines (fixed for every client). */
+  return_address: string[];
+  /** Sender/return NAME (top of each envelope), from a confirmed questionnaire answer. */
+  sender_name?: MailingCoverAnswerRef | null;
+  /** One block per recipient/envelope (scalable: 1..N). */
+  envelopes: Array<{
+    /** Fixed recipient lines, rendered verbatim. */
+    recipient_lines: string[];
+    /** Optional variable address appended below the fixed lines. null = fully fixed. */
+    address_from?: MailingCoverAnswerRef | null;
+  }>;
+  /** Layout tuning in points (US Letter). */
+  spacing?: {
+    block_gap_pt?: number;
+    line_height?: number;
+    font_size_pt?: number;
+    margin_pt?: number;
+  };
+}
+
 export interface ConfigSnapshot {
   system_prompt: string;
   input_document_slugs: string[];
@@ -202,6 +239,9 @@ export interface ConfigSnapshot {
   signature_role?: string | null;
   /** Deterministic token fills for court letters (config-as-data). Null = none. */
   letter_fill?: LetterFillConfig | null;
+  /** Deterministic USPS mailing cover sheet (config-as-data). Presence = no-LLM
+   *  render + prepend before the expediente index. Null/absent = ordinary ai_letter. */
+  mailing_cover?: MailingCoverConfig | null;
   // --- v1-grade engine (generic, configurable) ---
   web_search_enabled?: boolean;
   web_search_max_uses?: number;

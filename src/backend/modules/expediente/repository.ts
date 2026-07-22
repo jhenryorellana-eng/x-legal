@@ -314,11 +314,11 @@ export async function verifyCoverRenderExists(id: string): Promise<boolean> {
 /** Finds a completed ai_generation_run by id (returns its output_path). */
 export async function findGenerationRunById(
   id: string,
-): Promise<{ id: string; output_path: string | null; case_id: string; status: string } | null> {
+): Promise<{ id: string; output_path: string | null; case_id: string; status: string; form_definition_id: string } | null> {
   const supabase = createServiceClient();
   const { data } = await supabase
     .from("ai_generation_runs")
-    .select("id, output_path, case_id, status")
+    .select("id, output_path, case_id, status, form_definition_id")
     .eq("id", id)
     .maybeSingle();
   return data ?? null;
@@ -497,11 +497,40 @@ export async function deleteCoverRender(id: string): Promise<void> {
   if (error) throw new Error(`expediente.repository: deleteCoverRender — ${error.message}`);
 }
 
-/** Loads completed ai_generation_runs for a case. */
+/** form_definition_ids whose generation config is a deterministic mailing cover
+ *  ("Carátula de Envío"). Those are prepended before the index at compile time and
+ *  must NEVER be assembled into the body. Error-tolerant: a missing column
+ *  (pre-migration) degrades to an empty set (no exclusion). */
+async function loadMailingCoverFormIds(): Promise<Set<string>> {
+  const supabase = createServiceClient();
+  // `mailing_cover` is newer than the generated DB types; view the builder through a
+  // narrow untyped shape for this one filter (degrades to empty on any error).
+  const builder = supabase.from("ai_generation_configs").select("form_definition_id") as unknown as {
+    not: (
+      column: string,
+      operator: string,
+      value: unknown,
+    ) => PromiseLike<{ data: Array<{ form_definition_id: string }> | null; error: unknown }>;
+  };
+  const { data, error } = await builder.not("mailing_cover", "is", null);
+  if (error) return new Set<string>();
+  return new Set((data ?? []).map((r) => r.form_definition_id));
+}
+
+/** Whether a form_definition's generation config is a mailing cover — so it can be
+ *  kept OUT of the expediente body (it is prepended before the index instead). */
+export async function isMailingCoverForm(formDefinitionId: string): Promise<boolean> {
+  const ids = await loadMailingCoverFormIds();
+  return ids.has(formDefinitionId);
+}
+
+/** Loads completed ai_generation_runs for a case — EXCLUDING mailing covers, which
+ *  are prepended before the index (not body material). */
 export async function listGenerationRunsForMaterial(
   caseId: string,
 ): Promise<MaterialGenerations[]> {
   const supabase = createServiceClient();
+  const coverFormIds = await loadMailingCoverFormIds();
   const { data } = await supabase
     .from("ai_generation_runs")
     .select("id, output_path, created_at, party_id, version, form_definition_id, form_definitions(label_i18n)")
@@ -510,7 +539,7 @@ export async function listGenerationRunsForMaterial(
     .not("output_path", "is", null)
     .order("created_at", { ascending: false });
   return (data ?? [])
-    .filter((r) => r.output_path !== null)
+    .filter((r) => r.output_path !== null && !coverFormIds.has(r.form_definition_id))
     .map((r) => ({
       refId: r.id,
       title: formLabelFromJoin(r.form_definitions, "Carta generada"),
@@ -520,6 +549,30 @@ export async function listGenerationRunsForMaterial(
       formDefinitionId: r.form_definition_id,
       version: r.version,
     }));
+}
+
+/** Downloads the PDF bytes of the case's CURRENT (highest-version) completed
+ *  mailing-cover run, or null if none. Used to prepend the "Carátula de Envío" as
+ *  the unnumbered first sheet of the compiled expediente (before the index). */
+export async function loadLatestMailingCoverPdf(caseId: string): Promise<Uint8Array | null> {
+  const supabase = createServiceClient();
+  const coverFormIds = await loadMailingCoverFormIds();
+  if (coverFormIds.size === 0) return null;
+  const { data } = await supabase
+    .from("ai_generation_runs")
+    .select("output_path")
+    .eq("case_id", caseId)
+    .eq("status", "completed")
+    .not("output_path", "is", null)
+    .in("form_definition_id", [...coverFormIds])
+    .order("version", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(1);
+  const path = (data ?? [])[0]?.output_path as string | undefined;
+  if (!path) return null;
+  const { data: file, error } = await supabase.storage.from("generated").download(path);
+  if (error || !file) return null;
+  return new Uint8Array(await file.arrayBuffer());
 }
 
 /** Loads case_form_responses with a filled PDF for a case. */

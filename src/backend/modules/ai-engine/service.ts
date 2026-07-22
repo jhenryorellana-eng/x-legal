@@ -441,6 +441,10 @@ export async function startGeneration(
     output_language: (cfg?.output_language as ConfigSnapshot["output_language"]) ?? "es",
     signature_role: cfg?.signature_role ?? null,
     letter_fill: (cfg?.letter_fill as ConfigSnapshot["letter_fill"]) ?? null,
+    // Deterministic mailing cover (config-as-data). Cast: the column is newer than
+    // the generated DB types until db:types runs post-migration.
+    mailing_cover:
+      ((cfg as Record<string, unknown> | null)?.mailing_cover ?? null) as ConfigSnapshot["mailing_cover"],
     web_search_enabled: cfg?.web_search_enabled ?? false,
     web_search_max_uses: cfg?.web_search_max_uses ?? 5,
     research_instructions: cfg?.research_instructions ?? null,
@@ -599,8 +603,17 @@ export async function executeGenerationJob(
 
   const snapshot = run.config_snapshot as unknown as ConfigSnapshot;
 
-  // Load inputs + dataset
+  // Load inputs
   const inputs = await loadResolvedInputs(snapshot);
+
+  // Deterministic mailing cover ("Carátula de Envío"): NO model call — the whole
+  // document is fixed text plus two confirmed answers (client name + OPLA address).
+  // Its presence on the config is the single discriminator (see 0105). Branch here,
+  // before the dataset/prompt work, so no tokens or extra queries are ever spent.
+  if (snapshot.mailing_cover) {
+    return runMailingCoverGeneration(run, snapshot, inputs);
+  }
+
   const datasetItems = await loadDatasetItems(snapshot.dataset_id);
   const runContext: RunContext = {};
   // The few-shot reference is precedents + model declarations; country-condition
@@ -850,6 +863,78 @@ async function finalizeRun(args: {
   logger.info(
     { job: "run-generation", runId: run.id, model: modelUsed, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, costUsd },
     "run-generation: completed",
+  );
+  return "completed";
+}
+
+// ---------------------------------------------------------------------------
+// Deterministic mailing cover ("Carátula de Envío") — NO model call.
+// ---------------------------------------------------------------------------
+
+/** Plain-text mirror of the rendered cover, stored as the run's output_text for
+ *  preview/telemetry/audit (the real artifact is the PDF from renderAndStore). */
+function mailingCoverToText(data: {
+  senderName: string;
+  returnAddress: string[];
+  envelopes: Array<{ recipientLines: string[]; addressLines: string[] }>;
+}): string {
+  return data.envelopes
+    .map((e) =>
+      [data.senderName, ...data.returnAddress, "", "TO", "", ...e.recipientLines, ...e.addressLines].join("\n"),
+    )
+    .join("\n\n");
+}
+
+/**
+ * Deterministic mailing-cover generation: no LLM, no tokens, no cost. Resolves the
+ * cover values from confirmed answers, renders the PDF via renderAndStore (which
+ * short-circuits to renderMailingCoverPdf when snapshot.mailing_cover is present),
+ * and completes the run. The output_text column keeps a plain-text mirror.
+ */
+async function runMailingCoverGeneration(
+  run: GenerationRunRow & { orgId: string },
+  snapshot: ConfigSnapshot,
+  inputs: ResolvedInputs,
+): Promise<JobOutcome> {
+  if (await isCancelled(run.id)) return "cancelled";
+
+  const { resolveMailingCoverValues } = await import("./mailing-cover");
+  const outputText = mailingCoverToText(resolveMailingCoverValues(snapshot.mailing_cover!, inputs));
+
+  let outputPath: string | null = null;
+  try {
+    outputPath = await renderAndStore(outputText, run, snapshot);
+  } catch (renderErr) {
+    logger.warn({ err: renderErr, runId: run.id }, "run-generation(mailing-cover): render failed");
+  }
+
+  const { rowsAffected } = await completeRun(run.id, {
+    outputPath,
+    outputText,
+    outputSummary: outputText.slice(0, 400).trim(),
+    model: snapshot.model, // no LLM ran; tokens/cost = 0 mark the deterministic path
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheCreationInputTokens: 0,
+    cacheReadInputTokens: 0,
+    costUsd: 0,
+  });
+  if (rowsAffected === 0) {
+    logger.warn({ runId: run.id }, "run-generation(mailing-cover): completeRun affected 0 rows — already closed");
+    return "skipped";
+  }
+
+  await emitGenerationCompleted({
+    caseId: run.case_id,
+    runId: run.id,
+    formDefinitionId: run.form_definition_id,
+    partyId: run.party_id,
+    version: run.version,
+    isTest: run.is_test,
+  });
+  logger.info(
+    { job: "run-generation", runId: run.id, mailingCover: true },
+    "run-generation: completed (deterministic mailing cover)",
   );
   return "completed";
 }
@@ -1282,6 +1367,23 @@ async function renderAndStore(
 
   const { createServiceClient } = await import("@/backend/platform/supabase");
   const supabase = createServiceClient();
+
+  // Deterministic mailing cover: render the two-envelope sheet directly from the
+  // config + confirmed answers (ignore `outputText`, which is only a plain-text
+  // mirror). Shared by the initial generation AND reRenderRun, so a corrected OPLA
+  // address re-renders with no model call.
+  if (snapshot.mailing_cover) {
+    const { loadResolvedInputs } = await import("./repository");
+    const { resolveMailingCoverValues } = await import("./mailing-cover");
+    const { renderMailingCoverPdf } = await import("@/backend/platform/pdf");
+    const li = await loadResolvedInputs(snapshot);
+    const bytes = await renderMailingCoverPdf(resolveMailingCoverValues(snapshot.mailing_cover, li));
+    const { error } = await supabase.storage
+      .from("generated")
+      .upload(path, bytes, { contentType: "application/pdf", upsert: true });
+    if (error) throw error;
+    return path;
+  }
 
   if (fmt === "pdf") {
     // Signed ai_letter (config-as-data: ai_generation_configs.signature_role). Resolve

@@ -166,6 +166,24 @@ export interface GenerationAssemblyVM {
   cover_page?: { title?: string; rows?: CoverRowVM[] };
 }
 
+/** Reference to a companion-questionnaire answer (form slug + question wording). */
+export interface MailingCoverAnswerRefVM {
+  form_slug: string;
+  question: string;
+}
+export interface MailingCoverEnvelopeVM {
+  recipient_lines: string[];
+  address_from: MailingCoverAnswerRefVM | null;
+}
+/** Deterministic mailing cover ("Carátula de Envío") — mirror of the backend
+ *  MailingCoverConfig. Presence = no-LLM render + prepend before the index. */
+export interface MailingCoverVM {
+  return_address: string[];
+  sender_name: MailingCoverAnswerRefVM | null;
+  envelopes: MailingCoverEnvelopeVM[];
+  spacing?: { block_gap_pt?: number; line_height?: number; font_size_pt?: number; margin_pt?: number };
+}
+
 export interface GenerationConfigVM {
   system_prompt: string;
   input_document_slugs: string[];
@@ -189,6 +207,8 @@ export interface GenerationConfigVM {
   attach_sources_enabled: boolean;
   attach_sources_kinds: string[];
   curated_sources: { url: string; title: string; category: string }[];
+  /** Deterministic mailing cover ("Carátula de Envío"). Null = ordinary ai_letter. */
+  mailing_cover: MailingCoverVM | null;
 }
 
 /* Injected action shapes (structurally identical to the app server actions). */

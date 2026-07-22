@@ -139,6 +139,7 @@ export function buildFormEditorVM(data: RawFormEditorData, datasets: RawDataset[
           attach_sources_kinds: (cfg.attach_sources_kinds as string[]) ?? ["country_condition", "jurisprudence"],
           curated_sources:
             (cfg.curated_sources as { url: string; title: string; category: string }[]) ?? [],
+          mailing_cover: (cfg.mailing_cover as import("./types").MailingCoverVM | null) ?? null,
         }
       : null,
     questionnaireGenConfig: data.questionnaireGenConfig

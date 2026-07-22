@@ -708,6 +708,97 @@ export async function renderCoverPdf(data: CoverData): Promise<Uint8Array> {
 }
 
 // ---------------------------------------------------------------------------
+// E2. Mailing cover sheet ("Carátula de Envío") — deterministic, NON-AI.
+//     One US Letter page with N envelope blocks (sender return address +
+//     recipient), used as the mailing front sheet of a filing package.
+//     Resolved data (no ai-engine import — platform boundary) → pure HTML → mupdf.
+// ---------------------------------------------------------------------------
+
+/** Fully-resolved data the mailing cover renders (no config/answer lookups here —
+ *  the caller resolves values; this stays a pure, boundary-safe render input). */
+export interface MailingCoverRenderData {
+  /** Sender/return name (top line of every envelope block). */
+  senderName: string;
+  /** Firm's fixed return address lines. */
+  returnAddress: string[];
+  /** One block per recipient/envelope, in order. */
+  envelopes: Array<{
+    /** Fixed recipient lines (verbatim). */
+    recipientLines: string[];
+    /** Optional variable address appended below the fixed lines (e.g. OPLA). */
+    addressLines: string[];
+  }>;
+  /** Layout tuning in points (US Letter). */
+  spacing: { blockGapPt: number; lineHeight: number; fontSizePt: number; marginPt: number };
+}
+
+/** Vertical gap (pt) between the sender's return block and the "TO" label. */
+const MAILING_COVER_TO_GAP_PT = 44;
+/** Vertical gap (pt) between the "TO" label and the recipient block. */
+const MAILING_COVER_AFTER_TO_GAP_PT = 18;
+
+/**
+ * Builds the deterministic mailing-cover HTML (pure — no mupdf, so it is
+ * unit-testable without WASM, like buildCoverHtml). Each envelope stacks the
+ * sender name + return address, a gap, "TO", a gap, then the recipient lines and
+ * (optionally) a variable address; envelopes are separated by `blockGapPt`.
+ */
+export function buildMailingCoverHtml(data: MailingCoverRenderData): string {
+  const esc = (s: string) =>
+    String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string));
+  const { senderName, returnAddress, envelopes, spacing } = data;
+  const line = (t: string) => `<div>${esc(t)}</div>`;
+  const gap = (pt: number) => `<div style="height:${pt}pt"></div>`;
+  const blocks = envelopes
+    .map((env, i) => {
+      const addr = env.addressLines.map(line).join("");
+      return `${i > 0 ? gap(spacing.blockGapPt) : ""}<div>${line(senderName)}${returnAddress
+        .map(line)
+        .join("")}${gap(MAILING_COVER_TO_GAP_PT)}<div>TO</div>${gap(
+        MAILING_COVER_AFTER_TO_GAP_PT,
+      )}${env.recipientLines.map(line).join("")}${addr}</div>`;
+    })
+    .join("");
+  return `<!DOCTYPE html><html><body style="font-family:Helvetica,Arial,sans-serif;margin:0;padding:${spacing.marginPt}pt;color:${NAVY};font-size:${spacing.fontSizePt}pt;line-height:${spacing.lineHeight}">${blocks}</body></html>`;
+}
+
+/** Renders the deterministic mailing cover to a one-page US Letter PDF. Same
+ *  inputs → same bytes. */
+export async function renderMailingCoverPdf(data: MailingCoverRenderData): Promise<Uint8Array> {
+  return htmlToPdf(buildMailingCoverHtml(data));
+}
+
+/**
+ * Prepends `leadBytes` (e.g. an already-rendered mailing cover) in front of
+ * `baseBytes` (e.g. the compiled, Bates-stamped filing package) into a single
+ * PDF — graftPage copies pages verbatim (no font re-processing), so the base's
+ * foliation is preserved and the lead sheet stays unnumbered. Mirrors the merge
+ * in compileExpedientePdf.
+ */
+export async function prependPdfPages(leadBytes: Uint8Array, baseBytes: Uint8Array): Promise<Uint8Array> {
+  const mupdf = await import("mupdf");
+
+  const M = mupdf as any;
+  const lead = M.Document.openDocument(leadBytes, "application/pdf");
+  const base = M.Document.openDocument(baseBytes, "application/pdf");
+  const dst = new M.PDFDocument();
+  const graft = (src: any) => {
+    const n = Math.max(1, src.countPages());
+    for (let i = 0; i < n; i++) dst.graftPage(dst.countPages(), src, i);
+  };
+  try {
+    graft(lead);
+    graft(base);
+    return dst.saveToBuffer("").asUint8Array() as Uint8Array;
+  } finally {
+    try { lead?.destroy?.(); } catch { /* freed */ }
+    try { base?.destroy?.(); } catch { /* freed */ }
+    try { dst?.destroy?.(); } catch { /* freed */ }
+  }
+
+}
+
+// ---------------------------------------------------------------------------
 // F. renderCertifiedTranslationPdf — certified translation document
 //    Global title (with the language direction) + the document's own title +
 //    structured body (md→HTML, label-value tables) + a translator's certification

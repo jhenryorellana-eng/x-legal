@@ -130,6 +130,48 @@ describe("updateGenerationConfig — companion auto-wiring", () => {
   });
 });
 
+describe("updateGenerationConfig — mailing_cover conditional include (deploy-order safety)", () => {
+  it("OMITS mailing_cover from the upsert row when the input doesn't provide it", async () => {
+    // This is the guard that protects EVERY other ai_letter save from writing a
+    // (possibly not-yet-migrated) column: an ordinary save must never list mailing_cover.
+    wireFormLookups(COMPANION_ID);
+    await updateGenerationConfig(actor(), baseInput());
+    const saved = mocks.repo.upsertGenerationConfig.mock.calls[0][0];
+    expect("mailing_cover" in saved).toBe(false);
+  });
+
+  it("INCLUDES mailing_cover in the upsert row when the input provides it", async () => {
+    wireFormLookups(COMPANION_ID);
+    const mailing_cover = {
+      return_address: ["10951 N. Town Center Drive", "Highland, UT 84003"],
+      sender_name: { form_slug: COMPANION_SLUG, question: "Nombre" },
+      envelopes: [{ recipient_lines: ["Board of Immigration Appeals"], address_from: null }],
+    };
+    await updateGenerationConfig(actor(), { ...baseInput(), mailing_cover });
+    const saved = mocks.repo.upsertGenerationConfig.mock.calls[0][0];
+    expect("mailing_cover" in saved).toBe(true);
+    expect(saved.mailing_cover).toMatchObject({ return_address: mailing_cover.return_address });
+  });
+
+  it("includes mailing_cover as null when explicitly cleared", async () => {
+    wireFormLookups(COMPANION_ID);
+    await updateGenerationConfig(actor(), { ...baseInput(), mailing_cover: null });
+    const saved = mocks.repo.upsertGenerationConfig.mock.calls[0][0];
+    expect("mailing_cover" in saved).toBe(true);
+    expect(saved.mailing_cover).toBeNull();
+  });
+
+  it("rejects a mailing_cover whose ref form_slug is not a form of the service", async () => {
+    wireFormLookups(COMPANION_ID);
+    const mailing_cover = {
+      return_address: [],
+      sender_name: { form_slug: "does-not-exist", question: "X" },
+      envelopes: [],
+    };
+    await expect(updateGenerationConfig(actor(), { ...baseInput(), mailing_cover })).rejects.toThrow();
+  });
+});
+
 describe("saveFormFillGuide — mirrors the toggle into the generation config", () => {
   it("updates the config's pre_mortem_enabled when the guide toggle changes", async () => {
     wireFormLookups(COMPANION_ID);

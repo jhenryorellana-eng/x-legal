@@ -759,6 +759,51 @@ export const GenerationAssemblySchema = z.object({
 });
 export type GenerationAssembly = z.infer<typeof GenerationAssemblySchema>;
 
+// ---------------------------------------------------------------------------
+// Mailing cover sheet ("Carátula de Envío") — deterministic, NON-AI document
+// ---------------------------------------------------------------------------
+
+/** Where a variable value on the cover comes from: a CONFIRMED answer of a
+ *  companion-questionnaire question, referenced by form slug + question wording
+ *  (same convention as `letter_fill`, resolved against loadResolvedInputs). */
+export const MailingCoverAnswerRefSchema = z.object({
+  form_slug: z.string().min(1),
+  /** Question wording (question_i18n text, as stored) whose confirmed answer to read. */
+  question: z.string().min(1),
+});
+
+/** One envelope block: a fixed recipient header + an optional variable address
+ *  (e.g. the OPLA/OCC address the client found with the buscador IA). */
+export const MailingCoverEnvelopeSchema = z.object({
+  /** Fixed recipient lines, rendered verbatim (e.g. "Board of Immigration Appeals", …). */
+  recipient_lines: z.array(z.string()).default([]),
+  /** Optional variable address appended below the fixed lines. null = fully fixed. */
+  address_from: MailingCoverAnswerRefSchema.nullable().default(null),
+});
+
+/** Deterministic mailing cover sheet. Its PRESENCE on a config routes the
+ *  generation to the no-LLM render path and prepends the sheet before the
+ *  expediente index. */
+export const MailingCoverConfigSchema = z.object({
+  /** Firm's return address lines (fixed for every client). */
+  return_address: z.array(z.string()).default([]),
+  /** Sender/return NAME (top of each envelope) — a confirmed questionnaire answer. */
+  sender_name: MailingCoverAnswerRefSchema.nullable().default(null),
+  /** One block per recipient/envelope (scalable: 1..N). */
+  envelopes: z.array(MailingCoverEnvelopeSchema).default([]),
+  /** Layout tuning in points (US Letter) so the admin controls the spacing.
+   *  Optional — the ai-engine resolver applies the same defaults at render time. */
+  spacing: z
+    .object({
+      block_gap_pt: z.number().min(0).max(400).default(120),
+      line_height: z.number().min(1).max(3).default(1.5),
+      font_size_pt: z.number().min(8).max(24).default(13),
+      margin_pt: z.number().min(0).max(200).default(96),
+    })
+    .optional(),
+});
+export type MailingCoverConfig = z.infer<typeof MailingCoverConfigSchema>;
+
 /** A curated baseline source the admin pins on a letter — always downloaded and
  *  filed as an exhibit alongside whatever the AI cites. */
 export const CuratedSourceSchema = z.object({
@@ -794,6 +839,8 @@ export const GenerationConfigSchema = z.object({
   rules_enabled: z.boolean().default(true),
   rules_text: z.string().nullable().optional(),
   assembly: GenerationAssemblySchema.nullable().optional(),
+  // --- deterministic mailing cover sheet (non-AI); presence = no-LLM render + prepend before index ---
+  mailing_cover: MailingCoverConfigSchema.nullable().optional(),
   // --- automatic exhibits (anexos): download + file the cited sources ---
   attach_sources_enabled: z.boolean().default(false),
   attach_sources_kinds: z.array(z.enum(EXHIBIT_SOURCE_KIND_VALUES)).default(["country_condition", "jurisprudence"]),

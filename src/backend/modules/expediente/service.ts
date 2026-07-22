@@ -68,6 +68,8 @@ import {
   findCaseDocumentById,
   listCoverRendersForMaterial,
   listGenerationRunsForMaterial,
+  loadLatestMailingCoverPdf,
+  isMailingCoverForm,
   listFormResponsesForMaterial,
   listApprovedDocumentsForMaterial,
   findCasePlanRequiresLawyerValidation,
@@ -963,6 +965,12 @@ async function validateLogicalFk(
     case "ai_generation": {
       const run = await findGenerationRunById(refId);
       if (!run) throw new ExpedienteError("EXPEDIENTE_ITEM_REF_INVALID", { itemType, refId });
+      // A mailing cover ("Carátula de Envío") is prepended before the index at compile
+      // time and excluded from the body — it must NEVER be a reorderable body item, or
+      // it would double-file (once unstamped in front, once inside the Bates/TOC body).
+      if (await isMailingCoverForm(run.form_definition_id)) {
+        throw new ExpedienteError("EXPEDIENTE_ITEM_REF_INVALID", { itemType, refId, reason: "mailing_cover" });
+      }
       break;
     }
     case "automated_form": {
@@ -1302,7 +1310,27 @@ export async function compileExpediente(
       });
     }
 
-    const result = await compileExpedientePdf(compileInput);
+    let result = await compileExpedientePdf(compileInput);
+
+    // Prepend the mailing cover ("Carátula de Envío") as the UNNUMBERED first sheet,
+    // BEFORE the index — a mailing front sheet, not a filed page: the compiled
+    // package (index + Bates USALP-000x) is already stamped, so grafting the cover
+    // in front leaves the legal foliation untouched. Best-effort: a fetch/render
+    // failure logs and compiles without it rather than failing the whole package.
+    const coverBytes = await loadLatestMailingCoverPdf(expediente.case_id);
+    if (coverBytes) {
+      try {
+        const { prependPdfPages, countPdfPages } = await import("@/backend/platform/pdf");
+        const coverPages = await countPdfPages(coverBytes);
+        const mergedPdf = await prependPdfPages(coverBytes, result.pdf);
+        result = { ...result, pdf: mergedPdf, pageCount: result.pageCount + coverPages };
+      } catch (coverErr) {
+        logger.warn(
+          { err: coverErr, caseId: expediente.case_id },
+          "expediente.compile: mailing cover prepend failed — compiling without it",
+        );
+      }
+    }
 
     const compiledPdfPath = `case/${expediente.case_id}/${expedienteId}-a${expediente.attempt_no}.pdf`;
     await uploadBytesToStorage(

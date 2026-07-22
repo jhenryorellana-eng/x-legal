@@ -76,6 +76,9 @@ const {
   mockValidateUploadedObject,
   mockRenderCoverPdf,
   mockCompileExpedientePdf,
+  mockLoadLatestMailingCoverPdf,
+  mockPrependPdfPages,
+  mockCountPdfPages,
 } = vi.hoisted(() => ({
   mockCan: vi.fn(),
   mockRequireCaseAccess: vi.fn().mockResolvedValue(undefined),
@@ -130,6 +133,9 @@ const {
     pageCount: 10,
     toc: [{ title: "Cover", startPage: 2, pageCount: 1 }],
   }),
+  mockLoadLatestMailingCoverPdf: vi.fn().mockResolvedValue(null),
+  mockPrependPdfPages: vi.fn(),
+  mockCountPdfPages: vi.fn().mockResolvedValue(1),
 }));
 
 // ---------------------------------------------------------------------------
@@ -176,6 +182,8 @@ vi.mock("@/backend/platform/storage", () => ({
 vi.mock("@/backend/platform/pdf", () => ({
   renderCoverPdf: mockRenderCoverPdf,
   compileExpedientePdf: mockCompileExpedientePdf,
+  prependPdfPages: mockPrependPdfPages,
+  countPdfPages: mockCountPdfPages,
 }));
 
 vi.mock("@/backend/modules/audit", () => ({
@@ -214,6 +222,8 @@ vi.mock("../repository", () => ({
   findCaseDocumentById: mockFindCaseDocumentById,
   listCoverRendersForMaterial: mockListCoverRendersForMaterial,
   listGenerationRunsForMaterial: mockListGenerationRunsForMaterial,
+  loadLatestMailingCoverPdf: mockLoadLatestMailingCoverPdf,
+  isMailingCoverForm: vi.fn().mockResolvedValue(false),
   listFormResponsesForMaterial: mockListFormResponsesForMaterial,
   listApprovedDocumentsForMaterial: mockListApprovedDocumentsForMaterial,
   findCoverRenderById: mockFindCoverRenderById,
@@ -865,6 +875,42 @@ describe("service: compileExpediente — happy path", () => {
 
     expect(result.pageCount).toBe(5);
     expect(result.compiledPdfPath).toBeTruthy();
+  });
+
+  it("prepends the mailing cover (Carátula de Envío) before the index and bumps pageCount", async () => {
+    const coverBytes = new Uint8Array([37, 80, 68, 70, 1]); // %PDF + marker
+    const merged = new Uint8Array([37, 80, 68, 70, 2]);
+    mockLoadLatestMailingCoverPdf.mockResolvedValueOnce(coverBytes);
+    mockCountPdfPages.mockResolvedValueOnce(1);
+    mockPrependPdfPages.mockResolvedValueOnce(merged);
+
+    const result = await compileExpediente(staffActor, EXP_ID);
+
+    // Cover grafted in FRONT of the already-compiled+stamped package (Bates untouched).
+    expect(mockPrependPdfPages).toHaveBeenCalledWith(coverBytes, expect.any(Uint8Array));
+    // pageCount = compiled (5) + cover (1); the MERGED bytes are what gets uploaded.
+    expect(result.pageCount).toBe(6);
+    expect(mockUpdateExpediente).toHaveBeenNthCalledWith(
+      2,
+      EXP_ID,
+      expect.objectContaining({ status: "compiled", page_count: 6 }),
+    );
+    expect(mockUploadBytesToStorage).toHaveBeenCalledWith(
+      "expedientes",
+      expect.any(String),
+      merged,
+      "application/pdf",
+    );
+  });
+
+  it("does NOT prepend anything when the case has no mailing cover", async () => {
+    await compileExpediente(staffActor, EXP_ID);
+    expect(mockPrependPdfPages).not.toHaveBeenCalled();
+    expect(mockUpdateExpediente).toHaveBeenNthCalledWith(
+      2,
+      EXP_ID,
+      expect.objectContaining({ page_count: 5 }),
+    );
   });
 });
 

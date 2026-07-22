@@ -59,7 +59,9 @@ import {
   AiImproveSchema,
   GenerationSectionSchema,
   GenerationAssemblySchema,
+  MailingCoverConfigSchema,
   QuestionnaireGenerationConfigSchema,
+  type MailingCoverConfig,
   type QuestionnaireGenerationConfigInput,
 } from "./domain";
 
@@ -2014,6 +2016,9 @@ export async function updateGenerationConfig(
     attach_sources_enabled?: boolean;
     attach_sources_kinds?: string[];
     curated_sources?: Array<{ url: string; title?: string; category?: string }>;
+    /** Deterministic mailing cover ("Carátula de Envío"). Presence = no-LLM render
+     *  + prepend before the expediente index. Omit to preserve the stored value. */
+    mailing_cover?: MailingCoverConfig | null;
   },
 ): Promise<GenerationConfig> {
   can(actor, "catalog", "edit");
@@ -2053,6 +2058,24 @@ export async function updateGenerationConfig(
   // asylum sections). Empty = single-call generation.
   const sections = (input.sections ?? []).map((s) => GenerationSectionSchema.parse(s));
   const assembly = input.assembly ? GenerationAssemblySchema.parse(input.assembly) : null;
+  // Deterministic mailing cover: validated only when provided; when omitted the
+  // column is left out of the upsert so PostgREST preserves the stored value
+  // (same "seed/edit, never wiped by an unrelated save" contract as letter_fill).
+  const mailingCoverProvided = input.mailing_cover !== undefined;
+  const mailingCover = input.mailing_cover ? MailingCoverConfigSchema.parse(input.mailing_cover) : null;
+  // A mailing cover references confirmed answers by form slug — reject a slug that is
+  // not a form of this service (catches a typo before it silently renders a blank).
+  if (mailingCover) {
+    const refSlugs = [
+      mailingCover.sender_name?.form_slug,
+      ...mailingCover.envelopes.map((e) => e.address_from?.form_slug),
+    ].filter((s): s is string => !!s);
+    for (const s of refSlugs) {
+      if (!slugIndex.forms.includes(s)) {
+        throw catalogError("CATALOG_SOURCE_REF_INVALID", `Mailing cover form slug "${s}" not found in service.`);
+      }
+    }
+  }
 
   // Companion questionnaire (Etapa B) ALWAYS feeds its ai_letter, so its slug must
   // live in input_form_slugs for the generation to read the client's answers. The
@@ -2097,8 +2120,13 @@ export async function updateGenerationConfig(
     attach_sources_enabled: input.attach_sources_enabled ?? false,
     attach_sources_kinds: input.attach_sources_kinds ?? ["country_condition", "jurisprudence"],
     curated_sources: (input.curated_sources ?? []) as unknown as import("@/shared/database.types").Json,
+    // Only sent when the admin edited it — otherwise omitted so the stored value is
+    // preserved. Cast: the column is newer than the generated DB types until db:types.
+    ...(mailingCoverProvided
+      ? { mailing_cover: (mailingCover ?? null) as unknown as import("@/shared/database.types").Json }
+      : {}),
     updated_by: actor.userId,
-  });
+  } as Parameters<typeof repo.upsertGenerationConfig>[0]);
 
   // Audit with redacted prompt (hash only, not the full text)
   await writeAudit(actor, "catalog.generation_config.updated", "ai_generation_configs", config.form_definition_id, {

@@ -146,6 +146,7 @@ export const formEditorAiMock: FormEditorVM = {
     attach_sources_enabled: false,
     attach_sources_kinds: ["country_condition", "jurisprudence"],
     curated_sources: [],
+    mailing_cover: null,
   },
 };
 
