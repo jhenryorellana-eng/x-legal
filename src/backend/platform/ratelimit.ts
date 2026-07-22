@@ -163,6 +163,31 @@ function otpVerifyPhone1h(): Ratelimit {
   return (_otpVerifyPhone1h ??= makeLimiter(redis(), 10, "1 h", "rl:otp:verify:phone:1h"));
 }
 
+// client:phone-login — dedicated limiter for the phone-ONLY client login
+// (identity.loginClientByPhone). This login does NOT send an SMS, so it must not
+// borrow the deliberately-strict otp:send tiers (1/45s · 5/h · 8/d) — those exist
+// to cap SMS cost/abuse and would lock a legit client out after a few taps. It
+// still needs an anti-brute-force cap because the phone is currently the SOLE
+// auth factor (no 2FA yet). "Equilibrado" tiers (decision 2026-07-22):
+//   phone: 10/min · 40/h   |   ip: 40/min · 300/h (anti-enumeration).
+let _clientLoginPhone1m: Ratelimit | undefined;
+let _clientLoginPhone1h: Ratelimit | undefined;
+function clientLoginPhone1m(): Ratelimit {
+  return (_clientLoginPhone1m ??= makeLimiter(redis(), 10, "1 m", "rl:client:phone-login:phone:1m"));
+}
+function clientLoginPhone1h(): Ratelimit {
+  return (_clientLoginPhone1h ??= makeLimiter(redis(), 40, "1 h", "rl:client:phone-login:phone:1h"));
+}
+
+let _clientLoginIp1m: Ratelimit | undefined;
+let _clientLoginIp1h: Ratelimit | undefined;
+function clientLoginIp1m(): Ratelimit {
+  return (_clientLoginIp1m ??= makeLimiter(redis(), 40, "1 m", "rl:client:phone-login:ip:1m"));
+}
+function clientLoginIp1h(): Ratelimit {
+  return (_clientLoginIp1h ??= makeLimiter(redis(), 300, "1 h", "rl:client:phone-login:ip:1h"));
+}
+
 // otp:send:email — 3 tiers (DOC-22 §1, email auth): 1/45s · 5/h · 8/d
 let _otpSendEmail45s: Ratelimit | undefined;
 let _otpSendEmail1h: Ratelimit | undefined;
@@ -317,6 +342,43 @@ export async function limitOtpVerifyPhone(phoneE164: string): Promise<RateLimitR
     return { allowed: r.success, reset: r.reset };
   } catch (err) {
     logger.error({ err }, "Rate limiter error (otp:verify:phone) — denying (closed fail mode)");
+    return { allowed: false, reset: Date.now() + 60_000 };
+  }
+}
+
+/**
+ * Checks the client phone-login PHONE tiers (10/min · 40/h). Sequential — a denial
+ * at the short tier must not consume the hourly budget (see limitOtpSendPhone).
+ * Fail mode: closed (auth endpoint — the phone is the sole factor).
+ */
+export async function limitClientLoginPhone(phoneE164: string): Promise<RateLimitResult> {
+  try {
+    const r1m = await clientLoginPhone1m().limit(phoneE164);
+    if (!r1m.success) return { allowed: false, reset: r1m.reset };
+    const r1h = await clientLoginPhone1h().limit(phoneE164);
+    if (!r1h.success) return { allowed: false, reset: r1h.reset };
+    return { allowed: true, reset: 0 };
+  } catch (err) {
+    logger.error({ err }, "Rate limiter error (client:phone-login:phone) — denying (closed fail mode)");
+    return { allowed: false, reset: Date.now() + 60_000 };
+  }
+}
+
+/**
+ * Checks the client phone-login IP tiers (40/min · 300/h) — anti-enumeration
+ * (an attacker trying many phones from one IP). Generous enough for carrier-NAT /
+ * shared-office IPs where many legit clients egress from a single address.
+ * Fail mode: closed.
+ */
+export async function limitClientLoginIp(ip: string): Promise<RateLimitResult> {
+  try {
+    const r1m = await clientLoginIp1m().limit(ip);
+    if (!r1m.success) return { allowed: false, reset: r1m.reset };
+    const r1h = await clientLoginIp1h().limit(ip);
+    if (!r1h.success) return { allowed: false, reset: r1h.reset };
+    return { allowed: true, reset: 0 };
+  } catch (err) {
+    logger.error({ err }, "Rate limiter error (client:phone-login:ip) — denying (closed fail mode)");
     return { allowed: false, reset: Date.now() + 60_000 };
   }
 }

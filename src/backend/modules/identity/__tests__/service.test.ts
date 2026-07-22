@@ -33,8 +33,8 @@ vi.mock("@zxcvbn-ts/language-common", () => ({ adjacencyGraphs: {}, dictionary: 
 
 // platform/ratelimit
 vi.mock("@/backend/platform/ratelimit.js", () => ({
-  limitOtpSendPhone: vi.fn(),
-  limitOtpSendIp: vi.fn(),
+  limitClientLoginPhone: vi.fn(),
+  limitClientLoginIp: vi.fn(),
 }));
 
 // platform/env — phone-login password derivation reads SUPABASE_SERVICE_ROLE_KEY
@@ -108,8 +108,8 @@ import {
 } from "../service";
 
 import {
-  limitOtpSendPhone,
-  limitOtpSendIp,
+  limitClientLoginPhone,
+  limitClientLoginIp,
 } from "@/backend/platform/ratelimit";
 import { requireActor } from "@/backend/platform/authz";
 import {
@@ -164,8 +164,8 @@ describe("loginClientByPhone", () => {
   const ip = "1.2.3.4";
 
   beforeEach(() => {
-    vi.mocked(limitOtpSendPhone).mockResolvedValue({ allowed: true, reset: 0 });
-    vi.mocked(limitOtpSendIp).mockResolvedValue({ allowed: true, reset: 0 });
+    vi.mocked(limitClientLoginPhone).mockResolvedValue({ allowed: true, reset: 0 });
+    vi.mocked(limitClientLoginIp).mockResolvedValue({ allowed: true, reset: 0 });
     vi.mocked(findClientByPhone).mockResolvedValue({ id: userId, email, existed: true });
     vi.mocked(checkClientEligibility).mockResolvedValue({ eligible: true });
     vi.mocked(checkClientEligibilityById).mockResolvedValue({ eligible: true });
@@ -282,14 +282,14 @@ client as any);
   }, 2000);
 
   it("throws rate_limited when the phone tier is exceeded", async () => {
-    vi.mocked(limitOtpSendPhone).mockResolvedValue({ allowed: false, reset: Date.now() + 30_000 });
+    vi.mocked(limitClientLoginPhone).mockResolvedValue({ allowed: false, reset: Date.now() + 30_000 });
     await expect(loginClientByPhone(validPhone, ip)).rejects.toThrow(
       expect.objectContaining({ code: "rate_limited" }),
     );
   }, 2000);
 
   it("throws rate_limited when the IP tier is exceeded", async () => {
-    vi.mocked(limitOtpSendIp).mockResolvedValue({ allowed: false, reset: Date.now() + 30_000 });
+    vi.mocked(limitClientLoginIp).mockResolvedValue({ allowed: false, reset: Date.now() + 30_000 });
     await expect(loginClientByPhone(validPhone, ip)).rejects.toThrow(
       expect.objectContaining({ code: "rate_limited" }),
     );

@@ -31,8 +31,8 @@ import { createServerClient, createServiceClient, revokeAllSessions } from "@/ba
 import { logger } from "@/backend/platform/logger";
 import { env } from "@/backend/platform/env";
 import {
-  limitOtpSendPhone,
-  limitOtpSendIp,
+  limitClientLoginPhone,
+  limitClientLoginIp,
 } from "@/backend/platform/ratelimit";
 import { sendTransactional, FROM_TRANSACTIONAL } from "@/backend/platform/resend";
 import { appEvents } from "@/backend/platform/events";
@@ -387,12 +387,15 @@ export async function loginClientByPhone(
   }
 
   // Step 2: Rate limit — sequential: phone first, IP second (M-1 anti-timing).
-  const phoneRL = await limitOtpSendPhone(phoneE164);
+  // Dedicated phone-LOGIN limiter (10/min·40/h phone, 40/min·300/h IP) — NOT the
+  // strict otp:send tiers: this login sends no SMS, so those SMS-cost caps would
+  // lock out a legit client after a few taps. Still fail-closed (sole factor).
+  const phoneRL = await limitClientLoginPhone(phoneE164);
   if (!phoneRL.allowed) {
     await enforceFloor(start, LOGIN_LATENCY_FLOOR_MS);
     throw new IdentityError("rate_limited");
   }
-  const ipRL = await limitOtpSendIp(ip);
+  const ipRL = await limitClientLoginIp(ip);
   if (!ipRL.allowed) {
     await enforceFloor(start, LOGIN_LATENCY_FLOOR_MS);
     throw new IdentityError("rate_limited");
