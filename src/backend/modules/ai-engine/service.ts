@@ -3224,9 +3224,17 @@ export async function runFieldWebResearch(
   // response is fresh web content, not the echoed query).
   const query = maskPiiReversible(rawQuery).masked;
 
+  // Output-format guardrail (code-level, always applied): the value goes VERBATIM into a
+  // form field (and is copied into the Proof of Service letter), so the model must return
+  // ONLY the postal address — no prose, greetings, markdown, tables, emojis, or phone.
   const system =
     template.replace(/\{\{\s*INPUT\s*\}\}/g, query) +
-    (ref.reference_url ? `\n\nPrioriza esta fuente oficial: ${ref.reference_url}` : "");
+    (ref.reference_url ? `\n\nPrioriza esta fuente oficial: ${ref.reference_url}` : "") +
+    "\n\nFORMATO DE RESPUESTA (OBLIGATORIO): responde ÚNICAMENTE con la dirección postal en " +
+    "EXACTAMENTE 2 líneas:\nLínea 1 = calle y número (incluye Room/Suite si aplica).\n" +
+    "Línea 2 = 'Ciudad, ST ZIP'.\nEjemplo:\n126 Northpoint Drive, Room 2020\nHouston, TX 77060\n" +
+    "NADA más: sin nombre de oficina, sin saludos, sin explicaciones, sin markdown, sin viñetas, " +
+    "sin tablas, sin emojis, sin teléfono. Si no encuentras la dirección con certeza, responde exactamente: NO_ENCONTRADA";
   const model = process.env.AI_WEB_RESEARCH_MODEL ?? "claude-sonnet-4-6";
   const maxUses = Math.max(1, Math.min(8, ref.max_uses ?? 5));
 
@@ -3251,7 +3259,8 @@ export async function runFieldWebResearch(
     .map((b) => (b as { type: "text"; text: string }).text)
     .join("")
     .trim();
-  if (!address) throw new AiEngineError("WEB_RESEARCH_OUTPUT_INVALID");
+  // NO_ENCONTRADA sentinel or empty → a clean typed failure (never persist the sentinel).
+  if (!address || /^NO_ENCONTRADA$/i.test(address)) throw new AiEngineError("WEB_RESEARCH_OUTPUT_INVALID");
   const sources = extractWebResearchSources(resp.content);
 
   const costUsd = computeAnthropicCost(

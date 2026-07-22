@@ -981,7 +981,7 @@ export function FormWizard({
                     {pickI18n(q.questionI18n, locale)}
                     {cond.required && <span style={{ color: "var(--accent)" }}> *</span>}
                   </h2>
-                  {pickI18n(q.helpI18n, locale) && (
+                  {q.source !== "web_research" && pickI18n(q.helpI18n, locale) && (
                     <p style={{ fontSize: 14.5, color: "var(--ink-2)", lineHeight: 1.45, margin: "0 0 12px" }}>
                       {pickI18n(q.helpI18n, locale)}
                     </p>

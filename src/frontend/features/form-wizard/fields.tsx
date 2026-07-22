@@ -802,7 +802,6 @@ function WebResearchField(
   const current = typeof value === "string" ? value : value == null ? "" : String(value);
   const [query, setQuery] = React.useState("");
   const [state, setState] = React.useState<ResearchState>("idle");
-  const [sources, setSources] = React.useState<Array<{ uri: string; title: string | null }>>([]);
   const [manual, setManual] = React.useState(false);
   // Snapshot of the last AI-produced address, so "Volver al resultado de la IA" restores
   // the SEARCH result and never re-presents hand-typed text as the AI-verified value.
@@ -822,7 +821,6 @@ function WebResearchField(
           setLastAiAddress(r.address);
           setManual(false); // a fresh search re-locks the box to the AI result
           onChange(r.address);
-          setSources(r.sources ?? []);
           setState("idle");
           onBlur();
         } else {
@@ -930,17 +928,6 @@ function WebResearchField(
           onBlur={manual ? onBlur : undefined}
           style={{ ...boxStyle, background: manual ? "var(--card)" : "var(--chip)", cursor: manual ? "text" : "default" }}
         />
-        {sources.length > 0 && (
-          <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-3)" }}>{labels.researchSources || "Fuentes"}:</span>
-            {sources.map((s, i) => (
-              <a key={i} href={s.uri} target="_blank" rel="noopener noreferrer"
-                style={{ fontSize: 12.5, color: "var(--accent)", fontWeight: 600, textDecoration: "underline", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {s.title || s.uri}
-              </a>
-            ))}
-          </div>
-        )}
         {!disabled && (
           <button
             type="button"
