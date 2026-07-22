@@ -60,6 +60,9 @@ export {
   autoBootstrapCaseQuestionnaires,
   // Job entrypoints (consumed by jobs/ layer)
   executeGenerationJob,
+  // Re-render a completed run's PDF from stored text (no model) after a
+  // deterministic input changed — consumed by the rerender-run job.
+  reRenderRun,
   executeExtractionJob,
   executeTranslationJob,
   executeQuestionnaireGenerationJob,

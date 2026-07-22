@@ -1,0 +1,3 @@
+# Never commit minted session material (JWT / refresh tokens).
+*-cookie.json
+*.token.txt

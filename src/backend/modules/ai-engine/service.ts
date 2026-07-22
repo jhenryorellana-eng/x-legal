@@ -247,7 +247,10 @@ export class AiEngineError extends Error {
       | "PREMORTEM_NO_TARGET"
       | "PREMORTEM_NO_GUIDE"
       | "PREMORTEM_IN_PROGRESS"
-      | "PREMORTEM_TARGET_REGENERATING",
+      | "PREMORTEM_TARGET_REGENERATING"
+      | "RERENDER_RUN_NOT_FOUND"
+      | "RERENDER_RUN_NOT_COMPLETED"
+      | "RERENDER_RUN_NO_TEXT",
     public readonly details?: unknown,
   ) {
     super(code);
@@ -618,6 +621,36 @@ export async function executeGenerationJob(
     return runSectionedGeneration(run, snapshot, prompt, inputs, sections, datasetItems);
   }
   return runSinglePassGeneration(run, snapshot, prompt);
+}
+
+/**
+ * Re-renders a COMPLETED run's PDF from its STORED `output_text` — WITHOUT calling
+ * the model. It re-resolves only the deterministic, code-owned tokens
+ * ({{OCC_ADDRESS}}, {{APPELLANT_ADDRESS}}, {{APPELLANT_SIGNATURE}}, service method,
+ * {{CURRENT_DATE}}) against the case's CURRENT confirmed answers / extractions, and
+ * overwrites the same storage object the run already points at.
+ *
+ * Use when a deterministic INPUT changed after generation (e.g. a corrected OCC
+ * service address, or the appellant's apartment removed from the source
+ * extraction) and the reviewed/approved prose must stay byte-identical — the model
+ * owns the argument, code owns the facts (letter-fill.ts), so only the facts
+ * refresh. It does NOT touch run status, cost, events, or version.
+ *
+ * Idempotent: `renderAndStore` writes `generated/runs/{runId}/output.{fmt}` with
+ * upsert, which `output_path` already references — so no row update is needed and
+ * every consumer (expediente compile, download URL) sees the refreshed bytes.
+ */
+export async function reRenderRun(runId: string): Promise<string | null> {
+  const run = await findRunById(runId);
+  if (!run) throw new AiEngineError("RERENDER_RUN_NOT_FOUND", { runId });
+  if (run.status !== "completed") {
+    throw new AiEngineError("RERENDER_RUN_NOT_COMPLETED", { runId, status: run.status });
+  }
+  if (!run.output_text) {
+    throw new AiEngineError("RERENDER_RUN_NO_TEXT", { runId });
+  }
+  const snapshot = run.config_snapshot as unknown as ConfigSnapshot;
+  return renderAndStore(run.output_text, run, snapshot);
 }
 
 // ---------------------------------------------------------------------------

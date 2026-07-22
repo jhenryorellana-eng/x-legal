@@ -38,6 +38,9 @@ import type { Json } from "@/shared/database.types";
 import { handleDeliverNotification } from "@/backend/jobs/deliver-notification";
 import { handleAppointmentReminders } from "@/backend/jobs/appointment-reminders";
 import { handleRunGeneration } from "@/backend/jobs/run-generation";
+import { handleRerenderRun } from "@/backend/jobs/rerender-run";
+import { handleRegenerateFormPdf } from "@/backend/jobs/regenerate-form-pdf";
+import { handleCompileExpediente } from "@/backend/jobs/compile-expediente";
 import { handleExtractDocument } from "@/backend/jobs/extract-document";
 import { handleTranslateDocument } from "@/backend/jobs/translate-document";
 import { handleAiBudgetAggregation } from "@/backend/jobs/ai-budget-aggregation";
@@ -72,6 +75,13 @@ const JOB_REGISTRY: Record<string, JobHandler> = {
   "appointment-reminders": handleAppointmentReminders,
   // F4 AI jobs
   "run-generation": handleRunGeneration,
+  // Re-render a completed run's PDF from stored text after a deterministic input
+  // changed (OCC/appellant address, etc.) — no model call, preserves the prose.
+  "rerender-run": handleRerenderRun,
+  // Re-fill a form response's PDF + re-compile an expediente from current data —
+  // refresh artifacts after a source input was corrected (no human clicks needed).
+  "regenerate-form-pdf": handleRegenerateFormPdf,
+  "compile-expediente": handleCompileExpediente,
   "extract-document": handleExtractDocument,
   "translate-document": handleTranslateDocument,
   "generate-questionnaire": handleGenerateQuestionnaire,

@@ -209,6 +209,7 @@ import {
   isPreMortemEnabledForCase,
   retrieveDatasetItemsWithFallback,
   computePreMortemDocBudget,
+  reRenderRun,
   AiEngineError,
   type RunPreMortemPayload,
 } from "../service";
@@ -748,5 +749,40 @@ describe("AiEngineError", () => {
     expect(new AiEngineError("PREMORTEM_NO_TARGET").code).toBe("PREMORTEM_NO_TARGET");
     expect(new AiEngineError("PREMORTEM_IN_PROGRESS").code).toBe("PREMORTEM_IN_PROGRESS");
     expect(new AiEngineError("PREMORTEM_TARGET_REGENERATING").code).toBe("PREMORTEM_TARGET_REGENERATING");
+  });
+});
+
+describe("reRenderRun (guards)", () => {
+  beforeEach(() => {
+    mocks.repo.findRunById.mockReset();
+  });
+
+  it("rejects when the run does not exist", async () => {
+    mocks.repo.findRunById.mockResolvedValue(null);
+    await expect(reRenderRun("00000000-0000-4000-8000-000000000001")).rejects.toMatchObject({
+      code: "RERENDER_RUN_NOT_FOUND",
+    });
+  });
+
+  it("rejects a run that is not completed (never re-renders an in-flight/failed run)", async () => {
+    mocks.repo.findRunById.mockResolvedValue({
+      id: "r1",
+      status: "running",
+      output_text: "body",
+      config_snapshot: {},
+      orgId: "org",
+    });
+    await expect(reRenderRun("r1")).rejects.toMatchObject({ code: "RERENDER_RUN_NOT_COMPLETED" });
+  });
+
+  it("rejects a completed run with no stored output_text (nothing to render)", async () => {
+    mocks.repo.findRunById.mockResolvedValue({
+      id: "r2",
+      status: "completed",
+      output_text: null,
+      config_snapshot: {},
+      orgId: "org",
+    });
+    await expect(reRenderRun("r2")).rejects.toMatchObject({ code: "RERENDER_RUN_NO_TEXT" });
   });
 });
