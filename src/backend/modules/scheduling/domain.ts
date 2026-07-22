@@ -483,6 +483,28 @@ export interface SchedulingSettings {
   remindersEnabled: boolean; // org-wide default for auto client reminders (reminders_enabled)
 }
 
+/**
+ * Returns the effective settings for a booking actor.
+ *
+ * `min_notice_hours` ("Antelación mínima para reservar", set in
+ * /ventas/disponibilidad) is a CLIENT-facing constraint: it stops clients from
+ * self-booking too close to the present. Staff MANAGE the agenda, so it does not
+ * bind them — they may book inside that window (mirrors Calendly's "minimum
+ * notice", which applies to invitees, not the host). So for staff we zero the
+ * min_notice; for clients the settings pass through untouched.
+ *
+ * Pure: returns a new object, never mutates the input. max_advance and every
+ * other setting are left intact for both actor kinds.
+ */
+export function settingsForActorKind(
+  settings: SchedulingSettings,
+  actorKind: AppointmentActorKind,
+): SchedulingSettings {
+  return actorKind === "staff"
+    ? { ...settings, minNoticeHours: 0 }
+    : settings;
+}
+
 export interface MaterializeSlotsInput {
   rules: AvailabilityRule[];
   settings: SchedulingSettings;

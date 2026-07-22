@@ -36,6 +36,7 @@ import {
   isRebookingBlocked,
   validateRuleSet,
   materializeSlots,
+  settingsForActorKind,
   convertRuleWallTime,
   isSlotInSet,
   type AppointmentStatus,
@@ -255,16 +256,22 @@ async function computeBookingWarnings(
   orgId: string,
   startsAt: Date,
   endsAt: Date,
-  // settings is intentionally ignored — the function re-fetches via repo.getSettings
-  // to avoid stale-closure issues when called across multiple paths
-  _settings?: unknown,
+  // The BOOKING actor kind — REQUIRED (no default). min_notice ("antelación
+  // mínima") is neutralized for staff exactly like the slot picker, so every
+  // call site must state the kind explicitly: a silent "staff" default would let
+  // a future client path inherit the bypass and lose the minimum-notice guard.
+  actorKind: AppointmentActorKind,
 ): Promise<BookingWarning[]> {
   const warnings: BookingWarning[] = [];
   const nowTs = now();
 
-  const fullSettings = await repo.getSettings(orgId);
+  // Re-fetch settings (avoids stale-closure issues across paths), then apply the
+  // actor rule: for staff, min_notice is zeroed so it never warns; max_advance
+  // and everything else are untouched.
+  const fullSettings = settingsForActorKind(await repo.getSettings(orgId), actorKind);
 
-  // Check min_notice
+  // Check min_notice (a no-op for staff: minNoticeHours is 0, so a future cita
+  // never trips this — the "sin fricción" behavior for staff bookings).
   if (startsAt.getTime() < nowTs.getTime() + fullSettings.minNoticeHours * 3_600_000) {
     warnings.push({ code: "OUTSIDE_WINDOW" });
   }
@@ -416,7 +423,9 @@ export async function getAvailableSlots(
 
   const slots = materializeSlots({
     rules,
-    settings,
+    // min_notice binds clients only — staff (Vanessa/admin) may offer/book
+    // near-term slots inside the client's antelación mínima window.
+    settings: settingsForActorKind(settings, actor.kind),
     exceptions,
     booked,
     windowFromUtc: input.windowFromUtc,
@@ -486,7 +495,9 @@ export async function getProspectSlots(
 
   const slots = materializeSlots({
     rules,
-    settings,
+    // Prospect booking is staff-only: min_notice ("antelación mínima") never
+    // clips the picker — staff manage the agenda.
+    settings: settingsForActorKind(settings, actor.kind),
     exceptions,
     booked,
     windowFromUtc: input.windowFromUtc,
@@ -627,9 +638,10 @@ export async function bookAppointment(
       throw new SchedulingError("SLOT_TAKEN");
     }
   } else {
-    // Staff: compute non-blocking warnings
-    const settings = await repo.getSettings(orgId);
-    const warnings = await computeBookingWarnings(orgId, startsAt, endsAt, settings);
+    // Staff: compute non-blocking warnings. min_notice is neutralized for staff
+    // inside computeBookingWarnings (they may book near-term); max_advance and
+    // out-of-availability warnings still apply.
+    const warnings = await computeBookingWarnings(orgId, startsAt, endsAt, "staff");
     if (warnings.length > 0 && !p.force) {
       return { warnings };
     }
@@ -1147,9 +1159,10 @@ export async function createProspectAppointment(
   const startsAt = p.startsAtUtc;
   const endsAt = addMinutes(startsAt, p.durationMinutes);
 
-  // Staff warnings (non-blocking) — org-level availability
+  // Staff warnings (non-blocking) — org-level availability. Prospect booking is
+  // staff-only, so min_notice ("antelación mínima") never warns here.
   const settings = await repo.getSettings(actor.orgId);
-  const warnings = await computeBookingWarnings(actor.orgId, startsAt, endsAt, settings);
+  const warnings = await computeBookingWarnings(actor.orgId, startsAt, endsAt, "staff");
   if (warnings.length > 0 && !p.force) {
     return { warnings };
   }

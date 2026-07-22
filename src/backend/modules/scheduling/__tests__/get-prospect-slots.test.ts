@@ -116,4 +116,19 @@ describe("getProspectSlots", () => {
     });
     expect(mockMaterialize).toHaveBeenCalledWith(expect.objectContaining({ durationMin: 60 }));
   });
+
+  it("zeroes min_notice for staff so near-term slots are offered (staff manage the agenda)", async () => {
+    // Org min_notice is 24h (see beforeEach). Prospect booking is staff-only, so
+    // the picker must NOT clip the near-term window — materializeSlots receives
+    // minNoticeHours: 0 regardless of the org's configured antelación mínima.
+    await getProspectSlots(STAFF, {
+      windowFromUtc: new Date("2026-07-01T00:00:00Z"),
+      windowToUtc: new Date("2026-07-31T00:00:00Z"),
+    });
+    expect(mockMaterialize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        settings: expect.objectContaining({ minNoticeHours: 0, maxAdvanceDays: 30 }),
+      }),
+    );
+  });
 });
