@@ -860,8 +860,17 @@ function WebResearchField(
     resize: "vertical",
   };
 
+  const help = pickI18n(question.helpI18n, locale);
+
   return (
     <div style={{ display: "grid", gap: 12 }}>
+      {/* Dynamic instructions (server-interpolated tokens: A-Number, nationality, …).
+          Rendered here because this widget replaces the standard field help slot. */}
+      {help && (
+        <p style={{ fontSize: 14, color: "var(--ink-2)", lineHeight: 1.45, margin: 0, whiteSpace: "pre-wrap" }}>
+          {help}
+        </p>
+      )}
       {/* Search box */}
       <div>
         <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: "var(--ink-2)", marginBottom: 6 }}>

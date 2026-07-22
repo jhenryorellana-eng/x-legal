@@ -3160,9 +3160,10 @@ function extractWebResearchSources(blocks: unknown[]): Array<{ uri: string; titl
   return [...byUri.values()];
 }
 
-// Bounded well under the invoking routes' maxDuration (120s) so the SDK aborts a stuck
-// web_search before the platform kills the Server Action.
-const WEB_RESEARCH_TIMEOUT_MS = 90_000;
+// Bounded UNDER the platform's ~60s Server-Action gateway limit (a 504 was observed at
+// ~65s), so the SDK aborts and returns a clean typed error before the platform 504s.
+// Combined with a low web_search max_uses, a typical lookup finishes in ~30-45s.
+const WEB_RESEARCH_TIMEOUT_MS = 50_000;
 const WEB_RESEARCH_MAX_QUERY_CHARS = 2000;
 
 /**

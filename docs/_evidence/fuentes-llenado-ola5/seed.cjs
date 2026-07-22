@@ -79,7 +79,9 @@ const WEB_RESEARCH_REF = {
   system_prompt_template:
     "Esta es la direccion del corte del juez {{INPUT}}, y con esa direccion buscame la direccion del fiscal principal para enviarle la copia de Proof of Service",
   reference_url: "https://www.ice.gov/contact/field-offices?office=12",
-  max_uses: 5,
+  // 3 rounds keeps a typical lookup ~30-45s, under the platform's Server-Action gateway
+  // limit (a 504 was observed with 5 rounds taking ~65s). See WEB_RESEARCH_TIMEOUT_MS.
+  max_uses: 3,
   search_label_i18n: {
     es: "Dirección del tribunal (pégala y presiona Buscar)",
     en: "Court address (paste it and press Search)",
