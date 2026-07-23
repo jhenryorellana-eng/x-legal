@@ -82,6 +82,7 @@ import {
   type DocumentTranslationRow,
 } from "@/backend/modules/ai-engine";
 import { addCaseAppointment, SchedulingError } from "@/backend/modules/scheduling";
+import { getDeadlinePolicy } from "@/backend/modules/catalog";
 import { ExpedienteError } from "@/backend/modules/expediente";
 import { IntegrationsError } from "@/backend/modules/integrations";
 import { linkLeadToCase } from "@/backend/modules/kanban";
@@ -219,6 +220,14 @@ export interface CreateCaseUiInput {
    * per client, DOC-22 §1); the UI sends them read-only for display.
    */
   existingClientId?: string;
+  /**
+   * Anchor date (yyyy-MM-dd) captured in the "Calificación" step for services
+   * whose deadline policy is enabled (e.g. Apelación → judge's decision date).
+   * Required for those services (validated server-side); ignored otherwise. The
+   * "menos de 3 días hábiles" acceptance rule is a UI soft-gate with override —
+   * the server does NOT hard-block on a short deadline (the operator confirmed).
+   */
+  deadlineAnchorDate?: string;
 }
 
 /**
@@ -329,6 +338,19 @@ export async function createCaseAction(
       };
     });
 
+    // Calificación (Feature A): services with an active deadline policy require the
+    // anchor date (e.g. Apelación → judge's decision date). Defense in depth — the
+    // UI already collects it. The "menos de 3 días hábiles" rule is NOT enforced
+    // here: it is a UI soft-gate with explicit override (the operator confirmed).
+    const anchorDate = input.deadlineAnchorDate?.trim() || null;
+    // Fail open (like every sibling call site): a config-read error — e.g. the
+    // deadline-policy table missing before migration 0106 lands, or a transient DB
+    // hiccup — must NEVER break case creation. Degrades to "no policy".
+    const deadlinePolicy = await getDeadlinePolicy(serviceId).catch(() => null);
+    if (deadlinePolicy?.isEnabled && !anchorDate) {
+      return { ok: false, error: { code: "INVALID_QUALIFICATION" } };
+    }
+
     // Step 2: Create case + contract + payment plan (all in one orchestrated call)
     const { caseId, contractId } = await createCaseFromContract(actor, {
       primaryClientId: userId,
@@ -342,6 +364,7 @@ export async function createCaseAction(
         frequency,
         notes: input.paymentPlan?.note?.trim() || null,
       },
+      ...(anchorDate ? { deadlineAnchorDate: anchorDate } : {}),
     });
 
     // Step 3: Send contract for signing (draft → sent, generates token)

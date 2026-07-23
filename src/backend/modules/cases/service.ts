@@ -17,6 +17,7 @@ import type { Actor } from "@/backend/platform/authz";
 import { appEvents } from "@/backend/platform/events";
 import { createServiceClient } from "@/backend/platform/supabase";
 import { toDownloadFilename } from "@/shared/strings";
+import { addCalendarDays } from "@/shared/business-days";
 import {
   createSignedUploadUrl,
   createSignedDownloadUrl,
@@ -45,7 +46,7 @@ import {
 // Static (not dynamic import): date-fns-tz is light, and a dynamic import inside the
 // synchronous-hot resolveBySource path can deadlock vitest's module runner under a
 // heavy multi-file run (the `current_date` unit test would time out).
-import { formatInTimeZone } from "date-fns-tz";
+import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 
 import {
   canTransitionCase,
@@ -56,6 +57,7 @@ import {
   resolveFirstMilestone,
   addWeeksToAnchorIso,
   addDaysToAnchorIso,
+  computeDeadlineAnchoredDueYmd,
   validateAnswerTypes,
   isAiImproveEnabled,
   buildPartiesSnapshot,
@@ -403,6 +405,18 @@ const CreateCaseFromContractInputSchema = z.object({
   leadId: zUuid.nullable().optional(),
   assignedParalegalId: zUuid.nullable().optional(),
   assignedSalesId: zUuid.nullable().optional(),
+  /**
+   * Anchor date (yyyy-MM-dd) for services with a deadline policy (e.g. Apelación:
+   * the judge's decision date, captured in the "Calificación" step). Persisted on
+   * the case; the legal deadline (= anchor + policy.deadlineDays) is frozen at
+   * creation and drives the deadline-anchored stage SLA. Ignored when the service
+   * has no active deadline policy.
+   */
+  deadlineAnchorDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "INVALID_ANCHOR_DATE")
+    .nullable()
+    .optional(),
   parties: z
     .array(
       z.object({
@@ -796,6 +810,37 @@ export async function createCaseFromContract(
 
   const caseId = atomic.caseId;
   const contractId = atomic.contractId;
+
+  // Deadline policy (Feature A/B): when the service has an active deadline policy
+  // and the alta captured an anchor date (e.g. Apelación → judge's decision date),
+  // persist the anchor + the FROZEN legal deadline (= anchor + policy.deadlineDays,
+  // calendar). This drives the deadline-anchored stage SLA (Diana) later. Kept out
+  // of the atomic RPC on purpose — it is metadata, not part of the contract/plan
+  // integrity — and degrades cleanly (best-effort) if the policy read fails.
+  if (p.deadlineAnchorDate) {
+    try {
+      const catalogModule = (await import("@/backend/modules/catalog")) as {
+        getDeadlinePolicy?: (serviceId: string) => Promise<{
+          isEnabled: boolean;
+          deadlineDays: number;
+        } | null>;
+      };
+      const policy = await catalogModule.getDeadlinePolicy?.(p.serviceId);
+      if (policy?.isEnabled) {
+        const anchorYmd = p.deadlineAnchorDate.slice(0, 10);
+        const deadlineYmd = addCalendarDays(anchorYmd, policy.deadlineDays);
+        await updateCase(caseId, {
+          deadline_anchor_date: anchorYmd,
+          intake_deadline_date: deadlineYmd,
+        });
+      }
+    } catch (err) {
+      logger.warn(
+        { err, caseId, serviceId: p.serviceId },
+        "cases.createCaseFromContract: deadline anchor persist failed — case created without it",
+      );
+    }
+  }
 
   // Step 5: Emit domain events + audit.
   // isFirstCase gates the client welcome email (Henry 2026-07-09): the atomic
@@ -1253,14 +1298,66 @@ export async function updateCaseParty(
 // ---------------------------------------------------------------------------
 
 /**
+ * stage_due_at of a DEADLINE-ANCHORED stage (Feature B — Diana). Bounded by the
+ * legal deadline in business days:
+ *
+ *   min( entered + maxDays hábiles,  intake_deadline − mailBuffer hábiles )
+ *
+ * Anchored to END of the due civil day in the office timezone ("due by close of
+ * business"), so a same-day deadline still gives the full day. Business-day math
+ * excludes weekends + the org's "días libres" (scheduling.listOrgNonWorkingDays).
+ * Returns null on any failure so the caller falls back to the fixed SLA.
+ */
+async function deadlineAnchoredDueAtIso(
+  orgId: string,
+  enteredAtIso: string,
+  intakeDeadlineDate: string,
+  maxDays: number,
+  mailBufferBusinessDays: number,
+): Promise<string | null> {
+  try {
+    const scheduling = (await import("@/backend/modules/scheduling")) as {
+      getOfficeTimezone?: (orgId: string) => Promise<string>;
+      listOrgNonWorkingDays?: (orgId: string, fromYmd: string, toYmd: string) => Promise<string[]>;
+    };
+    const officeTz = (await scheduling.getOfficeTimezone?.(orgId)) ?? "America/New_York";
+    const enteredYmd = formatInTimeZone(new Date(enteredAtIso), officeTz, "yyyy-MM-dd");
+    const deadlineYmd = intakeDeadlineDate.slice(0, 10);
+    // Fetch the org's non-working days over the whole span (either order).
+    const [from, to] = enteredYmd <= deadlineYmd ? [enteredYmd, deadlineYmd] : [deadlineYmd, enteredYmd];
+    const holidays = new Set((await scheduling.listOrgNonWorkingDays?.(orgId, from, to)) ?? []);
+    const dueYmd = computeDeadlineAnchoredDueYmd({
+      enteredYmd,
+      deadlineYmd,
+      maxBusinessDays: maxDays,
+      mailBufferBusinessDays,
+      holidays,
+    });
+    return fromZonedTime(`${dueYmd}T23:59:59.999`, officeTz).toISOString();
+  } catch (err) {
+    logger.warn(
+      { err, orgId, stage: "anchored" },
+      "cases.deadlineAnchoredDueAtIso: dynamic SLA failed — falling back to fixed",
+    );
+    return null;
+  }
+}
+
+/**
  * Kanban countdown clock — snapshots the deadline of the stage a case is ENTERING.
  *
- * Returns `stage_entered_at` (t0) and `stage_due_at` (t0 + the service's per-stage
- * SLA in días). Single point that computes the clock; called at every stage entry
- * (activation, transferCase, expediente→operations, phase-restart) so the value is
- * always consistent regardless of the transition path. Terminal stage 'done' or a
- * stage with no configured SLA → `stage_due_at` null (no countdown). Reads the SLA
- * via catalog module-pub (dynamic import, mirrors the first-phase lookup below).
+ * Returns `stage_entered_at` (t0) and `stage_due_at`. For a normal stage this is
+ * `t0 + the service's per-stage SLA in días` (fixed, calendar). For the stage a
+ * service's deadline policy marks as `anchored_stage` (e.g. Apelación → legal =
+ * Diana), and when the case carries an `intake_deadline_date`, the due date is
+ * instead anchored to that legal deadline in business days (see
+ * `deadlineAnchoredDueAtIso`) — the stage's SLA días becomes the MAX cap.
+ *
+ * Single point that computes the clock; called at every stage entry (activation,
+ * transferCase, expediente→operations, phase-restart) so the value is always
+ * consistent regardless of the transition path. Terminal stage 'done' or a stage
+ * with no configured SLA → `stage_due_at` null (no countdown). Reads config via
+ * catalog module-pub (dynamic import, mirrors the first-phase lookup below).
  *
  * Exported for unit testing (see __tests__/stage-deadline-fields.test.ts); not part
  * of the module's public API.
@@ -1269,18 +1366,33 @@ export async function stageDeadlineFields(
   serviceId: string,
   stage: CaseStage,
   enteredAtIso: string,
+  opts?: { orgId?: string | null; intakeDeadlineDate?: string | null },
 ): Promise<Pick<TablesUpdate<"cases">, "stage_entered_at" | "stage_due_at">> {
   if (stage === "done") {
     return { stage_entered_at: enteredAtIso, stage_due_at: null };
   }
   let days: number | null = null;
+  let anchoredStage: string | null = null;
+  let mailBufferBusinessDays = 0;
   try {
     const catalogModule = (await import("@/backend/modules/catalog")) as {
       getStageSlaDays?: (serviceId: string) => Promise<Record<string, number | null>>;
+      getDeadlinePolicy?: (serviceId: string) => Promise<{
+        isEnabled: boolean;
+        anchoredStage: string | null;
+        mailBufferBusinessDays: number;
+      } | null>;
     };
     if (typeof catalogModule.getStageSlaDays === "function") {
       const map = await catalogModule.getStageSlaDays(serviceId);
       days = map?.[stage] ?? null;
+    }
+    if (typeof catalogModule.getDeadlinePolicy === "function") {
+      const policy = await catalogModule.getDeadlinePolicy(serviceId);
+      if (policy?.isEnabled) {
+        anchoredStage = policy.anchoredStage;
+        mailBufferBusinessDays = policy.mailBufferBusinessDays;
+      }
     }
   } catch (err) {
     logger.warn(
@@ -1288,6 +1400,22 @@ export async function stageDeadlineFields(
       "cases.stageDeadlineFields: SLA lookup failed — case enters without a countdown",
     );
   }
+
+  // Deadline-anchored path: this stage is the policy's anchored stage AND the case
+  // carries a legal deadline → bound the due date by it (business days), capped by
+  // the stage's SLA días. Falls back to the fixed path on any failure.
+  const deadline = opts?.intakeDeadlineDate ?? null;
+  if (anchoredStage === stage && deadline && days != null && opts?.orgId) {
+    const dyn = await deadlineAnchoredDueAtIso(
+      opts.orgId,
+      enteredAtIso,
+      deadline,
+      days,
+      mailBufferBusinessDays,
+    );
+    if (dyn) return { stage_entered_at: enteredAtIso, stage_due_at: dyn };
+  }
+
   return {
     stage_entered_at: enteredAtIso,
     stage_due_at: days != null ? addDaysToAnchorIso(enteredAtIso, days) : null,
@@ -1345,7 +1473,10 @@ export async function onDownpaymentConfirmed(payload: {
   // Activation = t0 of the SALES countdown (the case is already stage 'sales',
   // owned by Vanessa since createCaseFromContract). Anchor the clock on opened_at.
   const openedAtIso = new Date().toISOString();
-  const salesDeadline = await stageDeadlineFields(caseRow.service_id, "sales", openedAtIso);
+  const salesDeadline = await stageDeadlineFields(caseRow.service_id, "sales", openedAtIso, {
+    orgId: caseRow.org_id,
+    intakeDeadlineDate: caseRow.intake_deadline_date,
+  });
   await updateCase(caseRow.id, {
     status: "active",
     opened_at: openedAtIso,
@@ -2393,7 +2524,10 @@ export async function advanceCasePhase(
 
   // New phase cycle restarts at sales → fresh sales countdown for Vanessa.
   const restartAtIso = new Date().toISOString();
-  const restartDeadline = await stageDeadlineFields(caseRow.service_id, "sales", restartAtIso);
+  const restartDeadline = await stageDeadlineFields(caseRow.service_id, "sales", restartAtIso, {
+    orgId: caseRow.org_id,
+    intakeDeadlineDate: caseRow.intake_deadline_date,
+  });
   await updateCase(caseRow.id, {
     current_phase_id: target.id,
     current_stage: "sales",
@@ -7818,7 +7952,10 @@ export async function transferCase(
   // The new owner's countdown starts now, against the toStage SLA (a fresh clock
   // for the receiving member — e.g. Diana sees her full "7 días" on handoff).
   const enteredAtIso = new Date().toISOString();
-  const stageDeadline = await stageDeadlineFields(caseRow.service_id, toStage, enteredAtIso);
+  const stageDeadline = await stageDeadlineFields(caseRow.service_id, toStage, enteredAtIso, {
+    orgId: caseRow.org_id,
+    intakeDeadlineDate: caseRow.intake_deadline_date,
+  });
   const fields: TablesUpdate<"cases"> = {
     current_stage: toStage,
     current_owner_id: toOwnerId,
@@ -8152,7 +8289,10 @@ export async function onExpedienteSentToFinanceCase(payload: {
       // best-effort: missing operations owner → leave unassigned (admin assigns)
     }
     const fromOwnerId = caseRow.current_owner_id;
-    const opsDeadline = await stageDeadlineFields(caseRow.service_id, "operations", new Date().toISOString());
+    const opsDeadline = await stageDeadlineFields(caseRow.service_id, "operations", new Date().toISOString(), {
+      orgId: caseRow.org_id,
+      intakeDeadlineDate: caseRow.intake_deadline_date,
+    });
     await updateCase(caseId, { current_stage: "operations", current_owner_id: toOwnerId, ...opsDeadline });
     await insertStageHistory({
       caseId,

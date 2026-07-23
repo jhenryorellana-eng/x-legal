@@ -363,6 +363,7 @@ function DisponibilidadPreview() {
       noShowPenaltyDays={7}
       videoLink="https://meet.usalatinoprime.com/vanessa"
       staffTz={STAFF_TZ}
+      officeTz={STAFF_TZ}
       blockedClient={{ id: "k1", name: "Roberto Aguilar tiene bloqueo de reagendamiento activo." }}
       strings={{
         title: "Mi disponibilidad",
@@ -397,6 +398,7 @@ function DisponibilidadPreview() {
         blockReason: "Ej. Vacaciones",
         blockFromLabel: "Desde",
         blockToLabel: "Hasta",
+        blockAllDay: "Todo el día (feriado / oficina cerrada)",
         blockInvalidRange: "La fecha de fin debe ser posterior a la de inicio.",
         blockAffectsConfirm: "Este bloqueo afecta {n} cita(s) agendada(s). ¿Crear igualmente?",
         affectsNotice: "Afecta {n} citas agendadas.",

@@ -11,7 +11,7 @@ import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import { formatInTimeZone } from "date-fns-tz";
 import { getActor } from "@/backend/modules/identity";
-import { getAvailabilityConfig } from "@/backend/modules/scheduling";
+import { getAvailabilityConfig, getOfficeTimezone } from "@/backend/modules/scheduling";
 import { tzLabel } from "@/frontend/lib/datetime";
 import { DisponibilidadView, LexPrefsProvider } from "@/frontend/features/vanessa";
 import type { DayRule } from "@/frontend/features/vanessa";
@@ -47,6 +47,8 @@ export default async function VentasDisponibilidadPage() {
   // the editor still renders rather than crashing the panel.
   const config = await getAvailabilityConfig(actor).catch(() => null);
   const staffTz = config?.staffTimezone ?? "America/New_York";
+  // Office canonical zone — all-day "holiday" blocks anchor to it (see the view).
+  const officeTz = await getOfficeTimezone(actor.orgId).catch(() => "America/New_York");
 
   // Group the flat active rules into per-weekday ranges for the editor.
   const rangesByWeekday = new Map<number, { start: string; end: string }[]>();
@@ -114,6 +116,7 @@ export default async function VentasDisponibilidadPage() {
     blockReason: t("blockReason"),
     blockFromLabel: t("blockFromLabel"),
     blockToLabel: t("blockToLabel"),
+    blockAllDay: t("blockAllDay"),
     blockInvalidRange: t("blockInvalidRange"),
     blockAffectsConfirm: t("blockAffectsConfirm", { n: "{n}" }),
     affectsNotice: t("affectsNotice", { n: "{n}" }),
@@ -134,6 +137,7 @@ export default async function VentasDisponibilidadPage() {
         noShowPenaltyDays={noShowPenaltyDays}
         videoLink={config?.videoLink ?? ""}
         staffTz={staffTz}
+        officeTz={officeTz}
         blockedClient={null}
         strings={strings}
         actions={{

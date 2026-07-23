@@ -8,6 +8,7 @@
 
 import { deriveFieldState, parseConditionOrNull } from "@/shared/form-logic/conditions";
 import { PRINCIPAL_ROLE_KEY } from "@/shared/constants/party-roles";
+import { addBusinessDays, subtractBusinessDays } from "@/shared/business-days";
 
 // ---------------------------------------------------------------------------
 // CaseStatus
@@ -579,6 +580,30 @@ export function addDaysToAnchorIso(anchorIso: string | null, days: number): stri
   const d = new Date(anchorIso);
   if (Number.isNaN(d.getTime())) return null;
   return new Date(d.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+/**
+ * Due civil date (yyyy-MM-dd) of a deadline-anchored stage (Feature B — Diana):
+ *
+ *   min( entered + maxBusinessDays hábiles,  deadline − mailBufferBusinessDays hábiles )
+ *
+ * Both bounds are BUSINESS days (weekends + injected holidays excluded). The cap
+ * keeps the assigned workload bounded to what the service configured (Diana's
+ * "máximo 4 días"); the buffer reserves shipping time so the expediente is mailed
+ * before the legal deadline (Diana's "−1 día por el correo"). Returns the earlier
+ * (tighter) of the two — when the deadline is close, the buffer wins; otherwise the
+ * cap does. Pure; holidays injected by the caller (office-timezone civil dates).
+ */
+export function computeDeadlineAnchoredDueYmd(args: {
+  enteredYmd: string;
+  deadlineYmd: string;
+  maxBusinessDays: number;
+  mailBufferBusinessDays: number;
+  holidays: ReadonlySet<string>;
+}): string {
+  const cap = addBusinessDays(args.enteredYmd, args.maxBusinessDays, args.holidays);
+  const shipBy = subtractBusinessDays(args.deadlineYmd, args.mailBufferBusinessDays, args.holidays);
+  return shipBy < cap ? shipBy : cap;
 }
 
 // ---------------------------------------------------------------------------

@@ -44,6 +44,9 @@ export {
   getServiceCronograma,
   // Stage SLA — plazo por etapa (consumido por cases al activar/traspasar)
   getStageSlaDays,
+  // Deadline policy — plazo legal externo + paso "Calificación" (cases + alta)
+  getDeadlinePolicy,
+  replaceDeadlinePolicy,
   // Form editor + datasets reads (DOC-53 §5 / §6 — page-initial RSC reads)
   getFormEditorData,
   getVersionPdfUrl,
@@ -94,6 +97,8 @@ export type {
   StageSlaDays,
   StageSlaItem,
   UpsertStageSlasDto,
+  DeadlinePolicy,
+  UpsertDeadlinePolicyDto,
 } from "./domain";
 
 // Stage SLA — etapas con plazo (value export para el wizard admin)

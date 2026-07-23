@@ -527,6 +527,33 @@ export async function replaceStageSlas(
 }
 
 // ---------------------------------------------------------------------------
+// Deadline policy — plazo legal externo por servicio (1 fila por servicio)
+// ---------------------------------------------------------------------------
+
+export type DeadlinePolicyRow = Tables<"service_deadline_policies">;
+
+/** The single deadline policy row of a service, or null if none configured. */
+export async function getDeadlinePolicyRow(serviceId: string): Promise<DeadlinePolicyRow | null> {
+  const { data, error } = await db()
+    .from("service_deadline_policies")
+    .select("*")
+    .eq("service_id", serviceId)
+    .maybeSingle();
+  if (error) throw new Error(`catalog.repo.getDeadlinePolicyRow: ${error.message}`);
+  return data ?? null;
+}
+
+/** Upsert (insert-or-update) the deadline policy of a service, keyed by service_id. */
+export async function upsertDeadlinePolicyRow(
+  row: TablesInsert<"service_deadline_policies">,
+): Promise<void> {
+  const { error } = await db()
+    .from("service_deadline_policies")
+    .upsert(row, { onConflict: "service_id" });
+  if (error) throw new Error(`catalog.repo.upsertDeadlinePolicyRow: ${error.message}`);
+}
+
+// ---------------------------------------------------------------------------
 // Required documents
 // ---------------------------------------------------------------------------
 

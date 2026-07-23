@@ -35,6 +35,14 @@ import { Icon } from "@/frontend/components/brand/icon";
 import { Chip } from "@/frontend/components/brand/chip";
 import { toast } from "@/frontend/components/desktop/toast";
 import { resolveCasosActionError, type CasosStrings } from "@/frontend/features/shared-case";
+import { businessDaysUntil, addCalendarDays } from "@/shared/business-days";
+
+/**
+ * Wizard steps by KEY (not a numeric index) so a conditional step can be inserted
+ * without renumbering. "qualification" appears only for services whose deadline
+ * policy is enabled (Feature A). "success" is the terminal link screen.
+ */
+type StepKey = "client" | "service" | "qualification" | "payment" | "success";
 
 export interface NewCasePlan {
   kind: "self" | "with_lawyer";
@@ -62,6 +70,20 @@ export interface NewCaseService {
   encodedByKind: Record<string, string>;
   /** Additional case parties this service declares (the applicant is implicit). */
   partyRoles: NewCasePartyRole[];
+  /**
+   * Deadline policy (Feature A) — present + enabled → the "Calificación" step
+   * shows after service selection. Drives the acceptance calculator (deadline =
+   * anchor + deadlineDays calendar; warn if fewer than minBusinessDays business
+   * days remain). null when the service has no external legal deadline.
+   */
+  deadlinePolicy?: {
+    isEnabled: boolean;
+    /** Localized question for the anchor date input. */
+    anchorLabel: string;
+    deadlineDays: number;
+    minBusinessDays: number;
+    mailBufferDays: number;
+  } | null;
 }
 
 /** Existing client returned by the step-1 picker search (RF-VAN-018). */
@@ -120,6 +142,8 @@ export interface NewCaseInput {
    * skips provisioning and persists the step-1 edits to the client profile.
    */
   existingClientId?: string;
+  /** Anchor date (yyyy-MM-dd) from the Calificación step (Feature A). */
+  deadlineAnchorDate?: string;
 }
 
 export interface NewCaseActions {
@@ -162,6 +186,8 @@ export function NewCaseModal({
   presetName,
   presetPhone,
   caseLinkBase,
+  holidays,
+  todayYmd,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
@@ -175,12 +201,25 @@ export function NewCaseModal({
   presetPhone?: string | null;
   /** Base path for the "Ver" link of the RF-VAN-019 notice (e.g. "/ventas/clientes"). */
   caseLinkBase?: string;
+  /**
+   * Org non-working days (yyyy-MM-dd, office TZ) for the Calificación calculator —
+   * the "Bloqueos / días libres" of /ventas/disponibilidad. Defaults to none.
+   */
+  holidays?: string[];
+  /** Office-TZ civil "today" (yyyy-MM-dd) for the calculator. Defaults to the client's date. */
+  todayYmd?: string;
 }) {
   // `actions` is rebuilt inline by the parent each render; pin to a ref so the
   // debounced search effect depends on stable values, not the object identity.
   const actionsRef = React.useRef(actions);
   actionsRef.current = actions;
-  const [step, setStep] = React.useState<1 | 2 | 3 | 4>(1);
+  const [stepKey, setStepKey] = React.useState<StepKey>("client");
+  // Calificación (Feature A): judge decision date (yyyy-MM-dd), whether "Calificar"
+  // was pressed (so the result is shown before advancing), and the short-deadline
+  // override confirmation.
+  const [judgeDecisionDate, setJudgeDecisionDate] = React.useState("");
+  const [qualified, setQualified] = React.useState(false);
+  const [confirmTight, setConfirmTight] = React.useState(false);
   // Step 1 mode (RF-VAN-018): pick an existing client (default) or create new.
   const [clientMode, setClientMode] = React.useState<"existing" | "new">("existing");
   const [clientQuery, setClientQuery] = React.useState("");
@@ -341,6 +380,27 @@ export function NewCaseModal({
 
   const service = services.find((s) => s.id === serviceId);
 
+  // --- Wizard flow (keyed steps) --------------------------------------------
+  // The "qualification" step is inserted after "service" only when the chosen
+  // service has an enabled deadline policy (Feature A). Everything (footer,
+  // progress, title) derives from this ordered list — adding a future conditional
+  // step is a one-line change here, not a renumber.
+  const deadlinePolicy = service?.deadlinePolicy ?? null;
+  const showQualification = !!deadlinePolicy?.isEnabled;
+  const flowSteps = React.useMemo<StepKey[]>(
+    () => ["client", "service", ...(showQualification ? (["qualification"] as StepKey[]) : []), "payment"],
+    [showQualification],
+  );
+  const currentIndex = flowSteps.indexOf(stepKey);
+  function goNext() {
+    const i = flowSteps.indexOf(stepKey);
+    if (i >= 0 && i < flowSteps.length - 1) setStepKey(flowSteps[i + 1]);
+  }
+  function goBack() {
+    const i = flowSteps.indexOf(stepKey);
+    if (i > 0) setStepKey(flowSteps[i - 1]);
+  }
+
   /** Seeds one empty name slot per additional role of the chosen service. */
   function selectService(id: string) {
     setServiceId(id);
@@ -349,6 +409,10 @@ export function NewCaseModal({
     const init: Record<string, string[]> = {};
     for (const r of svc?.partyRoles ?? []) init[r.roleKey] = [""];
     setPartyNames(init);
+    // Reset the Calificación step when the service changes (its policy may differ).
+    setJudgeDecisionDate("");
+    setQualified(false);
+    setConfirmTight(false);
   }
 
   /** Selects a plan and seeds the editable payment fields from its defaults. */
@@ -379,7 +443,10 @@ export function NewCaseModal({
   }
 
   function reset() {
-    setStep(1);
+    setStepKey("client");
+    setJudgeDecisionDate("");
+    setQualified(false);
+    setConfirmTight(false);
     setClientMode("existing");
     setClientQuery("");
     setClientResults([]);
@@ -434,6 +501,31 @@ export function NewCaseModal({
     (r) => !r.required || (partyNames[r.roleKey] ?? []).some((n) => n.trim()),
   );
   const step2Valid = !!serviceId && !!planKind && rolesValid;
+
+  // Calificación calculator (Feature A). deadline = anchor + policy.deadlineDays
+  // (calendar); the acceptance guard counts BUSINESS days remaining until the
+  // deadline (weekends + org "días libres" excluded). Under the threshold → warn.
+  const holidaysSet = React.useMemo(() => new Set(holidays ?? []), [holidays]);
+  const refToday = todayYmd && /^\d{4}-\d{2}-\d{2}$/.test(todayYmd)
+    ? todayYmd
+    : new Date().toISOString().slice(0, 10);
+  const anchorYmd = /^\d{4}-\d{2}-\d{2}$/.test(judgeDecisionDate) ? judgeDecisionDate : "";
+  const deadlineYmd = deadlinePolicy && anchorYmd ? addCalendarDays(anchorYmd, deadlinePolicy.deadlineDays) : "";
+  const businessDaysLeft =
+    deadlinePolicy && anchorYmd && deadlineYmd ? businessDaysUntil(refToday, deadlineYmd, holidaysSet) : null;
+  const tooTight =
+    deadlinePolicy != null && businessDaysLeft != null && businessDaysLeft < deadlinePolicy.minBusinessDays;
+  // The operator must press "Calificar" (see the result) before advancing.
+  const qualificationValid = !showQualification || (!!anchorYmd && qualified);
+
+  /** Calificación "Siguiente": short deadline → confirm once, then advance. */
+  function handleQualificationNext() {
+    if (tooTight && !confirmTight) {
+      setConfirmTight(true);
+      return;
+    }
+    goNext();
+  }
 
   // Editable payment plan (parsed from the dollar inputs). Downpayment must be
   // > 0 and ≤ total; installments ≥ 1 (matches the backend contract).
@@ -490,12 +582,14 @@ export function NewCaseModal({
       ...(clientMode === "existing" && selectedClient
         ? { existingClientId: selectedClient.userId }
         : {}),
+      // Calificación anchor (Feature A) — only when the service's step collected it.
+      ...(showQualification && anchorYmd ? { deadlineAnchorDate: anchorYmd } : {}),
     });
     setSubmitting(false);
     if (res.ok && res.signingUrl) {
       // Absolute link built server-side (canonical origin) — copyable/shareable.
       setSigningLink(res.signingUrl);
-      setStep(4);
+      setStepKey("success");
     } else {
       // Map the stable error code to a real reason (permission, invalid data, …).
       // The old fallback showed "No pudimos cargar los casos." for every failure.
@@ -511,13 +605,15 @@ export function NewCaseModal({
   }
 
   const title =
-    step === 1
+    stepKey === "client"
       ? strings.newCaseStep1
-      : step === 2
+      : stepKey === "service"
         ? strings.newCaseStep2
-        : step === 3
-          ? strings.newCaseStep3
-          : strings.linkTitle;
+        : stepKey === "qualification"
+          ? strings.newCaseQualification
+          : stepKey === "payment"
+            ? strings.newCaseStep3
+            : strings.linkTitle;
 
   return (
     <Modal
@@ -526,11 +622,11 @@ export function NewCaseModal({
       title={title}
       width={560}
       footer={
-        step === 4 ? (
+        stepKey === "success" ? (
           <GradientBtn size="md" full={false} icon="check" onClick={() => close(false)}>
             {strings.done}
           </GradientBtn>
-        ) : step === 1 ? (
+        ) : stepKey === "client" ? (
           <>
             <GhostBtn size="md" full={false} onClick={() => close(false)}>
               {strings.cancel}
@@ -540,14 +636,14 @@ export function NewCaseModal({
               full={false}
               icon="chevR"
               disabled={!step1Valid}
-              onClick={() => setStep(2)}
+              onClick={goNext}
             >
               {strings.next}
             </GradientBtn>
           </>
-        ) : step === 2 ? (
+        ) : stepKey === "service" ? (
           <>
-            <GhostBtn size="md" full={false} icon="chevL" onClick={() => setStep(1)}>
+            <GhostBtn size="md" full={false} icon="chevL" onClick={goBack}>
               {strings.back}
             </GhostBtn>
             <GradientBtn
@@ -555,14 +651,29 @@ export function NewCaseModal({
               full={false}
               icon="chevR"
               disabled={!step2Valid}
-              onClick={() => setStep(3)}
+              onClick={goNext}
             >
               {strings.next}
             </GradientBtn>
           </>
+        ) : stepKey === "qualification" ? (
+          <>
+            <GhostBtn size="md" full={false} icon="chevL" onClick={goBack}>
+              {strings.back}
+            </GhostBtn>
+            <GradientBtn
+              size="md"
+              full={false}
+              icon="chevR"
+              disabled={!qualificationValid}
+              onClick={handleQualificationNext}
+            >
+              {tooTight && confirmTight ? strings.qualifyProceedAnyway : strings.next}
+            </GradientBtn>
+          </>
         ) : (
           <>
-            <GhostBtn size="md" full={false} icon="chevL" onClick={() => setStep(2)}>
+            <GhostBtn size="md" full={false} icon="chevL" onClick={goBack}>
               {strings.back}
             </GhostBtn>
             <GradientBtn
@@ -578,24 +689,24 @@ export function NewCaseModal({
         )
       }
     >
-      {/* Step indicator */}
-      {step !== 4 && (
+      {/* Step indicator — one bar per active step (conditional Calificación adds one) */}
+      {stepKey !== "success" && (
         <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
-          {[1, 2, 3].map((n) => (
+          {flowSteps.map((k, i) => (
             <div
-              key={n}
+              key={k}
               style={{
                 flex: 1,
                 height: 4,
                 borderRadius: 999,
-                background: step >= n ? "var(--accent)" : "var(--line)",
+                background: currentIndex >= i ? "var(--accent)" : "var(--line)",
               }}
             />
           ))}
         </div>
       )}
 
-      {step === 1 && (
+      {stepKey === "client" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           {/* Mode selector — Cliente existente | Cliente nuevo (RF-VAN-018) */}
           <div style={segmentedStyle} role="tablist">
@@ -812,7 +923,7 @@ export function NewCaseModal({
         </div>
       )}
 
-      {step === 2 && (
+      {stepKey === "service" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <span style={{ fontSize: 12.5, fontWeight: 800, color: "var(--ink-2)" }}>
@@ -996,7 +1107,30 @@ export function NewCaseModal({
         </div>
       )}
 
-      {step === 3 && (
+      {stepKey === "qualification" && deadlinePolicy && (
+        <QualificationStep
+          strings={strings}
+          label={deadlinePolicy.anchorLabel}
+          maxDate={refToday}
+          value={judgeDecisionDate}
+          onChange={(v) => {
+            setJudgeDecisionDate(v);
+            setQualified(false);
+            setConfirmTight(false);
+          }}
+          qualified={qualified}
+          onQualify={() => setQualified(true)}
+          deadlineYmd={deadlineYmd}
+          businessDaysLeft={businessDaysLeft}
+          minBusinessDays={deadlinePolicy.minBusinessDays}
+          tooTight={tooTight}
+          confirmTight={confirmTight}
+          onConfirmProceed={goNext}
+          onConfirmCancel={() => setConfirmTight(false)}
+        />
+      )}
+
+      {stepKey === "payment" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div
             style={{
@@ -1089,7 +1223,7 @@ export function NewCaseModal({
         </div>
       )}
 
-      {step === 4 && signingLink && (
+      {stepKey === "success" && signingLink && (
         <div
           style={{
             display: "flex",
@@ -1166,6 +1300,144 @@ export function NewCaseModal({
       )}
     </Modal>
   );
+}
+
+/**
+ * Calificación step (Feature A). Collects the anchor date (e.g. the judge's
+ * decision date), and on "Calificar" shows the computed legal deadline + the
+ * business days remaining. Under the threshold → red "no deberíamos aceptar"
+ * notice; advancing then requires an explicit "¿Estás seguro?" confirmation
+ * (soft-gate with override, driven by the parent).
+ */
+function QualificationStep({
+  strings,
+  label,
+  maxDate,
+  value,
+  onChange,
+  qualified,
+  onQualify,
+  deadlineYmd,
+  businessDaysLeft,
+  minBusinessDays,
+  tooTight,
+  confirmTight,
+  onConfirmProceed,
+  onConfirmCancel,
+}: {
+  strings: CasosStrings;
+  label: string;
+  maxDate: string;
+  value: string;
+  onChange: (v: string) => void;
+  qualified: boolean;
+  onQualify: () => void;
+  deadlineYmd: string;
+  businessDaysLeft: number | null;
+  minBusinessDays: number;
+  tooTight: boolean;
+  confirmTight: boolean;
+  onConfirmProceed: () => void;
+  onConfirmCancel: () => void;
+}) {
+  const showResult = qualified && !!value && !!deadlineYmd;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <label style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <span style={{ fontSize: 13.5, fontWeight: 800, color: "var(--ink)", lineHeight: 1.4 }}>{label}</span>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input
+            type="date"
+            value={value}
+            max={maxDate}
+            onChange={(e) => onChange(e.target.value)}
+            style={{ ...inputStyle, flex: 1, minWidth: 0 }}
+          />
+          <GradientBtn size="md" full={false} icon="check" disabled={!value} onClick={onQualify}>
+            {strings.qualifyButton}
+          </GradientBtn>
+        </div>
+      </label>
+
+      {showResult && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+              padding: "12px 14px",
+              borderRadius: 12,
+              background: "var(--blue-soft)",
+              border: "1px solid color-mix(in srgb, var(--accent) 18%, transparent)",
+            }}
+          >
+            <span style={{ fontSize: 13, color: "var(--ink-2)" }}>
+              {interpStr(strings.qualifyDeadline, { date: formatYmdDisplay(deadlineYmd) })}
+            </span>
+            <span style={{ fontSize: 13, fontWeight: 800, color: "var(--ink)" }}>
+              {interpStr(strings.qualifyBusinessDaysLeft, { n: String(businessDaysLeft ?? 0) })}
+            </span>
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 8,
+              padding: "10px 12px",
+              borderRadius: 12,
+              background: tooTight
+                ? "color-mix(in srgb, var(--red) 12%, transparent)"
+                : "color-mix(in srgb, #16a34a 12%, transparent)",
+              border: `1px solid ${tooTight ? "color-mix(in srgb, var(--red) 40%, transparent)" : "color-mix(in srgb, #16a34a 40%, transparent)"}`,
+            }}
+          >
+            <Icon name="info" size={15} color={tooTight ? "var(--red)" : "#16a34a"} />
+            <span style={{ flex: 1, fontSize: 13, color: "var(--ink-2)", lineHeight: 1.45 }}>
+              {tooTight
+                ? interpStr(strings.qualifyTooTight, { min: String(minBusinessDays) })
+                : strings.qualifyOk}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {confirmTight && (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+            padding: "14px",
+            borderRadius: 12,
+            background: "color-mix(in srgb, var(--red) 8%, transparent)",
+            border: "1px solid color-mix(in srgb, var(--red) 35%, transparent)",
+          }}
+        >
+          <b style={{ fontSize: 14, color: "var(--ink)" }}>{strings.qualifyConfirmTitle}</b>
+          <p style={{ margin: 0, fontSize: 13, color: "var(--ink-2)", lineHeight: 1.5 }}>
+            {strings.qualifyConfirmBody}
+          </p>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <GhostBtn size="md" full={false} onClick={onConfirmCancel}>
+              {strings.qualifyConfirmReview}
+            </GhostBtn>
+            <GradientBtn size="md" full={false} icon="chevR" onClick={onConfirmProceed}>
+              {strings.qualifyConfirmYes}
+            </GradientBtn>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** yyyy-MM-dd → dd/MM/yyyy for display (locale-neutral, no timezone). */
+function formatYmdDisplay(ymd: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return ymd;
+  const [y, m, d] = ymd.split("-");
+  return `${d}/${m}/${y}`;
 }
 
 /** Whole-dollar string for an input from integer cents (e.g. 350000 → "3500"). */

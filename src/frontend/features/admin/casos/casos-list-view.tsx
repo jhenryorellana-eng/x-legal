@@ -58,6 +58,8 @@ export function CasosListView({
   hasMore,
   nextCursor,
   services,
+  holidays,
+  todayYmd,
   strings,
   detailBasePath,
   newCaseActions,
@@ -67,6 +69,8 @@ export function CasosListView({
   hasMore: boolean;
   nextCursor: string | null;
   services: NewCaseService[];
+  holidays?: string[];
+  todayYmd?: string;
   strings: CasosStrings;
   detailBasePath: string;
   newCaseActions: NewCaseActions;
@@ -282,6 +286,8 @@ export function CasosListView({
         open={modalOpen}
         onOpenChange={setModalOpen}
         services={services}
+        holidays={holidays}
+        todayYmd={todayYmd}
         strings={strings}
         actions={newCaseActions}
         caseLinkBase={detailBasePath}

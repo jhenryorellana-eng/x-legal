@@ -27,6 +27,7 @@ export {
   removeAvailabilityException,
   updateSchedulingSettings,
   migrateAvailabilityTimezone,
+  listOrgNonWorkingDays, // → cases SLA engine + new-case wizard (deadline-anchored SLAs)
   getAppointmentForClient,
   getCaseAppointments,
   getAppointmentAdvisor,
@@ -72,6 +73,7 @@ export {
   getPhaseAppointmentsSummary, // → cases (phase progress, DOC-41 §3.5)
   findDueReminders,            // → jobs/appointment-reminders (DOC-26 §2.7)
   markReminderSent,            // → jobs/appointment-reminders (DOC-26 §2.7)
+  getOfficeTimezone,           // → cases SLA engine (civil dates in the office TZ)
 } from "./repository";
 
 // Repository row types

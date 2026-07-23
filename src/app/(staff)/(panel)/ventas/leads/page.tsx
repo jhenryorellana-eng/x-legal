@@ -75,7 +75,7 @@ export default async function VentasLeadsPage() {
   // Catalog services for the modals (Nuevo lead + Nuevo caso) AND for resolving
   // each lead card's service label — one read, shared with /ventas/clientes via
   // the _lib helper so the two pages never drift.
-  const { services, newCaseServices, casosStrings } = await buildNewCaseModalData(actor.orgId, locale);
+  const { services, newCaseServices, casosStrings, holidays, todayYmd } = await buildNewCaseModalData(actor.orgId, locale);
   const servicesById = new Map(services.map((s) => [s.id, s.label]));
 
   // Real lead categories (their UUIDs are what `createLead` stores — the modal
@@ -283,6 +283,8 @@ export default async function VentasLeadsPage() {
       categories={categories}
       newCaseServices={newCaseServices}
       casosStrings={casosStrings}
+      holidays={holidays}
+      todayYmd={todayYmd}
       boardId={boardId}
       moveAction={moveKanbanCardAction}
       contactAction={contactLeadAction}

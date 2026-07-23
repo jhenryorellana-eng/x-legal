@@ -20,6 +20,7 @@ import { createServiceClient } from "@/backend/platform/supabase";
 import { logger } from "@/backend/platform/logger";
 import { writeAudit } from "@/backend/modules/audit";
 import type { I18nText } from "@/shared/i18n";
+import { addCalendarDays } from "@/shared/business-days";
 
 import {
   canTransitionAppointment,
@@ -1641,6 +1642,52 @@ export async function removeAvailabilityException(
     exceptionId,
     {},
   );
+}
+
+/**
+ * Org-wide non-working days (full-day office closures) within a civil-date window,
+ * for the business-day arithmetic of deadline-anchored SLAs (Features A & B).
+ *
+ * System-level read (by orgId, no Actor — mirrors catalog.getStageSlaDays): the
+ * cases SLA engine runs it from event paths (system actor) and the new-case wizard
+ * builders from RSCs. Reuses the "Bloqueos / días libres" of /ventas/disponibilidad
+ * (availability_exceptions — always org-wide: staff_id NULL) as the holiday source,
+ * so there is no separate holidays table to keep in sync.
+ *
+ * A civil date D (in the office timezone) is non-working iff some org exception
+ * FULLY covers it: starts_at ≤ 00:00 of D and ends_at ≥ 00:00 of D+1. A partial
+ * block (e.g. a 2h meeting) does NOT close the day — holidays are entered with the
+ * "Todo el día" toggle (00:00→24:00). Weekends are handled by the business-day
+ * utility itself, not here.
+ *
+ * Returns yyyy-MM-dd strings, inclusive of [fromYmd, toYmd].
+ */
+export async function listOrgNonWorkingDays(
+  orgId: string,
+  fromYmd: string,
+  toYmd: string,
+): Promise<string[]> {
+  if (toYmd < fromYmd) return [];
+  const officeTz = await repo.getOfficeTimezone(orgId);
+  const startOfDayUtc = (ymd: string) => fromZonedTime(`${ymd}T00:00:00`, officeTz);
+
+  const windowFromUtc = startOfDayUtc(fromYmd);
+  const windowToUtc = startOfDayUtc(addCalendarDays(toYmd, 1));
+  const exceptions = await repo.getExceptionsInRange(orgId, windowFromUtc, windowToUtc);
+  if (exceptions.length === 0) return [];
+
+  const closed: string[] = [];
+  let d = fromYmd;
+  while (d <= toYmd) {
+    const dayStart = startOfDayUtc(d).getTime();
+    const nextDayStart = startOfDayUtc(addCalendarDays(d, 1)).getTime();
+    const fullyClosed = exceptions.some(
+      (ex) => ex.startsAt.getTime() <= dayStart && ex.endsAt.getTime() >= nextDayStart,
+    );
+    if (fullyClosed) closed.push(d);
+    d = addCalendarDays(d, 1);
+  }
+  return closed;
 }
 
 const SettingsSchema = z.object({

@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { addWeeksToAnchorIso, addDaysToAnchorIso } from "../domain";
+import { addWeeksToAnchorIso, addDaysToAnchorIso, computeDeadlineAnchoredDueYmd } from "../domain";
 
 describe("addWeeksToAnchorIso", () => {
   it("returns null when there is no anchor (case not active yet)", () => {
@@ -46,5 +46,63 @@ describe("addDaysToAnchorIso (stage deadline snapshot)", () => {
 
   it("day 1 → +1 día", () => {
     expect(addDaysToAnchorIso("2026-06-01T00:00:00.000Z", 1)).toBe("2026-06-02T00:00:00.000Z");
+  });
+});
+
+describe("computeDeadlineAnchoredDueYmd (Diana's dynamic due date)", () => {
+  const NONE = new Set<string>();
+  // Reference week: Wed 2026-07-22, Thu 23, Fri 24, Sat 25, Sun 26, Mon 27, Tue 28.
+
+  it("cap wins when the deadline is far: entered + maxBusinessDays", () => {
+    // cap = addBiz(07-22, 4) = 07-28; shipBy = subBiz(08-21 Fri, 1) = 08-20 → min 07-28.
+    expect(
+      computeDeadlineAnchoredDueYmd({
+        enteredYmd: "2026-07-22",
+        deadlineYmd: "2026-08-21",
+        maxBusinessDays: 4,
+        mailBufferBusinessDays: 1,
+        holidays: NONE,
+      }),
+    ).toBe("2026-07-28");
+  });
+
+  it("buffer wins when the deadline is close: deadline − mailBuffer", () => {
+    // cap = 07-28; shipBy = subBiz(07-27 Mon, 1) = Fri 07-24 → min 07-24.
+    expect(
+      computeDeadlineAnchoredDueYmd({
+        enteredYmd: "2026-07-22",
+        deadlineYmd: "2026-07-27",
+        maxBusinessDays: 4,
+        mailBufferBusinessDays: 1,
+        holidays: NONE,
+      }),
+    ).toBe("2026-07-24");
+  });
+
+  it("mailBuffer 0 → shipBy is the deadline itself (cap still applies)", () => {
+    expect(
+      computeDeadlineAnchoredDueYmd({
+        enteredYmd: "2026-07-22",
+        deadlineYmd: "2026-07-24",
+        maxBusinessDays: 4,
+        mailBufferBusinessDays: 0,
+        holidays: NONE,
+      }),
+    ).toBe("2026-07-24"); // cap 07-28 vs shipBy 07-24 → 07-24
+  });
+
+  it("excludes injected holidays from both bounds", () => {
+    const h = new Set(["2026-07-23"]); // Thu closed
+    // cap = addBiz(07-22, 4, {Thu23}) = Fri24,Mon27,Tue28,Wed29 → 07-29;
+    // shipBy = subBiz(08-21, 1) = 08-20 → min 07-29.
+    expect(
+      computeDeadlineAnchoredDueYmd({
+        enteredYmd: "2026-07-22",
+        deadlineYmd: "2026-08-21",
+        maxBusinessDays: 4,
+        mailBufferBusinessDays: 1,
+        holidays: h,
+      }),
+    ).toBe("2026-07-29");
   });
 });

@@ -28,6 +28,8 @@ export function ClientesClient({
   readyCaseId,
   newCaseServices,
   casosStrings,
+  holidays,
+  todayYmd,
   createCaseAction,
   searchClientsAction,
   getClientCasesAction,
@@ -39,6 +41,8 @@ export function ClientesClient({
   readyCaseId: string | null;
   newCaseServices: NewCaseService[];
   casosStrings: CasosStrings;
+  holidays?: string[];
+  todayYmd?: string;
   createCaseAction: NewCaseActions["createCase"];
   searchClientsAction: NewCaseActions["searchClients"];
   getClientCasesAction: NewCaseActions["getClientCases"];
@@ -61,6 +65,8 @@ export function ClientesClient({
         open={caseModal}
         onOpenChange={setCaseModal}
         services={newCaseServices}
+        holidays={holidays}
+        todayYmd={todayYmd}
         strings={casosStrings}
         actions={{
           createCase: createCaseAction,

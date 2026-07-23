@@ -153,6 +153,16 @@ export interface WizardStageSlas {
   operations: number | null;
 }
 
+/** Política de plazo legal externo + paso "Calificación" (config-as-data, genérico). */
+export interface WizardDeadlinePolicy {
+  isEnabled: boolean;
+  anchorLabel: I18nValue;
+  deadlineDays: number;
+  minBusinessDays: number;
+  mailBufferDays: number;
+  anchoredStage: "sales" | "legal" | "operations" | null;
+}
+
 export interface PublicationIssueVM {
   code: string;
   severity: "blocking" | "warning";
@@ -167,6 +177,8 @@ export interface CatalogWizardProps {
   phases: WizardPhase[];
   /** Plazo por etapa (días) — cuenta regresiva. Empty (all null) en modo creación. */
   stageSlas: WizardStageSlas;
+  /** Política de plazo legal externo (paso "Calificación" + SLA anclado). null = no configurada. */
+  deadlinePolicy: WizardDeadlinePolicy | null;
   slugLocked: boolean;
   messages: Record<string, string>;
   listHref: string;
@@ -185,6 +197,7 @@ export interface CatalogWizardProps {
     upsertPolicy: (input: Record<string, unknown>) => Promise<ActionRes<unknown>>;
     upsertSchedule: (input: Record<string, unknown>) => Promise<ActionRes<unknown>>;
     saveStageSlas: (input: Record<string, unknown>) => Promise<ActionRes<unknown>>;
+    saveDeadlinePolicy: (input: Record<string, unknown>) => Promise<ActionRes<unknown>>;
     upsertMilestones: (
       servicePhaseId: string,
       items: Array<Record<string, unknown>>,
@@ -239,6 +252,7 @@ export function CatalogWizard({
   partyRoles: initialPartyRoles,
   phases: initialPhases,
   stageSlas: initialStageSlas,
+  deadlinePolicy: initialDeadlinePolicy,
   slugLocked,
   messages: t,
   listHref,
@@ -529,6 +543,7 @@ export function CatalogWizard({
             setActiveIdx={setActivePhaseIdx}
             stageSlas={stageSlas}
             setStageSlas={setStageSlas}
+            deadlinePolicy={initialDeadlinePolicy}
             actions={actions}
             t={t}
           />
@@ -1039,6 +1054,153 @@ function PlansStep({ plans, setPlans, t }: { plans: WizardPlan[]; setPlans: Reac
   );
 }
 
+/* ─────────────── Calificación / plazo legal externo (config) ─────────────── */
+
+/**
+ * Admin editor for a service's deadline policy (Feature A/B). Genérico: activar
+ * aquí hace aparecer el paso "Calificación" en el alta para este servicio y ancla
+ * el SLA de la etapa elegida al plazo legal. Sin código: pura config.
+ */
+function DeadlinePolicyPanel({
+  serviceId,
+  initial,
+  stageSlas,
+  save,
+  t,
+}: {
+  serviceId: string | null;
+  initial: WizardDeadlinePolicy | null;
+  stageSlas: WizardStageSlas;
+  save: CatalogWizardProps["actions"]["saveDeadlinePolicy"];
+  t: Record<string, string>;
+}) {
+  const [enabled, setEnabled] = React.useState(initial?.isEnabled ?? false);
+  const [labelEs, setLabelEs] = React.useState(initial?.anchorLabel.es ?? "");
+  const [labelEn, setLabelEn] = React.useState(initial?.anchorLabel.en ?? "");
+  const [deadlineDays, setDeadlineDays] = React.useState(String(initial?.deadlineDays ?? 30));
+  const [minBiz, setMinBiz] = React.useState(String(initial?.minBusinessDays ?? 3));
+  const [mailBuffer, setMailBuffer] = React.useState(String(initial?.mailBufferDays ?? 1));
+  const [anchoredStage, setAnchoredStage] = React.useState<string>(initial?.anchoredStage ?? "");
+  const [saving, setSaving] = React.useState(false);
+
+  async function saveNow() {
+    if (!serviceId) {
+      toast.error("—");
+      return;
+    }
+    setSaving(true);
+    const r = await save({
+      service_id: serviceId,
+      is_enabled: enabled,
+      anchor_label_i18n: { es: labelEs, en: labelEn },
+      deadline_days: Math.max(1, Math.floor(Number(deadlineDays) || 30)),
+      min_business_days_to_accept: Math.max(0, Math.floor(Number(minBiz) || 0)),
+      mail_buffer_business_days: Math.max(0, Math.floor(Number(mailBuffer) || 0)),
+      anchored_stage: anchoredStage === "" ? null : anchoredStage,
+    });
+    setSaving(false);
+    if (r.success) toast.success(t.saved);
+    else toast.error(r.error?.message ?? "Error");
+  }
+
+  return (
+    <div
+      style={{
+        gridColumn: "1 / -1",
+        border: "1.5px solid var(--line)",
+        borderRadius: 14,
+        padding: 16,
+        background: "var(--panel-2, var(--card-alt))",
+      }}
+    >
+      <div style={{ fontWeight: 800, fontSize: 14, color: "var(--ink)" }}>{t.deadlineTitle}</div>
+      <p style={{ fontSize: 12.5, color: "var(--ink-3)", margin: "4px 0 14px" }}>{t.deadlineSub}</p>
+
+      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+        <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+        <span style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>{t.deadlineEnabled}</span>
+      </label>
+
+      {enabled && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 14 }}>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={subLabel}>{t.deadlineAnchorLabel} (ES)</span>
+            <TextInput value={labelEs} onChange={(e) => setLabelEs(e.target.value)} />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={subLabel}>{t.deadlineAnchorLabel} (EN)</span>
+            <TextInput value={labelEn} onChange={(e) => setLabelEn(e.target.value)} />
+          </label>
+
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "flex-end" }}>
+            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={subLabel}>{t.deadlineDaysLabel}</span>
+              <TextInput type="number" min={1} max={365} style={{ width: 110 }} value={deadlineDays} onChange={(e) => setDeadlineDays(e.target.value)} />
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={subLabel}>{t.deadlineMinBiz}</span>
+              <TextInput type="number" min={0} max={90} style={{ width: 110 }} value={minBiz} onChange={(e) => setMinBiz(e.target.value)} />
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={subLabel}>{t.deadlineMailBuffer}</span>
+              <TextInput type="number" min={0} max={30} style={{ width: 110 }} value={mailBuffer} onChange={(e) => setMailBuffer(e.target.value)} />
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={subLabel}>{t.deadlineAnchoredStage}</span>
+              <select
+                value={anchoredStage}
+                onChange={(e) => setAnchoredStage(e.target.value)}
+                style={{ height: 40, borderRadius: 10, border: "1px solid var(--line)", background: "var(--card)", color: "var(--ink)", padding: "0 10px", fontSize: 13 }}
+              >
+                <option value="">{t.deadlineStageNone}</option>
+                <option value="sales">{t.stageSlaSales}</option>
+                <option value="legal">{t.stageSlaLegal}</option>
+                <option value="operations">{t.stageSlaOperations}</option>
+              </select>
+            </label>
+          </div>
+
+          {anchoredStage !== "" && stageSlas[anchoredStage as keyof WizardStageSlas] == null && (
+            <div
+              style={{
+                padding: "10px 12px",
+                borderRadius: 10,
+                fontSize: 12.5,
+                color: "var(--ink-2)",
+                background: "color-mix(in srgb, #f59e0b 12%, transparent)",
+                border: "1px solid color-mix(in srgb, #f59e0b 35%, transparent)",
+              }}
+            >
+              {t.deadlineNoSlaWarn}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}>
+        <button
+          type="button"
+          onClick={saveNow}
+          disabled={saving || !serviceId}
+          style={{
+            padding: "8px 14px",
+            borderRadius: 10,
+            border: "none",
+            background: "var(--accent)",
+            color: "#fff",
+            fontWeight: 700,
+            fontSize: 13,
+            cursor: serviceId ? "pointer" : "not-allowed",
+            opacity: serviceId ? 1 : 0.5,
+          }}
+        >
+          {t.deadlineSave}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ───────────────────────── Step 3: Phases ───────────────────────── */
 
 function PhasesStep({
@@ -1049,6 +1211,7 @@ function PhasesStep({
   setActiveIdx,
   stageSlas,
   setStageSlas,
+  deadlinePolicy,
   actions,
   t,
 }: {
@@ -1059,6 +1222,7 @@ function PhasesStep({
   setActiveIdx: (i: number) => void;
   stageSlas: WizardStageSlas;
   setStageSlas: React.Dispatch<React.SetStateAction<WizardStageSlas>>;
+  deadlinePolicy: WizardDeadlinePolicy | null;
   actions: CatalogWizardProps["actions"];
   t: Record<string, string>;
 }) {
@@ -1283,6 +1447,15 @@ function PhasesStep({
           </div>
         </div>
       </div>
+
+      {/* Calificación / plazo legal externo (Feature A/B) */}
+      <DeadlinePolicyPanel
+        serviceId={serviceId}
+        initial={deadlinePolicy}
+        stageSlas={stageSlas}
+        save={actions.saveDeadlinePolicy}
+        t={t}
+      />
 
       {/* Phase list */}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>

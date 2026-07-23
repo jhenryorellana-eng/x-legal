@@ -113,6 +113,7 @@ export function PreviewClient({ view }: { view: string }) {
           partyRoles={[]}
           phases={[]}
           stageSlas={{ sales: null, legal: null, operations: null }}
+          deadlinePolicy={null}
           slugLocked={false}
           messages={catalogMessages}
           listHref="#"
@@ -128,6 +129,7 @@ export function PreviewClient({ view }: { view: string }) {
             upsertPolicy: noopRes,
             upsertSchedule: noopRes,
             saveStageSlas: noopRes,
+            saveDeadlinePolicy: noopRes,
             upsertMilestones: noopRes,
             createRequiredDoc: async () => ({ success: true, data: { id: "mock-doc" } }),
             updateRequiredDoc: async () => ({ success: true, data: { id: "mock-doc" } }),

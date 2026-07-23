@@ -16,8 +16,16 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Hoisted mocks
 // ---------------------------------------------------------------------------
 
-const { mockGetStageSlaDays } = vi.hoisted(() => ({
+const {
+  mockGetStageSlaDays,
+  mockGetDeadlinePolicy,
+  mockGetOfficeTimezone,
+  mockListOrgNonWorkingDays,
+} = vi.hoisted(() => ({
   mockGetStageSlaDays: vi.fn(),
+  mockGetDeadlinePolicy: vi.fn(),
+  mockGetOfficeTimezone: vi.fn(),
+  mockListOrgNonWorkingDays: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -54,9 +62,15 @@ vi.mock("@/backend/modules/audit", () => ({
   appendCaseTimeline: vi.fn().mockResolvedValue(undefined),
 }));
 
-// The dynamic import() target inside stageDeadlineFields.
+// The dynamic import() targets inside stageDeadlineFields.
 vi.mock("@/backend/modules/catalog", () => ({
   getStageSlaDays: mockGetStageSlaDays,
+  getDeadlinePolicy: mockGetDeadlinePolicy,
+}));
+
+vi.mock("@/backend/modules/scheduling", () => ({
+  getOfficeTimezone: mockGetOfficeTimezone,
+  listOrgNonWorkingDays: mockListOrgNonWorkingDays,
 }));
 
 // Import AFTER mocks
@@ -68,6 +82,7 @@ describe("cases: stageDeadlineFields", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetStageSlaDays.mockResolvedValue({ sales: 7, legal: null, operations: 3 });
+    mockGetDeadlinePolicy.mockResolvedValue(null); // no deadline policy → fixed path
   });
 
   it("snapshots stage_due_at = entered + SLA days (sales = 7)", async () => {
@@ -98,5 +113,76 @@ describe("cases: stageDeadlineFields", () => {
     mockGetStageSlaDays.mockRejectedValue(new Error("catalog down"));
     const r = await stageDeadlineFields("svc", "sales", ENTERED);
     expect(r).toEqual({ stage_entered_at: ENTERED, stage_due_at: null });
+  });
+});
+
+describe("cases: stageDeadlineFields — deadline-anchored stage (Feature B, Diana)", () => {
+  // Legal handoff on Wed 2026-07-22 (11:00 EDT). Legal SLA días = 4 (the MAX cap);
+  // the policy anchors the 'legal' stage with a 1-business-day mail buffer.
+  const LEGAL_ENTERED = "2026-07-22T15:00:00.000Z";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetStageSlaDays.mockResolvedValue({ sales: 2, legal: 4, operations: 3 });
+    mockGetDeadlinePolicy.mockResolvedValue({
+      isEnabled: true,
+      anchoredStage: "legal",
+      mailBufferBusinessDays: 1,
+    });
+    mockGetOfficeTimezone.mockResolvedValue("America/New_York");
+    mockListOrgNonWorkingDays.mockResolvedValue([]);
+  });
+
+  it("cap wins when the deadline is far: due = entered + 4 business days (end of day, office TZ)", async () => {
+    // deadline 2026-08-21 (Fri) → shipBy = Thu 08-20; cap = Tue 07-28 → min = 07-28.
+    const r = await stageDeadlineFields("svc", "legal", LEGAL_ENTERED, {
+      orgId: "org1",
+      intakeDeadlineDate: "2026-08-21",
+    });
+    expect(r.stage_due_at).toBe("2026-07-29T03:59:59.999Z"); // end of 07-28 EDT
+  });
+
+  it("buffer wins when the deadline is close: due = deadline − 1 business day", async () => {
+    // deadline 2026-07-27 (Mon) → shipBy = Fri 07-24; cap = Tue 07-28 → min = 07-24.
+    const r = await stageDeadlineFields("svc", "legal", LEGAL_ENTERED, {
+      orgId: "org1",
+      intakeDeadlineDate: "2026-07-27",
+    });
+    expect(r.stage_due_at).toBe("2026-07-25T03:59:59.999Z"); // end of 07-24 EDT
+  });
+
+  it("excludes org non-working days from the business-day math", async () => {
+    mockListOrgNonWorkingDays.mockResolvedValue(["2026-07-23"]); // Thu closed
+    // cap = addBusinessDays(07-22, 4, {Thu23}) → Fri24,Mon27,Tue28,Wed29 = 07-29.
+    const r = await stageDeadlineFields("svc", "legal", LEGAL_ENTERED, {
+      orgId: "org1",
+      intakeDeadlineDate: "2026-08-21",
+    });
+    expect(r.stage_due_at).toBe("2026-07-30T03:59:59.999Z"); // end of 07-29 EDT
+  });
+
+  it("non-anchored stage uses the fixed path even with a deadline present", async () => {
+    const r = await stageDeadlineFields("svc", "sales", LEGAL_ENTERED, {
+      orgId: "org1",
+      intakeDeadlineDate: "2026-07-27",
+    });
+    // fixed: entered + 2 calendar days (sales SLA)
+    expect(r.stage_due_at).toBe("2026-07-24T15:00:00.000Z");
+    expect(mockGetOfficeTimezone).not.toHaveBeenCalled();
+  });
+
+  it("no intake deadline on the case → fixed path (entered + cap días, calendar)", async () => {
+    const r = await stageDeadlineFields("svc", "legal", LEGAL_ENTERED, { orgId: "org1" });
+    expect(r.stage_due_at).toBe("2026-07-26T15:00:00.000Z"); // entered + 4 calendar
+    expect(mockGetOfficeTimezone).not.toHaveBeenCalled();
+  });
+
+  it("fails open: a scheduling error falls back to the fixed SLA (does not block)", async () => {
+    mockGetOfficeTimezone.mockRejectedValue(new Error("scheduling down"));
+    const r = await stageDeadlineFields("svc", "legal", LEGAL_ENTERED, {
+      orgId: "org1",
+      intakeDeadlineDate: "2026-07-27",
+    });
+    expect(r.stage_due_at).toBe("2026-07-26T15:00:00.000Z"); // fixed: entered + 4 calendar
   });
 });

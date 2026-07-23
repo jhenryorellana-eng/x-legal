@@ -162,6 +162,21 @@ export default async function ServiceDetailPage({
         legal: tree.stageSlas.legal,
         operations: tree.stageSlas.operations,
       }}
+      deadlinePolicy={
+        tree.deadlinePolicy
+          ? {
+              isEnabled: tree.deadlinePolicy.isEnabled,
+              anchorLabel: {
+                es: tree.deadlinePolicy.anchorLabelI18n.es ?? "",
+                en: tree.deadlinePolicy.anchorLabelI18n.en ?? "",
+              },
+              deadlineDays: tree.deadlinePolicy.deadlineDays,
+              minBusinessDays: tree.deadlinePolicy.minBusinessDaysToAccept,
+              mailBufferDays: tree.deadlinePolicy.mailBufferBusinessDays,
+              anchoredStage: tree.deadlinePolicy.anchoredStage,
+            }
+          : null
+      }
       slugLocked={false}
       messages={buildCatalogStrings(tt)}
       listHref="/admin/catalogo"

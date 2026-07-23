@@ -349,6 +349,38 @@ export const UpsertStageSlasDtoSchema = z.object({
 export type UpsertStageSlasDto = z.infer<typeof UpsertStageSlasDtoSchema>;
 
 // ---------------------------------------------------------------------------
+// Deadline policy — plazo legal externo por servicio + paso "Calificación".
+//
+// Config-as-data (genérico, NO hardcodea el slug del servicio): is_enabled activa
+// el paso de Calificación en el alta; la calculadora usa deadline_days (calendario)
+// + min_business_days_to_accept (hábiles) para el aviso "no aceptar"; y la etapa
+// anchored_stage ancla su stage_due_at al deadline (min(entered + tope hábiles,
+// deadline − mail_buffer hábiles)). El "tope" es el duration_days de esa etapa en
+// service_stage_slas (no se duplica aquí).
+// ---------------------------------------------------------------------------
+
+export interface DeadlinePolicy {
+  serviceId: string;
+  isEnabled: boolean;
+  anchorLabelI18n: I18nTextDraft;
+  deadlineDays: number;
+  minBusinessDaysToAccept: number;
+  mailBufferBusinessDays: number;
+  anchoredStage: StageSlaKey | null;
+}
+
+export const UpsertDeadlinePolicyDtoSchema = z.object({
+  service_id: z.string().uuid(),
+  is_enabled: z.boolean(),
+  anchor_label_i18n: I18nTextDraftSchema,
+  deadline_days: z.number().int().min(1).max(365),
+  min_business_days_to_accept: z.number().int().min(0).max(90),
+  mail_buffer_business_days: z.number().int().min(0).max(30),
+  anchored_stage: z.enum(STAGE_SLA_KEYS).nullable(),
+});
+export type UpsertDeadlinePolicyDto = z.infer<typeof UpsertDeadlinePolicyDtoSchema>;
+
+// ---------------------------------------------------------------------------
 // Service Party Role — the ADDITIONAL case parties a service declares
 // (besides the implicit applicant). DOC-41. role_key mirrors the
 // case_parties.party_role CHECK; cardinality single|multiple.

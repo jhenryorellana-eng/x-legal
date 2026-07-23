@@ -12,6 +12,7 @@
 
 import * as React from "react";
 import { fromZonedTime } from "date-fns-tz";
+import { addCalendarDays } from "@/shared/business-days";
 import { MSym } from "../shared/msym";
 import { Chip } from "../shared/ui";
 import { Switch, Modal } from "@/frontend/components/desktop";
@@ -64,6 +65,7 @@ export interface DisponibilidadStrings {
   blockReason: string;
   blockFromLabel: string;
   blockToLabel: string;
+  blockAllDay: string;
   blockInvalidRange: string;
   blockAffectsConfirm: string; // contains {n}
   affectsNotice: string; // contains {n}
@@ -103,6 +105,12 @@ export interface DisponibilidadViewProps {
   videoLink: string;
   /** Staff IANA timezone — block datetime-local inputs are interpreted in it. */
   staffTz: string;
+  /**
+   * Office IANA timezone (org canonical). All-day "holiday" blocks are anchored to
+   * THIS zone, not the viewer's, so their 00:00→24:00 range aligns to the office
+   * civil day the Calificación calculator reads (listOrgNonWorkingDays).
+   */
+  officeTz: string;
   blockedClient: { id: string; name: string } | null;
   strings: DisponibilidadStrings;
   actions: DisponibilidadActions;
@@ -123,6 +131,10 @@ export function DisponibilidadView(props: DisponibilidadViewProps) {
   const [blockLabel, setBlockLabel] = React.useState("");
   const [blockFrom, setBlockFrom] = React.useState(""); // datetime-local "YYYY-MM-DDTHH:mm"
   const [blockTo, setBlockTo] = React.useState("");
+  // All-day block = a holiday / office closure (00:00 → next 00:00). These are the
+  // blocks the Calificación calculator treats as non-working days (a partial block,
+  // e.g. a meeting, does not close the whole day).
+  const [blockAllDay, setBlockAllDay] = React.useState(false);
   const [blockBusy, setBlockBusy] = React.useState(false);
   const [blockAffected, setBlockAffected] = React.useState<number | null>(null);
   const [blocked, setBlocked] = React.useState(props.blockedClient);
@@ -133,6 +145,27 @@ export function DisponibilidadView(props: DisponibilidadViewProps) {
     setDays((ds) =>
       ds.map((d, j) => (j === i ? { ...d, ranges: d.ranges.filter((_, x) => x !== k) } : d)),
     );
+
+  /** Toggle "all day": full civil-day range (00:00 → next 00:00) vs working day. */
+  function toggleBlockAllDay(on: boolean) {
+    setBlockAllDay(on);
+    setBlockAffected(null);
+    const ymd = (blockFrom || "").slice(0, 10) || new Date().toISOString().slice(0, 10);
+    if (on) {
+      setBlockFrom(`${ymd}T00:00`);
+      setBlockTo(`${addCalendarDays(ymd, 1)}T00:00`);
+    } else {
+      setBlockFrom(`${ymd}T09:00`);
+      setBlockTo(`${ymd}T18:00`);
+    }
+  }
+  /** All-day date picker → full civil-day range. */
+  function setBlockAllDayDate(d: string) {
+    setBlockAffected(null);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
+    setBlockFrom(`${d}T00:00`);
+    setBlockTo(`${addCalendarDays(d, 1)}T00:00`);
+  }
 
   const addRange = () => {
     if (rangeFor === null) return;
@@ -179,10 +212,13 @@ export function DisponibilidadView(props: DisponibilidadViewProps) {
     if (!blockRangeValid || !blockLabel.trim() || blockBusy) return;
     setBlockBusy(true);
     try {
-      // The datetime-local values are wall-times in the STAFF's zone; convert to
-      // UTC instants for storage (availability_exceptions is UTC — DOC-23 §6.1).
-      const fromIso = fromZonedTime(blockFrom, props.staffTz).toISOString();
-      const toIso = fromZonedTime(blockTo, props.staffTz).toISOString();
+      // The datetime-local values are wall-times; convert to UTC for storage
+      // (availability_exceptions is UTC — DOC-23 §6.1). All-day "holiday" blocks
+      // anchor to the OFFICE zone so their civil-day boundaries match what the
+      // Calificación calculator reads; partial blocks stay in the viewer's zone.
+      const tz = blockAllDay ? props.officeTz : props.staffTz;
+      const fromIso = fromZonedTime(blockFrom, tz).toISOString();
+      const toIso = fromZonedTime(blockTo, tz).toISOString();
       const res = await actions.addException({
         label: blockLabel.trim(),
         fromIso,
@@ -364,6 +400,7 @@ export function DisponibilidadView(props: DisponibilidadViewProps) {
                 const ymd = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
                 setBlockOpen(true);
                 setBlockLabel("");
+                setBlockAllDay(false);
                 setBlockFrom(`${ymd}T09:00`);
                 setBlockTo(`${ymd}T18:00`);
                 setBlockAffected(null);
@@ -447,26 +484,42 @@ export function DisponibilidadView(props: DisponibilidadViewProps) {
             placeholder={strings.blockReason}
           />
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, cursor: "pointer" }}>
+          <input type="checkbox" checked={blockAllDay} onChange={(e) => toggleBlockAllDay(e.target.checked)} />
+          <span style={{ fontSize: 13, fontWeight: 600 }}>{strings.blockAllDay}</span>
+        </label>
+        {blockAllDay ? (
           <div className="vfield" style={{ marginBottom: 0 }}>
-            <label htmlFor="block-from">{strings.blockFromLabel}</label>
+            <label htmlFor="block-day">{strings.blockFromLabel}</label>
             <input
-              id="block-from"
-              type="datetime-local"
-              value={blockFrom}
-              onChange={(e) => { setBlockFrom(e.target.value); setBlockAffected(null); }}
+              id="block-day"
+              type="date"
+              value={blockFrom.slice(0, 10)}
+              onChange={(e) => setBlockAllDayDate(e.target.value)}
             />
           </div>
-          <div className="vfield" style={{ marginBottom: 0 }}>
-            <label htmlFor="block-to">{strings.blockToLabel}</label>
-            <input
-              id="block-to"
-              type="datetime-local"
-              value={blockTo}
-              onChange={(e) => { setBlockTo(e.target.value); setBlockAffected(null); }}
-            />
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div className="vfield" style={{ marginBottom: 0 }}>
+              <label htmlFor="block-from">{strings.blockFromLabel}</label>
+              <input
+                id="block-from"
+                type="datetime-local"
+                value={blockFrom}
+                onChange={(e) => { setBlockFrom(e.target.value); setBlockAffected(null); }}
+              />
+            </div>
+            <div className="vfield" style={{ marginBottom: 0 }}>
+              <label htmlFor="block-to">{strings.blockToLabel}</label>
+              <input
+                id="block-to"
+                type="datetime-local"
+                value={blockTo}
+                onChange={(e) => { setBlockTo(e.target.value); setBlockAffected(null); }}
+              />
+            </div>
           </div>
-        </div>
+        )}
         {blockFrom && blockTo && !blockRangeValid && (
           <div className="dup-warn" style={{ marginTop: 12 }}>
             <MSym name="info" size={16} />

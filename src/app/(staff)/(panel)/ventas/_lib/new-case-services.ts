@@ -3,7 +3,11 @@ import {
   listContractableServices,
   listContractableServicePlans,
   listServicePartyRoles,
+  getDeadlinePolicy,
 } from "@/backend/modules/catalog";
+import { getOfficeTimezone, listOrgNonWorkingDays } from "@/backend/modules/scheduling";
+import { formatInTimeZone } from "date-fns-tz";
+import { addCalendarDays } from "@/shared/business-days";
 import { resolveI18n } from "@/shared/i18n";
 import { buildCasosStrings, type CasosStrings } from "@/frontend/features/shared-case";
 import type { NewCaseService } from "@/frontend/features/admin/casos/new-case-modal";
@@ -16,6 +20,23 @@ export interface NewCaseModalData {
   newCaseServices: NewCaseService[];
   /** Localized strings shared by every "Nuevo caso" modal mount. */
   casosStrings: CasosStrings;
+  /** Org non-working days (yyyy-MM-dd, office TZ) for the Calificación calculator. */
+  holidays: string[];
+  /** Office-TZ civil "today" (yyyy-MM-dd) for the Calificación calculator. */
+  todayYmd: string;
+}
+
+/** Maps a service's deadline policy to the modal's per-service shape (or null). */
+async function resolveDeadlinePolicy(serviceId: string, locale: Locale): Promise<NewCaseService["deadlinePolicy"]> {
+  const policy = await getDeadlinePolicy(serviceId).catch(() => null);
+  if (!policy?.isEnabled) return null;
+  return {
+    isEnabled: true,
+    anchorLabel: resolveI18n(policy.anchorLabelI18n, locale),
+    deadlineDays: policy.deadlineDays,
+    minBusinessDays: policy.minBusinessDaysToAccept,
+    mailBufferDays: policy.mailBufferBusinessDays,
+  };
 }
 
 /**
@@ -33,6 +54,11 @@ export async function buildNewCaseModalData(
 ): Promise<NewCaseModalData> {
   const casosStrings = buildCasosStrings(locale === "en" ? "en" : "es");
 
+  // Office-TZ "today" for the Calificación calculator (Feature A). The org's
+  // non-working days are fetched below, once the window is known.
+  const officeTz = await getOfficeTimezone(orgId).catch(() => "America/New_York");
+  const todayYmd = formatInTimeZone(new Date(), officeTz, "yyyy-MM-dd");
+
   const catalogServices = await listContractableServices(orgId).catch(() => []);
   const services = catalogServices.map((s) => ({ id: s.id, label: resolveI18n(s.label_i18n, locale) }));
 
@@ -40,9 +66,10 @@ export async function buildNewCaseModalData(
     catalogServices.map(async (s): Promise<NewCaseService> => {
       // listContractableServicePlans is sales-accessible (getServiceEditorTree
       // requires catalog.view, which the sales role lacks).
-      const [plans, roles] = await Promise.all([
+      const [plans, roles, deadlinePolicy] = await Promise.all([
         listContractableServicePlans(s.id).catch(() => []),
         listServicePartyRoles(s.id).catch(() => []),
+        resolveDeadlinePolicy(s.id, locale),
       ]);
       const encodedByKind: Record<string, string> = {};
       for (const p of plans) {
@@ -70,9 +97,21 @@ export async function buildNewCaseModalData(
           cardinality: r.cardinality,
           required: r.is_required,
         })),
+        deadlinePolicy,
       };
     }),
   );
 
-  return { services, newCaseServices, casosStrings };
+  // Size the holiday window from the LARGEST configured deadline (deadline_days can
+  // be up to 365 in admin), so the calculator never misses a closure near a distant
+  // deadline. Anchor ≤ today (a past judge decision) → deadline ≤ today + deadlineDays.
+  const maxDeadlineDays = Math.max(
+    0,
+    ...newCaseServices.map((s) => s.deadlinePolicy?.deadlineDays ?? 0),
+  );
+  const holidays = maxDeadlineDays === 0
+    ? []
+    : await listOrgNonWorkingDays(orgId, todayYmd, addCalendarDays(todayYmd, maxDeadlineDays + 7)).catch(() => []);
+
+  return { services, newCaseServices, casosStrings, holidays, todayYmd };
 }

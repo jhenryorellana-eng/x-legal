@@ -246,6 +246,23 @@ export async function upsertStageSlasAction(
   }
 }
 
+/**
+ * Crea/actualiza la política de plazo legal externo (paso "Calificación" + SLA
+ * anclado) de un servicio.
+ *
+ * @api-id API-CAT-39
+ */
+export async function upsertDeadlinePolicyAction(
+  input: Parameters<typeof svc.replaceDeadlinePolicy>[1],
+): Promise<ActionResult<Awaited<ReturnType<typeof svc.replaceDeadlinePolicy>>>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.replaceDeadlinePolicy(actor, input));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Milestones
 // ---------------------------------------------------------------------------

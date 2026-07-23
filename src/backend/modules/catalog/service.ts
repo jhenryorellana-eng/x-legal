@@ -42,6 +42,9 @@ import {
   STAGE_SLA_KEYS,
   type StageSlaDays,
   type UpsertStageSlasDto,
+  UpsertDeadlinePolicyDtoSchema,
+  type UpsertDeadlinePolicyDto,
+  type DeadlinePolicy,
   CreateFormDtoSchema,
   QuestionSchema,
   validateServicePublication,
@@ -2829,6 +2832,8 @@ export interface ServiceEditorTree {
   phases: ServiceEditorPhase[];
   /** Plazo (días) por etapa de responsabilidad — cuenta regresiva del kanban. */
   stageSlas: StageSlaDays;
+  /** Política de plazo legal externo (paso "Calificación" + SLA anclado). null = no configurada. */
+  deadlinePolicy: DeadlinePolicy | null;
 }
 
 /**
@@ -2847,11 +2852,12 @@ export async function getServiceEditorTree(
   const service = await repo.findServiceById(serviceId);
   if (!service) return null;
 
-  const [plans, partyRoleRows, phaseRows, stageSlaRows] = await Promise.all([
+  const [plans, partyRoleRows, phaseRows, stageSlaRows, deadlinePolicyRow] = await Promise.all([
     repo.listPlans(serviceId),
     repo.listServicePartyRoles(serviceId),
     repo.listPhases(serviceId),
     repo.listStageSlas(serviceId),
+    repo.getDeadlinePolicyRow(serviceId),
   ]);
 
   const phases: ServiceEditorPhase[] = await Promise.all(
@@ -2895,6 +2901,7 @@ export async function getServiceEditorTree(
     partyRoles: partyRoleRows.map(mapPartyRoleRow),
     phases,
     stageSlas: mapStageSlaRows(stageSlaRows),
+    deadlinePolicy: deadlinePolicyRow ? mapDeadlinePolicyRow(deadlinePolicyRow) : null,
   };
 }
 
@@ -2954,6 +2961,73 @@ export async function replaceStageSlas(
   });
 
   return getStageSlaDays(dto.service_id);
+}
+
+// ---------------------------------------------------------------------------
+// Deadline policy — plazo legal externo por servicio + paso "Calificación".
+// Config del wizard + lectura runtime consumida por el alta (paso Calificación)
+// y por el módulo cases (SLA dinámico de la etapa anclada).
+// ---------------------------------------------------------------------------
+
+/** Row → DTO camelCase (con defaults defensivos por si faltara la fila). */
+function mapDeadlinePolicyRow(row: repo.DeadlinePolicyRow): DeadlinePolicy {
+  return {
+    serviceId: row.service_id,
+    isEnabled: row.is_enabled,
+    anchorLabelI18n: (row.anchor_label_i18n ?? {}) as DeadlinePolicy["anchorLabelI18n"],
+    deadlineDays: row.deadline_days,
+    minBusinessDaysToAccept: row.min_business_days_to_accept,
+    mailBufferBusinessDays: row.mail_buffer_business_days,
+    anchoredStage: (row.anchored_stage as DeadlinePolicy["anchoredStage"]) ?? null,
+  };
+}
+
+/**
+ * Deadline policy of a service, or null if none configured. SIN gate (config
+ * runtime, como getStageSlaDays): la consume el alta (paso Calificación) y el
+ * módulo cases al anclar el SLA de la etapa. Genérico: sin slug hardcodeado.
+ *
+ * @api-id API-CAT-38
+ */
+export async function getDeadlinePolicy(serviceId: string): Promise<DeadlinePolicy | null> {
+  const row = await repo.getDeadlinePolicyRow(serviceId);
+  return row ? mapDeadlinePolicyRow(row) : null;
+}
+
+/**
+ * Crea/actualiza la política de deadline de un servicio (upsert por service_id).
+ *
+ * @api-id API-CAT-39 (admin catalog editor)
+ */
+export async function replaceDeadlinePolicy(
+  actor: Actor,
+  input: UpsertDeadlinePolicyDto,
+): Promise<DeadlinePolicy> {
+  can(actor, "catalog", "edit");
+  const dto = UpsertDeadlinePolicyDtoSchema.parse(input);
+  await assertServiceInOrg(actor, dto.service_id);
+
+  await repo.upsertDeadlinePolicyRow({
+    service_id: dto.service_id,
+    is_enabled: dto.is_enabled,
+    anchor_label_i18n: dto.anchor_label_i18n,
+    deadline_days: dto.deadline_days,
+    min_business_days_to_accept: dto.min_business_days_to_accept,
+    mail_buffer_business_days: dto.mail_buffer_business_days,
+    anchored_stage: dto.anchored_stage,
+  });
+
+  await writeAudit(
+    actor,
+    "catalog.deadline_policy.updated",
+    "service_deadline_policies",
+    dto.service_id,
+    { after: dto },
+  );
+
+  const policy = await getDeadlinePolicy(dto.service_id);
+  if (!policy) throw new Error("catalog.replaceDeadlinePolicy: policy missing after upsert");
+  return policy;
 }
 
 // ---------------------------------------------------------------------------

@@ -28,6 +28,7 @@ import {
   updateServicePartyRoleAction,
   deleteServicePartyRoleAction,
   upsertStageSlasAction,
+  upsertDeadlinePolicyAction,
   createFormDefinitionAction,
   updateFormDefinitionAction,
   proposeExtractionSchemaAction,
@@ -145,6 +146,13 @@ export async function upsertScheduleUi(input: Record<string, unknown>): Promise<
 export async function upsertStageSlasUi(input: Record<string, unknown>): Promise<Res<unknown>> {
   const r = await upsertStageSlasAction(
     input as Parameters<typeof upsertStageSlasAction>[0],
+  );
+  return r.success ? { success: true, data: r.data } : { success: false, error: r.error };
+}
+
+export async function upsertDeadlinePolicyUi(input: Record<string, unknown>): Promise<Res<unknown>> {
+  const r = await upsertDeadlinePolicyAction(
+    input as Parameters<typeof upsertDeadlinePolicyAction>[0],
   );
   return r.success ? { success: true, data: r.data } : { success: false, error: r.error };
 }

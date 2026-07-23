@@ -62,7 +62,7 @@ export default async function VentasClientesPage() {
 
   // Data for the "Nuevo caso" modal (DOC-52 §2.7: "Mis clientes" launches the
   // same modal as the Leads board, with no preset) — shared via the _lib helper.
-  const { newCaseServices, casosStrings } = await buildNewCaseModalData(actor.orgId, locale);
+  const { newCaseServices, casosStrings, holidays, todayYmd } = await buildNewCaseModalData(actor.orgId, locale);
 
   const strings = {
     title: t("title"),
@@ -94,6 +94,8 @@ export default async function VentasClientesPage() {
       readyCaseId={ready?.id ?? null}
       newCaseServices={newCaseServices}
       casosStrings={casosStrings}
+      holidays={holidays}
+      todayYmd={todayYmd}
       createCaseAction={createCaseAction}
       searchClientsAction={searchClientsForCaseAction}
       getClientCasesAction={getClientCasesForNewCaseAction}

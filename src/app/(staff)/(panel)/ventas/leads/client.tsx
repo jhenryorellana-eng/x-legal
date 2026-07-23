@@ -54,6 +54,8 @@ export interface LeadsClientProps {
   categories: CategoryOption[];
   newCaseServices: NewCaseService[];
   casosStrings: CasosStrings;
+  holidays?: string[];
+  todayYmd?: string;
   boardId: string;
   moveAction: LeadsViewMove;
   contactAction: LeadsViewContact;
@@ -100,6 +102,8 @@ export function LeadsClient({
   categories,
   newCaseServices,
   casosStrings,
+  holidays,
+  todayYmd,
   boardId,
   moveAction,
   contactAction,
@@ -226,6 +230,8 @@ export function LeadsClient({
         presetName={caseModal.name ?? undefined}
         presetPhone={caseModal.phone}
         services={newCaseServices}
+        holidays={holidays}
+        todayYmd={todayYmd}
         strings={casosStrings}
         actions={{
           createCase: createCaseAction,

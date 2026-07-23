@@ -2251,8 +2251,10 @@ export type Database = {
           current_owner_id: string | null
           current_phase_id: string | null
           current_stage: string
+          deadline_anchor_date: string | null
           detected_posture: string | null
           id: string
+          intake_deadline_date: string | null
           internal_note: string | null
           opened_at: string | null
           org_id: string
@@ -2275,8 +2277,10 @@ export type Database = {
           current_owner_id?: string | null
           current_phase_id?: string | null
           current_stage?: string
+          deadline_anchor_date?: string | null
           detected_posture?: string | null
           id?: string
+          intake_deadline_date?: string | null
           internal_note?: string | null
           opened_at?: string | null
           org_id: string
@@ -2299,8 +2303,10 @@ export type Database = {
           current_owner_id?: string | null
           current_phase_id?: string | null
           current_stage?: string
+          deadline_anchor_date?: string | null
           detected_posture?: string | null
           id?: string
+          intake_deadline_date?: string | null
           internal_note?: string | null
           opened_at?: string | null
           org_id?: string
@@ -5395,6 +5401,50 @@ export type Database = {
             foreignKeyName: "service_postures_service_id_fkey"
             columns: ["service_id"]
             isOneToOne: false
+            referencedRelation: "services"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      service_deadline_policies: {
+        Row: {
+          anchor_label_i18n: Json
+          anchored_stage: string | null
+          created_at: string
+          deadline_days: number
+          is_enabled: boolean
+          mail_buffer_business_days: number
+          min_business_days_to_accept: number
+          service_id: string
+          updated_at: string
+        }
+        Insert: {
+          anchor_label_i18n?: Json
+          anchored_stage?: string | null
+          created_at?: string
+          deadline_days?: number
+          is_enabled?: boolean
+          mail_buffer_business_days?: number
+          min_business_days_to_accept?: number
+          service_id: string
+          updated_at?: string
+        }
+        Update: {
+          anchor_label_i18n?: Json
+          anchored_stage?: string | null
+          created_at?: string
+          deadline_days?: number
+          is_enabled?: boolean
+          mail_buffer_business_days?: number
+          min_business_days_to_accept?: number
+          service_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "service_deadline_policies_service_id_fkey"
+            columns: ["service_id"]
+            isOneToOne: true
             referencedRelation: "services"
             referencedColumns: ["id"]
           },

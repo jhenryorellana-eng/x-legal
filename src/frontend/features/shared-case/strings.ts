@@ -57,6 +57,8 @@ export function resolveCasosActionError(
       return e.plan;
     case "CONTRACT_TOKEN_INVALID":
       return e.signingLink;
+    case "INVALID_QUALIFICATION":
+      return e.qualification;
     default:
       return e.generic;
   }
