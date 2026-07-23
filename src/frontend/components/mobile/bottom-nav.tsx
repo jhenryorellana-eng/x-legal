@@ -59,6 +59,12 @@ export interface BottomNavProps {
   absolute?: boolean;
   /** Force a given item id active (showcase/preview only; ignores the URL). */
   activeOverride?: string;
+  /**
+   * Minimal case mode (services with an external evaluation tool): the caso bar
+   * drops Citas / Documentos / Formularios, leaving only Inicio · Más. Gated by
+   * config-as-data (hasExternalTool) upstream — never by a service slug.
+   */
+  minimalMode?: boolean;
 }
 
 function buildAccountItems(labels: BottomNavLabels, notifCount?: number): NavItem[] {
@@ -71,16 +77,27 @@ function buildAccountItems(labels: BottomNavLabels, notifCount?: number): NavIte
   ];
 }
 
-function buildCaseItems(labels: BottomNavLabels, caseId: string): NavItem[] {
+function buildCaseItems(labels: BottomNavLabels, caseId: string, minimalMode: boolean): NavItem[] {
   const base = `/caso/${caseId}`;
+  const inicio: NavItem = {
+    id: "inicio",
+    label: labels.inicio,
+    icon: "home",
+    href: `${base}/camino`,
+    match: [`${base}/disclaimer`, `${base}/proceso`, `${base}/evaluacion`],
+  };
+  const mas: NavItem = {
+    id: "mas",
+    label: labels.mas,
+    icon: "grid",
+    href: `${base}/mas`,
+    match: [`${base}/historial`, `${base}/datos`, `${base}/expedientes`],
+  };
+  // Minimal mode (external-tool services): only Inicio · Más. Citas / Documentos /
+  // Formularios don't apply to a single-step external evaluation flow.
+  if (minimalMode) return [inicio, mas];
   return [
-    {
-      id: "inicio",
-      label: labels.inicio,
-      icon: "home",
-      href: `${base}/camino`,
-      match: [`${base}/disclaimer`, `${base}/proceso`],
-    },
+    inicio,
     {
       id: "citas",
       label: labels.citas,
@@ -102,13 +119,7 @@ function buildCaseItems(labels: BottomNavLabels, caseId: string): NavItem[] {
       href: `${base}/formularios`,
       match: [`${base}/historia`],
     },
-    {
-      id: "mas",
-      label: labels.mas,
-      icon: "grid",
-      href: `${base}/mas`,
-      match: [`${base}/historial`, `${base}/datos`, `${base}/expedientes`],
-    },
+    mas,
   ];
 }
 
@@ -126,12 +137,13 @@ export function BottomNav({
   caseId,
   absolute = false,
   activeOverride,
+  minimalMode = false,
 }: BottomNavProps) {
   const pathname = usePathname() ?? "";
   const items =
     variant === "cuenta"
       ? buildAccountItems(labels, notifCount)
-      : buildCaseItems(labels, caseId ?? "");
+      : buildCaseItems(labels, caseId ?? "", minimalMode);
 
   return (
     <nav

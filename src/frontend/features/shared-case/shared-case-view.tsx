@@ -25,6 +25,7 @@ import { HistorialTab } from "./tabs/historial-tab";
 import { PagosTab } from "./tabs/pagos-tab";
 import { GeneracionesTab } from "./tabs/generaciones-tab";
 import { ValidacionTab } from "./tabs/validacion-tab";
+import { EvaluacionTab } from "./tabs/evaluacion-tab";
 import { ExpedienteTab } from "./tabs/expediente-tab";
 import { FasesAnterioresTab } from "./tabs/fases-anteriores-tab";
 import { PreMortemTab } from "./tabs/pre-mortem-tab";
@@ -106,6 +107,7 @@ export function SharedCaseView({
     documentsToReview,
     isPaymentPending: vm.header.isPaymentPending,
     requiresLawyerValidation: vm.requiresLawyerValidation,
+    hasExternalTool: vm.hasExternalTool,
     hasPriorPhases: (vm.priorPhases?.length ?? 0) > 0,
     hasPreMortem: vm.preMortem?.enabled ?? false,
     allowedTabIds: tabAccessByRole?.[isAdmin ? "admin" : vm.role] ?? null,
@@ -374,6 +376,7 @@ export function SharedCaseView({
         {active === "pagos" && <PagosTab vm={vm} actions={actions} strings={strings} locale={locale} />}
         {active === "expediente" && <ExpedienteTab vm={vm} strings={strings} title={tb.expediente} />}
         {active === "validacion" && <ValidacionTab vm={vm} strings={strings} title={tb.validacion} />}
+        {active === "evaluacion" && <EvaluacionTab vm={vm} actions={actions} strings={strings} title={tb.evaluacion} locale={locale} />}
         {active === "fasesAnteriores" && <FasesAnterioresTab vm={vm} actions={actions} strings={strings} />}
         {active === "preMortem" && <PreMortemTab vm={vm} actions={actions} strings={strings} selectedTargetKey={preMortemTarget} onSelectTarget={setPreMortemTarget} />}
         {active === "notas" && <NotasTab vm={vm} actions={actions} strings={strings} locale={locale} />}

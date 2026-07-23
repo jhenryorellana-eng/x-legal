@@ -40,6 +40,8 @@ export interface BuildTabsInput {
   /** Case not yet active (status === 'payment_pending') → gate the operativo tabs. */
   isPaymentPending: boolean;
   requiresLawyerValidation: boolean;
+  /** The case's service has an external evaluation tool enabled → show the tab. */
+  hasExternalTool: boolean;
   /** The case has materials in already-passed phases → show the read-only tab. */
   hasPriorPhases: boolean;
   /** The case's service has an ai_letter with Pre-Mortem enabled → show the tab. */
@@ -88,6 +90,10 @@ const TAB_META: Record<CaseTabId, TabMeta> = {
   validacion: {
     label: (tb) => tb.validacion,
     visible: (input) => input.requiresLawyerValidation,
+  },
+  evaluacion: {
+    label: (tb) => tb.evaluacion,
+    visible: (input) => input.hasExternalTool,
   },
   fasesAnteriores: {
     label: (tb) => tb.fasesAnteriores,

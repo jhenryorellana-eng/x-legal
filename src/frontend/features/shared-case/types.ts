@@ -218,6 +218,45 @@ export interface ExpedienteVM {
   createdAt: string;
 }
 
+/* ---------------------------------------------------------------------------
+ * External evaluation tool (v1: Juez) — Evaluación tab. Presentational mirror
+ * of the evaluations module's StaffEvaluationVM, REDECLARED here so the feature
+ * never imports @/backend (R2). The RSC pages map the module DTO into this shape.
+ * ------------------------------------------------------------------------ */
+
+/** not_started = the client has not opened the tool yet (no session row). */
+export type EvaluationStatusVM = "not_started" | "pending" | "in_progress" | "delivered" | "failed";
+export type EvaluationRunStatusVM = "consumed" | "completed" | "failed";
+
+export interface EvaluationReportMetaVM {
+  score?: number | null;
+  nivel?: string | null;
+  headline?: string | null;
+  lastError?: string | null;
+}
+
+export interface EvaluationRunVM {
+  jobId: string;
+  status: EvaluationRunStatusVM;
+  createdAt: string;
+  error: string | null;
+}
+
+/** Staff Evaluación tab state (attempts + runs + delivered report). */
+export interface StaffEvaluationPanelVM {
+  /** null = the client has not opened the tool yet (no session row). */
+  evaluationId: string | null;
+  status: EvaluationStatusVM;
+  attemptsAllowed: number;
+  attemptsUsed: number;
+  pdfAvailable: boolean;
+  deliveredAt: string | null;
+  reportMeta: EvaluationReportMetaVM;
+  runs: EvaluationRunVM[];
+  /** Tool identifier (e.g. "juez"). */
+  toolKey: string;
+}
+
 /**
  * Read-only materials (documents + form responses) from phases the case has
  * already PASSED (Etapa C). Backed by cases.getPriorPhaseMaterials; labels are
@@ -411,6 +450,10 @@ export interface CaseWorkspaceVM {
   isAdmin: boolean;
   /** Validación tab visibility (only with_lawyer plans). */
   requiresLawyerValidation: boolean;
+  /** Evaluación tab visibility — the case's service has an external tool enabled. */
+  hasExternalTool: boolean;
+  /** External evaluation panel state (attempts/runs/report). Null = no tool. */
+  evaluationPanel: StaffEvaluationPanelVM | null;
   documents: DocumentVM[];
   /** Full requirements matrix (the docs the admin defined on the service). */
   requirements: DocMatrixVM[];
@@ -814,4 +857,18 @@ export interface CaseDetailActions {
     caseDocumentId: string;
     value: boolean;
   }) => Promise<{ ok: boolean; error?: { code: string } }>;
+  /**
+   * Signed URL of the delivered external-evaluation PDF (Evaluación tab "Descargar
+   * PDF"). Optional — only surfaces with an external tool inject it.
+   */
+  getEvaluationPdfUrl?: (input: {
+    caseId: string;
+  }) => Promise<{ ok: boolean; url?: string; error?: { code: string } }>;
+  /**
+   * Admin-only: grant +1 attempt for the case's external evaluation. The server
+   * rejects non-admins. Optional — only the admin surface injects it.
+   */
+  grantEvaluationAttempt?: (input: {
+    caseId: string;
+  }) => Promise<{ ok: boolean; attemptsAllowed?: number; attemptsUsed?: number; error?: { code: string } }>;
 }

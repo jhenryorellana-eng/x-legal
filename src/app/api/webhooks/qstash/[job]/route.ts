@@ -58,6 +58,7 @@ import { handleRunPremortem } from "@/backend/jobs/run-premortem";
 import { handleLexAnswer } from "@/backend/jobs/lex-answer";
 import { handleLexReindexCase } from "@/backend/jobs/lex-reindex-case";
 import { handleRefreshAiPrefill } from "@/backend/jobs/refresh-ai-prefill";
+import { handleReconcileJuezEvaluations } from "@/backend/jobs/reconcile-juez-evaluations";
 
 // ---------------------------------------------------------------------------
 // Job registry — jobKey → handler
@@ -98,6 +99,8 @@ const JOB_REGISTRY: Record<string, JobHandler> = {
   "job-failed": handleJobFailed,
   // F6 integrations (DOC-70, DOC-26 §2.8)
   "retry-abogados-polling": handleRetryAbogadosPolling,
+  // Evaluations (external tool Juez) — webhook backstop polling (contract v1 §3.4)
+  "reconcile-juez-evaluations": handleReconcileJuezEvaluations,
   // F6-Ola2 billing cron (DOC-44 §3.9)
   "installment-reminders": handleInstallmentReminders,
   // Billing cron — clear orphaned Stripe checkout attempts (unblocks new checkouts)

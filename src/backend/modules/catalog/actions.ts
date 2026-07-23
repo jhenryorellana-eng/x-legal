@@ -263,6 +263,22 @@ export async function upsertDeadlinePolicyAction(
   }
 }
 
+/**
+ * Crea/actualiza la herramienta externa (v1: Juez) de un servicio.
+ *
+ * @api-id API-CAT-41
+ */
+export async function upsertExternalToolAction(
+  input: Parameters<typeof svc.replaceExternalTool>[1],
+): Promise<ActionResult<Awaited<ReturnType<typeof svc.replaceExternalTool>>>> {
+  try {
+    const actor = await requireActor();
+    return ok(await svc.replaceExternalTool(actor, input));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Milestones
 // ---------------------------------------------------------------------------

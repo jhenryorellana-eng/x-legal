@@ -17,7 +17,9 @@ import type {
   PreMortemInFlightVM,
   PreMortemSemaforo,
   PreMortemSeverity,
+  StaffEvaluationPanelVM,
 } from "@/frontend/features/shared-case";
+import type { StaffEvaluationVM } from "@/backend/modules/evaluations";
 import type { PreMortemAssessment, ValidableTarget } from "@/backend/modules/ai-engine";
 import {
   FINDING_CATEGORIES_META,
@@ -227,6 +229,38 @@ export function mapPreMortemInFlight(
         createdAt: a.createdAt,
       };
     });
+}
+
+/**
+ * Maps the evaluations module StaffEvaluationVM into the shared-case presentational
+ * panel VM (Evaluación tab). Null passes through (tool not enabled → tab hidden).
+ * The shapes mirror each other; this keeps the frontend free of @/backend types (R2).
+ */
+export function mapStaffEvaluationPanel(
+  panel: StaffEvaluationVM | null,
+): StaffEvaluationPanelVM | null {
+  if (!panel) return null;
+  return {
+    evaluationId: panel.evaluationId,
+    status: panel.status,
+    attemptsAllowed: panel.attemptsAllowed,
+    attemptsUsed: panel.attemptsUsed,
+    pdfAvailable: panel.pdfAvailable,
+    deliveredAt: panel.deliveredAt,
+    reportMeta: {
+      score: panel.reportMeta.score ?? null,
+      nivel: panel.reportMeta.nivel ?? null,
+      headline: panel.reportMeta.headline ?? null,
+      lastError: panel.reportMeta.lastError ?? null,
+    },
+    runs: panel.runs.map((r) => ({
+      jobId: r.jobId,
+      status: r.status,
+      createdAt: r.createdAt,
+      error: r.error,
+    })),
+    toolKey: panel.toolKey,
+  };
 }
 
 /** Coarse relative time ("hace 4 meses" / "4 months ago"). */

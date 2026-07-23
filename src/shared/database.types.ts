@@ -1179,6 +1179,126 @@ export type Database = {
           },
         ]
       }
+      case_evaluation_runs: {
+        Row: {
+          created_at: string
+          error: string | null
+          evaluation_id: string
+          id: string
+          job_id: string
+          org_id: string
+          pdf_storage_path: string | null
+          report_meta: Json
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          error?: string | null
+          evaluation_id: string
+          id?: string
+          job_id: string
+          org_id: string
+          pdf_storage_path?: string | null
+          report_meta?: Json
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          error?: string | null
+          evaluation_id?: string
+          id?: string
+          job_id?: string
+          org_id?: string
+          pdf_storage_path?: string | null
+          report_meta?: Json
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_evaluation_runs_evaluation_id_fkey"
+            columns: ["evaluation_id"]
+            isOneToOne: false
+            referencedRelation: "case_evaluations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_evaluation_runs_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "orgs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      case_evaluations: {
+        Row: {
+          access_token: string
+          attempts_allowed: number
+          attempts_used: number
+          case_id: string
+          created_at: string
+          delivered_at: string | null
+          id: string
+          last_job_id: string | null
+          org_id: string
+          pdf_storage_path: string | null
+          report_meta: Json
+          status: string
+          tool_key: string
+          updated_at: string
+        }
+        Insert: {
+          access_token?: string
+          attempts_allowed?: number
+          attempts_used?: number
+          case_id: string
+          created_at?: string
+          delivered_at?: string | null
+          id?: string
+          last_job_id?: string | null
+          org_id: string
+          pdf_storage_path?: string | null
+          report_meta?: Json
+          status?: string
+          tool_key?: string
+          updated_at?: string
+        }
+        Update: {
+          access_token?: string
+          attempts_allowed?: number
+          attempts_used?: number
+          case_id?: string
+          created_at?: string
+          delivered_at?: string | null
+          id?: string
+          last_job_id?: string | null
+          org_id?: string
+          pdf_storage_path?: string | null
+          report_meta?: Json
+          status?: string
+          tool_key?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_evaluations_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_evaluations_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "orgs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       case_exhibits: {
         Row: {
           accessed_at: string | null
@@ -5548,6 +5668,47 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "service_deadline_policies_service_id_fkey"
+            columns: ["service_id"]
+            isOneToOne: true
+            referencedRelation: "services"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      service_external_tools: {
+        Row: {
+          base_url: string
+          created_at: string
+          default_attempts: number
+          instructions_i18n: Json
+          is_enabled: boolean
+          service_id: string
+          tool_key: string
+          updated_at: string
+        }
+        Insert: {
+          base_url: string
+          created_at?: string
+          default_attempts?: number
+          instructions_i18n?: Json
+          is_enabled?: boolean
+          service_id: string
+          tool_key?: string
+          updated_at?: string
+        }
+        Update: {
+          base_url?: string
+          created_at?: string
+          default_attempts?: number
+          instructions_i18n?: Json
+          is_enabled?: boolean
+          service_id?: string
+          tool_key?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "service_external_tools_service_id_fkey"
             columns: ["service_id"]
             isOneToOne: true
             referencedRelation: "services"

@@ -263,6 +263,10 @@
       "formsValue": "{n} pending",
       "noMeeting": "Not scheduled yet",
       "deliveryWeeks": "~{n} weeks",
+      "evaluationLabel": "Your evaluation",
+      "evaluationReady": "Result ready",
+      "evaluationPending": "Start your evaluation",
+      "evaluationCtaBody": "Generate your evaluation with our tool and review your result.",
       "tutorial": {
         "step1Title": "Let's start here",
         "step1Body": "Tap “Continue” to upload your documents. I'll guide you every step — don't worry.",
@@ -274,6 +278,24 @@
         "next": "Next",
         "done": "Got it!"
       }
+    },
+    "evaluacion": {
+      "back": "Back to my path",
+      "title": "Your evaluation",
+      "intro": "Generate your evaluation with our tool. Upload all your documents in it before generating your result.",
+      "attemptsRemaining": "You have {remaining} attempt(s)",
+      "uploadNotice": "Upload all your documents in the tool before generating.",
+      "refresh": "Refresh",
+      "generatingTitle": "Generating your evaluation…",
+      "generatingBody": "This may take a few minutes. You can stay on this screen; it will update on its own.",
+      "readyTitle": "Your evaluation is ready",
+      "viewPdf": "View my evaluation (PDF)",
+      "nivelLabel": "Level",
+      "scoreLabel": "Score",
+      "errorTitle": "We couldn't generate your evaluation",
+      "errorBody": "Please try again. If the problem continues, contact your advisor.",
+      "noAttemptsTitle": "No attempts left",
+      "noAttemptsBody": "Contact your advisor to continue with your evaluation."
     },
     "documentos": {
       "title": "My Documents",
@@ -1281,6 +1303,16 @@
         "deadlineStageNone": "None (all fixed)",
         "deadlineNoSlaWarn": "The anchored stage has no deadline (days) configured above in \"Stage deadlines\". Without it, that stage will show no countdown.",
         "deadlineSave": "Save qualification",
+        "externalToolTitle": "External tool",
+        "externalToolSub": "Integrate an external tool (Juez) that generates the client's evaluation inside their case.",
+        "externalToolEnabled": "Enabled",
+        "externalToolBaseUrl": "Base URL",
+        "externalToolBaseUrlHelp": "Tool origin; the case embeds {baseUrl}/xlegal",
+        "externalToolAttempts": "Included attempts",
+        "externalToolAttemptsHelp": "Attempts included per payment; the admin can grant +1 per case",
+        "externalToolInstructions": "Instructions for the client",
+        "externalToolSave": "Save tool",
+        "externalToolError": "Couldn't save the external tool.",
         "docDocument": "Document",
         "docTip": "Tip",
         "docCategory": "Category",
@@ -1795,6 +1827,7 @@
           "pagos": "Payments",
           "expediente": "File",
           "validacion": "Validation",
+          "evaluacion": "Evaluation",
           "fasesAnteriores": "Previous phases",
           "preMortem": "Pre-Mortem",
           "mensajes": "Messages"
@@ -2096,6 +2129,36 @@
           "validated": "Validated",
           "needs_corrections": "Needs corrections",
           "error": "Error"
+        },
+        "evaluacion": {
+          "sub": "External case evaluation with the Juez tool.",
+          "empty": "The client hasn't opened their evaluation yet.",
+          "status": {
+            "not_started": "Not started",
+            "pending": "Pending",
+            "in_progress": "In progress",
+            "delivered": "Delivered",
+            "failed": "Failed"
+          },
+          "attempts": "Attempts used: {used} of {allowed}",
+          "deliveredAt": "Delivered on {date}",
+          "lastErrorLabel": "Last error",
+          "nivel": "Level",
+          "score": "Score",
+          "download": "Download PDF",
+          "runsTitle": "Runs",
+          "noRuns": "No runs yet.",
+          "runStatus": {
+            "consumed": "Started",
+            "completed": "Completed",
+            "failed": "Failed"
+          },
+          "grant": "Grant extra attempt (+1)",
+          "grantConfirm": "Grant one additional attempt to this client?",
+          "grantConfirmYes": "Yes, grant",
+          "grantCancel": "Cancel",
+          "grantSuccess": "Extra attempt granted.",
+          "grantError": "Could not grant the attempt."
         },
         "expSub": "Expediente assembly attempts.",
         "expEmpty": "This case has no expedientes yet.",

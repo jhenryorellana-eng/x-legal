@@ -19,6 +19,7 @@ import {
   getClientFormsForCase,
 } from "@/backend/modules/cases";
 import { getCaseAppointments } from "@/backend/modules/scheduling";
+import { getClientEvaluationSummary } from "@/backend/modules/evaluations";
 import { fmtDateShort, fmtTime } from "@/frontend/lib/datetime";
 import { pickLocale, type Locale } from "@/frontend/features/cliente/shared/i18n";
 import { CaminoScreen } from "@/frontend/features/cliente/camino/camino-screen";
@@ -93,6 +94,10 @@ export default async function CaminoPage({
     (f) => !(f.status === "submitted" || f.status === "approved" || f.status === "in_validation"),
   ).length;
 
+  // External evaluation tool (Juez) — cheap read (never creates the session).
+  // Null → the case's service has no external tool → no tile.
+  const evalSummary = await getClientEvaluationSummary(actor, caseId).catch(() => null);
+
   return (
     <CaminoScreen
       caseId={caseId}
@@ -115,6 +120,8 @@ export default async function CaminoPage({
       nextMeetingValue={nextMeetingValue}
       nextMeetingHref={nextMeetingHref}
       deliveryLabel={deliveryLabel}
+      evaluation={evalSummary ? { status: evalSummary.status, pdfAvailable: evalSummary.pdfAvailable } : null}
+      minimalMode={evalSummary !== null}
       labels={{
         backCases: t("backCases"),
         deliveryEstimate: t("deliveryEstimate"),
@@ -138,6 +145,10 @@ export default async function CaminoPage({
         forms: t("forms"),
         formsValue: t.raw("formsValue") as string,
         noMeeting: t("noMeeting"),
+        evaluationLabel: t("evaluationLabel"),
+        evaluationReady: t("evaluationReady"),
+        evaluationPending: t("evaluationPending"),
+        evaluationCtaBody: t("evaluationCtaBody"),
       }}
       tutorialLabels={{
         step1Title: t("tutorial.step1Title"),

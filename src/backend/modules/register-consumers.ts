@@ -417,6 +417,19 @@ export function registerConsumers(): void {
   });
 
   // -------------------------------------------------------------------------
+  // evaluations (external tool Juez): PDF delivered / generation failed →
+  // notifications (client + sales / sales). Timeline entries are written by
+  // the evaluations service itself (same transaction path as the webhook).
+  // -------------------------------------------------------------------------
+  appEvents.on("evaluation.completed", async (event) => {
+    await notifyFromEvent(event);
+  });
+
+  appEvents.on("evaluation.failed", async (event) => {
+    await notifyFromEvent(event);
+  });
+
+  // -------------------------------------------------------------------------
   // ai-engine consumers (F4 — no-op in V2.0, hook for future wiring)
   // -------------------------------------------------------------------------
   registerAiEngineConsumers();

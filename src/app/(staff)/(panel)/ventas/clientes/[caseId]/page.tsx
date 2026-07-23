@@ -32,6 +32,7 @@ import {
   getLexMessageStatusAction,
 } from "@/backend/modules/ai-engine/actions";
 import { getCaseRuta } from "@/backend/modules/scheduling";
+import { getStaffEvaluationPanel } from "@/backend/modules/evaluations";
 import { getCaseNotes } from "@/backend/modules/notes";
 import { resolveI18n, type Locale } from "@/shared/i18n";
 import { SharedCaseView, buildCasosStrings } from "@/frontend/features/shared-case";
@@ -47,7 +48,7 @@ import {
   getAttachmentDownloadUrlAction,
 } from "@/backend/modules/messaging/actions";
 import type { CaseWorkspaceVM, CaseTabId } from "@/frontend/features/shared-case";
-import { mapStatusToPill, buildRutaVM, mapStatementInstallments, mapClientContact } from "../../../admin/casos/view-helpers";
+import { mapStatusToPill, buildRutaVM, mapStatementInstallments, mapClientContact, mapStaffEvaluationPanel } from "../../../admin/casos/view-helpers";
 import {
   reviewDocumentAction,
   dismissCoverageAction,
@@ -76,6 +77,7 @@ import {
   getDocumentTranslationAction,
   addCaseNoteAction,
   deleteNoteAction,
+  getEvaluationPdfUrlCaseAction,
 } from "../../../admin/casos/actions";
 import { getFormResponsePdfUrlAction, approveFormResponseAction } from "../../../admin/casos/form-actions";
 
@@ -105,7 +107,7 @@ export default async function VentasCasoDetailPage({
     throw err;
   }
 
-  const [documents, statement, contract, timeline, forms, runs, matrix, rutaRaw, priorPhasesRaw, notes] = await Promise.all([
+  const [documents, statement, contract, timeline, forms, runs, matrix, rutaRaw, priorPhasesRaw, notes, evalPanelRaw] = await Promise.all([
     getCaseDocuments(actor, caseId).catch(() => []),
     getAccountStatement(actor, caseId).catch(() => null),
     getContractForCase(actor, caseId).catch(() => null),
@@ -116,7 +118,9 @@ export default async function VentasCasoDetailPage({
     getCaseRuta(actor, caseId).catch(() => null),
     getPriorPhaseMaterials(actor, caseId).catch(() => ({ phases: [] })),
     getCaseNotes(actor, caseId).catch(() => []),
+    getStaffEvaluationPanel(actor, caseId).catch(() => null),
   ]);
+  const evaluationPanel = mapStaffEvaluationPanel(evalPanelRaw);
 
   // Responsable / etapa (eje propio) — staff-only; degrade to null on failure.
   const stageInfo = await getCaseStageInfo(actor, caseId).catch(() => null);
@@ -240,6 +244,8 @@ export default async function VentasCasoDetailPage({
     role: (actor.role as "sales" | "paralegal" | "finance" | "admin") ?? "sales",
     isAdmin: false,
     requiresLawyerValidation: contractPlanKind === "with_lawyer",
+    hasExternalTool: evaluationPanel !== null,
+    evaluationPanel,
     documents: documents.map((d) => ({
       id: d.id,
       filename: d.original_filename,
@@ -316,6 +322,7 @@ export default async function VentasCasoDetailPage({
         getTranslation: canManageDocs ? getDocumentTranslationAction : undefined,
         addNote: addCaseNoteAction,
         deleteNote: deleteNoteAction,
+        getEvaluationPdfUrl: getEvaluationPdfUrlCaseAction,
       }}
       strings={strings}
       locale={lc}

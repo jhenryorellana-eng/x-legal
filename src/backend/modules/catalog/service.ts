@@ -45,6 +45,9 @@ import {
   UpsertDeadlinePolicyDtoSchema,
   type UpsertDeadlinePolicyDto,
   type DeadlinePolicy,
+  UpsertExternalToolDtoSchema,
+  type UpsertExternalToolDto,
+  type ExternalToolConfig,
   CreateFormDtoSchema,
   QuestionSchema,
   validateServicePublication,
@@ -2871,6 +2874,8 @@ export interface ServiceEditorTree {
   stageSlas: StageSlaDays;
   /** Política de plazo legal externo (paso "Calificación" + SLA anclado). null = no configurada. */
   deadlinePolicy: DeadlinePolicy | null;
+  /** Herramienta externa (v1: Juez). null = no configurada. */
+  externalTool: ExternalToolConfig | null;
 }
 
 /**
@@ -2889,12 +2894,13 @@ export async function getServiceEditorTree(
   const service = await repo.findServiceById(serviceId);
   if (!service) return null;
 
-  const [plans, partyRoleRows, phaseRows, stageSlaRows, deadlinePolicyRow] = await Promise.all([
+  const [plans, partyRoleRows, phaseRows, stageSlaRows, deadlinePolicyRow, externalToolRow] = await Promise.all([
     repo.listPlans(serviceId),
     repo.listServicePartyRoles(serviceId),
     repo.listPhases(serviceId),
     repo.listStageSlas(serviceId),
     repo.getDeadlinePolicyRow(serviceId),
+    repo.getExternalToolRow(serviceId),
   ]);
 
   const phases: ServiceEditorPhase[] = await Promise.all(
@@ -2939,6 +2945,7 @@ export async function getServiceEditorTree(
     phases,
     stageSlas: mapStageSlaRows(stageSlaRows),
     deadlinePolicy: deadlinePolicyRow ? mapDeadlinePolicyRow(deadlinePolicyRow) : null,
+    externalTool: externalToolRow ? mapExternalToolRow(externalToolRow) : null,
   };
 }
 
@@ -3065,6 +3072,70 @@ export async function replaceDeadlinePolicy(
   const policy = await getDeadlinePolicy(dto.service_id);
   if (!policy) throw new Error("catalog.replaceDeadlinePolicy: policy missing after upsert");
   return policy;
+}
+
+// ---------------------------------------------------------------------------
+// External tool — herramienta externa por servicio (v1: Juez). Config del
+// wizard + lectura runtime consumida por el módulo evaluations. Genérico:
+// sin slug hardcodeado (se activa por is_enabled, patrón deadline policy).
+// ---------------------------------------------------------------------------
+
+function mapExternalToolRow(row: repo.ExternalToolRow): ExternalToolConfig {
+  return {
+    serviceId: row.service_id,
+    toolKey: row.tool_key as ExternalToolConfig["toolKey"],
+    isEnabled: row.is_enabled,
+    baseUrl: row.base_url,
+    defaultAttempts: row.default_attempts,
+    instructionsI18n: (row.instructions_i18n ?? {}) as ExternalToolConfig["instructionsI18n"],
+  };
+}
+
+/**
+ * Runtime read: the external-tool config of a service, or null if none.
+ * Consumed by the evaluations module (module-pub) to gate the case tab/screen.
+ *
+ * @api-id API-CAT-40
+ */
+export async function getExternalTool(serviceId: string): Promise<ExternalToolConfig | null> {
+  const row = await repo.getExternalToolRow(serviceId);
+  return row ? mapExternalToolRow(row) : null;
+}
+
+/**
+ * Crea/actualiza la herramienta externa de un servicio (upsert por service_id).
+ *
+ * @api-id API-CAT-41 (admin catalog editor)
+ */
+export async function replaceExternalTool(
+  actor: Actor,
+  input: UpsertExternalToolDto,
+): Promise<ExternalToolConfig> {
+  can(actor, "catalog", "edit");
+  const dto = UpsertExternalToolDtoSchema.parse(input);
+  await assertServiceInOrg(actor, dto.service_id);
+
+  await repo.upsertExternalToolRow({
+    service_id: dto.service_id,
+    tool_key: dto.tool_key,
+    is_enabled: dto.is_enabled,
+    // Normalized without trailing slash — the embed URL is `${base_url}${path}`.
+    base_url: dto.base_url.replace(/\/+$/, ""),
+    default_attempts: dto.default_attempts,
+    instructions_i18n: dto.instructions_i18n,
+  });
+
+  await writeAudit(
+    actor,
+    "catalog.external_tool.updated",
+    "service_external_tools",
+    dto.service_id,
+    { after: dto },
+  );
+
+  const config = await getExternalTool(dto.service_id);
+  if (!config) throw new Error("catalog.replaceExternalTool: config missing after upsert");
+  return config;
 }
 
 // ---------------------------------------------------------------------------

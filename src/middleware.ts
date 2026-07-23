@@ -39,6 +39,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { logger } from "@/backend/platform/logger";
 import { DEMO_TOOL_FRAME_ORIGINS } from "@/shared/constants/demo-tools";
+import { EVALUATION_TOOL_FRAME_ORIGINS } from "@/shared/constants/evaluations";
 import type { Database } from "@/shared/database.types";
 
 // ---------------------------------------------------------------------------
@@ -148,7 +149,10 @@ function buildCsp(nonce: string): string {
     // Without it the preview <iframe> breaks once the CSP flips to enforcing.
     // The demo-tool origins (/admin/demo/* embeds) come from the shared registry
     // — a conscious allow-list per DOC-27 §6.1; adding a tool never edits this file.
-    `frame-src ${["'self'", "blob:", ...DEMO_TOOL_FRAME_ORIGINS].join(" ")}`,
+    // EVALUATION_TOOL_FRAME_ORIGINS mirrors service_external_tools.base_url (the
+    // client case iframe): the middleware can't read the DB, so any base_url
+    // configured in /admin/catalogo must be added there BEFORE the enforce-flip.
+    `frame-src ${["'self'", "blob:", ...new Set([...DEMO_TOOL_FRAME_ORIGINS, ...EVALUATION_TOOL_FRAME_ORIGINS])].join(" ")}`,
     `frame-ancestors 'none'`,
     `object-src 'none'`,
     `base-uri 'self'`,

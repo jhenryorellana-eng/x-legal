@@ -141,6 +141,8 @@ export const caseWorkspaceVmMock: CaseWorkspaceVM = {
   role: "admin",
   isAdmin: true,
   requiresLawyerValidation: true,
+  hasExternalTool: false,
+  evaluationPanel: null,
   documents: [
     { id: "d1", filename: "Pasaporte de María.pdf", status: "uploaded", partyName: "María González", createdAt: new Date().toISOString() },
     { id: "d2", filename: "Acta de nacimiento.pdf", status: "rejected", partyName: null, createdAt: new Date().toISOString() },

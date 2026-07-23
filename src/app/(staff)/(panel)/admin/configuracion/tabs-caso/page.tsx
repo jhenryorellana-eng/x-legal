@@ -34,6 +34,7 @@ const TAB_LABEL_KEY: Record<CaseTabId, string> = {
   citas: "citasRoute",
   expediente: "expediente",
   validacion: "validacion",
+  evaluacion: "evaluacion",
   fasesAnteriores: "fasesAnteriores",
   preMortem: "preMortem",
   traspaso: "traspaso",

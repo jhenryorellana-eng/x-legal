@@ -47,6 +47,9 @@ export {
   // Deadline policy — plazo legal externo + paso "Calificación" (cases + alta)
   getDeadlinePolicy,
   replaceDeadlinePolicy,
+  // External tool — herramienta externa por servicio (v1: Juez; evaluations + wizard)
+  getExternalTool,
+  replaceExternalTool,
   // Form editor + datasets reads (DOC-53 §5 / §6 — page-initial RSC reads)
   getFormEditorData,
   getVersionPdfUrl,
@@ -99,6 +102,8 @@ export type {
   UpsertStageSlasDto,
   DeadlinePolicy,
   UpsertDeadlinePolicyDto,
+  ExternalToolConfig,
+  UpsertExternalToolDto,
 } from "./domain";
 
 // Stage SLA — etapas con plazo (value export para el wizard admin)

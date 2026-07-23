@@ -39,6 +39,7 @@ import {
 import { getValidationsForCase } from "@/backend/modules/integrations";
 import { getCaseExpedientes } from "@/backend/modules/expediente";
 import { getCaseRuta } from "@/backend/modules/scheduling";
+import { getStaffEvaluationPanel } from "@/backend/modules/evaluations";
 import { resolveI18n, type Locale } from "@/shared/i18n";
 import { SharedCaseView } from "@/frontend/features/shared-case";
 import {
@@ -54,7 +55,7 @@ import {
 } from "@/backend/modules/messaging/actions";
 import type { CaseWorkspaceVM, CaseTabId } from "@/frontend/features/shared-case";
 import { buildCasosStrings } from "@/frontend/features/shared-case";
-import { mapStatusToPill, buildRutaVM, buildPreMortemTargets, mapPreMortemReports, mapPreMortemInFlight, mapStatementInstallments, mapClientContact } from "../view-helpers";
+import { mapStatusToPill, buildRutaVM, buildPreMortemTargets, mapPreMortemReports, mapPreMortemInFlight, mapStatementInstallments, mapClientContact, mapStaffEvaluationPanel } from "../view-helpers";
 import {
   reviewDocumentAction,
   dismissCoverageAction,
@@ -90,6 +91,8 @@ import {
   cancelPreMortemAction,
   addCaseNoteAction,
   deleteNoteAction,
+  getEvaluationPdfUrlCaseAction,
+  grantEvaluationAttemptCaseAction,
 } from "../actions";
 import { getFormResponsePdfUrlAction, generateFilledPdfAction, approveFormResponseAction } from "../form-actions";
 import { getGenerationOutputUrlAction, startLetterGenerationAction, getRunStatusAction } from "../generation-actions";
@@ -121,7 +124,7 @@ export default async function AdminCasoDetailPage({
   }
 
   // Parallel reads: documents, payment plan, contract, recent timeline.
-  const [documents, statement, contract, timeline, forms, runs, validationRows, expedienteRows, matrix, rutaRaw, priorPhasesRaw, preMortemEnabled, preMortemRows, preMortemTargetsRaw, notes] = await Promise.all([
+  const [documents, statement, contract, timeline, forms, runs, validationRows, expedienteRows, matrix, rutaRaw, priorPhasesRaw, preMortemEnabled, preMortemRows, preMortemTargetsRaw, notes, evalPanelRaw] = await Promise.all([
     getCaseDocuments(actor, caseId).catch(() => []),
     getAccountStatement(actor, caseId).catch(() => null),
     getContractForCase(actor, caseId).catch(() => null),
@@ -141,7 +144,9 @@ export default async function AdminCasoDetailPage({
     getPreMortemAssessmentsForCase(actor, caseId).catch(() => []),
     listValidableTargetsForCase(actor, caseId).catch(() => []),
     getCaseNotes(actor, caseId).catch(() => []),
+    getStaffEvaluationPanel(actor, caseId).catch(() => null),
   ]);
+  const evaluationPanel = mapStaffEvaluationPanel(evalPanelRaw);
 
   // Responsable / etapa (eje propio) — staff-only; degrade to null on failure.
   const stageInfo = await getCaseStageInfo(actor, caseId).catch(() => null);
@@ -300,6 +305,8 @@ export default async function AdminCasoDetailPage({
     role: (actor.role as "sales" | "paralegal" | "finance" | "admin") ?? "sales",
     isAdmin: actor.role === "admin",
     requiresLawyerValidation: contractPlanKind === "with_lawyer",
+    hasExternalTool: evaluationPanel !== null,
+    evaluationPanel,
     documents: documents.map((d) => ({
       id: d.id,
       filename: d.original_filename,
@@ -387,6 +394,9 @@ export default async function AdminCasoDetailPage({
         handoffCaseFromLegal: handoffCaseFromLegalAction,
         assignCaseOwner: actor.role === "admin" ? assignCaseOwnerAction : undefined,
         setDocumentTranslationNotRequired: canManageDocs ? setDocumentTranslationNotRequiredAction : undefined,
+        getEvaluationPdfUrl: getEvaluationPdfUrlCaseAction,
+        // Grant is admin-only (the module-pub service rejects non-admins too).
+        grantEvaluationAttempt: actor.role === "admin" ? grantEvaluationAttemptCaseAction : undefined,
       }}
       strings={strings}
       locale={lc}

@@ -89,6 +89,12 @@ const providerSchemas = {
     ABOGADOS_WEBHOOK_SECRET: z.string().min(1),
     ABOGADOS_CALLBACK_URL: z.string().url(),
   }),
+  juez: z.object({
+    /** Shared API key: Juez→x-legal (x-api-key) AND x-legal→Juez status polling. */
+    JUEZ_API_KEY: z.string().min(1),
+    /** HMAC-SHA256 secret for the inbound evaluation.completed/failed webhook. */
+    JUEZ_WEBHOOK_SECRET: z.string().min(1),
+  }),
   webpush: z.object({
     NEXT_PUBLIC_VAPID_PUBLIC_KEY: z.string().min(1),
     VAPID_PRIVATE_KEY: z.string().min(1),

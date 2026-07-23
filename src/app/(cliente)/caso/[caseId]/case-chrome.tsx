@@ -37,9 +37,11 @@ export interface CaseChromeProps {
   navLabels: BottomNavLabels;
   teamLabel: string;
   unreadCount?: number;
+  /** External-tool services → minimal caso nav (Inicio · Más only). */
+  minimalMode?: boolean;
 }
 
-export function CaseChrome({ caseId, navLabels, teamLabel, unreadCount = 0 }: CaseChromeProps) {
+export function CaseChrome({ caseId, navLabels, teamLabel, unreadCount = 0, minimalMode = false }: CaseChromeProps) {
   const pathname = usePathname() ?? "";
   const locale = (useLocale() === "en" ? "en" : "es") as "es" | "en";
   const [chatOpen, setChatOpen] = React.useState(false);
@@ -74,7 +76,7 @@ export function CaseChrome({ caseId, navLabels, teamLabel, unreadCount = 0 }: Ca
   return (
     <>
       <MessagingLauncher label={teamLabel} badge={unreadCount} onClick={() => setChatOpen(true)} />
-      <BottomNav variant="caso" caseId={caseId} labels={navLabels} />
+      <BottomNav variant="caso" caseId={caseId} labels={navLabels} minimalMode={minimalMode} />
       <ChatSheet
         open={chatOpen}
         onClose={() => setChatOpen(false)}

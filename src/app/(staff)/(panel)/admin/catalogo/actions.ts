@@ -29,6 +29,7 @@ import {
   deleteServicePartyRoleAction,
   upsertStageSlasAction,
   upsertDeadlinePolicyAction,
+  upsertExternalToolAction,
   createFormDefinitionAction,
   updateFormDefinitionAction,
   proposeExtractionSchemaAction,
@@ -153,6 +154,14 @@ export async function upsertStageSlasUi(input: Record<string, unknown>): Promise
 export async function upsertDeadlinePolicyUi(input: Record<string, unknown>): Promise<Res<unknown>> {
   const r = await upsertDeadlinePolicyAction(
     input as Parameters<typeof upsertDeadlinePolicyAction>[0],
+  );
+  return r.success ? { success: true, data: r.data } : { success: false, error: r.error };
+}
+
+/** Crea/actualiza la herramienta externa (v1: Juez) de un servicio. */
+export async function upsertExternalToolUi(input: Record<string, unknown>): Promise<Res<unknown>> {
+  const r = await upsertExternalToolAction(
+    input as Parameters<typeof upsertExternalToolAction>[0],
   );
   return r.success ? { success: true, data: r.data } : { success: false, error: r.error };
 }

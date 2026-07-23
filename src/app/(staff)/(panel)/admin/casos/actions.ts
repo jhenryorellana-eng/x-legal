@@ -83,6 +83,10 @@ import {
   type DocumentTranslationRow,
 } from "@/backend/modules/ai-engine";
 import { addCaseAppointment, SchedulingError } from "@/backend/modules/scheduling";
+import {
+  getStaffEvaluationPdfUrlAction as getStaffEvaluationPdfUrl,
+  grantExtraAttemptAction as grantExtraEvaluationAttempt,
+} from "@/backend/modules/evaluations";
 import { getDeadlinePolicy } from "@/backend/modules/catalog";
 import { ExpedienteError } from "@/backend/modules/expediente";
 import { IntegrationsError } from "@/backend/modules/integrations";
@@ -1213,6 +1217,32 @@ export async function assignCaseOwnerAction(input: {
   } catch (err) {
     return mapErr(err);
   }
+}
+
+// ---------------------------------------------------------------------------
+// External evaluation tool (v1: Juez) — Evaluación tab (module-pub wrappers).
+// The evaluations module-pub actions already build the Actor + authorize; these
+// thin "use server" wrappers adapt the ActionResult envelope to the shared-case
+// {ok,…} shape and expose them as Next.js server actions (app → module-pub).
+// ---------------------------------------------------------------------------
+
+/** Signed URL of the delivered external-evaluation PDF (Evaluación tab). */
+export async function getEvaluationPdfUrlCaseAction(input: {
+  caseId: string;
+}): Promise<{ ok: boolean; url?: string; error?: { code: string } }> {
+  const res = await getStaffEvaluationPdfUrl(input.caseId);
+  if (res.success) return { ok: true, url: res.data.url };
+  return { ok: false, error: { code: res.error.code } };
+}
+
+/** Admin-only: grant +1 attempt for the case's external evaluation. The
+ *  module-pub service rejects non-admins. The tab re-fetches the panel after. */
+export async function grantEvaluationAttemptCaseAction(input: {
+  caseId: string;
+}): Promise<{ ok: boolean; error?: { code: string } }> {
+  const res = await grantExtraEvaluationAttempt(input.caseId);
+  if (res.success) return { ok: true };
+  return { ok: false, error: { code: res.error.code } };
 }
 
 /** Marks a document as already-English (excluded from the translation gating) or back. */

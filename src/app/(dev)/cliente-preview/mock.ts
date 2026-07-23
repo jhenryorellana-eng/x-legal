@@ -132,6 +132,10 @@ export const caminoMock: CaminoScreenProps = {
     forms: "Formularios",
     formsValue: "{n} pendiente",
     noMeeting: "Aún sin agendar",
+    evaluationLabel: "Tu evaluación",
+    evaluationReady: "Resultado listo",
+    evaluationPending: "Comienza tu evaluación",
+    evaluationCtaBody: "Genera tu evaluación con nuestra herramienta y revisa tu resultado.",
   },
   tutorialLabels: {
     step1Title: "Empecemos por aquí",

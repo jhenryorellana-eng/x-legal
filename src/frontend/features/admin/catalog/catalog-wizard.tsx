@@ -167,6 +167,14 @@ export interface WizardDeadlinePolicy {
   anchoredStage: "sales" | "legal" | "operations" | null;
 }
 
+/** Herramienta externa (v1: Juez) — genera la evaluación del cliente dentro del caso. */
+export interface WizardExternalTool {
+  isEnabled: boolean;
+  baseUrl: string;
+  defaultAttempts: number;
+  instructions: I18nValue;
+}
+
 export interface PublicationIssueVM {
   code: string;
   severity: "blocking" | "warning";
@@ -183,6 +191,8 @@ export interface CatalogWizardProps {
   stageSlas: WizardStageSlas;
   /** Política de plazo legal externo (paso "Calificación" + SLA anclado). null = no configurada. */
   deadlinePolicy: WizardDeadlinePolicy | null;
+  /** Herramienta externa (v1: Juez). null = no configurada. */
+  externalTool: WizardExternalTool | null;
   slugLocked: boolean;
   messages: Record<string, string>;
   listHref: string;
@@ -202,6 +212,7 @@ export interface CatalogWizardProps {
     upsertSchedule: (input: Record<string, unknown>) => Promise<ActionRes<unknown>>;
     saveStageSlas: (input: Record<string, unknown>) => Promise<ActionRes<unknown>>;
     saveDeadlinePolicy: (input: Record<string, unknown>) => Promise<ActionRes<unknown>>;
+    saveExternalTool: (input: Record<string, unknown>) => Promise<ActionRes<unknown>>;
     upsertMilestones: (
       servicePhaseId: string,
       items: Array<Record<string, unknown>>,
@@ -257,6 +268,7 @@ export function CatalogWizard({
   phases: initialPhases,
   stageSlas: initialStageSlas,
   deadlinePolicy: initialDeadlinePolicy,
+  externalTool: initialExternalTool,
   slugLocked,
   messages: t,
   listHref,
@@ -548,6 +560,7 @@ export function CatalogWizard({
             stageSlas={stageSlas}
             setStageSlas={setStageSlas}
             deadlinePolicy={initialDeadlinePolicy}
+            externalTool={initialExternalTool}
             actions={actions}
             t={t}
           />
@@ -1205,6 +1218,146 @@ function DeadlinePolicyPanel({
   );
 }
 
+/* ─────────────── Herramienta externa (v1: Juez) — config ─────────────── */
+
+/**
+ * Admin editor for a service's external tool (v1: Juez). Genérico: activar aquí
+ * hace aparecer el tab/pantalla "Evaluación" del caso para este servicio. base_url
+ * es el origen embebido en el iframe del cliente; default_attempts los intentos
+ * incluidos por pago (el admin puede otorgar +1 por caso). Sin código: pura config.
+ */
+function ExternalToolPanel({
+  serviceId,
+  initial,
+  save,
+  t,
+}: {
+  serviceId: string | null;
+  initial: WizardExternalTool | null;
+  save: CatalogWizardProps["actions"]["saveExternalTool"];
+  t: Record<string, string>;
+}) {
+  const [enabled, setEnabled] = React.useState(initial?.isEnabled ?? false);
+  const [baseUrl, setBaseUrl] = React.useState(initial?.baseUrl ?? "");
+  const [attempts, setAttempts] = React.useState(String(initial?.defaultAttempts ?? 1));
+  const [instrEs, setInstrEs] = React.useState(initial?.instructions.es ?? "");
+  const [instrEn, setInstrEn] = React.useState(initial?.instructions.en ?? "");
+  const [saving, setSaving] = React.useState(false);
+
+  async function saveNow() {
+    if (!serviceId) {
+      toast.error("—");
+      return;
+    }
+    // base_url must be a valid URL (backend contract, even when disabled).
+    const trimmedUrl = baseUrl.trim();
+    try {
+      new URL(trimmedUrl);
+    } catch {
+      toast.error(t.externalToolError);
+      return;
+    }
+    setSaving(true);
+    const r = await save({
+      service_id: serviceId,
+      tool_key: "juez",
+      is_enabled: enabled,
+      base_url: trimmedUrl,
+      default_attempts: Math.min(10, Math.max(1, Math.floor(Number(attempts) || 1))),
+      instructions_i18n: { es: instrEs, en: instrEn },
+    });
+    setSaving(false);
+    if (r.success) toast.success(t.saved);
+    else toast.error(r.error?.message ?? t.externalToolError);
+  }
+
+  return (
+    <div
+      style={{
+        gridColumn: "1 / -1",
+        border: "1.5px solid var(--line)",
+        borderRadius: 14,
+        padding: 16,
+        background: "var(--panel-2, var(--card-alt))",
+      }}
+    >
+      <div style={{ fontWeight: 800, fontSize: 14, color: "var(--ink)" }}>{t.externalToolTitle}</div>
+      <p style={{ fontSize: 12.5, color: "var(--ink-3)", margin: "4px 0 14px" }}>{t.externalToolSub}</p>
+
+      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+        <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+        <span style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>{t.externalToolEnabled}</span>
+      </label>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 14 }}>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={subLabel}>{t.externalToolBaseUrl}</span>
+          <TextInput
+            type="url"
+            placeholder="https://…"
+            value={baseUrl}
+            onChange={(e) => setBaseUrl(e.target.value)}
+          />
+          <span style={{ fontSize: 11.5, color: "var(--ink-3)" }}>{t.externalToolBaseUrlHelp}</span>
+        </label>
+
+        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={subLabel}>{t.externalToolAttempts}</span>
+          <TextInput
+            type="number"
+            min={1}
+            max={10}
+            style={{ width: 110 }}
+            value={attempts}
+            onChange={(e) => setAttempts(e.target.value)}
+          />
+          <span style={{ fontSize: 11.5, color: "var(--ink-3)" }}>{t.externalToolAttemptsHelp}</span>
+        </label>
+
+        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={subLabel}>{t.externalToolInstructions} (ES)</span>
+          <textarea
+            value={instrEs}
+            onChange={(e) => setInstrEs(e.target.value)}
+            rows={3}
+            style={{ ...inputStyle, height: "auto", minHeight: 72, padding: "10px 12px", resize: "vertical" }}
+          />
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={subLabel}>{t.externalToolInstructions} (EN)</span>
+          <textarea
+            value={instrEn}
+            onChange={(e) => setInstrEn(e.target.value)}
+            rows={3}
+            style={{ ...inputStyle, height: "auto", minHeight: 72, padding: "10px 12px", resize: "vertical" }}
+          />
+        </label>
+      </div>
+
+      <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}>
+        <button
+          type="button"
+          onClick={saveNow}
+          disabled={saving || !serviceId}
+          style={{
+            padding: "8px 14px",
+            borderRadius: 10,
+            border: "none",
+            background: "var(--accent)",
+            color: "#fff",
+            fontWeight: 700,
+            fontSize: 13,
+            cursor: serviceId ? "pointer" : "not-allowed",
+            opacity: serviceId ? 1 : 0.5,
+          }}
+        >
+          {t.externalToolSave}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ───────────────────────── Step 3: Phases ───────────────────────── */
 
 function PhasesStep({
@@ -1216,6 +1369,7 @@ function PhasesStep({
   stageSlas,
   setStageSlas,
   deadlinePolicy,
+  externalTool,
   actions,
   t,
 }: {
@@ -1227,6 +1381,7 @@ function PhasesStep({
   stageSlas: WizardStageSlas;
   setStageSlas: React.Dispatch<React.SetStateAction<WizardStageSlas>>;
   deadlinePolicy: WizardDeadlinePolicy | null;
+  externalTool: WizardExternalTool | null;
   actions: CatalogWizardProps["actions"];
   t: Record<string, string>;
 }) {
@@ -1458,6 +1613,14 @@ function PhasesStep({
         initial={deadlinePolicy}
         stageSlas={stageSlas}
         save={actions.saveDeadlinePolicy}
+        t={t}
+      />
+
+      {/* Herramienta externa (v1: Juez) */}
+      <ExternalToolPanel
+        serviceId={serviceId}
+        initial={externalTool}
+        save={actions.saveExternalTool}
         t={t}
       />
 

@@ -40,6 +40,12 @@ export interface CaminoLabels {
   forms: string;
   formsValue: string; // "{n} pendiente"
   noMeeting: string;
+  /** External evaluation tool (Juez) tile. */
+  evaluationLabel: string;
+  evaluationReady: string; // delivered → "Resultado listo"
+  evaluationPending: string; // not delivered → "Comienza tu evaluación"
+  /** Minimal-mode primary CTA body (external-tool services). */
+  evaluationCtaBody: string;
 }
 
 export interface CaminoTutorialLabels {
@@ -84,6 +90,14 @@ export interface CaminoScreenProps {
   nextMeetingHref?: string;
   /** Estimated delivery in weeks (already formatted, e.g. "~12 semanas"), or null. */
   deliveryLabel?: string | null;
+  /** External evaluation tool state (Juez). Null = the case's service has none. */
+  evaluation?: { status: string; pdfAvailable: boolean } | null;
+  /**
+   * Minimal mode (external-tool services): the docs/forms/citas next-step + tiles
+   * are hidden and the evaluation becomes the primary CTA. Gated by config-as-data
+   * (evaluation != null) upstream — never by a service slug.
+   */
+  minimalMode?: boolean;
   labels: CaminoLabels;
   tutorialLabels: CaminoTutorialLabels;
   /** Persists that the first-visit tour was dismissed (cross-device, DOC-29 §34). */
@@ -112,6 +126,8 @@ export function CaminoScreen(props: CaminoScreenProps) {
     nextMeetingValue,
     nextMeetingHref,
     deliveryLabel,
+    evaluation,
+    minimalMode = false,
     labels,
     tutorialLabels,
     onTutorialSeen,
@@ -141,6 +157,22 @@ export function CaminoScreen(props: CaminoScreenProps) {
   const nextHref = docsComplete
     ? `/caso/${caseId}/formularios`
     : `/caso/${caseId}/documentos`;
+
+  // In minimal mode (external-tool services) the primary CTA IS the evaluation —
+  // there are no documents/forms to gate on, so the tool is the single next step.
+  const ctaHref = minimalMode ? `/caso/${caseId}/evaluacion` : nextHref;
+  const ctaTitle = minimalMode
+    ? evaluation?.status === "delivered"
+      ? labels.evaluationReady
+      : labels.evaluationPending
+    : docsComplete
+      ? labels.nextFormTitle
+      : labels.nextDocsTitle.replace("{n}", String(docsPending)).replace("{phase}", phaseName);
+  const ctaBody = minimalMode
+    ? labels.evaluationCtaBody
+    : docsComplete
+      ? labels.nextFormBody
+      : labels.nextDocsBody;
 
   // Targets resolved by selector so the tour can spotlight the fixed "Tu equipo"
   // launcher, which lives in the case chrome (outside this screen's tree).
@@ -336,11 +368,7 @@ export function CaminoScreen(props: CaminoScreenProps) {
               textWrap: "balance",
             }}
           >
-            {docsComplete
-              ? labels.nextFormTitle
-              : labels.nextDocsTitle
-                  .replace("{n}", String(docsPending))
-                  .replace("{phase}", phaseName)}
+            {ctaTitle}
           </h2>
           <p
             style={{
@@ -351,11 +379,11 @@ export function CaminoScreen(props: CaminoScreenProps) {
               lineHeight: 1.45,
             }}
           >
-            {docsComplete ? labels.nextFormBody : labels.nextDocsBody}
+            {ctaBody}
           </p>
           <button
             type="button"
-            onClick={() => router.push(nextHref)}
+            onClick={() => router.push(ctaHref)}
             className="mp-pop"
             style={{
               width: "100%",
@@ -478,29 +506,51 @@ export function CaminoScreen(props: CaminoScreenProps) {
       {/* Secondary tiles */}
       <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
         {[
-          {
-            href: nextMeetingHref ?? `/caso/${caseId}/agendar`,
-            icon: "calendar" as const,
-            color: "var(--accent)",
-            label: labels.nextMeeting,
-            value: nextMeetingValue ?? labels.noMeeting,
-          },
-          {
-            href: `/caso/${caseId}/documentos`,
-            icon: "doc" as const,
-            color: "var(--green)",
-            label: labels.documents,
-            value: labels.documentsValue
-              .replace("{x}", String(docsDone))
-              .replace("{y}", String(docsTotal)),
-          },
-          {
-            href: `/caso/${caseId}/formularios`,
-            icon: "form" as const,
-            color: "var(--gold)",
-            label: labels.forms,
-            value: labels.formsValue.replace("{n}", String(formsPending)),
-          },
+          // Citas / Documentos / Formularios don't apply to an external-tool
+          // service → hidden in minimal mode (the evaluation is the primary CTA).
+          ...(!minimalMode
+            ? [
+                {
+                  href: nextMeetingHref ?? `/caso/${caseId}/agendar`,
+                  icon: "calendar" as const,
+                  color: "var(--accent)",
+                  label: labels.nextMeeting,
+                  value: nextMeetingValue ?? labels.noMeeting,
+                },
+                {
+                  href: `/caso/${caseId}/documentos`,
+                  icon: "doc" as const,
+                  color: "var(--green)",
+                  label: labels.documents,
+                  value: labels.documentsValue
+                    .replace("{x}", String(docsDone))
+                    .replace("{y}", String(docsTotal)),
+                },
+                {
+                  href: `/caso/${caseId}/formularios`,
+                  icon: "form" as const,
+                  color: "var(--gold)",
+                  label: labels.forms,
+                  value: labels.formsValue.replace("{n}", String(formsPending)),
+                },
+              ]
+            : []),
+          // Evaluation tile only in NORMAL mode; in minimal mode it's the big CTA.
+          ...(evaluation && !minimalMode
+            ? [
+                {
+                  href: `/caso/${caseId}/evaluacion`,
+                  icon: evaluation.status === "delivered" ? ("trophy" as const) : ("scale" as const),
+                  color:
+                    evaluation.status === "delivered" ? "var(--gold-deep)" : "var(--accent)",
+                  label: labels.evaluationLabel,
+                  value:
+                    evaluation.status === "delivered"
+                      ? labels.evaluationReady
+                      : labels.evaluationPending,
+                },
+              ]
+            : []),
           ...(deliveryLabel
             ? [
                 {

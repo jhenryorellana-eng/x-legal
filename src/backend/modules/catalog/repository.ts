@@ -554,6 +554,33 @@ export async function upsertDeadlinePolicyRow(
 }
 
 // ---------------------------------------------------------------------------
+// External tool — herramienta externa por servicio (1 fila por servicio)
+// ---------------------------------------------------------------------------
+
+export type ExternalToolRow = Tables<"service_external_tools">;
+
+/** The single external-tool config row of a service, or null if none configured. */
+export async function getExternalToolRow(serviceId: string): Promise<ExternalToolRow | null> {
+  const { data, error } = await db()
+    .from("service_external_tools")
+    .select("*")
+    .eq("service_id", serviceId)
+    .maybeSingle();
+  if (error) throw new Error(`catalog.repo.getExternalToolRow: ${error.message}`);
+  return data ?? null;
+}
+
+/** Upsert (insert-or-update) the external-tool config of a service, keyed by service_id. */
+export async function upsertExternalToolRow(
+  row: TablesInsert<"service_external_tools">,
+): Promise<void> {
+  const { error } = await db()
+    .from("service_external_tools")
+    .upsert(row, { onConflict: "service_id" });
+  if (error) throw new Error(`catalog.repo.upsertExternalToolRow: ${error.message}`);
+}
+
+// ---------------------------------------------------------------------------
 // Required documents
 // ---------------------------------------------------------------------------
 

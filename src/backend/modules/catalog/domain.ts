@@ -381,6 +381,34 @@ export const UpsertDeadlinePolicyDtoSchema = z.object({
 export type UpsertDeadlinePolicyDto = z.infer<typeof UpsertDeadlinePolicyDtoSchema>;
 
 // ---------------------------------------------------------------------------
+// External tool — herramienta externa por servicio (v1: Juez, evaluación de
+// asilo). Config-as-data (genérico, NO hardcodea el slug del servicio):
+// is_enabled activa el tab/pantalla "Evaluación" del caso; base_url es el
+// origin embebido en el iframe del cliente ({base_url}/xlegal?t={token});
+// default_attempts = intentos incluidos por pago (el admin puede otorgar +1
+// por caso desde el workspace staff).
+// ---------------------------------------------------------------------------
+
+export interface ExternalToolConfig {
+  serviceId: string;
+  toolKey: "juez";
+  isEnabled: boolean;
+  baseUrl: string;
+  defaultAttempts: number;
+  instructionsI18n: I18nTextDraft;
+}
+
+export const UpsertExternalToolDtoSchema = z.object({
+  service_id: z.string().uuid(),
+  tool_key: z.literal("juez"),
+  is_enabled: z.boolean(),
+  base_url: z.string().url(),
+  default_attempts: z.number().int().min(1).max(10),
+  instructions_i18n: I18nTextDraftSchema,
+});
+export type UpsertExternalToolDto = z.infer<typeof UpsertExternalToolDtoSchema>;
+
+// ---------------------------------------------------------------------------
 // Service Party Role — the ADDITIONAL case parties a service declares
 // (besides the implicit applicant). DOC-41. role_key mirrors the
 // case_parties.party_role CHECK; cardinality single|multiple.

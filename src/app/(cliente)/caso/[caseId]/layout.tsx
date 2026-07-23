@@ -17,6 +17,7 @@ import { notFound, redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { getActor } from "@/backend/modules/identity";
 import { getCaseWorkspace } from "@/backend/modules/cases";
+import { getClientEvaluationSummary } from "@/backend/modules/evaluations";
 import { CaseChrome } from "./case-chrome";
 
 export default async function CaseLayout({
@@ -61,6 +62,12 @@ export default async function CaseLayout({
   // Do NOT reintroduce a terms redirect in this layout — it will bring the blank
   // back. Data is RLS-gated regardless (terms is a legal/flow gate, not access).
 
+  // External evaluation tool (config-as-data, never by slug): when the case's
+  // service has one, the whole case workspace drops to a minimal chrome (Inicio ·
+  // Más only). Cheap read (never creates the session); fail-safe to normal mode.
+  const evalSummary = await getClientEvaluationSummary(actor, caseId).catch(() => null);
+  const minimalMode = evalSummary !== null;
+
   const tNav = await getTranslations("cliente.nav");
   const tTeam = await getTranslations("cliente.team");
 
@@ -82,6 +89,7 @@ export default async function CaseLayout({
         caseId={caseId}
         navLabels={navLabels}
         teamLabel={tTeam("launcher")}
+        minimalMode={minimalMode}
       />
     </div>
   );

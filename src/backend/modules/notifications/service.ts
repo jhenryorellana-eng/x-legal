@@ -392,6 +392,37 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
   ],
 
   // ---------------------------------------------------------------------------
+  // Evaluations (external tool Juez) — the PDF arrived / the generation failed.
+  // Client ①② (no email v1 — no template yet) + sales ①. Failure is staff-only:
+  // the client already sees the error inline in the tool.
+  // ---------------------------------------------------------------------------
+  "evaluation.completed": [
+    {
+      type: "evaluation.completed",
+      recipients: [{ resolverKey: "clients_of_case" }],
+      channels: { push: true, email: false }, // ①② in-app + push
+      category: "case_updates",
+      deepLinkTemplate: "/caso/{caseId}/evaluacion",
+    },
+    {
+      type: "evaluation.completed.staff",
+      recipients: [{ resolverKey: "sales_of_case" }],
+      channels: { push: false, email: false }, // in-app ① only
+      category: "case_updates",
+      deepLinkTemplate: "/ventas/clientes/{caseId}",
+    },
+  ],
+  "evaluation.failed": [
+    {
+      type: "evaluation.failed",
+      recipients: [{ resolverKey: "sales_of_case" }],
+      channels: { push: false, email: false }, // in-app ① only
+      category: "case_updates",
+      deepLinkTemplate: "/ventas/clientes/{caseId}",
+    },
+  ],
+
+  // ---------------------------------------------------------------------------
   // F7 rows — payments (DOC-47 §4.3). These events are already wired in
   // register-consumers; adding the matrix rows activates their notifications.
   // ---------------------------------------------------------------------------
@@ -708,6 +739,33 @@ function renderContent(
       bodyI18n: { en: "Please review and re-upload your document.", es: "Por favor revisa y vuelve a subir tu documento." },
       icon: "alert-circle",
       color: "amber", // never red (RF-TRX-022)
+    },
+    "evaluation.completed": {
+      titleI18n: { en: "Your evaluation is ready", es: "Tu evaluación está lista" },
+      bodyI18n: {
+        en: "Your evaluation report (PDF) is ready. Open your case to view it.",
+        es: "Tu informe de evaluación (PDF) está listo. Abre tu caso para verlo.",
+      },
+      icon: "file-check",
+      color: "green",
+    },
+    "evaluation.completed.staff": {
+      titleI18n: { en: "Evaluation delivered", es: "Evaluación entregada" },
+      bodyI18n: {
+        en: "The external tool delivered the client's evaluation PDF.",
+        es: "La herramienta externa entregó el PDF de evaluación del cliente.",
+      },
+      icon: "file-check",
+      color: "green",
+    },
+    "evaluation.failed": {
+      titleI18n: { en: "Evaluation generation failed", es: "Falló la generación de la evaluación" },
+      bodyI18n: {
+        en: "The external tool reported a technical failure. The attempt was refunded.",
+        es: "La herramienta externa reportó un fallo técnico. El intento fue devuelto.",
+      },
+      icon: "alert-circle",
+      color: "amber",
     },
     "document.coverage_detected": {
       titleI18n: {

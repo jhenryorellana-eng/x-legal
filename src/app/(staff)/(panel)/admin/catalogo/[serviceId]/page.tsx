@@ -179,6 +179,19 @@ export default async function ServiceDetailPage({
             }
           : null
       }
+      externalTool={
+        tree.externalTool
+          ? {
+              isEnabled: tree.externalTool.isEnabled,
+              baseUrl: tree.externalTool.baseUrl,
+              defaultAttempts: tree.externalTool.defaultAttempts,
+              instructions: {
+                es: tree.externalTool.instructionsI18n.es ?? "",
+                en: tree.externalTool.instructionsI18n.en ?? "",
+              },
+            }
+          : null
+      }
       slugLocked={false}
       messages={buildCatalogStrings(tt)}
       listHref="/admin/catalogo"
