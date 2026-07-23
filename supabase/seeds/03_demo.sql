@@ -435,11 +435,12 @@ on conflict (ref_type, ref_id, column_id) do nothing;
 
 -- Appointment 1: upcoming for case 0001 (video, 30 min)
 insert into public.appointments (
-  id, case_id, service_phase_id, staff_id, client_user_id,
+  id, org_id, case_id, service_phase_id, staff_id, client_user_id,
   starts_at, ends_at, kind, status, sequence_number
 )
 select
   '00000000-0000-0000-0000-000000000901'::uuid,
+  (select org_id from public.cases where id = '00000000-0000-0000-0000-000000000301'::uuid),
   '00000000-0000-0000-0000-000000000301'::uuid,
   ph.id,
   vane.user_id,
@@ -456,11 +457,12 @@ on conflict (id) do nothing;
 
 -- Appointment 2: upcoming for case 0002 (video, 30 min)
 insert into public.appointments (
-  id, case_id, service_phase_id, staff_id, client_user_id,
+  id, org_id, case_id, service_phase_id, staff_id, client_user_id,
   starts_at, ends_at, kind, status, sequence_number
 )
 select
   '00000000-0000-0000-0000-000000000902'::uuid,
+  (select org_id from public.cases where id = '00000000-0000-0000-0000-000000000302'::uuid),
   '00000000-0000-0000-0000-000000000302'::uuid,
   ph.id,
   vane.user_id,
@@ -477,11 +479,12 @@ on conflict (id) do nothing;
 
 -- Appointment 3: completed historical (case 0001)
 insert into public.appointments (
-  id, case_id, service_phase_id, staff_id, client_user_id,
+  id, org_id, case_id, service_phase_id, staff_id, client_user_id,
   starts_at, ends_at, kind, status, sequence_number
 )
 select
   '00000000-0000-0000-0000-000000000903'::uuid,
+  (select org_id from public.cases where id = '00000000-0000-0000-0000-000000000301'::uuid),
   '00000000-0000-0000-0000-000000000301'::uuid,
   ph.id,
   vane.user_id,
