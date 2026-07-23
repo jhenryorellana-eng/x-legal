@@ -51,6 +51,7 @@ import {
   updateCaseParty,
   reviewDocument,
   setRequirementVisibility,
+  dismissDocumentCoverage,
   setFormVisibility,
   advanceCasePhase,
   advanceCaseMilestone,
@@ -559,6 +560,22 @@ export async function setRequirementVisibilityAction(input: {
   try {
     const actor = await requireActor();
     await setRequirementVisibility(actor, input);
+    return { ok: true };
+  } catch (err) {
+    return mapErr(err);
+  }
+}
+
+/** Reviewer (admin/paralegal/sales) overrules an AI coverage — the covered
+ *  requirement returns to pending and the client uploads it separately. */
+export async function dismissCoverageAction(input: {
+  caseId: string;
+  coverageId: string;
+  reason?: string;
+}): Promise<{ ok: boolean; error?: { code: string } }> {
+  try {
+    const actor = await requireActor();
+    await dismissDocumentCoverage(actor, input);
     return { ok: true };
   } catch (err) {
     return mapErr(err);

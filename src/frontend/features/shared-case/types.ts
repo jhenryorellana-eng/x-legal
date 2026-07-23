@@ -62,6 +62,15 @@ export interface DocMatrixVM {
   /** Staff view only: requirement is hidden from the client (optional docs only). */
   isHidden: boolean;
   status: "pendiente" | "revision" | "aprobado" | "corregir";
+  /** AI coverage: this pending slot's content was detected inside ANOTHER upload
+   *  (combined PDF). Counts as done; staff can dismiss it. */
+  coveredBy?: {
+    coverageId: string;
+    /** Human name of the source document ("Formulario I-589 completo…"). */
+    sourceName: string;
+    /** 0..1 — shown to staff as a percentage. */
+    confidence: number;
+  } | null;
   documentId: string | null;
   rejectionReason: string | null;
   /** Staff marked this uploaded document as already-English (no translation needed). */
@@ -690,6 +699,17 @@ export interface CaseDetailActions {
     requirementId: string | null;
     partyId: string | null;
     hidden: boolean;
+  }) => Promise<{ ok: boolean; error?: { code: string } }>;
+  /**
+   * Dismiss an AI coverage ("this upload contains that document") — the covered
+   * requirement goes back to pending and the client is asked to upload it
+   * separately. Sticky across re-classifications. Optional — reviewer surfaces
+   * (admin / legal / ventas) inject it.
+   */
+  dismissCoverage?: (input: {
+    caseId: string;
+    coverageId: string;
+    reason?: string;
   }) => Promise<{ ok: boolean; error?: { code: string } }>;
   /**
    * Edit a case party's legal name (admin only). Updates the live truth and

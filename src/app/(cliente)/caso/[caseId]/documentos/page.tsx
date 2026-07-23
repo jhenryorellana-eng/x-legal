@@ -70,6 +70,8 @@ export default async function DocumentosPage({
         : null,
       query: qs.toString(),
       allowMultiple: d.allowMultiple,
+      optional: !d.isRequired,
+      coveredByName: d.coveredBy?.sourceName ?? null,
       uploads: d.uploads.map((u) => ({
         documentId: u.documentId,
         name: u.displayName,
@@ -85,6 +87,8 @@ export default async function DocumentosPage({
       items={items}
       done={matrix.done}
       total={matrix.total}
+      optionalDone={matrix.optionalDone}
+      optionalTotal={matrix.optionalTotal}
       progress={matrix.progress}
       phaseName={phaseName}
       caseId={caseId}
@@ -104,6 +108,10 @@ export default async function DocumentosPage({
         remove: t("remove"),
         confirm: t("confirm"),
         cancel: t("cancel"),
+        optionalBadge: t("optionalBadge"),
+        coveredBy: t.raw("coveredBy") as string,
+        uploadSeparately: t("uploadSeparately"),
+        optionalProgress: t.raw("optionalProgress") as string,
       }}
       onDelete={deleteDocumentAction}
     />

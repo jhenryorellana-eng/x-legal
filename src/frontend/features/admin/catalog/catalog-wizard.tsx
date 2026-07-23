@@ -52,6 +52,10 @@ export interface WizardDoc {
   accepted_format: "pdf" | "png";
   /** Admin-configured: client may upload more than one file for this requirement. */
   allow_multiple: boolean;
+  /** Coverage: the AI may detect this type inside another upload of the phase. */
+  detectable_in_combined: boolean;
+  /** Admin-edited hints the AI uses to recognize the type in a combined PDF. */
+  detection_hints_i18n: I18nValue | null;
   is_active: boolean;
 }
 
@@ -1988,6 +1992,10 @@ function DocsStep({
   const [docFormat, setDocFormat] = React.useState<"pdf" | "png">("pdf");
   // Admin-chosen: client may upload more than one file for this document.
   const [docAllowMultiple, setDocAllowMultiple] = React.useState(false);
+  // Coverage: the AI may detect this type inside another upload (combined PDF).
+  // Requires AI extraction + PDF format — the switch disables otherwise.
+  const [docDetectable, setDocDetectable] = React.useState(false);
+  const [docHints, setDocHints] = React.useState<I18nValue>({ es: "", en: "" });
   const [savingDoc, setSavingDoc] = React.useState(false);
   // null = create mode; a doc id = editing that document in place.
   const [editingDocId, setEditingDocId] = React.useState<string | null>(null);
@@ -2012,6 +2020,8 @@ function DocsStep({
     setDocExtractionSchema(null);
     setDocFormat("pdf");
     setDocAllowMultiple(false);
+    setDocDetectable(false);
+    setDocHints({ es: "", en: "" });
   }
 
   function startEditDoc(d: WizardDoc) {
@@ -2025,6 +2035,11 @@ function DocsStep({
     setDocExtractionSchema(d.extraction_schema ?? null);
     setDocFormat(d.accepted_format ?? "pdf");
     setDocAllowMultiple(d.allow_multiple ?? false);
+    setDocDetectable(d.detectable_in_combined ?? false);
+    setDocHints({
+      es: d.detection_hints_i18n?.es ?? "",
+      en: d.detection_hints_i18n?.en ?? "",
+    });
   }
 
   const docSlugFrom = (es: string) =>
@@ -2043,6 +2058,13 @@ function DocsStep({
     const docRoles = docPerParty ? docPartyRoles : null;
     const labelI18n = { es: docLabel.es ?? "", en: docLabel.en ?? "" };
     const categoryI18n = docCategory.trim() ? { es: docCategory.trim(), en: "" } : null;
+    // The switch UI already disables detectable without AI/PDF; re-derive here so
+    // a stale toggle never reaches the backend validation.
+    const effectiveDetectable = docDetectable && docAiExtract && docFormat === "pdf";
+    const hintsI18n =
+      effectiveDetectable && (docHints.es?.trim() || docHints.en?.trim())
+        ? { es: docHints.es?.trim() ?? "", en: docHints.en?.trim() ?? "" }
+        : null;
     setSavingDoc(true);
 
     // --- Edit an existing document in place (party assignment, required, label) ---
@@ -2057,6 +2079,8 @@ function DocsStep({
         extraction_schema: docAiExtract ? docExtractionSchema : null,
         accepted_format: docFormat,
         allow_multiple: docAllowMultiple,
+        detectable_in_combined: effectiveDetectable,
+        detection_hints_i18n: hintsI18n,
       });
       setSavingDoc(false);
       if (r.success) {
@@ -2078,6 +2102,8 @@ function DocsStep({
                           extraction_schema: docAiExtract ? docExtractionSchema : null,
                           accepted_format: docFormat,
                           allow_multiple: docAllowMultiple,
+                          detectable_in_combined: effectiveDetectable,
+                          detection_hints_i18n: hintsI18n,
                         }
                       : d,
                   ),
@@ -2106,6 +2132,8 @@ function DocsStep({
       extraction_schema: docAiExtract ? docExtractionSchema : null,
       accepted_format: docFormat,
       allow_multiple: docAllowMultiple,
+      detectable_in_combined: effectiveDetectable,
+      detection_hints_i18n: hintsI18n,
       position: phase.docs.length,
     });
     setSavingDoc(false);
@@ -2123,6 +2151,8 @@ function DocsStep({
         extraction_schema: docAiExtract ? docExtractionSchema : null,
         accepted_format: docFormat,
         allow_multiple: docAllowMultiple,
+        detectable_in_combined: effectiveDetectable,
+        detection_hints_i18n: hintsI18n,
         is_active: true,
       };
       setPhases((prev) =>
@@ -2212,6 +2242,24 @@ function DocsStep({
               <Switch checked={docAllowMultiple} onCheckedChange={setDocAllowMultiple} aria-label={t.docAllowMultiple} />
               {t.docAllowMultiple}
             </label>
+            <label
+              style={{
+                display: "flex",
+                gap: 8,
+                alignItems: "center",
+                cursor: docAiExtract && docFormat === "pdf" ? "pointer" : "not-allowed",
+                opacity: docAiExtract && docFormat === "pdf" ? 1 : 0.5,
+              }}
+              title={docAiExtract && docFormat === "pdf" ? undefined : t.docAiExtract + " + PDF"}
+            >
+              <Switch
+                checked={docDetectable && docAiExtract && docFormat === "pdf"}
+                onCheckedChange={setDocDetectable}
+                disabled={!docAiExtract || docFormat !== "pdf"}
+                aria-label={t.docDetectable}
+              />
+              {t.docDetectable}
+            </label>
             {docAiExtract && (
               <GhostBtn size="md" full={false} icon="sparkle" onClick={() => setSchemaModalOpen(true)}>
                 {t.docSchema}
@@ -2227,6 +2275,13 @@ function DocsStep({
               </GhostBtn>
             )}
           </div>
+
+          {docDetectable && docAiExtract && docFormat === "pdf" && (
+            <div>
+              <FieldLabel>{t.docDetectableHints}</FieldLabel>
+              <I18nField label="" value={docHints} onChange={setDocHints} multiline />
+            </div>
+          )}
 
           {docPerParty && (
             <div>
@@ -2299,10 +2354,13 @@ function DocsStep({
                     </td>
                     <td style={{ ...docCell, textAlign: "center" }}>
                       {d.ai_extract ? (
-                        <Chip tone="gold" dot>
-                          {t.docAiExtract}
-                          {schemaFieldCount(d.extraction_schema) > 0 ? ` · ${schemaFieldCount(d.extraction_schema)}` : ""}
-                        </Chip>
+                        <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap", justifyContent: "center" }}>
+                          <Chip tone="gold" dot>
+                            {t.docAiExtract}
+                            {schemaFieldCount(d.extraction_schema) > 0 ? ` · ${schemaFieldCount(d.extraction_schema)}` : ""}
+                          </Chip>
+                          {d.detectable_in_combined && <Chip tone="blue">{t.docCombinable}</Chip>}
+                        </span>
                       ) : (
                         "—"
                       )}

@@ -18,6 +18,10 @@ export {
   reviewDocument,
   setRequirementVisibility,
   setFormVisibility,
+  // Combined-upload coverage (staff overrules the AI detection)
+  dismissDocumentCoverage,
+  restoreDocumentCoverage,
+  onDocumentCoverageDetected,
   changeCaseStatus,
   advanceCasePhase,
   advanceCaseMilestone,

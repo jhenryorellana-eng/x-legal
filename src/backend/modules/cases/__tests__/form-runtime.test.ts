@@ -156,6 +156,9 @@ vi.mock("../repository", () => ({
   findExtractionPayloadBySlug: vi.fn().mockResolvedValue(null),
   updateCasePosture: vi.fn().mockResolvedValue(undefined),
   listServicePosturesForService: vi.fn().mockResolvedValue([]),
+  // Combined-upload coverage (no coverage in these scenarios)
+  listActiveCoveragesForCase: vi.fn().mockResolvedValue([]),
+  findActiveCoveragePayloadBySlug: vi.fn().mockResolvedValue(null),
   // Existing repo functions (stubs for tests not under test here)
   findCaseById: vi.fn().mockResolvedValue(null),
   findCaseByCaseId: vi.fn().mockResolvedValue(null),

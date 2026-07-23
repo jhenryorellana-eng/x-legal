@@ -53,6 +53,14 @@ export interface ExtractionCompletedPayload {
   caseDocumentId: string;
 }
 
+export interface CoverageDetectedPayload {
+  caseId: string;
+  /** Source document (the combined upload) whose text covered other types. */
+  caseDocumentId: string;
+  /** required_document_types ids detected in this run (dismissed ones included). */
+  coveredRequirementIds: string[];
+}
+
 // ---------------------------------------------------------------------------
 // Typed event emitter helpers
 // ---------------------------------------------------------------------------
@@ -103,6 +111,22 @@ export async function emitExtractionCompleted(
   } satisfies DomainEvent<ExtractionCompletedPayload>);
 }
 
+/**
+ * emitAndWait — same frozen-invocation rationale as emitExtractionCompleted:
+ * consumers do async QStash publishes (prefill warm) and DB writes (timeline,
+ * questionnaire bootstrap) that a fire-and-forget emit would drop the instant
+ * the coverage job returns 200. Callers MUST await.
+ */
+export async function emitCoverageDetected(
+  payload: CoverageDetectedPayload,
+): Promise<void> {
+  await appEvents.emitAndWait({
+    type: "document.coverage_detected",
+    payload,
+    occurredAt: new Date(),
+  } satisfies DomainEvent<CoverageDetectedPayload>);
+}
+
 // ---------------------------------------------------------------------------
 // Consumer registration (called from register-consumers.ts)
 // ---------------------------------------------------------------------------
@@ -139,12 +163,47 @@ export async function enqueueLexReindex(caseId: string): Promise<void> {
 }
 
 /**
+ * Enqueues a classify-document-coverage job for a source document whose primary
+ * extraction just completed. The nonce (caller passes a fresh value per firing)
+ * keeps the dedupeId unique across re-extractions — the webhook's idempotency
+ * barrier is permanent per (source, dedupeId), so a fixed id would classify only
+ * the FIRST extraction of that document ever (same lesson as enqueueLexReindex).
+ * Non-fatal by contract: a lost trigger only means "no coverage yet".
+ */
+export async function enqueueCoverageClassification(
+  caseDocumentId: string,
+  nonce: string,
+): Promise<void> {
+  try {
+    await enqueueJob(
+      {
+        jobKey: "classify-document-coverage",
+        entityId: caseDocumentId,
+        attempt: 1,
+        dedupeId: `classify-coverage:${caseDocumentId}:${nonce}`,
+        caseDocumentId,
+      },
+      { retries: 2, timeout: "280s" },
+    );
+  } catch (err) {
+    logger.warn(
+      { err, caseDocumentId },
+      "ai-engine: failed to enqueue classify-document-coverage (non-fatal)",
+    );
+  }
+}
+
+/**
  * Registers ai-engine event consumers on the global event bus.
  *
  * Lex case chat: keep the per-case knowledge index fresh when the evidence
  * changes — a client (or staff) document upload/delete, or a submitted form
  * response. Each consumer is fault-isolated (enqueueLexReindex never throws;
  * the bus also isolates consumers from each other).
+ *
+ * Coverage: every completed primary extraction chains the combined-upload
+ * classification (both the single-call and chunked routes emit the same event,
+ * so one hook covers both).
  *
  * Called from src/backend/modules/register-consumers.ts at startup.
  */
@@ -153,6 +212,12 @@ export function registerAiEngineConsumers(): void {
     const p = (event.payload ?? {}) as { caseId?: string; documentId?: string };
     if (!p.caseId) return;
     await enqueueLexReindex(p.caseId);
+  });
+
+  appEvents.on("extraction.completed", async (event) => {
+    const p = (event.payload ?? {}) as { caseId?: string; caseDocumentId?: string };
+    if (!p.caseDocumentId) return;
+    await enqueueCoverageClassification(p.caseDocumentId, String(Date.now()));
   });
 
   appEvents.on("document.deleted", async (event) => {

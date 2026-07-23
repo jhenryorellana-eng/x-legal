@@ -66,6 +66,8 @@ export {
   // deterministic input changed — consumed by the rerender-run job.
   reRenderRun,
   executeExtractionJob,
+  // Combined-upload coverage classification (consumed by jobs/ layer)
+  executeCoverageClassificationJob,
   executeTranslationJob,
   executeQuestionnaireGenerationJob,
   // job-failed callbacks
@@ -128,6 +130,7 @@ export type {
   JobOutcome,
   RunGenerationPayload,
   ExtractDocumentPayload,
+  ClassifyCoveragePayload,
   TranslateDocumentJobPayload,
   TranslateDocumentResult,
   // Catalog editor assistance (consumed by catalog module)
@@ -204,4 +207,9 @@ export type {
   ExtractionCompletedPayload,
 } from "./events";
 
-export { registerAiEngineConsumers, enqueueLexReindex } from "./events";
+export {
+  registerAiEngineConsumers,
+  enqueueLexReindex,
+  enqueueCoverageClassification,
+} from "./events";
+export type { CoverageDetectedPayload } from "./events";

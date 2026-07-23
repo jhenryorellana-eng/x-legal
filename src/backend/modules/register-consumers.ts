@@ -11,7 +11,7 @@
 
 import { appEvents } from "@/backend/platform/events";
 import { logger } from "@/backend/platform/logger";
-import { onDownpaymentConfirmed, onExpedienteSentToFinanceCase, onExpedientePrintedCase, appendAppointmentTimeline, enqueueAiPrefillWarm, applyPostureToCase } from "@/backend/modules/cases";
+import { onDownpaymentConfirmed, onExpedienteSentToFinanceCase, onExpedientePrintedCase, appendAppointmentTimeline, enqueueAiPrefillWarm, applyPostureToCase, onDocumentCoverageDetected } from "@/backend/modules/cases";
 import { notifyFromEvent } from "@/backend/modules/notifications";
 import {
   onCaseOwnerChanged,
@@ -143,6 +143,32 @@ export function registerConsumers(): void {
   // document.rejected → notify client
   appEvents.on("document.rejected", async (event) => {
     await notifyFromEvent(event);
+  });
+
+  // document.coverage_detected → the AI found other requested documents INSIDE
+  // an upload (combined PDF). Client-facing: notification + timeline entry.
+  // Then re-run the idempotent consumers that depend on the case's document
+  // set: questionnaire staleness/bootstrap + ai_field prefill warm. No lex
+  // reindex / posture here — extraction.completed of the SOURCE doc already ran
+  // them (Lex indexes the source raw_text; posture reads the same payloads).
+  appEvents.on("document.coverage_detected", async (event) => {
+    await notifyFromEvent(event);
+    const p = (event.payload ?? {}) as {
+      caseId?: string;
+      caseDocumentId?: string;
+      coveredRequirementIds?: string[];
+    };
+    if (!p.caseId) return;
+    await onDocumentCoverageDetected({
+      caseId: p.caseId,
+      caseDocumentId: p.caseDocumentId ?? "",
+      coveredRequirementIds: p.coveredRequirementIds ?? [],
+    });
+    if (p.caseDocumentId) {
+      await flagQuestionnairesOnNewEvidence(p.caseId, p.caseDocumentId);
+    }
+    await autoBootstrapCaseQuestionnaires(p.caseId);
+    await enqueueAiPrefillWarm(p.caseId, null);
   });
 
   // form_response.submitted → notify the case's asesora (sales), client submits only

@@ -291,6 +291,10 @@
       "confirm": "Confirm",
       "cancel": "Cancel",
       "uncategorized": "Documents",
+      "optionalBadge": "Optional",
+      "coveredBy": "Covered by your {source} ✨",
+      "uploadSeparately": "Upload separately",
+      "optionalProgress": "plus {done} of {total} optional",
       "emptyTitle": "No documents to upload yet",
       "emptyBody": "Your team is preparing your case. We'll let you know as soon as there's something for you."
     },
@@ -1325,6 +1329,9 @@
         "docFormatPng": "PNG",
         "docAllowMultiple": "Allow multiple files",
         "docMultiple": "Multiple",
+        "docDetectable": "May arrive combined",
+        "docDetectableHints": "Detection hints (how the AI recognizes this document inside another PDF)",
+        "docCombinable": "Combinable",
         "docNeedName": "Enter the document name (ES).",
         "formsNeedPhaseTitle": "Create a phase first",
         "formsNeedPhaseSub": "Save the service and add at least one phase so you can create forms in it.",
@@ -2124,7 +2131,14 @@
         "hiddenFromClient": "Hidden from client",
         "hideRequiredBlocked": "Only optional documents can be hidden.",
         "hideDone": "Document hidden from the client",
-        "showDone": "Document visible to the client"
+        "showDone": "Document visible to the client",
+        "coveredByChip": "Covered by “{source}” ✨ · {confidence}%",
+        "coverageDismiss": "Dismiss",
+        "coverageDismissTitle": "Dismiss coverage",
+        "coverageDismissNote": "The requirement goes back to Pending and the client is asked to upload the document separately. The AI will not re-mark it automatically.",
+        "coverageDismissReason": "Reason (optional)",
+        "coverageDismissConfirm": "Dismiss coverage",
+        "coverageDismissDone": "Coverage dismissed"
       }
     },
     "ventas": {

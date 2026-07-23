@@ -1659,6 +1659,7 @@ export async function resolveGenerationInputs(
 
   // DOCUMENTS — every active case_document per requirement slug (upload order)
   // + each one's latest completed extraction.
+  const uncoveredSlugs: string[] = [];
   for (const slug of docSlugs) {
     let q = client
       .from("case_documents")
@@ -1688,6 +1689,51 @@ export async function resolveGenerationInputs(
         .limit(1);
       const extractionId = (ext?.[0] as { id?: string } | undefined)?.id;
       if (extractionId) documents.push({ slug, case_document_id: row.id, extraction_id: extractionId });
+    }
+    if (rows.length === 0) uncoveredSlugs.push(slug);
+  }
+
+  // Combined-upload fallback (case-level only), SECOND pass so the dedupe sees
+  // every own-doc resolution: a slug with NO own upload may be COVERED by
+  // another document — the SOURCE doc's raw_text CONTAINS the covered content,
+  // so it becomes this slug's generation input. If the source doc already
+  // entered via its own slug, skip (its text would reach the prompt twice).
+  if (!partyId) {
+    for (const slug of uncoveredSlugs) {
+      const { data: cov } = await client
+        .from("case_document_coverages")
+        .select(
+          "case_document_id, required_document_types!inner(slug), case_documents!inner(status)",
+        )
+        .eq("case_id", caseId)
+        .eq("status", "detected")
+        .is("party_id", null)
+        .eq("required_document_types.slug", slug)
+        .in("case_documents.status", ["uploaded", "approved"])
+        .order("created_at", { ascending: false })
+        .limit(1);
+      const sourceDocId = (cov?.[0] as { case_document_id?: string } | undefined)
+        ?.case_document_id;
+      if (
+        !sourceDocId ||
+        documents.some((d) => d.case_document_id === sourceDocId)
+      ) {
+        continue;
+      }
+      const { data: ext } = await client
+        .from("document_extractions")
+        .select("id")
+        .eq("case_document_id", sourceDocId)
+        .eq("status", "completed")
+        .limit(1);
+      const extractionId = (ext?.[0] as { id?: string } | undefined)?.id;
+      if (extractionId) {
+        documents.push({
+          slug,
+          case_document_id: sourceDocId,
+          extraction_id: extractionId,
+        });
+      }
     }
   }
 
@@ -2222,4 +2268,247 @@ export async function findLatestEligibleRunForPreMortem(
     }
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Document coverage (combined uploads) — classify-document-coverage job
+//
+// case_document_coverages ownership: DETECTION rows (insert/update/delete on
+// re-runs) are written HERE by the job; the staff dismiss/restore update is the
+// one human decision and lives in cases (mirrors case_documents: cases writes,
+// ai-engine reads).
+// ---------------------------------------------------------------------------
+
+export type CaseDocumentCoverageRow = Tables<"case_document_coverages">;
+
+export interface CoverageCandidate {
+  id: string;
+  slug: string;
+  labelI18n: Record<string, string> | null;
+  helpI18n: Record<string, string> | null;
+  hintsI18n: Record<string, string> | null;
+  extractionSchema: Record<string, unknown>;
+}
+
+export interface CoverageContext {
+  doc: {
+    id: string;
+    caseId: string;
+    partyId: string | null;
+    status: string;
+    mimeType: string;
+    requiredDocumentTypeId: string | null;
+    servicePhaseId: string | null;
+  };
+  /** raw_text of the COMPLETED primary extraction (classification input). */
+  rawText: string | null;
+  /** Sibling phase types eligible for detection (D5: case-level only). */
+  candidates: CoverageCandidate[];
+  /** Coverages already persisted for this source doc, keyed by covered rdt id. */
+  existingByRdtId: Map<string, { status: string }>;
+}
+
+function asI18nRecord(value: unknown): Record<string, string> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, string>;
+}
+
+/**
+ * Loads everything the coverage classification needs in one shot. Candidates
+ * exclude: the source doc's own type, per-party types (D5), inactive types,
+ * types without an extraction schema, and types the case already satisfied
+ * with an ACTIVE own upload (uploaded|approved, case-level) — those need no
+ * coverage and classifying them would only waste tokens.
+ */
+export async function getCoverageContext(
+  caseDocumentId: string,
+): Promise<CoverageContext | null> {
+  const client = createServiceClient();
+
+  const { data: doc, error: docErr } = await client
+    .from("case_documents")
+    .select(
+      "id, case_id, party_id, status, mime_type, required_document_type_id, required_document_types(service_phase_id)",
+    )
+    .eq("id", caseDocumentId)
+    .maybeSingle();
+  if (docErr || !doc) return null;
+
+  const rdt = Array.isArray(doc.required_document_types)
+    ? doc.required_document_types[0]
+    : doc.required_document_types;
+  const servicePhaseId = rdt?.service_phase_id ?? null;
+
+  const { data: extraction } = await client
+    .from("document_extractions")
+    .select("raw_text, status")
+    .eq("case_document_id", caseDocumentId)
+    .maybeSingle();
+  const rawText =
+    extraction?.status === "completed" && extraction.raw_text
+      ? extraction.raw_text
+      : null;
+
+  let candidates: CoverageCandidate[] = [];
+  if (servicePhaseId) {
+    const { data: types, error: typesErr } = await client
+      .from("required_document_types")
+      .select(
+        "id, slug, label_i18n, help_i18n, detection_hints_i18n, extraction_schema",
+      )
+      .eq("service_phase_id", servicePhaseId)
+      .eq("detectable_in_combined", true)
+      .eq("ai_extract", true)
+      .eq("is_active", true)
+      .eq("is_per_party", false)
+      .not("extraction_schema", "is", null)
+      .order("position");
+    if (typesErr) {
+      logger.error(
+        { err: typesErr, caseDocumentId },
+        "ai-engine: getCoverageContext candidate query failed",
+      );
+      return null;
+    }
+    candidates = (types ?? [])
+      .filter((t) => t.id !== doc.required_document_type_id)
+      .map((t) => ({
+        id: t.id,
+        slug: t.slug,
+        labelI18n: asI18nRecord(t.label_i18n),
+        helpI18n: asI18nRecord(t.help_i18n),
+        hintsI18n: asI18nRecord(t.detection_hints_i18n),
+        extractionSchema: (t.extraction_schema ?? {}) as Record<string, unknown>,
+      }));
+  }
+
+  if (candidates.length > 0) {
+    const { data: ownDocs } = await client
+      .from("case_documents")
+      .select("required_document_type_id")
+      .eq("case_id", doc.case_id)
+      .in("required_document_type_id", candidates.map((c) => c.id))
+      .in("status", ["uploaded", "approved"])
+      .is("party_id", null);
+    const satisfied = new Set(
+      (ownDocs ?? []).map((d) => d.required_document_type_id),
+    );
+    candidates = candidates.filter((c) => !satisfied.has(c.id));
+  }
+
+  const existingByRdtId = new Map<string, { status: string }>();
+  const { data: existing } = await client
+    .from("case_document_coverages")
+    .select("covered_required_document_type_id, status")
+    .eq("case_document_id", caseDocumentId);
+  for (const row of existing ?? []) {
+    existingByRdtId.set(row.covered_required_document_type_id, {
+      status: row.status,
+    });
+  }
+
+  return {
+    doc: {
+      id: doc.id,
+      caseId: doc.case_id,
+      partyId: doc.party_id,
+      status: doc.status,
+      mimeType: doc.mime_type ?? "application/pdf",
+      requiredDocumentTypeId: doc.required_document_type_id,
+      servicePhaseId,
+    },
+    rawText,
+    candidates,
+    existingByRdtId,
+  };
+}
+
+/**
+ * Persists one detected coverage. A staff dismissal is STICKY: if the existing
+ * row is 'dismissed', the re-run result is discarded (never resurrected). The
+ * unique key is (case_document_id, covered rdt, party) with nulls-not-distinct,
+ * which PostgREST upsert can't target — select-then-write is safe here because
+ * a source document has at most one classification job in flight (dedupeId).
+ */
+export async function upsertCoverageRow(row: {
+  case_id: string;
+  case_document_id: string;
+  covered_required_document_type_id: string;
+  party_id: string | null;
+  confidence: number;
+  page_range: string | null;
+  payload: TablesInsert<"case_document_coverages">["payload"];
+  model: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cost_usd: number | null;
+}): Promise<"inserted" | "updated" | "dismissed_kept"> {
+  const client = createServiceClient();
+
+  let query = client
+    .from("case_document_coverages")
+    .select("id, status")
+    .eq("case_document_id", row.case_document_id)
+    .eq("covered_required_document_type_id", row.covered_required_document_type_id);
+  query = row.party_id === null
+    ? query.is("party_id", null)
+    : query.eq("party_id", row.party_id);
+  const { data: existing } = await query.maybeSingle();
+
+  if (existing?.status === "dismissed") return "dismissed_kept";
+
+  if (existing) {
+    const { error } = await client
+      .from("case_document_coverages")
+      .update({
+        confidence: row.confidence,
+        page_range: row.page_range,
+        payload: row.payload,
+        model: row.model,
+        input_tokens: row.input_tokens,
+        output_tokens: row.output_tokens,
+        cost_usd: row.cost_usd,
+        status: "detected",
+      })
+      .eq("id", existing.id);
+    if (error) throw new Error(`ai-engine: upsertCoverageRow update failed — ${error.message}`);
+    return "updated";
+  }
+
+  const { error } = await client.from("case_document_coverages").insert({
+    ...row,
+    status: "detected",
+  });
+  if (error) throw new Error(`ai-engine: upsertCoverageRow insert failed — ${error.message}`);
+  return "inserted";
+}
+
+/**
+ * Re-run coherence: drops 'detected' coverages of this source document whose
+ * covered type was NOT detected this time. 'dismissed' rows survive (sticky).
+ */
+export async function deleteUndetectedCoverages(
+  caseDocumentId: string,
+  keepRdtIds: string[],
+): Promise<void> {
+  const client = createServiceClient();
+  let query = client
+    .from("case_document_coverages")
+    .delete()
+    .eq("case_document_id", caseDocumentId)
+    .eq("status", "detected");
+  if (keepRdtIds.length > 0) {
+    query = query.not(
+      "covered_required_document_type_id",
+      "in",
+      `(${keepRdtIds.join(",")})`,
+    );
+  }
+  const { error } = await query;
+  if (error) {
+    logger.warn(
+      { err: error, caseDocumentId },
+      "ai-engine: deleteUndetectedCoverages failed (non-fatal)",
+    );
+  }
 }

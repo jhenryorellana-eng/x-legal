@@ -131,6 +131,7 @@ export default async function FinanzasCasoDetailPage({
     isRequired: d.isRequired,
     isHidden: d.isHidden,
     status: d.status,
+    coveredBy: d.coveredBy,
     documentId: d.documentId,
     rejectionReason: d.rejectionReasonI18n ? resolveI18n(d.rejectionReasonI18n, locale) : null,
     translationNotRequired: d.translationNotRequired,

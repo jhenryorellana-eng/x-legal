@@ -160,6 +160,8 @@ function makeRequiredDoc(overrides: Partial<RequiredDocumentType> = {}): Require
     extraction_schema: null,
     accepted_format: "pdf",
     allow_multiple: false,
+    detectable_in_combined: false,
+    detection_hints_i18n: null,
     position: 0,
     is_active: true,
     ...overrides,

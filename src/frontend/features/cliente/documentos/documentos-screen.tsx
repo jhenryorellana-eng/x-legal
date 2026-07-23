@@ -43,6 +43,11 @@ export interface DocItem {
   query: string;
   /** True when the admin marked this requirement as multiple (≥1 file). */
   allowMultiple: boolean;
+  /** Optional requirement (is_required=false): visible, badged, never blocks. */
+  optional: boolean;
+  /** Human name of the upload that COVERS this pending slot (AI detected its
+   *  content inside another document), or null. */
+  coveredByName: string | null;
   /** Current (non-replaced) files for this slot. */
   uploads: DocUploadItem[];
 }
@@ -61,6 +66,14 @@ export interface DocumentosLabels {
   remove: string;
   confirm: string;
   cancel: string;
+  /** Chip on optional (never-blocking) requirements. */
+  optionalBadge: string;
+  /** "Cubierto por tu {source} ✨" — {source} replaced by the screen. */
+  coveredBy: string;
+  /** Ghost CTA on a covered slot (own upload supersedes the coverage). */
+  uploadSeparately: string;
+  /** "{done} de {total} opcionales" — placeholders replaced by the screen. */
+  optionalProgress: string;
 }
 
 export type DeleteResult = { ok: boolean; error?: { code: string } };
@@ -69,6 +82,8 @@ export function DocumentosScreen({
   items,
   done,
   total,
+  optionalDone,
+  optionalTotal,
   progress,
   phaseName,
   caseId,
@@ -76,8 +91,12 @@ export function DocumentosScreen({
   onDelete,
 }: {
   items: DocItem[];
+  /** Required requirements only — the gate/progress math (RF-ADM-027). */
   done: number;
   total: number;
+  /** Optional requirements, shown as a secondary line ("y N opcionales"). */
+  optionalDone: number;
+  optionalTotal: number;
   progress: number;
   phaseName: string;
   caseId: string;
@@ -179,6 +198,39 @@ export function DocumentosScreen({
     );
   }
 
+  /** "Opcional" chip next to a never-blocking requirement's label. */
+  function OptionalBadge() {
+    return (
+      <span
+        style={{
+          marginLeft: 8,
+          display: "inline-block",
+          verticalAlign: "middle",
+          padding: "2px 9px",
+          borderRadius: 999,
+          background: "var(--blue-soft)",
+          color: "var(--accent)",
+          fontSize: 11.5,
+          fontWeight: 800,
+        }}
+      >
+        {labels.optionalBadge}
+      </span>
+    );
+  }
+
+  /** "Cubierto por tu {source} ✨" — golden check under a covered slot. */
+  function CoveredLine({ source }: { source: string }) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
+        <Icon name="check" size={15} color="var(--gold-deep)" />
+        <span style={{ fontSize: 13, color: "var(--gold-deep)", fontWeight: 700 }}>
+          {labels.coveredBy.replace("{source}", source)}
+        </span>
+      </div>
+    );
+  }
+
   /** A single uploaded file row inside a multiple slot. */
   function UploadRow({ u }: { u: DocUploadItem }) {
     return (
@@ -233,6 +285,13 @@ export function DocumentosScreen({
           <div style={{ fontSize: 15, color: "var(--ink-2)", fontWeight: 500 }}>
             {labels.completed}
           </div>
+          {optionalTotal > 0 && (
+            <div style={{ fontSize: 13, color: "var(--ink-3)", fontWeight: 600, marginTop: 2 }}>
+              {labels.optionalProgress
+                .replace("{done}", String(optionalDone))
+                .replace("{total}", String(optionalTotal))}
+            </div>
+          )}
         </div>
       </Card>
 
@@ -314,11 +373,17 @@ export function DocumentosScreen({
                     >
                       <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
                         <IconTile name="doc" color="var(--accent)" size={44} radius={13} iconSize={24} />
-                        <div
-                          className="t-title"
-                          style={{ flex: 1, fontSize: 16, color: "var(--navy)", fontWeight: 700, lineHeight: 1.25 }}
-                        >
-                          {d.label}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div
+                            className="t-title"
+                            style={{ fontSize: 16, color: "var(--navy)", fontWeight: 700, lineHeight: 1.25 }}
+                          >
+                            {d.label}
+                            {d.optional && <OptionalBadge />}
+                          </div>
+                          {d.uploads.length === 0 && d.coveredByName && (
+                            <CoveredLine source={d.coveredByName} />
+                          )}
                         </div>
                       </div>
 
@@ -382,7 +447,11 @@ export function DocumentosScreen({
                           }}
                         >
                           {d.label}
+                          {d.optional && <OptionalBadge />}
                         </div>
+                        {d.status === "pendiente" && d.coveredByName && (
+                          <CoveredLine source={d.coveredByName} />
+                        )}
                         {d.status === "corregir" && d.rejectionReason && (
                           <div
                             style={{
@@ -407,40 +476,68 @@ export function DocumentosScreen({
                       {d.status === "revision" && d.uploads[0]?.canDelete && (
                         <DeleteControl documentId={d.uploads[0].documentId} />
                       )}
-                      {(d.status === "pendiente" || d.status === "corregir") && (
+                      {d.status === "pendiente" && d.coveredByName ? (
+                        // Covered slot: the requirement already counts — offer a
+                        // quiet "upload separately" (own upload supersedes).
                         <button
                           type="button"
                           onClick={() => goUpload(d)}
-                          className="mp-pop"
                           style={{
-                            height: 44,
-                            padding: "0 18px",
+                            height: 40,
+                            padding: "0 14px",
                             borderRadius: 999,
-                            border: "none",
+                            border: "1.5px solid var(--line)",
                             cursor: "pointer",
-                            // "corregir" CTA is amber (gold-deep), NOT red — tone rule.
-                            background:
-                              d.status === "corregir"
-                                ? "var(--gold-deep)"
-                                : "var(--accent)",
-                            color: "#fff",
+                            background: "var(--card)",
+                            color: "var(--ink-2)",
                             fontFamily: "var(--font-title)",
                             fontWeight: 700,
-                            fontSize: 15,
+                            fontSize: 13.5,
                             display: "flex",
                             alignItems: "center",
                             gap: 6,
-                            boxShadow: `0 6px 14px color-mix(in srgb, ${d.status === "corregir" ? "var(--gold-deep)" : "var(--accent)"} 27%, transparent)`,
                             whiteSpace: "nowrap",
                           }}
                         >
-                          <Icon
-                            name={d.status === "corregir" ? "edit" : "upload"}
-                            size={18}
-                            color="#fff"
-                          />
-                          {d.status === "corregir" ? labels.fix : labels.upload}
+                          <Icon name="upload" size={16} color="var(--ink-2)" />
+                          {labels.uploadSeparately}
                         </button>
+                      ) : (
+                        (d.status === "pendiente" || d.status === "corregir") && (
+                          <button
+                            type="button"
+                            onClick={() => goUpload(d)}
+                            className="mp-pop"
+                            style={{
+                              height: 44,
+                              padding: "0 18px",
+                              borderRadius: 999,
+                              border: "none",
+                              cursor: "pointer",
+                              // "corregir" CTA is amber (gold-deep), NOT red — tone rule.
+                              background:
+                                d.status === "corregir"
+                                  ? "var(--gold-deep)"
+                                  : "var(--accent)",
+                              color: "#fff",
+                              fontFamily: "var(--font-title)",
+                              fontWeight: 700,
+                              fontSize: 15,
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                              boxShadow: `0 6px 14px color-mix(in srgb, ${d.status === "corregir" ? "var(--gold-deep)" : "var(--accent)"} 27%, transparent)`,
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            <Icon
+                              name={d.status === "corregir" ? "edit" : "upload"}
+                              size={18}
+                              color="#fff"
+                            />
+                            {d.status === "corregir" ? labels.fix : labels.upload}
+                          </button>
+                        )
                       )}
                     </div>
                   ),

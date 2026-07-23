@@ -620,6 +620,13 @@ export async function createRequiredDocument(
     if (!valid) throw catalogError("CATALOG_EXTRACTION_SCHEMA_INVALID", reason);
   }
 
+  if (
+    dto.detectable_in_combined &&
+    (!dto.ai_extract || !dto.extraction_schema || dto.accepted_format !== "pdf")
+  ) {
+    throw catalogError("CATALOG_DETECTABLE_REQUIRES_EXTRACT");
+  }
+
   if (await repo.requiredDocSlugExists(dto.service_phase_id, dto.slug)) {
     throw catalogError("CATALOG_DOC_SLUG_TAKEN");
   }
@@ -653,6 +660,36 @@ export async function updateRequiredDocument(
   if (patch.ai_extract && patch.extraction_schema) {
     const { valid, reason } = validateExtractionSchema(patch.extraction_schema);
     if (!valid) throw catalogError("CATALOG_EXTRACTION_SCHEMA_INVALID", reason);
+  }
+
+  // detectable_in_combined must hold against the EFFECTIVE state (patch ∪ row):
+  // a partial patch can silently break the ai_extract/schema/pdf precondition.
+  if (
+    patch.detectable_in_combined !== undefined ||
+    patch.ai_extract !== undefined ||
+    patch.extraction_schema !== undefined ||
+    patch.accepted_format !== undefined
+  ) {
+    const existing = await repo.findRequiredDocById(id);
+    if (!existing) throw catalogError("CATALOG_DOC_NOT_FOUND");
+    const effective = {
+      detectable_in_combined:
+        patch.detectable_in_combined ?? existing.detectable_in_combined,
+      ai_extract: patch.ai_extract ?? existing.ai_extract,
+      extraction_schema:
+        patch.extraction_schema !== undefined
+          ? patch.extraction_schema
+          : existing.extraction_schema,
+      accepted_format: patch.accepted_format ?? existing.accepted_format,
+    };
+    if (
+      effective.detectable_in_combined &&
+      (!effective.ai_extract ||
+        !effective.extraction_schema ||
+        effective.accepted_format !== "pdf")
+    ) {
+      throw catalogError("CATALOG_DETECTABLE_REQUIRES_EXTRACT");
+    }
   }
 
   const doc = await repo.updateRequiredDocument(

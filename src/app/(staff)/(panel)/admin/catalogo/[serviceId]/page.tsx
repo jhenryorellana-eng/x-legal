@@ -136,6 +136,8 @@ export default async function ServiceDetailPage({
       extraction_schema: (d.extraction_schema ?? null) as Record<string, unknown> | null,
       accepted_format: (d.accepted_format ?? "pdf") as "pdf" | "png",
       allow_multiple: d.allow_multiple ?? false,
+      detectable_in_combined: d.detectable_in_combined ?? false,
+      detection_hints_i18n: i18n(d.detection_hints_i18n),
       is_active: d.is_active,
     })),
     forms: ph.forms.map((f) => ({

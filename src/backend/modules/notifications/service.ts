@@ -206,6 +206,17 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
       deepLinkTemplate: "/caso/{caseId}/corregir?docId={documentId}",
     },
   ],
+  // document.coverage_detected → client (positive tone): the AI detected other
+  // requested documents INSIDE their upload — those now count as delivered.
+  "document.coverage_detected": [
+    {
+      type: "document.coverage_detected",
+      recipients: [{ resolverKey: "clients_of_case" }],
+      channels: { push: true, email: false },
+      category: "case_updates",
+      deepLinkTemplate: "/caso/{caseId}/documentos",
+    },
+  ],
   // document.uploaded → the case's asesora (Vanessa). ①② in-app + push (no email).
   // Fires ONLY for client uploads (staff uploads must not alert sales).
   "document.uploaded": [
@@ -697,6 +708,18 @@ function renderContent(
       bodyI18n: { en: "Please review and re-upload your document.", es: "Por favor revisa y vuelve a subir tu documento." },
       icon: "alert-circle",
       color: "amber", // never red (RF-TRX-022)
+    },
+    "document.coverage_detected": {
+      titleI18n: {
+        en: "We found documents included in your upload",
+        es: "Encontramos documentos incluidos en tu archivo",
+      },
+      bodyI18n: {
+        en: "Some requested documents were detected inside your upload — they now count as delivered.",
+        es: "Detectamos documentos solicitados dentro de tu archivo — ya cuentan como entregados.",
+      },
+      icon: "check-circle",
+      color: "green",
     },
     // Staff-facing (asesora): a client uploaded a document to review.
     "document.uploaded": {

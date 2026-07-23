@@ -210,6 +210,10 @@ import {
   listPublishedClientQuestionsForDrafts,
   findQuestionForImprove,
   findQuestionForWebResearch,
+  getCoverageContext,
+  upsertCoverageRow,
+  deleteUndetectedCoverages,
+  type CoverageCandidate,
   type QuestionnaireInstanceRow,
   type QuestionnaireGenConfigRow,
   type GenerationRunRow,
@@ -222,6 +226,7 @@ import {
   emitGenerationCompleted,
   emitGenerationFailed,
   emitExtractionCompleted,
+  emitCoverageDetected,
 } from "./events";
 
 // ---------------------------------------------------------------------------
@@ -295,6 +300,18 @@ const EXTRACTION_DIGEST_MIN_CHARS = GENERATION_MULTI_DOC_CHAR_BUDGET;
 const EXTRACTION_PAGECOUNT_REQUIRED_BYTES = 8 * 1024 * 1024;
 // Backoff between provider retry attempts (chunk OCR / fields pass).
 const EXTRACTION_RETRY_BACKOFF_MS = [1_000, 4_000];
+// Coverage classification (combined uploads): a detection below this confidence
+// never covers a requirement. Env-overridable so ops can tighten/loosen without
+// a deploy while the per-type threshold need is still hypothetical.
+const COVERAGE_CONFIDENCE_THRESHOLD = Number(
+  process.env.AI_COVERAGE_MIN_CONFIDENCE ?? 0.7,
+);
+// Classification is text-only over the primary extraction's raw_text: clip huge
+// documents (500k chars ≈ 125k tokens) — types are detectable anywhere in text.
+const COVERAGE_RAWTEXT_MAX_CHARS = 500_000;
+// Safety ceiling: one classification call + at most this many per-type
+// extractions must fit the 300s webhook budget (all text-only, no OCR).
+const COVERAGE_MAX_CANDIDATES = 8;
 // Legibility gate — sample the first pages of big PDFs instead of inlining 14MB+
 const LEGIBILITY_SAMPLE_MIN_BYTES = 4 * 1024 * 1024;
 const LEGIBILITY_SAMPLE_PAGES = 5;
@@ -1879,6 +1896,326 @@ export async function executeExtractionJob(
     },
     "extract-document: completed",
   );
+
+  return "completed";
+}
+
+// ---------------------------------------------------------------------------
+// executeCoverageClassificationJob — combined uploads (jobs/classify-document-coverage.ts)
+// ---------------------------------------------------------------------------
+
+export interface ClassifyCoveragePayload {
+  jobKey: "classify-document-coverage";
+  entityId: string;
+  attempt: number;
+  dedupeId: string;
+  caseDocumentId: string;
+}
+
+interface CoverageVerdict {
+  present: boolean;
+  confidence: number;
+  page_range?: string;
+  rationale?: string;
+}
+
+/** Normalises a stored extraction_schema (full JSON Schema or bare property
+ *  map — same tolerance as executeExtractionJob) into props + required. */
+function normalizeExtractionSchema(schema: Record<string, unknown>): {
+  props: Record<string, unknown>;
+  required: string[];
+} {
+  const props =
+    (schema.properties as Record<string, unknown> | undefined) ?? schema;
+  const required = Array.isArray((schema as { required?: unknown }).required)
+    ? ((schema as { required?: string[] }).required as string[])
+    : [];
+  return { props, required };
+}
+
+/** Deterministic stub payload for AI_E2E_STUB: every required field = "STUB". */
+function buildStubCoveragePayload(
+  candidate: CoverageCandidate,
+): Record<string, unknown> {
+  const { required } = normalizeExtractionSchema(candidate.extractionSchema);
+  return Object.fromEntries(required.map((key) => [key, "STUB"]));
+}
+
+/**
+ * Classifies a source document's raw_text against the phase's detectable
+ * sibling types and persists one coverage row per detected type, each with a
+ * payload extracted against the COVERED type's own extraction_schema.
+ *
+ * Fail-open by design: this job runs AFTER the primary extraction completed
+ * and never touches document_extractions nor the document itself — a failure
+ * here only means "no coverage", never a blocked upload/extraction. Unexpected
+ * provider errors are thrown so QStash retries (retries=2); a per-candidate
+ * extraction failure only degrades that candidate to payload=null (the
+ * checklist coverage still counts; prefill simply has no data for it).
+ *
+ * The prompt is 100% data-driven (slug + label + help + admin-edited
+ * detection_hints_i18n) — no service or document slugs live in code.
+ *
+ * @internal
+ */
+export async function executeCoverageClassificationJob(
+  payload: ClassifyCoveragePayload,
+): Promise<JobOutcome> {
+  const ctx = await getCoverageContext(payload.caseDocumentId);
+  if (!ctx) {
+    logger.warn(
+      { caseDocumentId: payload.caseDocumentId },
+      "classify-document-coverage: document not found — skipping",
+    );
+    return "skipped";
+  }
+
+  if (ctx.doc.mimeType !== "application/pdf") return "skipped";
+  if (ctx.doc.status !== "uploaded" && ctx.doc.status !== "approved") {
+    return "skipped";
+  }
+  if (ctx.candidates.length === 0) return "skipped";
+  if (!ctx.rawText) {
+    logger.info(
+      { caseDocumentId: payload.caseDocumentId },
+      "classify-document-coverage: no completed primary extraction — skipping",
+    );
+    return "skipped";
+  }
+
+  const candidates = ctx.candidates.slice(0, COVERAGE_MAX_CANDIDATES);
+  if (ctx.candidates.length > candidates.length) {
+    logger.warn(
+      {
+        caseDocumentId: ctx.doc.id,
+        dropped: ctx.candidates.length - candidates.length,
+      },
+      "classify-document-coverage: candidate list truncated to COVERAGE_MAX_CANDIDATES",
+    );
+  }
+
+  const model = process.env.AI_GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL;
+  const clippedText = ctx.rawText.slice(0, COVERAGE_RAWTEXT_MAX_CHARS);
+
+  // ------------------------------------------------------------------
+  // 1) Classification — one text-only call over the primary raw_text
+  // ------------------------------------------------------------------
+  let verdicts: Record<string, CoverageVerdict>;
+  let classifyInputTokens = 0;
+  let classifyOutputTokens = 0;
+
+  if (isAiStubEnabled()) {
+    verdicts = Object.fromEntries(
+      candidates.map((c) => [
+        c.slug,
+        { present: true, confidence: 0.99, rationale: "AI_E2E_STUB" },
+      ]),
+    );
+  } else {
+    const geminiModels = getGeminiModels();
+    const candidateBlocks = candidates
+      .map((c, i) => {
+        const lines = [
+          `${i + 1}. slug: ${c.slug}`,
+          `   label: ${c.labelI18n?.es ?? ""} / ${c.labelI18n?.en ?? ""}`,
+        ];
+        const help = c.helpI18n?.es || c.helpI18n?.en;
+        if (help) lines.push(`   help: ${help}`);
+        const hints = c.hintsI18n?.es || c.hintsI18n?.en;
+        if (hints) lines.push(`   hints: ${hints}`);
+        return lines.join("\n");
+      })
+      .join("\n");
+
+    const classificationSchema = {
+      type: "object",
+      properties: Object.fromEntries(
+        candidates.map((c) => [
+          c.slug,
+          {
+            type: "object",
+            properties: {
+              present: { type: "boolean" },
+              confidence: { type: "number" },
+              page_range: { type: "string" },
+              rationale: { type: "string" },
+            },
+            required: ["present", "confidence"],
+          },
+        ]),
+      ),
+      required: candidates.map((c) => c.slug),
+    };
+
+    const classificationPrompt = [
+      "You are classifying the content of one uploaded legal document bundle from an immigration case.",
+      "For EACH candidate document type listed below, decide whether the bundle CLEARLY CONTAINS that document's actual content — a mere mention or reference does NOT count.",
+      "Be conservative: when in doubt, answer present=false. The bundle's own primary document is not a candidate.",
+      'For present candidates give confidence between 0 and 1 and, when the text contains "=== Pages N-M ===" markers, the page range where the content appears (e.g. "12-18").',
+      "",
+      "Candidate document types:",
+      candidateBlocks,
+      "",
+      "Document text:",
+      clippedText,
+    ].join("\n");
+
+    let parsed: Record<string, CoverageVerdict> | null = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const response = await geminiModels.generateContent({
+          model,
+          contents: [{ role: "user", parts: [{ text: classificationPrompt }] }],
+          config: {
+            temperature: 0,
+            maxOutputTokens: 4_096,
+            responseMimeType: "application/json",
+            responseSchema: classificationSchema,
+          },
+        });
+        const text = response.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+        classifyInputTokens += response.usageMetadata?.promptTokenCount ?? 0;
+        classifyOutputTokens += response.usageMetadata?.candidatesTokenCount ?? 0;
+        parsed = JSON.parse(text) as Record<string, CoverageVerdict>;
+        break;
+      } catch (err) {
+        logger.error(
+          { err, attempt, caseDocumentId: ctx.doc.id },
+          "classify-document-coverage: classification call failed",
+        );
+        if (attempt === 1) throw err; // let QStash retry the job
+        await sleepBackoff(attempt + 1);
+      }
+    }
+    verdicts = parsed ?? {};
+  }
+
+  // ------------------------------------------------------------------
+  // 2) Per detected type: extract with the COVERED type's own schema
+  // ------------------------------------------------------------------
+  const detectedIds: string[] = [];
+  let activeCoverages = 0;
+
+  for (const candidate of candidates) {
+    const verdict = verdicts[candidate.slug];
+    if (!verdict?.present) continue;
+    const confidence = Math.max(0, Math.min(1, verdict.confidence ?? 0));
+    if (confidence < COVERAGE_CONFIDENCE_THRESHOLD) continue;
+
+    // Sticky dismissal: skip the (costly) extraction when staff already said no.
+    if (ctx.existingByRdtId.get(candidate.id)?.status === "dismissed") {
+      detectedIds.push(candidate.id);
+      continue;
+    }
+
+    let extracted: Record<string, unknown> | null = null;
+    let inputTokens = 0;
+    let outputTokens = 0;
+
+    if (isAiStubEnabled()) {
+      extracted = buildStubCoveragePayload(candidate);
+    } else {
+      const geminiModels = getGeminiModels();
+      const { props, required } = normalizeExtractionSchema(
+        candidate.extractionSchema,
+      );
+      const extractionSchema = { type: "object", properties: props, required };
+      const label = candidate.labelI18n?.es ?? candidate.slug;
+      let missingFeedback = "";
+
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const response = await geminiModels.generateContent({
+            model,
+            contents: [
+              {
+                role: "user",
+                parts: [
+                  {
+                    text: `The document bundle text below contains a "${label}" document. Extract that document's information and return a JSON object matching the provided schema.${missingFeedback}\n\nDocument text:\n${clippedText}`,
+                  },
+                ],
+              },
+            ],
+            config: {
+              temperature: 0,
+              maxOutputTokens: EXTRACTION_MAX_OUTPUT_TOKENS,
+              responseMimeType: "application/json",
+              responseSchema: extractionSchema,
+            },
+          });
+          const text = response.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+          inputTokens += response.usageMetadata?.promptTokenCount ?? 0;
+          outputTokens += response.usageMetadata?.candidatesTokenCount ?? 0;
+
+          let parsed: Record<string, unknown>;
+          try {
+            parsed = JSON.parse(text) as Record<string, unknown>;
+          } catch {
+            missingFeedback =
+              "\n\nCORRECTION REQUIRED: the previous response was not valid JSON.";
+            continue;
+          }
+          const missing = required.filter((key) => !(key in parsed));
+          if (missing.length > 0) {
+            missingFeedback = `\n\nCORRECTION REQUIRED: the previous response was missing required fields: ${missing.join(", ")}.`;
+            continue;
+          }
+          extracted = parsed;
+          break;
+        } catch (err) {
+          logger.error(
+            { err, attempt, caseDocumentId: ctx.doc.id, covered: candidate.slug },
+            "classify-document-coverage: per-type extraction failed",
+          );
+          if (attempt === 0) await sleepBackoff(1);
+          // Both attempts failed → coverage still counts, payload stays null.
+        }
+      }
+    }
+
+    const costUsd = computeGeminiCost({ inputTokens, outputTokens });
+    const outcome = await upsertCoverageRow({
+      case_id: ctx.doc.caseId,
+      case_document_id: ctx.doc.id,
+      covered_required_document_type_id: candidate.id,
+      party_id: null, // D5: case-level only in v1
+      confidence,
+      page_range: verdict.page_range ?? null,
+      payload: (extracted ?? null) as import("@/shared/database.types").Json,
+      model,
+      input_tokens: inputTokens || null,
+      output_tokens: outputTokens || null,
+      cost_usd: costUsd || null,
+    });
+    detectedIds.push(candidate.id);
+    if (outcome !== "dismissed_kept") activeCoverages++;
+  }
+
+  // Re-run coherence: drop stale 'detected' rows no longer detected.
+  await deleteUndetectedCoverages(ctx.doc.id, detectedIds);
+
+  logger.info(
+    {
+      job: "classify-document-coverage",
+      caseDocumentId: ctx.doc.id,
+      candidates: candidates.length,
+      detected: detectedIds.length,
+      activeCoverages,
+      model,
+      classifyInputTokens,
+      classifyOutputTokens,
+    },
+    "classify-document-coverage: done",
+  );
+
+  if (activeCoverages > 0) {
+    await emitCoverageDetected({
+      caseId: ctx.doc.caseId,
+      caseDocumentId: ctx.doc.id,
+      coveredRequirementIds: detectedIds,
+    });
+  }
 
   return "completed";
 }

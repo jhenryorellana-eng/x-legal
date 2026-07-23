@@ -47,6 +47,7 @@ export function buildCatalogStrings(tt: Translator): Record<string, string> {
     "docAdd", "docNeedName", "docSave", "docCancelEdit", "docEdit", "docActions", "docPartiesColumn",
     "docFormat", "docFormatPdf", "docFormatPng",
     "docAllowMultiple", "docMultiple",
+    "docDetectable", "docDetectableHints", "docCombinable",
     "docActiveCol", "docSchema",
     "docSchemaModalTitle", "docSchemaModalNote", "docSchemaEditorLabel", "docSchemaFieldsLabel",
     "docSchemaPropose", "docSchemaProposing", "docSchemaProposeError", "docSchemaInvalidJson",

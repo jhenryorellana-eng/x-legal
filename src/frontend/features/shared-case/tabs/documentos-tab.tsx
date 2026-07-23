@@ -24,6 +24,7 @@ import { EmptyState } from "@/frontend/components/desktop/empty-state";
 import { toast } from "@/frontend/components/desktop/toast";
 import type { CaseWorkspaceVM, CaseDetailActions, DocMatrixVM, DocUploadVM } from "../types";
 import type { CasosStrings } from "../strings";
+import { interp } from "../strings";
 import { SectionLabel } from "../ui";
 import { DocumentPreviewModal } from "../document-preview-modal";
 import { DocumentTranslationModal } from "../document-translation-modal";
@@ -64,6 +65,8 @@ export function DocumentosTab({
   const [translateDoc, setTranslateDoc] = React.useState<{ id: string; label: string } | null>(null);
   const [renamingDoc, setRenamingDoc] = React.useState<{ documentId: string } | null>(null);
   const [renameValue, setRenameValue] = React.useState("");
+  const [dismissingCoverage, setDismissingCoverage] = React.useState<{ coverageId: string } | null>(null);
+  const [dismissReason, setDismissReason] = React.useState("");
 
   // The visibility toggle is wired only on surfaces that pass the action
   // (admin + sales case detail). Read-only views omit it → no button.
@@ -74,6 +77,8 @@ export function DocumentosTab({
   const canMarkTranslation = typeof actions.setDocumentTranslationNotRequired === "function";
   // Rename a document's semantic name — staff-only (fixes client-typed names).
   const canRename = typeof actions.renameDocument === "function";
+  // Overrule the AI's "this upload contains that document" — reviewer surfaces only.
+  const canDismissCoverage = typeof actions.dismissCoverage === "function";
 
   async function onApprove(documentId: string) {
     setBusyKey(documentId);
@@ -134,6 +139,23 @@ export function DocumentosTab({
     setBusyKey(null);
     if (res.ok) {
       toast.success(t.translationFlagDone);
+      router.refresh();
+    } else toast.error(strings.errorTitle);
+  }
+
+  async function onConfirmDismissCoverage() {
+    if (!dismissingCoverage || !actions.dismissCoverage) return;
+    setBusyKey(dismissingCoverage.coverageId);
+    const res = await actions.dismissCoverage({
+      caseId: vm.header.caseId,
+      coverageId: dismissingCoverage.coverageId,
+      reason: dismissReason.trim() || undefined,
+    });
+    setBusyKey(null);
+    if (res.ok) {
+      toast.success(t.coverageDismissDone);
+      setDismissingCoverage(null);
+      setDismissReason("");
       router.refresh();
     } else toast.error(strings.errorTitle);
   }
@@ -258,9 +280,33 @@ export function DocumentosTab({
                 <Chip tone="blue">{t.optional}</Chip>
               </span>
             )}
+            {item.uploads.length === 0 && item.coveredBy && (
+              <span style={{ marginLeft: 8 }}>
+                <Chip tone="gold" dot>
+                  {interp(t.coveredByChip, {
+                    source: item.coveredBy.sourceName,
+                    confidence: String(Math.round(item.coveredBy.confidence * 100)),
+                  })}
+                </Chip>
+              </span>
+            )}
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+          {item.uploads.length === 0 && item.coveredBy && canDismissCoverage && (
+            <GhostBtn
+              size="md"
+              full={false}
+              icon="x"
+              disabled={busyKey === item.coveredBy.coverageId}
+              onClick={() => {
+                setDismissReason("");
+                setDismissingCoverage({ coverageId: item.coveredBy!.coverageId });
+              }}
+            >
+              {t.coverageDismiss}
+            </GhostBtn>
+          )}
           <UploadButton
             item={item}
             caseId={vm.header.caseId}
@@ -319,11 +365,19 @@ export function DocumentosTab({
         )}
       </div>
 
-      {!item.isHidden && (
-        <StatusPill kind={item.status as StatusKind} variant="subtle">
-          {statusLabel(item.status, t)}
-        </StatusPill>
-      )}
+      {!item.isHidden &&
+        (item.status === "pendiente" && item.coveredBy ? (
+          <Chip tone="gold" dot>
+            {interp(t.coveredByChip, {
+              source: item.coveredBy.sourceName,
+              confidence: String(Math.round(item.coveredBy.confidence * 100)),
+            })}
+          </Chip>
+        ) : (
+          <StatusPill kind={item.status as StatusKind} variant="subtle">
+            {statusLabel(item.status, t)}
+          </StatusPill>
+        ))}
 
       <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
         {item.isHidden ? (
@@ -407,6 +461,20 @@ export function DocumentosTab({
                   {t.reject}
                 </GhostBtn>
               </>
+            )}
+            {item.status === "pendiente" && item.coveredBy && canDismissCoverage && (
+              <GhostBtn
+                size="md"
+                full={false}
+                icon="x"
+                disabled={busyKey === item.coveredBy.coverageId}
+                onClick={() => {
+                  setDismissReason("");
+                  setDismissingCoverage({ coverageId: item.coveredBy!.coverageId });
+                }}
+              >
+                {t.coverageDismiss}
+              </GhostBtn>
             )}
             {canToggle && !item.isRequired && (
               <GhostBtn
@@ -530,6 +598,31 @@ export function DocumentosTab({
             }}
           />
         </label>
+      </Modal>
+
+      <Modal
+        open={dismissingCoverage !== null}
+        onOpenChange={(o) => !o && setDismissingCoverage(null)}
+        title={t.coverageDismissTitle}
+        tone="var(--gold-deep)"
+        footer={
+          <>
+            <GhostBtn size="md" full={false} onClick={() => setDismissingCoverage(null)}>
+              {strings.cancel}
+            </GhostBtn>
+            <GradientBtn
+              size="md"
+              full={false}
+              disabled={busyKey !== null}
+              onClick={onConfirmDismissCoverage}
+            >
+              {t.coverageDismissConfirm}
+            </GradientBtn>
+          </>
+        }
+      >
+        <Field label={t.coverageDismissReason} value={dismissReason} onChange={setDismissReason} />
+        <p style={{ margin: "12px 0 0", fontSize: 12.5, color: "var(--ink-3)" }}>{t.coverageDismissNote}</p>
       </Modal>
 
       {previewDoc && (

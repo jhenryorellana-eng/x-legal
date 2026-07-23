@@ -50,6 +50,7 @@ import type { CaseWorkspaceVM, CaseTabId } from "@/frontend/features/shared-case
 import { mapStatusToPill, buildRutaVM, mapStatementInstallments, mapClientContact } from "../../../admin/casos/view-helpers";
 import {
   reviewDocumentAction,
+  dismissCoverageAction,
   setRequirementVisibilityAction,
   setFormVisibilityAction,
   registerPaymentAction,
@@ -132,6 +133,7 @@ export default async function VentasCasoDetailPage({
     isRequired: d.isRequired,
     isHidden: d.isHidden,
     status: d.status,
+    coveredBy: d.coveredBy,
     documentId: d.documentId,
     rejectionReason: d.rejectionReasonI18n ? resolveI18n(d.rejectionReasonI18n, locale) : null,
     translationNotRequired: d.translationNotRequired,
@@ -285,6 +287,7 @@ export default async function VentasCasoDetailPage({
       vm={vm}
       actions={{
         reviewDocument: reviewDocumentAction,
+        dismissCoverage: dismissCoverageAction,
         getFilledPdfUrl: getFormResponsePdfUrlAction,
         // RF-VAN-043 — "Marcar como Verificado" (completeness-gated approve).
         approveForm: approveFormResponseAction,

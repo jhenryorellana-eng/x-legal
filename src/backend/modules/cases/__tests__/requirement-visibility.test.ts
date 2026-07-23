@@ -36,6 +36,7 @@ const {
   mockGetPublishedAutomationVersion,
   mockFindDocumentById,
   mockUpdateDocument,
+  mockListActiveCoveragesForCase,
 } = vi.hoisted(() => ({
   mockCan: vi.fn(),
   mockRequireCaseAccess: vi.fn().mockResolvedValue(undefined),
@@ -57,6 +58,7 @@ const {
   mockGetPublishedAutomationVersion: vi.fn().mockResolvedValue(null),
   mockFindDocumentById: vi.fn().mockResolvedValue(null),
   mockUpdateDocument: vi.fn().mockResolvedValue(undefined),
+  mockListActiveCoveragesForCase: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("@/backend/platform/authz", () => ({
@@ -126,6 +128,8 @@ vi.mock("../repository", async (importOriginal) => {
     findFormResponse: mockFindFormResponse,
     findDocumentById: mockFindDocumentById,
     updateDocument: mockUpdateDocument,
+    listActiveCoveragesForCase: mockListActiveCoveragesForCase,
+    findActiveCoveragePayloadBySlug: vi.fn().mockResolvedValue(null),
   };
 });
 
@@ -211,6 +215,9 @@ beforeEach(() => {
   mockGetRequirementOverrides.mockResolvedValue([]);
   mockFindRequirementOverride.mockResolvedValue(null);
   mockListCaseDocuments.mockResolvedValue([]);
+  // clearAllMocks does NOT reset implementations — without this, a test that
+  // stubs a coverage would leak it into every later test and open the gate.
+  mockListActiveCoveragesForCase.mockResolvedValue([]);
   mockListServicePhases.mockResolvedValue([
     { id: PHASE_ID, service_id: ACTIVE_CASE.service_id, slug: "fase-1", label_i18n: { es: "Fase 1", en: "Phase 1" }, position: 0 },
   ]);
@@ -403,8 +410,9 @@ describe("getDocumentsMatrix party name + hidden", () => {
     expect(client.items).toHaveLength(0);
   });
 
-  it("counts BOTH required and optional requirements toward the total", async () => {
-    // 1 required + 2 optional, none hidden → total must be 3 (not 1).
+  it("counts ONLY required requirements toward the total; optionals report separately (RF-ADM-027)", async () => {
+    // 1 required + 2 optional, none hidden → total=1 (gate math), optionalTotal=2.
+    // The optionals stay visible in items but never block forms.
     mockGetCaseRequirements.mockResolvedValue({
       documents: [
         expandedDoc({ key: "req:case", required_document_type_id: "req-doc", party_id: null, is_required: true }),
@@ -415,12 +423,14 @@ describe("getDocumentsMatrix party name + hidden", () => {
 
     const res = await getDocumentsMatrix(actor("admin"), CASE_ID, { includeHidden: true });
     expect(res.items).toHaveLength(3);
-    expect(res.total).toBe(3); // was 1 (required-only) before the fix
+    expect(res.total).toBe(1);
     expect(res.done).toBe(0);
+    expect(res.optionalTotal).toBe(2);
+    expect(res.optionalDone).toBe(0);
   });
 
-  it("excludes optional requirements the staff hid for this case from the total", async () => {
-    // 1 required + 1 optional-hidden → total counts only the non-hidden (1).
+  it("excludes optional requirements the staff hid for this case from every counter", async () => {
+    // 1 required + 1 optional-hidden → total=1, optionalTotal=0 (hidden drops out).
     mockGetCaseRequirements.mockResolvedValue({
       documents: [
         expandedDoc({ key: "req:case", required_document_type_id: "req-doc", party_id: null, is_required: true }),
@@ -430,6 +440,7 @@ describe("getDocumentsMatrix party name + hidden", () => {
 
     const res = await getDocumentsMatrix(actor("admin"), CASE_ID, { includeHidden: true });
     expect(res.total).toBe(1);
+    expect(res.optionalTotal).toBe(0);
   });
 });
 
@@ -456,17 +467,36 @@ function uploadedDoc(over: Record<string, unknown> = {}) {
 }
 
 describe("getDocumentsGateStatus", () => {
-  it("is INCOMPLETE when a visible document is not uploaded", async () => {
-    mockGetCaseRequirements.mockResolvedValue({ documents: [expandedDoc()] });
+  // The gate counts REQUIRED visible documents only (RF-ADM-027); the suite's
+  // default expandedDoc() is optional, so gate scenarios pin is_required=true.
+  beforeEach(() => {
+    mockGetCaseRequirements.mockResolvedValue({
+      documents: [expandedDoc({ is_required: true })],
+    });
+  });
+
+  it("is INCOMPLETE when a required visible document is not uploaded", async () => {
     mockListCaseDocuments.mockResolvedValue([]); // nothing uploaded → pendiente
 
     const gate = await getDocumentsGateStatus(CLIENT_ACTOR, CASE_ID);
     expect(gate).toMatchObject({ complete: false, done: 0, total: 1 });
   });
 
-  it("is COMPLETE once every visible document is uploaded (uploaded counts, not only approved)", async () => {
-    mockGetCaseRequirements.mockResolvedValue({ documents: [expandedDoc()] });
+  it("is COMPLETE once every required document is uploaded (uploaded counts, not only approved)", async () => {
     // 'uploaded' (pending staff review) already satisfies the client-facing gate.
+    mockListCaseDocuments.mockResolvedValue([uploadedDoc({ status: "uploaded" })]);
+
+    const gate = await getDocumentsGateStatus(CLIENT_ACTOR, CASE_ID);
+    expect(gate).toMatchObject({ complete: true, done: 1, total: 1 });
+  });
+
+  it("an OPTIONAL pending document does NOT block the gate (RF-ADM-027)", async () => {
+    mockGetCaseRequirements.mockResolvedValue({
+      documents: [
+        expandedDoc({ is_required: true }),
+        expandedDoc({ key: "opt:case", required_document_type_id: "opt-doc", party_id: null, is_required: false }),
+      ],
+    });
     mockListCaseDocuments.mockResolvedValue([uploadedDoc({ status: "uploaded" })]);
 
     const gate = await getDocumentsGateStatus(CLIENT_ACTOR, CASE_ID);
@@ -492,11 +522,27 @@ describe("getDocumentsGateStatus", () => {
   });
 
   it("a rejected document still counts as pending → gate stays incomplete", async () => {
-    mockGetCaseRequirements.mockResolvedValue({ documents: [expandedDoc()] });
     mockListCaseDocuments.mockResolvedValue([uploadedDoc({ status: "rejected" })]);
 
     const gate = await getDocumentsGateStatus(CLIENT_ACTOR, CASE_ID);
     expect(gate.complete).toBe(false);
+  });
+
+  it("an AI coverage counts a required pending document as done → gate opens", async () => {
+    mockListCaseDocuments.mockResolvedValue([]);
+    mockListActiveCoveragesForCase.mockResolvedValue([
+      {
+        id: "cov-1",
+        case_document_id: "src-doc-1",
+        covered_required_document_type_id: DOC_ID,
+        party_id: PARTY_ANNA,
+        confidence: 0.9,
+        source_display_name: "Formulario I-589",
+      },
+    ]);
+
+    const gate = await getDocumentsGateStatus(CLIENT_ACTOR, CASE_ID);
+    expect(gate).toMatchObject({ complete: true, done: 1, total: 1 });
   });
 });
 
@@ -508,6 +554,14 @@ describe("getDocumentsGateStatus", () => {
 // ---------------------------------------------------------------------------
 
 describe("documents gate enforcement (getFormForClient / saveFormDraft)", () => {
+  // The gate only counts REQUIRED documents now — pin the default requirement
+  // as required so "docs incomplete" still holds in these scenarios.
+  beforeEach(() => {
+    mockGetCaseRequirements.mockResolvedValue({
+      documents: [expandedDoc({ is_required: true })],
+    });
+  });
+
   it("READ: throws FORMS_LOCKED for a not-yet-started gated form while docs incomplete", async () => {
     await expect(
       getFormForClient(CLIENT_ACTOR, { caseId: CASE_ID, formDefinitionId: FORM_ID, partyId: null }),

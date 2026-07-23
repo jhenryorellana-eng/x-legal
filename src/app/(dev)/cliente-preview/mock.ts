@@ -206,16 +206,22 @@ const docItems: DocItem[] = ([
     rejectionReason: null,
     query: "req=7",
   },
-] as Omit<DocItem, "allowMultiple" | "uploads">[]).map((d) => ({
+] as Omit<DocItem, "allowMultiple" | "uploads" | "optional" | "coveredByName">[]).map((d) => ({
   ...d,
   allowMultiple: false,
+  // Showcase the coverage states: item 6 is optional AND covered by the
+  // combined upload; item 7 is a plain optional (badge only).
+  optional: d.key === "6" || d.key === "7",
+  coveredByName: d.key === "6" ? "Orden de custodia" : null,
   uploads: [],
 }));
 
 export const documentosMock = {
   items: docItems,
   done: 3,
-  total: 7,
+  total: 5,
+  optionalDone: 1,
+  optionalTotal: 2,
   progress: 43,
   phaseName: "Custodia",
   caseId: "demo",
@@ -233,6 +239,10 @@ export const documentosMock = {
     remove: "Eliminar",
     confirm: "Confirmar",
     cancel: "Cancelar",
+    optionalBadge: "Opcional",
+    coveredBy: "Cubierto por tu {source} ✨",
+    uploadSeparately: "Subir por separado",
+    optionalProgress: "y {done} de {total} opcionales",
   },
 };
 

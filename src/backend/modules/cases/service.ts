@@ -98,6 +98,10 @@ import {
   listCases,
   listCaseDocuments,
   getRequirementOverrides,
+  listActiveCoveragesForCase,
+  findCoverageById,
+  updateCoverageStatus,
+  findActiveCoveragePayloadBySlug,
   findRequirementOverride,
   insertRequirementOverride,
   updateRequirementOverride,
@@ -213,6 +217,8 @@ export class CaseError extends Error {
       | "DOC_ALREADY_APPROVED"
       | "DOC_LOCKED"
       | "DOC_REVIEWED"
+      | "COVERAGE_NOT_FOUND"
+      | "COVERAGE_INVALID_STATE"
       | "FORM_NOT_FOUND"
       | "FORM_NOT_OPTIONAL"
       | "FORM_VERSION_NOT_PUBLISHED"
@@ -2154,6 +2160,141 @@ export async function setRequirementVisibility(
 }
 
 // ---------------------------------------------------------------------------
+// Document coverage dismiss/restore — staff overrules the AI's "this upload
+// contains type X" detection. The dismissal is STICKY (re-classification never
+// resurrects it — ai-engine upserts skip dismissed rows); restoring re-counts
+// the coverage immediately. The gate/matrix recompute by derivation.
+// ---------------------------------------------------------------------------
+
+/** Same reviewer policy as reviewDocument: legal team (admin + paralegal) and
+ *  sales overrule AI coverage; finance is excluded. */
+function assertCoverageReviewer(actor: Actor): void {
+  can(actor, "cases", "edit");
+  if (actor.role !== "admin" && actor.role !== "paralegal" && actor.role !== "sales") {
+    throw new AuthzError("forbidden_module");
+  }
+}
+
+/**
+ * Dismisses an AI coverage: the covered requirement goes back to "pendiente"
+ * and the client is told to upload the document separately.
+ *
+ * @api-id API-CASE-31 (coverage dismiss)
+ */
+export async function dismissDocumentCoverage(
+  actor: Actor,
+  input: { caseId: string; coverageId: string; reason?: string },
+): Promise<void> {
+  assertCoverageReviewer(actor);
+  await requireCaseAccess(actor, input.caseId);
+
+  const coverage = await findCoverageById(input.coverageId);
+  if (!coverage || coverage.case_id !== input.caseId) {
+    throw new CaseError("COVERAGE_NOT_FOUND");
+  }
+  if (coverage.status !== "detected") {
+    throw new CaseError("COVERAGE_INVALID_STATE");
+  }
+
+  await updateCoverageStatus(coverage.id, {
+    status: "dismissed",
+    dismissed_by: actor.userId,
+    dismissed_at: new Date().toISOString(),
+    dismiss_reason: input.reason?.trim() || null,
+  });
+
+  await writeAudit(
+    actor,
+    "case.document_coverage.dismissed",
+    "case_document_coverages",
+    coverage.id,
+    {
+      after: {
+        coveredRequirementId: coverage.covered_required_document_type_id,
+        sourceDocumentId: coverage.case_document_id,
+        reason: input.reason ?? null,
+      },
+    },
+  );
+
+  await writeTimeline({
+    caseId: input.caseId,
+    eventType: "document.coverage_dismissed",
+    actorKind: "team",
+    actorUserId: actor.userId,
+    visibleToClient: true,
+    titleI18n: {
+      en: "Coverage dismissed — please upload the document separately",
+      es: "Cobertura descartada — sube el documento por separado",
+    },
+  });
+}
+
+/**
+ * Restores a dismissed coverage (staff changed their mind): it counts again
+ * for the gate/progress immediately.
+ *
+ * @api-id API-CASE-32 (coverage restore)
+ */
+export async function restoreDocumentCoverage(
+  actor: Actor,
+  input: { caseId: string; coverageId: string },
+): Promise<void> {
+  assertCoverageReviewer(actor);
+  await requireCaseAccess(actor, input.caseId);
+
+  const coverage = await findCoverageById(input.coverageId);
+  if (!coverage || coverage.case_id !== input.caseId) {
+    throw new CaseError("COVERAGE_NOT_FOUND");
+  }
+  if (coverage.status !== "dismissed") {
+    throw new CaseError("COVERAGE_INVALID_STATE");
+  }
+
+  await updateCoverageStatus(coverage.id, {
+    status: "detected",
+    dismissed_by: null,
+    dismissed_at: null,
+    dismiss_reason: null,
+  });
+
+  await writeAudit(
+    actor,
+    "case.document_coverage.restored",
+    "case_document_coverages",
+    coverage.id,
+    {
+      after: {
+        coveredRequirementId: coverage.covered_required_document_type_id,
+        sourceDocumentId: coverage.case_document_id,
+      },
+    },
+  );
+}
+
+/**
+ * Event consumer (register-consumers, document.coverage_detected): one timeline
+ * entry — visible to the client — when the AI detects that an upload contains
+ * other requested documents. System actor (no staff involved).
+ */
+export async function onDocumentCoverageDetected(payload: {
+  caseId: string;
+  caseDocumentId: string;
+  coveredRequirementIds: string[];
+}): Promise<void> {
+  await writeTimeline({
+    caseId: payload.caseId,
+    eventType: "document.coverage_detected",
+    actorKind: "system",
+    visibleToClient: true,
+    titleI18n: {
+      en: "We detected documents included in your upload — they now count as delivered",
+      es: "Detectamos documentos incluidos en tu archivo — ya cuentan como entregados",
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // setFormVisibility — staff hides/shows an OPTIONAL form per case. Mirrors
 // setRequirementVisibility (documents) for form_definitions. Ola apelación
 // (EOIR-26A Fee Waiver). Backed by case_form_overrides.is_hidden.
@@ -3237,9 +3378,13 @@ async function resolveClientContact(
 }
 
 interface DocsCount {
+  /** REQUIRED visible requirements only — the gate/progress math (RF-ADM-027). */
   total: number;
   done: number;
   pending: number;
+  /** Optional visible requirements, reported separately for the UI ("y N opcionales"). */
+  optionalTotal: number;
+  optionalDone: number;
 }
 
 /** Maps a stored case document row to the per-file view-model used by the
@@ -3272,12 +3417,16 @@ async function buildDocumentsMatrix(
   opts: { includeHidden?: boolean } = {},
 ): Promise<{ items: DocumentMatrixItem[]; counts: DocsCount }> {
   if (!caseRow.current_phase_id) {
-    return { items: [], counts: { total: 0, done: 0, pending: 0 } };
+    return {
+      items: [],
+      counts: { total: 0, done: 0, pending: 0, optionalTotal: 0, optionalDone: 0 },
+    };
   }
 
   const overrides = await getRequirementOverrides(caseRow.id);
   const parties = await getCaseParties(caseRow.id);
   const documents = await listCaseDocuments(caseRow.id);
+  const coverages = await listActiveCoveragesForCase(caseRow.id);
 
   // Resolve the catalog requirements (per-party expansion + overrides) via the
   // catalog module's runtime resolver (no cross-table read inside catalog).
@@ -3337,6 +3486,26 @@ async function buildDocumentsMatrix(
       const uploads: UploadedDocVM[] = slotDocs.map(toUploadVM);
       const head = slotDocs[0];
 
+      // Combined-upload coverage: an own upload always supersedes (derivation,
+      // never persisted). v1 coverages are case-level (party_id null).
+      const cov =
+        slotDocs.length === 0
+          ? coverages.find(
+              (c) =>
+                c.covered_required_document_type_id ===
+                  r.required_document_type_id &&
+                (c.party_id ?? null) === (r.party_id ?? null),
+            )
+          : undefined;
+      const coveredBy = cov
+        ? {
+            coverageId: cov.id,
+            sourceDocumentId: cov.case_document_id,
+            sourceName: cov.source_display_name,
+            confidence: cov.confidence,
+          }
+        : null;
+
       // Slot status. Single slot: mirrors the head document. Multiple slot is a
       // container — pendiente if empty, aprobado when every file is approved,
       // otherwise revision (per-file states live in `uploads`).
@@ -3374,6 +3543,7 @@ async function buildDocumentsMatrix(
         allowMultiple,
         position: r.position,
         status,
+        coveredBy,
         documentId: head?.id ?? null,
         uploads,
         rejectionReasonI18n: head ? asI18n(head.rejection_reason_i18n) : null,
@@ -3383,22 +3553,30 @@ async function buildDocumentsMatrix(
     },
   );
 
-  // Count BOTH required and optional requirements (DOC-41: the client sees every
-  // requested document). The only way a document stops counting is when staff
-  // hides (disables) it for this specific case — case_requirement_overrides.is_hidden,
-  // which only applies to optional ones. Hidden items are flagged for staff and
-  // dropped entirely for the client, so filtering them here is correct for both.
-  const counted = items.filter((i) => !i.isHidden);
-  const done = counted.filter(
-    (i) => i.status === "aprobado" || i.status === "revision",
-  ).length;
-  const pending = counted.filter(
-    (i) => i.status === "pendiente" || i.status === "corregir",
-  ).length;
+  // Gate/progress math counts ONLY required visible requirements (RF-ADM-027:
+  // "el progreso documental se calcula contra los requirements obligatorios
+  // activos"). Optional ones are shown to the client marked "Opcional"
+  // (RF-CLI-022) and reported in separate counters — they never block forms.
+  // A requirement is done when its own upload is in review/approved (RF-CLI-023)
+  // OR when an AI coverage marks it as contained in another upload (coveredBy).
+  // Hidden items are flagged for staff and dropped entirely for the client, so
+  // filtering them here is correct for both.
+  const visible = items.filter((i) => !i.isHidden);
+  const required = visible.filter((i) => i.isRequired);
+  const optional = visible.filter((i) => !i.isRequired);
+  const isDone = (i: DocumentMatrixItem) =>
+    i.status === "aprobado" || i.status === "revision" || i.coveredBy != null;
+  const done = required.filter(isDone).length;
 
   return {
     items,
-    counts: { total: counted.length, done, pending },
+    counts: {
+      total: required.length,
+      done,
+      pending: required.length - done,
+      optionalTotal: optional.length,
+      optionalDone: optional.filter(isDone).length,
+    },
   };
 }
 
@@ -3435,6 +3613,14 @@ export interface DocumentMatrixItem {
   allowMultiple: boolean;
   position: number;
   status: "pendiente" | "revision" | "aprobado" | "corregir";
+  /** AI coverage: this (pending, no own upload) requirement's content was
+   *  detected inside ANOTHER upload. Counts as done; staff can dismiss. */
+  coveredBy: {
+    coverageId: string;
+    sourceDocumentId: string;
+    sourceName: string;
+    confidence: number;
+  } | null;
   /** Head/latest document id (single slot), or latest of the list (multiple). */
   documentId: string | null;
   /** All current (non-replaced) files for this slot. 0/1 for single, N for multiple. */
@@ -3630,8 +3816,12 @@ export async function getCaseWorkspace(
 export interface DocumentsMatrixDto {
   phaseLabelI18n: I18nValue | null;
   items: DocumentMatrixItem[];
+  /** Required visible requirements only (the gate/progress math, RF-ADM-027). */
   total: number;
   done: number;
+  /** Optional visible requirements — shown separately, never block anything. */
+  optionalTotal: number;
+  optionalDone: number;
   progress: number;
 }
 
@@ -3674,19 +3864,22 @@ export async function getDocumentsMatrix(
     items: items.sort((a, b) => a.position - b.position),
     total: counts.total,
     done: counts.done,
+    optionalTotal: counts.optionalTotal,
+    optionalDone: counts.optionalDone,
     progress,
   };
 }
 
 // ---------------------------------------------------------------------------
-// Documents gate (Ola 2) — "100% of visible documents → forms unlock"
+// Documents gate (Ola 2) — "100% of REQUIRED visible documents → forms unlock"
+// (RF-ADM-027: optional requirements never block; an AI coverage counts as done)
 // ---------------------------------------------------------------------------
 
-/** Whether the case's visible documents are 100% uploaded (the forms gate). */
+/** Whether the case's required visible documents are 100% uploaded (the forms gate). */
 export interface DocumentsGateStatus {
-  /** True when every visible document is uploaded (or there are none to upload). */
+  /** True when every REQUIRED visible document is uploaded/covered (or there are none). */
   complete: boolean;
-  /** Visible documents already uploaded (counts 'revision' + 'aprobado'). */
+  /** Required visible documents already uploaded (counts 'revision' + 'aprobado' + covered). */
   done: number;
   /** Visible documents requested (excludes staff-hidden ones). */
   total: number;
@@ -4036,6 +4229,9 @@ export interface FormResolveCache {
    *  and extraction row N times (2N queries per open). */
   docBySlug?: Map<string, Promise<Awaited<ReturnType<typeof findLatestActiveDocumentBySlug>>>>;
   extractionByDocId?: Map<string, Promise<Awaited<ReturnType<typeof findDocumentExtractionByCaseDocId>>>>;
+  /** Memoized combined-upload coverage payload per slug (fallback when the slug
+   *  has no own upload). Case-level only — keyed by slug alone. */
+  coverageBySlug?: Map<string, Promise<Record<string, unknown> | null>>;
   /** Org IANA timezone for `current_date` questions (one lookup per form load). */
   orgTimezone?: Promise<string>;
   /** Memoized `answers`+version of another form of the case, keyed by `${slug}|${partyId}`.
@@ -4216,17 +4412,42 @@ export async function resolveBySource(
       return p;
     };
 
+    // Combined-upload fallback: a slug with NO own upload may still have a
+    // coverage payload (extracted with this slug's own schema from another
+    // document). An own upload always supersedes — even with an incomplete
+    // extraction, we never mix sources. Case-level only (v1).
+    const loadCoverage = (): Promise<Record<string, unknown> | null> => {
+      if (partyId) return Promise.resolve(null);
+      if (!cache) return findActiveCoveragePayloadBySlug(caseId, documentSlug);
+      cache.coverageBySlug ??= new Map();
+      let p = cache.coverageBySlug.get(documentSlug);
+      if (!p) {
+        p = findActiveCoveragePayloadBySlug(caseId, documentSlug).catch((e) => {
+          cache.coverageBySlug?.delete(documentSlug);
+          throw e;
+        });
+        cache.coverageBySlug.set(documentSlug, p);
+      }
+      return p;
+    };
+
     const approvedDoc = await loadDoc();
-    if (!approvedDoc) return applyMap(null);
+    let payload: unknown = null;
+    if (approvedDoc) {
+      const extraction = await loadExtraction(approvedDoc.id);
+      if (extraction && extraction.status === "completed") {
+        payload = extraction.payload;
+      }
+    } else {
+      payload = await loadCoverage();
+    }
+    if (payload == null) return applyMap(null);
 
-    const extraction = await loadExtraction(approvedDoc.id);
-    if (!extraction || extraction.status !== "completed") return applyMap(null);
-
-    if (!jsonPath) return extraction.payload;
+    if (!jsonPath) return payload;
 
     // Navigate JSON path (dot-notation, no array support needed for V2)
     const parts = jsonPath.split(".");
-    let current: unknown = extraction.payload;
+    let current: unknown = payload;
     for (const part of parts) {
       if (current == null || typeof current !== "object") return applyMap(null);
       current = (current as Record<string, unknown>)[part];

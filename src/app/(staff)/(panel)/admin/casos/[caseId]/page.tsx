@@ -57,6 +57,7 @@ import { buildCasosStrings } from "@/frontend/features/shared-case";
 import { mapStatusToPill, buildRutaVM, buildPreMortemTargets, mapPreMortemReports, mapPreMortemInFlight, mapStatementInstallments, mapClientContact } from "../view-helpers";
 import {
   reviewDocumentAction,
+  dismissCoverageAction,
   setRequirementVisibilityAction,
   setFormVisibilityAction,
   advanceCasePhaseAction,
@@ -156,6 +157,7 @@ export default async function AdminCasoDetailPage({
     isRequired: d.isRequired,
     isHidden: d.isHidden,
     status: d.status,
+    coveredBy: d.coveredBy,
     documentId: d.documentId,
     rejectionReason: d.rejectionReasonI18n ? resolveI18n(d.rejectionReasonI18n, locale) : null,
     translationNotRequired: d.translationNotRequired,
@@ -348,6 +350,7 @@ export default async function AdminCasoDetailPage({
         addNote: addCaseNoteAction,
         deleteNote: deleteNoteAction,
         reviewDocument: reviewDocumentAction,
+        dismissCoverage: dismissCoverageAction,
         getFilledPdfUrl: getFormResponsePdfUrlAction,
         generateFilledPdf: generateFilledPdfAction,
         approveForm: approveFormResponseAction,

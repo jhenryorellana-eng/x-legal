@@ -60,6 +60,7 @@ import {
 import { mapStatusToPill, buildRutaVM, buildPreMortemTargets, mapPreMortemReports, mapPreMortemInFlight, mapStatementInstallments, mapClientContact } from "../../../admin/casos/view-helpers";
 import {
   reviewDocumentAction,
+  dismissCoverageAction,
   registerPaymentAction,
   resendSigningLinkAction,
   sendContractAction,
@@ -144,6 +145,7 @@ export default async function LegalCasoDetailPage({
     isRequired: d.isRequired,
     isHidden: d.isHidden,
     status: d.status,
+    coveredBy: d.coveredBy,
     documentId: d.documentId,
     rejectionReason: d.rejectionReasonI18n ? resolveI18n(d.rejectionReasonI18n, locale) : null,
     translationNotRequired: d.translationNotRequired,
@@ -322,6 +324,7 @@ export default async function LegalCasoDetailPage({
         addNote: addCaseNoteAction,
         deleteNote: deleteNoteAction,
         reviewDocument: reviewDocumentAction,
+        dismissCoverage: dismissCoverageAction,
         getFilledPdfUrl: getFormResponsePdfUrlAction,
         generateFilledPdf: generateFilledPdfAction,
         approveForm: approveFormResponseAction,

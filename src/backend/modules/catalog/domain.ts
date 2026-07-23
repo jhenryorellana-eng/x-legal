@@ -433,6 +433,10 @@ export const RequiredDocumentTypeSchema = z.object({
   extraction_schema: z.record(z.string(), z.unknown()).nullable(),
   accepted_format: z.enum(["pdf", "png"]).default("pdf"),
   allow_multiple: z.boolean().default(false),
+  // Coverage: the AI may detect this type INSIDE another upload of the same
+  // phase (combined PDF). Requires ai_extract + extraction_schema + pdf format.
+  detectable_in_combined: z.boolean().default(false),
+  detection_hints_i18n: I18nTextDraftSchema.nullable(),
   position: z.number().int().default(0),
   is_active: z.boolean().default(true),
 });
@@ -451,6 +455,8 @@ export const CreateRequiredDocDtoSchema = z.object({
   extraction_schema: z.record(z.string(), z.unknown()).nullable().optional(),
   accepted_format: z.enum(["pdf", "png"]).default("pdf"),
   allow_multiple: z.boolean().default(false),
+  detectable_in_combined: z.boolean().default(false),
+  detection_hints_i18n: I18nTextDraftSchema.nullable().optional(),
   position: z.number().int().default(0),
 });
 export type CreateRequiredDocDto = z.infer<typeof CreateRequiredDocDtoSchema>;

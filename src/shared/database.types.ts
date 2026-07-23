@@ -961,6 +961,105 @@ export type Database = {
           },
         ]
       }
+      case_document_coverages: {
+        Row: {
+          case_document_id: string
+          case_id: string
+          confidence: number
+          cost_usd: number | null
+          covered_required_document_type_id: string
+          created_at: string
+          dismiss_reason: string | null
+          dismissed_at: string | null
+          dismissed_by: string | null
+          id: string
+          input_tokens: number | null
+          model: string | null
+          output_tokens: number | null
+          page_range: string | null
+          party_id: string | null
+          payload: Json | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          case_document_id: string
+          case_id: string
+          confidence: number
+          cost_usd?: number | null
+          covered_required_document_type_id: string
+          created_at?: string
+          dismiss_reason?: string | null
+          dismissed_at?: string | null
+          dismissed_by?: string | null
+          id?: string
+          input_tokens?: number | null
+          model?: string | null
+          output_tokens?: number | null
+          page_range?: string | null
+          party_id?: string | null
+          payload?: Json | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          case_document_id?: string
+          case_id?: string
+          confidence?: number
+          cost_usd?: number | null
+          covered_required_document_type_id?: string
+          created_at?: string
+          dismiss_reason?: string | null
+          dismissed_at?: string | null
+          dismissed_by?: string | null
+          id?: string
+          input_tokens?: number | null
+          model?: string | null
+          output_tokens?: number | null
+          page_range?: string | null
+          party_id?: string | null
+          payload?: Json | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_document_coverages_case_document_id_fkey"
+            columns: ["case_document_id"]
+            isOneToOne: false
+            referencedRelation: "case_documents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_document_coverages_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_document_coverages_covered_required_document_type_id_fkey"
+            columns: ["covered_required_document_type_id"]
+            isOneToOne: false
+            referencedRelation: "required_document_types"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_document_coverages_dismissed_by_fkey"
+            columns: ["dismissed_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_document_coverages_party_id_fkey"
+            columns: ["party_id"]
+            isOneToOne: false
+            referencedRelation: "case_parties"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       case_documents: {
         Row: {
           case_id: string
@@ -4972,6 +5071,8 @@ export type Database = {
           allow_multiple: boolean
           category_i18n: Json | null
           created_at: string
+          detectable_in_combined: boolean
+          detection_hints_i18n: Json | null
           extraction_schema: Json | null
           help_i18n: Json | null
           id: string
@@ -4994,6 +5095,8 @@ export type Database = {
           allow_multiple?: boolean
           category_i18n?: Json | null
           created_at?: string
+          detectable_in_combined?: boolean
+          detection_hints_i18n?: Json | null
           extraction_schema?: Json | null
           help_i18n?: Json | null
           id?: string
@@ -5016,6 +5119,8 @@ export type Database = {
           allow_multiple?: boolean
           category_i18n?: Json | null
           created_at?: string
+          detectable_in_combined?: boolean
+          detection_hints_i18n?: Json | null
           extraction_schema?: Json | null
           help_i18n?: Json | null
           id?: string

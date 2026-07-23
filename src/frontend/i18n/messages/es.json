@@ -291,6 +291,10 @@
       "confirm": "Confirmar",
       "cancel": "Cancelar",
       "uncategorized": "Documentos",
+      "optionalBadge": "Opcional",
+      "coveredBy": "Cubierto por tu {source} ✨",
+      "uploadSeparately": "Subir por separado",
+      "optionalProgress": "y {done} de {total} opcionales",
       "emptyTitle": "Aún no hay documentos por subir",
       "emptyBody": "Tu equipo está preparando tu caso. Te avisaremos en cuanto haya algo para ti."
     },
@@ -1325,6 +1329,9 @@
         "docFormatPng": "PNG",
         "docAllowMultiple": "Permitir múltiples archivos",
         "docMultiple": "Múltiple",
+        "docDetectable": "Puede venir combinado",
+        "docDetectableHints": "Pistas de detección (cómo reconoce la IA este documento dentro de otro PDF)",
+        "docCombinable": "Combinable",
         "docNeedName": "Escribe el nombre del documento (ES).",
         "formsNeedPhaseTitle": "Primero crea una fase",
         "formsNeedPhaseSub": "Guarda el servicio y agrega al menos una fase para poder crear formularios en ella.",
@@ -2124,7 +2131,14 @@
         "hiddenFromClient": "Oculto para el cliente",
         "hideRequiredBlocked": "Solo puedes ocultar documentos opcionales.",
         "hideDone": "Documento oculto para el cliente",
-        "showDone": "Documento visible para el cliente"
+        "showDone": "Documento visible para el cliente",
+        "coveredByChip": "Cubierto por «{source}» ✨ · {confidence}%",
+        "coverageDismiss": "Descartar",
+        "coverageDismissTitle": "Descartar cobertura",
+        "coverageDismissNote": "El requisito volverá a Pendiente y el cliente verá que debe subir el documento por separado. La IA no volverá a marcarlo automáticamente.",
+        "coverageDismissReason": "Motivo (opcional)",
+        "coverageDismissConfirm": "Descartar cobertura",
+        "coverageDismissDone": "Cobertura descartada"
       }
     },
     "ventas": {

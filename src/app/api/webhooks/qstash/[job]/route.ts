@@ -42,6 +42,7 @@ import { handleRerenderRun } from "@/backend/jobs/rerender-run";
 import { handleRegenerateFormPdf } from "@/backend/jobs/regenerate-form-pdf";
 import { handleCompileExpediente } from "@/backend/jobs/compile-expediente";
 import { handleExtractDocument } from "@/backend/jobs/extract-document";
+import { handleClassifyDocumentCoverage } from "@/backend/jobs/classify-document-coverage";
 import { handleTranslateDocument } from "@/backend/jobs/translate-document";
 import { handleAiBudgetAggregation } from "@/backend/jobs/ai-budget-aggregation";
 import { handleJobFailed } from "@/backend/jobs/job-failed";
@@ -83,6 +84,8 @@ const JOB_REGISTRY: Record<string, JobHandler> = {
   "regenerate-form-pdf": handleRegenerateFormPdf,
   "compile-expediente": handleCompileExpediente,
   "extract-document": handleExtractDocument,
+  // Combined-upload coverage: classify raw_text vs the phase's detectable types
+  "classify-document-coverage": handleClassifyDocumentCoverage,
   "translate-document": handleTranslateDocument,
   "generate-questionnaire": handleGenerateQuestionnaire,
   "run-premortem": handleRunPremortem,

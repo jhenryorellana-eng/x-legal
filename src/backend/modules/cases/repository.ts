@@ -804,8 +804,120 @@ export async function findExtractionPayloadBySlug(
   const raw = (data as { document_extractions?: unknown } | null)?.document_extractions;
   const ext = Array.isArray(raw) ? raw[0] : raw;
   const row = ext as { status?: string; payload?: unknown } | undefined;
-  if (!row || row.status !== "completed") return null;
+  if (!row || row.status !== "completed") {
+    // Combined-upload fallback: the slug may be COVERED by another document's
+    // classification (payload extracted with this slug's own schema).
+    return findActiveCoveragePayloadBySlug(caseId, requirementSlug);
+  }
   return (row.payload ?? {}) as Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------
+// Document coverage (combined uploads) — read side + staff dismiss write.
+// Detection rows are written by ai-engine's classify-document-coverage job;
+// cases owns the derivation (buildDocumentsMatrix) and the human dismiss.
+// ---------------------------------------------------------------------------
+
+export interface ActiveCoverageRow {
+  id: string;
+  case_document_id: string;
+  covered_required_document_type_id: string;
+  party_id: string | null;
+  confidence: number;
+  /** Human name of the SOURCE document (display_name → original_filename). */
+  source_display_name: string;
+}
+
+/**
+ * Active coverages of a case: status='detected' AND the source document is
+ * still uploaded|approved. "The covered slot has no own upload" is NOT checked
+ * here — buildDocumentsMatrix derives that per slot (own upload supersedes).
+ */
+export async function listActiveCoveragesForCase(
+  caseId: string,
+): Promise<ActiveCoverageRow[]> {
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("case_document_coverages")
+    .select(
+      "id, case_document_id, covered_required_document_type_id, party_id, confidence, case_documents!inner(status, display_name, original_filename)",
+    )
+    .eq("case_id", caseId)
+    .eq("status", "detected")
+    .in("case_documents.status", ["uploaded", "approved"]);
+  if (error) {
+    logger.warn({ err: error, caseId }, "cases: listActiveCoveragesForCase failed — treating as none");
+    return [];
+  }
+  return (data ?? []).map((row) => {
+    const doc = Array.isArray(row.case_documents)
+      ? row.case_documents[0]
+      : row.case_documents;
+    return {
+      id: row.id,
+      case_document_id: row.case_document_id,
+      covered_required_document_type_id: row.covered_required_document_type_id,
+      party_id: row.party_id,
+      confidence: Number(row.confidence),
+      source_display_name:
+        doc?.display_name ?? doc?.original_filename ?? "",
+    };
+  });
+}
+
+export async function findCoverageById(
+  coverageId: string,
+): Promise<Tables<"case_document_coverages"> | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("case_document_coverages")
+    .select("*")
+    .eq("id", coverageId)
+    .maybeSingle();
+  return data ?? null;
+}
+
+export async function updateCoverageStatus(
+  coverageId: string,
+  patch: TablesUpdate<"case_document_coverages">,
+): Promise<void> {
+  const supabase = createServiceClient();
+  const { error } = await supabase
+    .from("case_document_coverages")
+    .update(patch)
+    .eq("id", coverageId);
+  if (error) {
+    throw new Error(`cases: updateCoverageStatus failed — ${error.message}`);
+  }
+}
+
+/**
+ * Payload of the active coverage whose covered type has this slug (case-level
+ * only — v1 coverages carry party_id=null). Callers use this as a fallback
+ * AFTER establishing the slug has no own active upload. Returns null when the
+ * coverage exists but its per-type extraction failed (payload null) — the
+ * caller must not guess.
+ */
+export async function findActiveCoveragePayloadBySlug(
+  caseId: string,
+  requirementSlug: string,
+): Promise<Record<string, unknown> | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("case_document_coverages")
+    .select(
+      "payload, created_at, required_document_types!inner(slug), case_documents!inner(status)",
+    )
+    .eq("case_id", caseId)
+    .eq("status", "detected")
+    .is("party_id", null)
+    .eq("required_document_types.slug", requirementSlug)
+    .in("case_documents.status", ["uploaded", "approved"])
+    .order("created_at", { ascending: false })
+    .limit(1);
+  const row = data?.[0] as { payload?: unknown } | undefined;
+  if (!row || row.payload == null) return null;
+  return row.payload as Record<string, unknown>;
 }
 
 /**
@@ -1059,7 +1171,7 @@ export async function listDocumentMetaBySlugs(
       | Array<{ status: string; completed_at: string | null }>
       | null;
   }>;
-  return rows.map((r) => {
+  const out = rows.map((r) => {
     const rdt = Array.isArray(r.required_document_types)
       ? r.required_document_types[0]
       : r.required_document_types;
@@ -1075,6 +1187,42 @@ export async function listDocumentMetaBySlugs(
       extraction_completed_at: ext?.completed_at ?? null,
     };
   });
+
+  // Coverage pseudo-rows (case-level only): a slug with no own upload can be
+  // COVERED by another document's classification. Including these rows in the
+  // fingerprint makes the ai_field cache self-invalidate when a coverage
+  // appears, is re-extracted (updated_at bump) or is dismissed (row gone).
+  if (!partyId) {
+    const { data: covData } = await supabase
+      .from("case_document_coverages")
+      .select(
+        "id, updated_at, required_document_types!inner(slug), case_documents!inner(status)",
+      )
+      .eq("case_id", caseId)
+      .eq("status", "detected")
+      .is("party_id", null)
+      .in("required_document_types.slug", slugs)
+      .in("case_documents.status", ["uploaded", "approved"]);
+    for (const row of (covData ?? []) as unknown as Array<{
+      id: string;
+      updated_at: string;
+      required_document_types: { slug: string } | Array<{ slug: string }>;
+    }>) {
+      const rdt = Array.isArray(row.required_document_types)
+        ? row.required_document_types[0]
+        : row.required_document_types;
+      out.push({
+        id: row.id,
+        slug: rdt?.slug ?? "",
+        size_bytes: 0,
+        updated_at: row.updated_at,
+        extraction_status: "coverage:detected",
+        extraction_completed_at: null,
+      });
+    }
+  }
+
+  return out;
 }
 
 /** Cached ai_field resolutions for a question set (fingerprint validated by the caller). */

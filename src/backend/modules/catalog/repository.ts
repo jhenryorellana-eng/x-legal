@@ -592,6 +592,16 @@ export async function updateRequiredDocument(
   return throwOnError(data, error, "updateRequiredDocument");
 }
 
+export async function findRequiredDocById(id: string): Promise<RequiredDocRow | null> {
+  const { data, error } = await db()
+    .from("required_document_types")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw new Error(`catalog.repo.findRequiredDocById: ${error.message}`);
+  return data;
+}
+
 export async function requiredDocSlugExists(phaseId: string, slug: string): Promise<boolean> {
   const { data } = await db()
     .from("required_document_types")
