@@ -143,11 +143,14 @@ export default async function VentasCitasPage(
       ? sp.week
       : currentWeekStart(now, staffTimezone);
 
-  // Week boundary dates for the header sub-string.
-  const weekStartDate = toZonedTime(
-    new Date(`${realWeekStart}T00:00:00`),
-    staffTimezone,
-  );
+  // Week boundary dates for the header sub-string. `realWeekStart` is ALREADY the
+  // Monday civil date in the staff TZ (from currentWeekStart), so materialize it
+  // directly. Do NOT re-apply toZonedTime: that treats the civil date as a UTC
+  // instant and shifts it one day back for negative-offset zones (the server runs
+  // in UTC), which mislabeled the grid — e.g. Wed 22 rendered under "JUE". All
+  // downstream use is civil-day arithmetic (getDate/addDays/format), which is
+  // offset-agnostic at local midnight.
+  const weekStartDate = new Date(`${realWeekStart}T00:00:00`);
   const weekEndDate = addDays(weekStartDate, 6);
 
   const weekD1 = format(weekStartDate, locale === "en" ? "MMM d" : "d 'de' MMMM", { locale: dfLoc });
