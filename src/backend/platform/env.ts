@@ -99,6 +99,14 @@ const providerSchemas = {
     NEXT_PUBLIC_VAPID_PUBLIC_KEY: z.string().min(1),
     VAPID_PRIVATE_KEY: z.string().min(1),
   }),
+  zelleImap: z.object({
+    ZELLE_IMAP_HOST: z.string().min(1),
+    ZELLE_IMAP_PORT: z.coerce.number().int().positive().default(993),
+    ZELLE_IMAP_USER: z.string().min(1),
+    /** Migadu APP password for the worker — never the mailbox's main password. */
+    ZELLE_IMAP_PASS: z.string().min(1),
+    ZELLE_IMAP_MAILBOX: z.string().min(1).default("ZELLE"),
+  }),
 } as const;
 
 type ProviderKey = keyof typeof providerSchemas;

@@ -540,6 +540,11 @@ export function registerConsumers(): void {
     await notifyFromEvent(event);
   });
 
+  // zelle.match_suggested → notifications (finance reconciliation inbox, 0111)
+  appEvents.on("zelle.match_suggested", async (event) => {
+    await notifyFromEvent(event);
+  });
+
   // installment.paid → notifications (client receipt)
   appEvents.on("installment.paid", async (event) => {
     await notifyFromEvent(event);

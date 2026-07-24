@@ -27,4 +27,9 @@ export type {
   OrgSettings,
   CoverTemplate,
   TermsVersion,
+  ZelleReconciliationSettings,
 } from "./domain";
+
+// Zelle reconciliation settings schema — consumed by zelle-recon to parse the
+// `zelle_reconciliation` key of orgs.settings (single source of truth).
+export { ZelleReconciliationSettingsSchema } from "./domain";

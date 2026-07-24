@@ -7,16 +7,22 @@
 
 import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
-import { getActor } from "@/backend/modules/identity";
+import { getActor, can } from "@/backend/modules/identity";
 import { setUserLocaleAction } from "@/backend/modules/identity/actions";
 import {
   registerPushSubscriptionAction,
   removePushSubscriptionAction,
 } from "@/backend/modules/notifications/actions";
+import { getReconConfig } from "@/backend/modules/zelle-recon";
 import { StaffLanguageCard } from "@/frontend/components/desktop/staff-language-card";
 import { StaffAppearanceCard } from "@/frontend/components/desktop/staff-appearance-card";
 import { StaffPushCard } from "@/frontend/components/desktop/staff-push-card";
 import { StaffTimezoneSection } from "../../_components/staff-timezone-section";
+import {
+  ZelleReconConfigCard,
+  type ZelleReconConfigVM,
+} from "@/frontend/features/andrium/configuracion/zelle-recon-config-card";
+import { updateZelleReconConfigAction } from "../pagos/actions";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +32,24 @@ export default async function FinanzasConfigPage() {
 
   const locale = (await getLocale()) === "en" ? "en" : "es";
   const t = await getTranslations("staff.config");
+
+  // Zelle reconciliation breakers — finance/admin with billing:edit only.
+  // Degrades to null before migration 0111 is applied (tables absent).
+  let reconConfig: ZelleReconConfigVM | null = null;
+  try {
+    can(actor, "billing", "edit");
+    const cfg = await getReconConfig(actor.orgId);
+    reconConfig = {
+      enabled: cfg.enabled,
+      tier_a_max_amount_cents: cfg.tierAMaxAmountCents,
+      daily_auto_max_cents: cfg.dailyAutoMaxCents,
+      daily_auto_max_count: cfg.dailyAutoMaxCount,
+      per_payer_daily_max: cfg.perPayerDailyMax,
+      tier_b_mode: cfg.tierBMode,
+    };
+  } catch {
+    reconConfig = null;
+  }
 
   return (
     <div style={{ maxWidth: 760 }}>
@@ -56,6 +80,13 @@ export default async function FinanzasConfigPage() {
             denied: t("pushDenied"),
           }}
         />
+        {reconConfig ? (
+          <ZelleReconConfigCard
+            config={reconConfig}
+            locale={locale}
+            updateAction={updateZelleReconConfigAction}
+          />
+        ) : null}
       </div>
       <StaffTimezoneSection locale={locale} />
     </div>

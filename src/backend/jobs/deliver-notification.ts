@@ -16,8 +16,14 @@
 
 import { z } from "zod";
 import { logger } from "@/backend/platform/logger";
-import { sendTransactional } from "@/backend/platform/resend";
-import { renderTransactionalEmail, EmailDataSchema } from "@/backend/platform/emails";
+import { sendTransactional, type EmailAttachment } from "@/backend/platform/resend";
+import {
+  renderTransactionalEmail,
+  EmailDataSchema,
+  pickLocale,
+  renderPaymentReceiptPdf,
+  receiptPdfFilename,
+} from "@/backend/platform/emails";
 import { sendPush } from "@/backend/platform/webpush";
 import {
   findNotificationById,
@@ -115,6 +121,29 @@ export async function handleDeliverNotification(
       data: payload.emailData,
     });
 
+    // Payment receipts travel with a PDF copy attached. Degradation is
+    // deliberate: a PDF render failure must never block the receipt email.
+    let attachments: EmailAttachment[] | undefined;
+    if (payload.emailData?.kind === "payment-receipt") {
+      try {
+        const pdfBytes = await renderPaymentReceiptPdf(
+          payload.emailData,
+          pickLocale(payload.locale),
+        );
+        attachments = [
+          {
+            filename: receiptPdfFilename(payload.emailData),
+            content: Buffer.from(pdfBytes),
+          },
+        ];
+      } catch (err) {
+        logger.warn(
+          { err, notificationId: notification.id },
+          "deliver-notification: receipt pdf failed — sending email without attachment",
+        );
+      }
+    }
+
     try {
       await sendTransactional({
         to: payload.recipientEmail,
@@ -122,6 +151,7 @@ export async function handleDeliverNotification(
         html,
         text,
         idempotencyKey: `notification:${notification.id}:email:${payload.templateKey}`,
+        attachments,
       });
 
       logger.info(

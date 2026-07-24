@@ -30,7 +30,9 @@ const nextConfig: NextConfig = {
   // mupdf is an ESM/WASM package — must NOT be bundled by Next.js webpack.
   // It loads its own .wasm file at runtime via Node.js resolution.
   // Without this, the build fails with "WASM module not found" errors.
-  serverExternalPackages: ["mupdf"],
+  // imapflow/mailparser (Zelle reconciliation IMAP sweep) are Node-native
+  // socket/stream packages — same treatment, never bundled.
+  serverExternalPackages: ["mupdf", "imapflow", "mailparser"],
 
   // Static security headers (DOC-27 §6). The nonce-based CSP is per-request and
   // lives in middleware.ts (Report-Only for the rollout window). These 5 are

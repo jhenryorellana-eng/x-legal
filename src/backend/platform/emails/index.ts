@@ -9,6 +9,11 @@ export {
   renderTransactionalEmail,
   renderCampaignEmail,
 } from "./render";
+export {
+  buildPaymentReceiptPdfHtml,
+  renderPaymentReceiptPdf,
+  receiptPdfFilename,
+} from "./receipt-pdf";
 export { pickLocale, emailSubject, type Locale } from "./i18n";
 export {
   EmailDataSchema,

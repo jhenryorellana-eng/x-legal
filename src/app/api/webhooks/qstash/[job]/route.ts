@@ -59,6 +59,9 @@ import { handleLexAnswer } from "@/backend/jobs/lex-answer";
 import { handleLexReindexCase } from "@/backend/jobs/lex-reindex-case";
 import { handleRefreshAiPrefill } from "@/backend/jobs/refresh-ai-prefill";
 import { handleReconcileJuezEvaluations } from "@/backend/jobs/reconcile-juez-evaluations";
+import { handleIngestZelleEmails } from "@/backend/jobs/ingest-zelle-emails";
+import { handleZelleIngestHeartbeat } from "@/backend/jobs/zelle-ingest-heartbeat";
+import { handleMatchZelleNotification } from "@/backend/jobs/match-zelle-notification";
 
 // ---------------------------------------------------------------------------
 // Job registry — jobKey → handler
@@ -113,6 +116,10 @@ const JOB_REGISTRY: Record<string, JobHandler> = {
   "send-campaign": handleSendCampaign,
   // Exhibits — download/render ONE cited source to a PDF annex (fan-out per exhibit)
   "fetch-exhibit": handleFetchExhibit,
+  // Zelle reconciliation (0111): IMAP sweep cron + heartbeat + per-txn matcher
+  "ingest-zelle-emails": handleIngestZelleEmails,
+  "zelle-ingest-heartbeat": handleZelleIngestHeartbeat,
+  "match-zelle-notification": handleMatchZelleNotification,
 };
 
 // On-demand AI jobs can run past the default 60s function limit. run-premortem

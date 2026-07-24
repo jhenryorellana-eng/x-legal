@@ -57,6 +57,11 @@ next-env.d.ts
 # playwright auth state (session cookies — never commit)
 /e2e/.auth/
 
+# Real Chase Zelle emails used as parser regression fixtures — contain client
+# PII (names, amounts, txn ids). Tests skip gracefully when absent (CI runs
+# the synthetic structural suite only).
+src/backend/modules/zelle-recon/__tests__/fixtures/*.eml
+
 # Evidence session artifacts (real JWTs / cookies — never commit)
 docs/_evidence/**/*cookie*.json
 docs/_evidence/**/*cookie*.txt

@@ -51,6 +51,7 @@ import {
   insertPayment,
   updatePayment,
   findPaymentById,
+  callApplyZelleAutoPayment,
   findPendingZellePayment,
   findInstallmentCaseId,
   getAccountStatement as repoGetAccountStatement,
@@ -326,12 +327,45 @@ async function applyPaymentSuccess(
     return;
   }
 
-  // Step 1: mark payment succeeded
-  await updatePayment(payment.id, {
-    status: "succeeded",
-    confirmed_by: confirmedBy ?? null,
-    confirmed_at: nowIso(),
-  });
+  // Step 1: mark payment succeeded.
+  // Since 0111, payments_succeeded_unique_idx guarantees ONE succeeded payment
+  // per installment across ALL methods. A 23505 here means another method won
+  // a genuine concurrent-settlement race (e.g. autopay charge vs bank-auto
+  // Zelle). Money may have been collected twice — that cannot be auto-resolved
+  // (a refund decision belongs to finance), so: audit loudly, leave THIS
+  // payment untouched (pending), and return without settling the installment
+  // again (review finding #3, 2026-07-23).
+  try {
+    await updatePayment(payment.id, {
+      status: "succeeded",
+      confirmed_by: confirmedBy ?? null,
+      confirmed_at: nowIso(),
+    });
+  } catch (err) {
+    if ((err as { code?: string }).code === "23505") {
+      logger.error(
+        { paymentId: payment.id, installmentId: installment.id, method: payment.method },
+        "billing.applyPaymentSuccess: CONCURRENT SETTLEMENT — another payment already " +
+          "succeeded for this installment; possible double collection, finance must review",
+      );
+      await writeAudit(
+        "system",
+        "billing.payment.concurrent_settlement",
+        "payments",
+        payment.id,
+        {
+          after: {
+            installmentId: installment.id,
+            method: payment.method,
+            amountCents: payment.amount_cents,
+            note: "unique succeeded-per-installment index rejected this settlement",
+          },
+        },
+      );
+      return;
+    }
+    throw err;
+  }
 
   // Step 2: ledger entry (income, 'cuota') — BEFORE installment→paid (crash-safe)
   // orgId derives from BD (findOrgIdForCase) — never from Stripe metadata (MED-3)
@@ -355,6 +389,21 @@ async function applyPaymentSuccess(
 
   if (!caseId) return;
 
+  await emitPaymentSuccessEvents(payment, installment, caseId);
+}
+
+/**
+ * Post-settlement tail shared by every confirmation path: receipt facts +
+ * domain event (downpayment.confirmed / installment.paid) + case timeline.
+ * Extracted from applyPaymentSuccess so the atomic Zelle reconciler (which
+ * settles via the apply_zelle_auto_payment RPC) can emit the exact same
+ * events after its transaction commits.
+ */
+async function emitPaymentSuccessEvents(
+  payment: PaymentRow,
+  installment: InstallmentRow,
+  caseId: string,
+): Promise<void> {
   // Receipt facts for the client email (amount + plan progress). Computed after
   // the installment is marked paid so this payment is reflected in the counts.
   const receipt = await buildPaymentReceiptFacts(caseId, payment);
@@ -643,12 +692,13 @@ export type RegisterZellePaymentInput = z.infer<typeof RegisterZelleSchema>;
  * Directly registers a Zelle payment (finance staff, RF-AND-012).
  * The proof is mandatory (Henry 2026-07-02): staff uploads the comprobante via
  * getZelleProofUploadUrl first, then registers+confirms in one step.
- * Calls applyPaymentSuccess internally.
+ * Calls applyPaymentSuccess internally. Returns the created payment id so
+ * callers (zelle-recon inbox) can link it to their own records.
  */
 export async function registerZellePayment(
   actor: Actor,
   input: RegisterZellePaymentInput,
-): Promise<void> {
+): Promise<{ paymentId: string }> {
   can(actor, "cases", "edit");
   const parsed = RegisterZelleSchema.parse(input);
 
@@ -701,6 +751,93 @@ export async function registerZellePayment(
       },
     },
   );
+
+  return { paymentId: payment.id };
+}
+
+// ---------------------------------------------------------------------------
+// applyBankVerifiedZellePayment — automatic tier-A settlement (zelle-recon)
+// ---------------------------------------------------------------------------
+
+const ApplyBankZelleSchema = z.object({
+  notificationId: z.string().uuid(),
+  matchId: z.string().uuid(),
+  installmentId: z.string().uuid(),
+  amountCents: z.number().int().positive(),
+  proofPath: z.string().min(1),
+  orgId: z.string().uuid(),
+  payerUserId: z.string().uuid().nullable(),
+});
+
+export type ApplyBankZelleInput = z.infer<typeof ApplyBankZelleSchema>;
+
+export type ApplyBankZelleResult =
+  | { applied: true; paymentId: string }
+  | { applied: false; reason: string };
+
+/**
+ * Settles a bank-verified Zelle payment automatically (tier A of the Zelle
+ * reconciler — NO human in the loop). The settlement itself runs in the
+ * apply_zelle_auto_payment RPC (one transaction, row locks, re-checked
+ * preconditions); this wrapper guards the domain transition, emits the same
+ * domain events as every other confirmation path AFTER the commit, and audits
+ * as system actor.
+ *
+ * Never throws on a refused settlement — returns {applied:false, reason} so
+ * the caller (zelle-recon service) degrades the notification to review.
+ * Consumed ONLY by the match-zelle-notification job via billing/index.
+ */
+export async function applyBankVerifiedZellePayment(
+  input: ApplyBankZelleInput,
+): Promise<ApplyBankZelleResult> {
+  const parsed = ApplyBankZelleSchema.parse(input);
+
+  const installment = await findInstallmentById(parsed.installmentId);
+  if (!installment) return { applied: false, reason: "INSTALLMENT_NOT_FOUND" };
+
+  // Domain guard (defense in depth — the RPC re-checks under lock).
+  const status = installment.status as Parameters<typeof canTransitionInstallment>[0];
+  if (!canTransitionInstallment(status, "paid", "reconciler")) {
+    return { applied: false, reason: `INSTALLMENT_NOT_PAYABLE:${installment.status}` };
+  }
+
+  const result = await callApplyZelleAutoPayment(parsed);
+  if (!result.applied || !result.payment_id) {
+    return { applied: false, reason: result.reason ?? "RPC_REFUSED" };
+  }
+
+  // Post-commit tail: same receipt/event/timeline as applyPaymentSuccess.
+  const [payment, settled, caseId] = await Promise.all([
+    findPaymentById(result.payment_id),
+    findInstallmentById(parsed.installmentId),
+    findInstallmentCaseId(parsed.installmentId),
+  ]);
+  if (payment && settled && caseId) {
+    await emitPaymentSuccessEvents(payment, settled, caseId);
+  } else {
+    logger.error(
+      { paymentId: result.payment_id, installmentId: parsed.installmentId },
+      "billing.applyBankVerifiedZellePayment: settled but could not load rows for events",
+    );
+  }
+
+  await writeAudit(
+    "system",
+    "billing.zelle.auto_confirmed",
+    "payments",
+    result.payment_id,
+    {
+      after: {
+        notificationId: parsed.notificationId,
+        matchId: parsed.matchId,
+        installmentId: parsed.installmentId,
+        amountCents: parsed.amountCents,
+        confirmationSource: "bank_auto",
+      },
+    },
+  );
+
+  return { applied: true, paymentId: result.payment_id };
 }
 
 // ---------------------------------------------------------------------------

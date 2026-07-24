@@ -32,6 +32,11 @@ import {
   type StatusKind,
 } from "@/frontend/components/brand";
 import { toast } from "@/frontend/components/desktop";
+import {
+  ConciliacionTab,
+  type ReconInboxVMShape,
+  type ConciliacionActions,
+} from "./conciliacion-tab";
 
 // ---------------------------------------------------------------------------
 // VM types (fed from server component — serialisable, no backend imports)
@@ -96,12 +101,18 @@ export interface PagosGlobalVM {
   calendarGroups: DueCalendarGroupVM[];
   overdueGroups: OverdueGroupVM[];
   locale: "es" | "en";
+  /** Zelle reconciliation inbox (null when the load degraded). */
+  reconVM: ReconInboxVMShape | null;
 }
 
 export interface PagosGlobalViewProps {
   vm: PagosGlobalVM;
   tEs: Record<string, string>;
   tEn: Record<string, string>;
+  /** Server actions for the reconciliation tab (injected by the page). */
+  reconActions: ConciliacionActions;
+  /** Deep-link tab (?tab=conciliacion from finance notifications). */
+  initialTab?: "calendario" | "morosidad" | "conciliacion";
 }
 
 // ---------------------------------------------------------------------------
@@ -575,31 +586,44 @@ function OverdueTab({
 }
 
 // ---------------------------------------------------------------------------
-// Reconciliation Tab (placeholder §3.9)
+// Reconciliation Tab (0111 — Zelle reconciliation inbox; degraded fallback)
 // ---------------------------------------------------------------------------
 
-function ReconciliationTab({ locale }: { locale: "es" | "en" }) {
-  return (
-    <div
-      style={{
-        padding: "48px 24px",
-        textAlign: "center",
-        background: "var(--card)",
-        borderRadius: "var(--r-lg)",
-        border: "1px solid var(--line)",
-      }}
-    >
-      <Lex mood="calma" size={78} />
-      <p style={{ marginTop: 16, fontWeight: 700, color: "var(--ink)" }}>
-        {locale === "es" ? "Conciliación — Próximamente" : "Reconciliation — Coming soon"}
-      </p>
-      <p style={{ marginTop: 8, color: "var(--ink-2)", maxWidth: 400, margin: "8px auto 0" }}>
-        {locale === "es"
-          ? "La conciliación global de pagos estará disponible en la próxima ola. Mientras tanto, revisa los pagos caso a caso en el estado de cuenta."
-          : "Global payment reconciliation will be available in the next wave. In the meantime, review payments case by case in the account statement."}
-      </p>
-    </div>
-  );
+function ReconciliationTab({
+  locale,
+  reconVM,
+  reconActions,
+}: {
+  locale: "es" | "en";
+  reconVM: ReconInboxVMShape | null;
+  reconActions: ConciliacionActions;
+}) {
+  if (!reconVM) {
+    return (
+      <div
+        style={{
+          padding: "48px 24px",
+          textAlign: "center",
+          background: "var(--card)",
+          borderRadius: "var(--r-lg)",
+          border: "1px solid var(--line)",
+        }}
+      >
+        <Lex mood="calma" size={78} />
+        <p style={{ marginTop: 16, fontWeight: 700, color: "var(--ink)" }}>
+          {locale === "es"
+            ? "La conciliación no está disponible ahora mismo"
+            : "Reconciliation is unavailable right now"}
+        </p>
+        <p style={{ marginTop: 8, color: "var(--ink-2)", maxWidth: 400, margin: "8px auto 0" }}>
+          {locale === "es"
+            ? "No se pudo cargar la bandeja. Recarga la página o revisa los pagos caso a caso."
+            : "The inbox could not be loaded. Reload the page or review payments case by case."}
+        </p>
+      </div>
+    );
+  }
+  return <ConciliacionTab vm={reconVM} locale={locale} actions={reconActions} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -618,11 +642,18 @@ const TABS: Array<{ id: TabId; labelEs: string; labelEn: string }> = [
 // Main view
 // ---------------------------------------------------------------------------
 
-export function PagosGlobalView({ vm, tEs: _tEs, tEn: _tEn }: PagosGlobalViewProps) {
-  const [activeTab, setActiveTab] = React.useState<TabId>("calendario");
+export function PagosGlobalView({
+  vm,
+  tEs: _tEs,
+  tEn: _tEn,
+  reconActions,
+  initialTab,
+}: PagosGlobalViewProps) {
+  const [activeTab, setActiveTab] = React.useState<TabId>(initialTab ?? "calendario");
   void toast; // referenced for potential use in child actions
 
   const locale = vm.locale;
+  const reconPending = vm.reconVM?.pendingCount ?? 0;
 
   return (
     <div style={{ padding: "32px 32px 48px" }}>
@@ -694,6 +725,26 @@ export function PagosGlobalView({ vm, tEs: _tEs, tEn: _tEn }: PagosGlobalViewPro
               }}
             >
               {locale === "es" ? tab.labelEs : tab.labelEn}
+              {tab.id === "conciliacion" && reconPending > 0 ? (
+                <span
+                  style={{
+                    marginLeft: 7,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    minWidth: 20,
+                    height: 20,
+                    padding: "0 6px",
+                    borderRadius: 999,
+                    background: "var(--accent)",
+                    color: "#fff",
+                    fontSize: 11,
+                    fontWeight: 800,
+                  }}
+                >
+                  {reconPending}
+                </span>
+              ) : null}
             </button>
           );
         })}
@@ -724,7 +775,7 @@ export function PagosGlobalView({ vm, tEs: _tEs, tEn: _tEn }: PagosGlobalViewPro
         aria-labelledby="tab-conciliacion"
         hidden={activeTab !== "conciliacion"}
       >
-        <ReconciliationTab locale={locale} />
+        <ReconciliationTab locale={locale} reconVM={vm.reconVM} reconActions={reconActions} />
       </div>
 
       {/* Keyframe for blink animation (overdue badge, §3.2) */}

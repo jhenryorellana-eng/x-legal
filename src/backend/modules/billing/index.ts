@@ -52,6 +52,8 @@ export {
   setAutopay,
   getSavedCard,
   chargeDueInstallments,
+  // Zelle auto-reconciliation (tier A — consumed only by zelle-recon)
+  applyBankVerifiedZellePayment,
 } from "./service";
 
 // Error class
@@ -89,6 +91,9 @@ export type {
   SavedCardDto,
   ChargeDueResult,
   AutopayDisabledReason,
+  // Zelle auto-reconciliation
+  ApplyBankZelleInput,
+  ApplyBankZelleResult,
 } from "./service";
 
 // Domain (pure functions — safe to import widely)

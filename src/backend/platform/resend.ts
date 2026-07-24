@@ -51,6 +51,12 @@ function getClient(): Resend {
 // Types
 // ---------------------------------------------------------------------------
 
+export interface EmailAttachment {
+  filename: string;
+  /** Raw bytes or base64-encoded string (Resend accepts both). */
+  content: Buffer | string;
+}
+
 export interface TransactionalEmailOptions {
   to: string | string[];
   subject: string;
@@ -64,6 +70,8 @@ export interface TransactionalEmailOptions {
   replyTo?: string;
   /** Idempotency key for dedup (use the notification id or event id) */
   idempotencyKey?: string;
+  /** Optional file attachments (e.g. the payment-receipt PDF). */
+  attachments?: EmailAttachment[];
 }
 
 export interface BatchEmailItem {
@@ -95,6 +103,7 @@ export async function sendTransactional(
     html: options.html,
     ...(options.text && { text: options.text }),
     ...(options.replyTo && { reply_to: options.replyTo }),
+    ...(options.attachments?.length && { attachments: options.attachments }),
   });
 
   if (error || !data) {

@@ -131,6 +131,9 @@ export async function updateOrgSettings(
     goals: dto.goals ?? before.settings.goals,
     ai_lex_model:
       dto.ai_lex_model !== undefined ? dto.ai_lex_model : before.settings.ai_lex_model,
+    // Owned by zelle-recon (finance) — the admin form never edits it, but it
+    // must be carried through or this whole-object write would wipe it.
+    zelle_reconciliation: before.settings.zelle_reconciliation,
   };
 
   const updated = await repo.updateOrg(actor.orgId, {

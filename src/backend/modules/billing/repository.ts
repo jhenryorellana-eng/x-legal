@@ -190,10 +190,78 @@ export async function updatePayment(
     .eq("id", paymentId);
 
   if (error) {
-    throw new Error(
+    // Preserve the Postgres error code: since 0111, flipping a payment to
+    // succeeded can hit payments_succeeded_unique_idx (23505) when another
+    // method settled the installment concurrently — callers need to tell
+    // that apart from a generic failure.
+    const err = new Error(
       `billing.repository: updatePayment failed — ${error.message}`,
+    ) as Error & { code?: string };
+    err.code = (error as { code?: string }).code;
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// apply_zelle_auto_payment RPC — atomic tier-A settlement (0111)
+// ---------------------------------------------------------------------------
+
+export interface ZelleAutoPaymentRpcArgs {
+  notificationId: string;
+  matchId: string;
+  installmentId: string;
+  amountCents: number;
+  proofPath: string;
+  orgId: string;
+  payerUserId: string | null;
+}
+
+export interface ZelleAutoPaymentRpcResult {
+  applied: boolean;
+  reason?: string;
+  payment_id?: string | null;
+  case_id?: string | null;
+}
+
+/**
+ * Calls the atomic settlement RPC (SECURITY DEFINER, service_role only).
+ * All preconditions are re-checked under row locks inside the function; a
+ * `{applied:false, reason}` result is a normal outcome, not an error.
+ *
+ * Loosely-typed client cast: the RPC ships with migration 0111 and enters
+ * database.types.ts on the next `npm run db:types` after it is applied. The
+ * cast is on the CLIENT (method invoked inline) — never detach `.rpc` from
+ * its object (documented `this`-loss bug pattern).
+ */
+export async function callApplyZelleAutoPayment(
+  args: ZelleAutoPaymentRpcArgs,
+): Promise<ZelleAutoPaymentRpcResult> {
+  const supabase = createServiceClient();
+  type LooseRpcClient = {
+    rpc: (
+      fn: string,
+      params?: Record<string, unknown>,
+    ) => PromiseLike<{ data: unknown; error: { message?: string } | null }>;
+  };
+  const { data, error } = await (supabase as unknown as LooseRpcClient).rpc(
+    "apply_zelle_auto_payment",
+    {
+      p_notification_id: args.notificationId,
+      p_match_id: args.matchId,
+      p_installment_id: args.installmentId,
+      p_amount_cents: args.amountCents,
+      p_proof_path: args.proofPath,
+      p_org_id: args.orgId,
+      p_payer_user_id: args.payerUserId,
+    },
+  );
+
+  if (error) {
+    throw new Error(
+      `billing.repository: apply_zelle_auto_payment failed — ${error.message}`,
     );
   }
+  return (data ?? { applied: false, reason: "EMPTY_RPC_RESULT" }) as ZelleAutoPaymentRpcResult;
 }
 
 /**

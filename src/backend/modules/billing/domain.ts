@@ -17,8 +17,18 @@ export type InstallmentStatus =
   | "overdue"
   | "waived";
 
-/** Actor types allowed to trigger installment transitions (DOC-44 §2.2). */
-export type InstallmentTransitionActor = "system" | "cron" | "finance" | "admin";
+/**
+ * Actor types allowed to trigger installment transitions (DOC-44 §2.2).
+ * "reconciler" = the automatic Zelle reconciliation (bank-verified email →
+ * atomic RPC). Deliberately separate from "system": widening "system" to
+ * pending→paid would relax validation on every other system path.
+ */
+export type InstallmentTransitionActor =
+  | "system"
+  | "cron"
+  | "finance"
+  | "admin"
+  | "reconciler";
 
 /** States from which a payment (Stripe checkout or Zelle) can be initiated. */
 export const PAYABLE_STATUSES: InstallmentStatus[] = ["pending", "overdue"];
@@ -34,12 +44,12 @@ const INSTALLMENT_TRANSITIONS: Record<
   pending: {
     processing: ["system"],
     overdue:    ["cron"],
-    paid:       ["finance", "admin"],
+    paid:       ["finance", "admin", "reconciler"],
     waived:     ["finance", "admin"],
   },
   overdue: {
     processing: ["system"],
-    paid:       ["finance", "admin"],
+    paid:       ["finance", "admin", "reconciler"],
     waived:     ["finance", "admin"],
   },
   processing: {

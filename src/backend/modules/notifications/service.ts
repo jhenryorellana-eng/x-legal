@@ -508,6 +508,19 @@ const F2_MATRIX: Record<string, MatrixRule[]> = {
     },
   ],
 
+  // zelle.match_suggested → Finance ①② (Zelle reconciliation inbox, 0111)
+  // A bank alert needs human eyes: tier-B suggestion, tier-A degradation, or
+  // an unidentified payment. Deep link lands on the reconciliation tab.
+  "zelle.match_suggested": [
+    {
+      type: "zelle.match_suggested",
+      recipients: [{ resolverKey: "finance" }],
+      channels: { push: true, email: false }, // ①②
+      category: "payment_reminders",
+      deepLinkTemplate: "/finanzas/pagos?tab=conciliacion",
+    },
+  ],
+
   // autopay.charge_failed → Client ①② + Finance ① (DOC-71 §2.4)
   "autopay.charge_failed": [
     {
@@ -905,6 +918,16 @@ function renderContent(
       bodyI18n: { en: "A payment has been refunded.", es: "Se ha reembolsado un pago." },
       icon: "dollar-sign",
       color: "gold",
+    },
+    // Zelle reconciliation (0111)
+    "zelle.match_suggested": {
+      titleI18n: { en: "Zelle payment to reconcile", es: "Pago Zelle por conciliar" },
+      bodyI18n: {
+        en: "A bank alert arrived and needs your confirmation in the reconciliation inbox.",
+        es: "Llegó una alerta del banco y necesita tu confirmación en la bandeja de conciliación.",
+      },
+      icon: "dollar-sign",
+      color: "accent",
     },
     // Autopay (DOC-71 §2.4)
     "autopay.charge_failed": {

@@ -20,6 +20,7 @@ import {
   listOverdueForCollections,
   BillingError,
 } from "@/backend/modules/billing";
+import { getReconInbox } from "@/backend/modules/zelle-recon";
 import type { Locale } from "@/shared/i18n";
 import {
   PagosGlobalView,
@@ -29,6 +30,14 @@ import {
   type DueCalendarGroupVM,
   type OverdueGroupVM,
 } from "@/frontend/features/andrium/pagos/pagos-global-view";
+import type { ReconInboxVMShape } from "@/frontend/features/andrium/pagos/conciliacion-tab";
+import {
+  confirmZelleMatchAction,
+  reassignZelleNotificationAction,
+  dismissZelleNotificationAction,
+  getZelleEvidenceUrlAction,
+  searchReconTargetsAction,
+} from "./actions";
 
 import esMessages from "@/frontend/i18n/messages/es.json";
 import enMessages from "@/frontend/i18n/messages/en.json";
@@ -52,7 +61,11 @@ function pagosLabels(msgs: unknown): Record<string, string> {
 // Page
 // ---------------------------------------------------------------------------
 
-export default async function PagosPage() {
+export default async function PagosPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string }>;
+}) {
   const actor = await getActor();
   if (!actor || actor.kind !== "staff") redirect("/login");
 
@@ -63,10 +76,12 @@ export default async function PagosPage() {
   }
 
   const locale = (await getLocale()) as Locale;
+  const { tab } = await searchParams;
 
   let gateItems: GateItemVM[] = [];
   let calendarGroups: DueCalendarGroupVM[] = [];
   let overdueGroups: OverdueGroupVM[] = [];
+  let reconVM: ReconInboxVMShape | null = null;
 
   try {
     const now = new Date();
@@ -136,11 +151,20 @@ export default async function PagosPage() {
     }
   }
 
+  // Zelle reconciliation inbox (0111). Degrades to null (fallback card) —
+  // before the migration is applied the zelle_* tables don't exist yet.
+  try {
+    reconVM = await getReconInbox(actor);
+  } catch (err) {
+    console.error("[/finanzas/pagos] recon inbox load failed:", err);
+  }
+
   const vm: PagosGlobalVM = {
     gateItems,
     calendarGroups,
     overdueGroups,
     locale: locale === "en" ? "en" : "es",
+    reconVM,
   };
 
   return (
@@ -149,6 +173,14 @@ export default async function PagosPage() {
         vm={vm}
         tEs={pagosLabels(esMessages)}
         tEn={pagosLabels(enMessages)}
+        reconActions={{
+          confirmZelleMatch: confirmZelleMatchAction,
+          reassignZelleNotification: reassignZelleNotificationAction,
+          dismissZelleNotification: dismissZelleNotificationAction,
+          getZelleEvidenceUrl: getZelleEvidenceUrlAction,
+          searchReconTargets: searchReconTargetsAction,
+        }}
+        initialTab={tab === "conciliacion" ? "conciliacion" : undefined}
       />
     </div>
   );

@@ -493,6 +493,32 @@ describe("canTransitionInstallment", () => {
     expect(canTransitionInstallment("pending", "processing")).toBe(true);
     expect(canTransitionInstallment("pending", "paid")).toBe(false); // system cannot go pending→paid
   });
+
+  // --- reconciler (automatic Zelle reconciliation, 0111) ---
+  it("reconciler can settle payable installments (pending|overdue → paid)", () => {
+    expect(canTransitionInstallment("pending", "paid", "reconciler")).toBe(true);
+    expect(canTransitionInstallment("overdue", "paid", "reconciler")).toBe(true);
+  });
+
+  it("reconciler can do NOTHING else", () => {
+    const froms: InstallmentStatus[] = ["pending", "processing", "paid", "overdue", "waived"];
+    const targets: InstallmentStatus[] = ["pending", "processing", "paid", "overdue", "waived"];
+    for (const from of froms) {
+      for (const to of targets) {
+        const allowed =
+          (from === "pending" || from === "overdue") && to === "paid";
+        expect(
+          canTransitionInstallment(from, to, "reconciler"),
+          `${from} → ${to} by reconciler`,
+        ).toBe(allowed);
+      }
+    }
+  });
+
+  it("adding reconciler did not widen system: pending→paid still forbidden for system", () => {
+    expect(canTransitionInstallment("pending", "paid", "system")).toBe(false);
+    expect(canTransitionInstallment("overdue", "paid", "system")).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

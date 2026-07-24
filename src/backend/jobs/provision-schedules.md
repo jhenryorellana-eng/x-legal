@@ -21,6 +21,8 @@ them here.
 | `17 * * * *`     | `expire-stale-checkouts`  | `{jobKey,entityId:null,attempt:1,dedupeId:"expire-stale-checkouts:<YYYY-MM-DD-HH>"}` | Hourly; clears orphaned pending/stripe payments (session_id null > 60min) |
 | `*/15 * * * *`   | `reconcile-stripe-payments` | `{jobKey,entityId:null,attempt:1,dedupeId:"reconcile-stripe-payments:<ISO-15min-window>"}` | Every 15 min; settles/expires created-but-unconfirmed Stripe sessions (session_id NOT null > 3min) — card-confirmation safety net |
 | `30 10 * * *`    | `charge-due-installments` | `{jobKey,entityId:null,attempt:1,dedupeId:"charge-due-installments:<YYYY-MM-DD>"}` | Daily autopay MIT charges (DOC-71 §2.4). MUST run BEFORE installment-reminders (11:00) so charged cuotas are processing/paid when reminders compute |
+| `*/2 * * * *`    | `ingest-zelle-emails`     | `{jobKey,entityId:null,attempt:1,dedupeId:"ingest-zelle-emails:<ISO-2min-window>"}` | Zelle reconciliation: IMAP sweep of the Migadu ZELLE mailbox. retries 0 — the next sweep self-heals; a row-lease prevents overlap |
+| `0 * * * *`      | `zelle-ingest-heartbeat`  | `{jobKey,entityId:null,attempt:1,dedupeId:"zelle-ingest-heartbeat:<YYYY-MM-DD-HH>"}` | Alerts admins when no successful mailbox sweep in 6h (dead worker / revoked IMAP password / Chase alert off) |
 
 ## Provisioning commands (Upstash CLI)
 
@@ -65,6 +67,21 @@ upstash qstash schedule create \
   --cron "30 10 * * *" \
   --url "${APP_URL}/api/webhooks/qstash/charge-due-installments" \
   --body '{"jobKey":"charge-due-installments","entityId":null,"attempt":1,"dedupeId":"charge-due-installments:__date__"}' \
+  --retries 1
+
+# ingest-zelle-emails — every 2 minutes (Zelle reconciliation IMAP sweep)
+# retries 0: the mailbox is the durable queue; the next sweep self-heals.
+upstash qstash schedule create \
+  --cron "*/2 * * * *" \
+  --url "${APP_URL}/api/webhooks/qstash/ingest-zelle-emails" \
+  --body '{"jobKey":"ingest-zelle-emails","entityId":null,"attempt":1,"dedupeId":"ingest-zelle-emails:__window__"}' \
+  --retries 0
+
+# zelle-ingest-heartbeat — hourly (staleness alert to admins)
+upstash qstash schedule create \
+  --cron "0 * * * *" \
+  --url "${APP_URL}/api/webhooks/qstash/zelle-ingest-heartbeat" \
+  --body '{"jobKey":"zelle-ingest-heartbeat","entityId":null,"attempt":1,"dedupeId":"zelle-ingest-heartbeat:__hour__"}' \
   --retries 1
 ```
 

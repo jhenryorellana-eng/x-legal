@@ -24,6 +24,25 @@ export type I18nTextDraft = z.infer<typeof I18nTextDraftSchema>;
 // ---------------------------------------------------------------------------
 
 /**
+ * Zelle auto-reconciliation knobs (migration 0111). Owned/edited by the
+ * zelle-recon module (finance role, can('billing','edit')) — the admin
+ * settings form does not touch them, but this schema MUST declare the key or
+ * an admin settings save would silently strip it from the jsonb.
+ *
+ * Defaults = dark-launch: the pipeline parses/matches and fills the review
+ * inbox, but nothing auto-applies until `enabled` is flipped.
+ */
+export const ZelleReconciliationSettingsSchema = z.object({
+  enabled: z.boolean().default(false),
+  tier_a_max_amount_cents: z.number().int().positive().default(50_000),
+  daily_auto_max_cents: z.number().int().positive().default(250_000),
+  daily_auto_max_count: z.number().int().positive().default(5),
+  per_payer_daily_max: z.number().int().positive().default(2),
+  tier_b_mode: z.enum(["review_only", "auto"]).default("review_only"),
+});
+export type ZelleReconciliationSettings = z.infer<typeof ZelleReconciliationSettingsSchema>;
+
+/**
  * The typed org settings. Stored in orgs.settings (jsonb) but never edited as
  * raw JSON — the admin form maps each field (DOC-53 §9.1). Phones are validated
  * server-side with normalize_phone() (E1).
@@ -53,6 +72,15 @@ export const OrgSettingsSchema = z.object({
     .enum(["claude-sonnet-4-6", "claude-haiku-4-5", "claude-fable-5"])
     .nullable()
     .default(null),
+  /** Zelle auto-reconciliation circuit breakers (see schema above). */
+  zelle_reconciliation: ZelleReconciliationSettingsSchema.default({
+    enabled: false,
+    tier_a_max_amount_cents: 50_000,
+    daily_auto_max_cents: 250_000,
+    daily_auto_max_count: 5,
+    per_payer_daily_max: 2,
+    tier_b_mode: "review_only",
+  }),
 });
 export type OrgSettings = z.infer<typeof OrgSettingsSchema>;
 
